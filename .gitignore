@@ -1,0 +1,40 @@
+# ===== 构建产物 =====
+build/
+*.ninja_log
+*.ninja_deps
+
+# ===== 打包输出（独立运行目录） =====
+dist/
+
+# ===== 测试运行临时输出 =====
+*.o.txt
+*.e.txt
+*.out.txt
+*.err.txt
+*/out*.txt
+testout/
+# 调试期原始捕获（测试进程 stdout/stderr 原始字节转储）
+*.raw
+cleanup_result.txt
+gs.txt
+
+# 调试期落盘捕获（PowerShell stdout/stderr 转存，沙箱下无法物理删除）
+_diag*.txt
+_out_*.txt
+_raw_*.txt
+_diffstat.txt
+_exitcodes.txt
+_section_diff.txt
+tmp_*.txt
+_*.txt
+
+# ===== Qr / 工具链临时 =====
+.qt/
+*.autosave
+
+# ===== 日志 =====
+*.log
+
+# ===== 系统文件 =====
+Thumbs.db
+.DS_Store

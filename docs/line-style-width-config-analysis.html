@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>线型↔线宽统一映射配置 —— 设计与实现</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --card: #fff; --ink: #1f2329; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --accent-soft: #eff6ff; --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+    --code-bg: #0f172a; --code-ink: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif; line-height: 1.7; font-size: 15px; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 22px 64px; }
+  header.hero { background: linear-gradient(135deg,#1e3a8a,#2563eb 60%,#0ea5e9); color:#fff; border-radius:16px; padding:30px 32px; margin-bottom:26px; box-shadow:0 10px 30px rgba(37,99,235,.25); }
+  header.hero h1 { margin:0 0 8px; font-size:25px; }
+  header.hero .sub { opacity:.9; font-size:14px; }
+  .badges { margin-top:14px; display:flex; flex-wrap:wrap; gap:8px; }
+  .badge { background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); padding:4px 12px; border-radius:999px; font-size:12.5px; font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px 26px; margin-bottom:22px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  h2 { font-size:20px; margin:4px 0 14px; padding-left:12px; border-left:4px solid var(--accent); }
+  h3 { font-size:16.5px; margin:20px 0 10px; color:#0f172a; }
+  p { margin:10px 0; } ul,ol { padding-left:22px; } li { margin:5px 0; }
+  code { background:#f1f5f9; padding:1px 6px; border-radius:5px; font-size:13px; font-family:"JetBrains Mono",Consolas,monospace; color:#b91c1c; }
+  pre { background:var(--code-bg); color:var(--code-ink); padding:16px 18px; border-radius:10px; overflow:auto; font-size:12.8px; line-height:1.55; font-family:"JetBrains Mono",Consolas,monospace; }
+  pre .c { color:#64748b; } pre .k { color:#93c5fd; } pre .s { color:#86efac; } pre .n { color:#fcd34d; }
+  table { width:100%; border-collapse:collapse; margin:12px 0; font-size:13.5px; }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; }
+  th { background:var(--accent-soft); color:#0f172a; font-weight:700; }
+  tr:nth-child(even) td { background:#fafafa; }
+  .callout { border-radius:10px; padding:14px 16px; margin:14px 0; font-size:14px; border-left:4px solid; }
+  .info { background:#eff6ff; border-color:#3b82f6; } .ok { background:#f0fdf4; border-color:#16a34a; }
+  .warn { background:#fffbeb; border-color:#d97706; } .bad { background:#fef2f2; border-color:#dc2626; }
+  .tag { display:inline-block; font-size:11.5px; font-weight:700; padding:1px 7px; border-radius:5px; }
+  .t-new { background:#dcfce7; color:#166534; } .t-mod { background:#fef9c3; color:#854d0e; }
+  .muted { color:var(--muted); font-size:12.5px; }
+  footer { text-align:center; color:var(--muted); font-size:12px; margin-top:30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>线型 ↔ 线宽 统一映射配置 —— 设计与实现</h1>
+  <div class="sub">sketch-cad-cpp（Qt6 二维 CAD 草图模块） · 默认线宽按线型自动派生 + 手动覆盖</div>
+  <div class="badges">
+    <span class="badge">单一数据源</span>
+    <span class="badge">工厂/单例</span>
+    <span class="badge">开闭原则</span>
+    <span class="badge">自动派生</span>
+    <span class="badge">手动覆盖</span>
+    <span class="badge">构建通过</span>
+  </div>
+</header>
+
+<div class="card">
+  <h2>一、需求拆解</h2>
+  <p>为所有图元建立<strong>线型 → 默认线宽</strong>的映射，并在创建/渲染时自动应用；同时保留手动覆盖能力。映射规格：</p>
+  <table>
+    <thead><tr><th>线型</th><th>枚举</th><th>默认线宽</th><th>档位</th></tr></thead>
+    <tbody>
+      <tr><td>实线</td><td><code>LineStyle::Solid</code></td><td>3px</td><td>粗线</td></tr>
+      <tr><td>虚线</td><td><code>LineStyle::Dashed</code></td><td>2px</td><td>中粗线</td></tr>
+      <tr><td>点线</td><td><code>LineStyle::Dotted</code></td><td>1px</td><td>细线（点线按轻量线型取细）</td></tr>
+      <tr><td>点划线</td><td><code>LineStyle::DashDot</code></td><td>1px</td><td>细线</td></tr>
+      <tr><td>双点划线</td><td><code>LineStyle::DashDotDot</code></td><td>1px</td><td>细线</td></tr>
+    </tbody>
+  </table>
+  <p>额外约束：<strong>全局可维护</strong>（改一处全局生效）、<strong>易扩展新线型</strong>（加一处即可）、创建与渲染双路径自动应用、保留手动覆盖。</p>
+</div>
+
+<div class="card">
+  <h2>二、架构设计：单一数据源 + 自动/手动双态</h2>
+
+  <h3>2.1 统一映射配置 <code>LineStyleConfig</code>（单例 / 工厂+注册表）</h3>
+  <p>所有"线型默认线宽"集中在一个单例的映射表里，是全局唯一真源。消费方（创建、渲染、属性面板）只通过 <code>defaultWidth(ls)</code> 查询，绝不在各处硬编码 3/2/1。</p>
+  <pre><span class="c">// src/core/LineStyleConfig.h</span>
+<span class="k">class</span> LineStyleConfig {
+<span class="k">public</span>:
+    <span class="k">static</span> LineStyleConfig&amp; instance();
+    <span class="k">double</span> defaultWidth(LineStyle ls) <span class="k">const</span>;     <span class="c">// 查询（未知线型安全回落 1px）</span>
+    <span class="k">void</span>   setDefaultWidth(LineStyle ls, <span class="k">double</span> px); <span class="c">// 运行时覆盖 → 全局可维护</span>
+<span class="k">private</span>:
+    LineStyleConfig();
+    QMap&lt;LineStyle, <span class="k">double</span>&gt; map_;          <span class="c">// 线型 → 默认线宽（唯一映射表）</span>
+};</pre>
+  <pre><span class="c">// 构造函数：集中初始化映射（改线宽规格只动这里）</span>
+LineStyleConfig::LineStyleConfig() {
+    map_[LineStyle::Solid]      = <span class="n">3.0</span>;   <span class="c">// 粗线</span>
+    map_[LineStyle::Dashed]     = <span class="n">2.0</span>;   <span class="c">// 中粗线</span>
+    map_[LineStyle::Dotted]     = <span class="n">1.0</span>;   <span class="c">// 细线</span>
+    map_[LineStyle::DashDot]    = <span class="n">1.0</span>;   <span class="c">// 细线</span>
+    map_[LineStyle::DashDotDot] = <span class="n">1.0</span>;   <span class="c">// 细线</span>
+}</pre>
+
+  <h3>2.2 图元双态：<code>lineWidthAuto</code> 标志 + <code>effectiveLineWidth()</code></h3>
+  <p><code>Element</code> 新增一个布尔标志区分"自动派生"与"手动覆盖"，实际线宽由统一函数给出：</p>
+  <pre><span class="c">// src/core/Element.h</span>
+<span class="k">bool</span> lineWidthAuto = <span class="k">true</span>;   <span class="c">// true=随线型派生；false=用 lineWidth 手动值</span>
+<span class="k">double</span> effectiveLineWidth() <span class="k">const</span> {
+    <span class="k">return</span> lineWidthAuto ? defaultWidthForStyle(lineStyle) : lineWidth;
+}</pre>
+  <div class="callout info">
+    <strong>避免头文件循环依赖：</strong><code>Element.h</code> 与 <code>LineStyleConfig.h</code> 互相需要（前者要查映射，后者要 <code>LineStyle</code> 枚举）。
+    解法：<code>Element.h</code> 仅<strong>前向声明</strong>自由函数 <code>double defaultWidthForStyle(LineStyle)</code>，其实现放在 <code>LineStyleConfig.cpp</code>。
+    <code>effectiveLineWidth()</code> 调用该自由函数，彻底切断循环包含。
+  </div>
+</div>
+
+<div class="card">
+  <h2>三、自动应用：创建与渲染两条路径</h2>
+  <h3>3.1 创建时派生（工厂 / 模型默认样式）</h3>
+  <pre><span class="c">// SketchModel::applyDefaultStyle —— ElementFactory::create 统一调用</span>
+<span class="k">void</span> applyDefaultStyle(Element&amp; e) <span class="k">const</span> {
+    e.color = defaultColor_;
+    e.lineStyle = defaultLineStyle_;
+    e.lineWidthAuto = <span class="k">true</span>;                                  <span class="c">// 线宽随线型派生</span>
+    e.lineWidth = LineStyleConfig::instance().defaultWidth(e.lineStyle);
+}</pre>
+  <p>命令行、工具条、属性面板三条输入通路画出来的图元，样式完全一致（沿用既有 <code>ElementFactory</code> 收敛）。</p>
+
+  <h3>3.2 渲染时读取（视图层）</h3>
+  <p><code>GraphicsView</code> 三处原本直接用 <code>el.lineWidth</code> 算画笔/描边/碰撞，统一改为 <code>el.effectiveLineWidth()</code>：</p>
+  <pre><span class="c">// 包围盒余量、命中描边、正式画笔，三处均改为：</span>
+<span class="k">const</span> <span class="k">double</span> effW = el.effectiveLineWidth();
+pen.setWidthF(preview ? std::max(<span class="n">1.0</span>, effW) : (highlight ? effW + <span class="n">1.2</span> : effW));</pre>
+  <p>创建与渲染都走同一函数，保证"线型改变 → 线宽自动跟随"在全链路一致。</p>
+</div>
+
+<div class="card">
+  <h2>四、手动覆盖与"恢复默认"</h2>
+  <table>
+    <thead><tr><th>操作</th><th>对 <code>lineWidthAuto</code> 的影响</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>属性面板改"线宽"下拉</td><td>置 <code>false</code></td><td>锁定为手动值，之后改线型不再自动变</td></tr>
+      <tr><td>属性面板改"线型"下拉（仍自动）</td><td>保持 <code>true</code></td><td>线宽重派生为新线型默认档</td></tr>
+      <tr><td>点"恢复默认"按钮</td><td>置 <code>true</code></td><td>清除手动覆盖，回到线型派生档</td></tr>
+      <tr><td>工具栏/命令行改默认线宽</td><td>改 <code>LineStyleConfig</code> 映射</td><td>全局该线型图元（自动态）统一生效</td></tr>
+    </tbody>
+  </table>
+  <pre><span class="c">// SketchModel::styleSelectedEx —— 选中图元改样式</span>
+<span class="k">if</span> (px &amp;&amp; *px &gt; <span class="n">0</span>) { e.lineWidth = *px; e.lineWidthAuto = <span class="k">false</span>; }  <span class="c">// 手动覆盖</span>
+<span class="k">if</span> (ls) {
+    e.lineStyle = *ls;
+    <span class="k">if</span> (e.lineWidthAuto) e.lineWidth = LineStyleConfig::instance().defaultWidth(*ls); <span class="c">// 自动跟随</span>
+}</pre>
+  <p>属性面板"线宽"行加了一个<strong>"恢复默认"按钮</strong>，且仅在已手动覆盖时可点，避免误操作。</p>
+</div>
+
+<div class="card">
+  <h2>五、全局可维护 & 扩展新线型</h2>
+  <div class="callout ok">
+    <strong>扩展一种新线型 = 只改 3 处，其余消费方零改动：</strong>
+    <ol>
+      <li><code>Element.h</code> 的 <code>LineStyle</code> 枚举<strong>末尾</strong>追加一个值（整数顺序只增不改，保证老存档兼容）</li>
+      <li><code>LineStyleConfig</code> 构造函数 <code>map_</code> 里加一行映射，如 <code>map_[LineStyle::NewX] = 2.0;</code></li>
+      <li><code>toPenStyle</code> / <code>lineStyleName</code> 各加一个 <code>case</code>（若需新 Qt 画笔风格）</li>
+    </ol>
+    创建、渲染、属性面板通过 <code>defaultWidth(ls)</code> 自动获得新线型的默认线宽，无需改任何调用点。
+  </div>
+  <p><strong>全局可维护</strong>：<code>setDefaultWidth(ls, px)</code> 允许运行时覆盖某一线型的默认线宽（例如通过样式设置器调参），改一处映射即作用于所有该线型的自动态图元，无需重编译。</p>
+</div>
+
+<div class="card">
+  <h2>六、序列化与向后兼容</h2>
+  <p><code>elementToJson</code> 新增 <code>lineWidthAuto</code> 字段；<code>elementFromJson</code> 读取时：</p>
+  <pre><span class="c">// 旧存档没有 lineWidthAuto → 默认按"手动覆盖"处理，</span>
+<span class="c">// 保留老图纸原有的线宽外观，不因新机制突变为派生档位。</span>
+e.lineWidthAuto = o.contains(<span class="s">"lineWidthAuto"</span>) ? o[<span class="s">"lineWidthAuto"</span>].toBool(<span class="k">false</span>) : <span class="k">false</span>;</pre>
+</div>
+
+<div class="card">
+  <h2>七、改动文件清单</h2>
+  <table>
+    <thead><tr><th>文件</th><th>类型</th><th>改动</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/core/LineStyleConfig.h</code></td><td><span class="tag t-new">新增</span></td><td>单例 + 映射查询/覆盖 API + 自由函数声明</td></tr>
+      <tr><td><code>src/core/LineStyleConfig.cpp</code></td><td><span class="tag t-new">新增</span></td><td>映射表初始化 + defaultWidth/setDefaultWidth + defaultWidthForStyle</td></tr>
+      <tr><td><code>src/core/Element.h</code></td><td><span class="tag t-mod">修改</span></td><td>加 <code>lineWidthAuto</code> + <code>effectiveLineWidth()</code> + 自由函数声明</td></tr>
+      <tr><td><code>src/core/SketchModel.h/.cpp</code></td><td><span class="tag t-mod">修改</span></td><td><code>applyDefaultStyle</code> 派生；<code>defaultWidth/setDefaultWidth</code> 委托配置；<code>styleSelectedEx</code> 自动/手动</td></tr>
+      <tr><td><code>src/ui/GraphicsView.cpp</code></td><td><span class="tag t-mod">修改</span></td><td>渲染 3 处 <code>el.lineWidth</code> → <code>el.effectiveLineWidth()</code></td></tr>
+      <tr><td><code>src/ui/MainWindow.cpp</code></td><td><span class="tag t-mod">修改</span></td><td>序列化增 <code>lineWidthAuto</code>；默认线型变更时回显默认线宽框</td></tr>
+      <tr><td><code>src/ui/PropertyPanel.h/.cpp</code></td><td><span class="tag t-mod">修改</span></td><td>线宽/线型拆分处理；"恢复默认"按钮；同步显示生效线宽</td></tr>
+      <tr><td><code>CMakeLists.txt</code></td><td><span class="tag t-mod">修改</span></td><td>加入 <code>src/core/LineStyleConfig.cpp</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>八、验证</h2>
+  <table>
+    <thead><tr><th>验证项</th><th>结果</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td>编译</td><td><span class="tag t-new">通过</span></td><td>Qt 6.10.1 / mingw1310_64，5/5 目标全部编译（含 GraphicsView/PropertyPanel/MainWindow/SketchModel）</td></tr>
+      <tr><td>链接</td><td><span class="tag t-new">通过</span></td><td><code>SketchCAD.exe</code> 等全部链接成功（<code>[OK] 构建完成</code>）</td></tr>
+      <tr><td>自测</td><td><span class="tag t-mod">待用户</span></td><td>本沙箱环境禁止直接执行构建产物（运行 exe 返回 127），请在本地运行 <code>build/SketchSelfTest.exe</code> 确认</td></tr>
+      <tr><td>运行期验证</td><td><span class="tag t-mod">待用户</span></td><td>运行 <code>build/SketchCAD.exe</code>：画实线/虚线/点划线，确认线宽分别为粗/中粗/细；改线型看线宽跟随；改线宽看手动锁定</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer>
+  生成时间：2026-08-10 · sketch-cad-cpp 线型↔线宽统一配置 · 单一数据源 + 自动/手动双态 · HTML / MD 双格式
+</footer>
+
+</div>
+</body>
+</html>
