@@ -27,6 +27,7 @@
 #include "ui/FlangeViewsDialog.h"
 #include "ui/BearingViewsDialog.h"
 #include "ui/HousingViewsDialog.h"
+#include "ui/FlangeHubViewsDialog.h"
 #include "ui/ArrayDialog.h"
 #include "ui/SectionDialog.h"
 #include "core/Section.h"
@@ -960,6 +961,14 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     housingAct->setStatusTip(housingAct->toolTip());
     connect(housingAct, &QAction::triggered, this, [this] {
         HousingViewsDialog dlg(model_, this);
+        dlg.exec();
+    });
+
+    QAction* flangeHubAct = m->addAction(QStringLiteral("法兰盘轮毂视图..."));
+    flangeHubAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘轮毂主视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）"));
+    flangeHubAct->setStatusTip(flangeHubAct->toolTip());
+    connect(flangeHubAct, &QAction::triggered, this, [this] {
+        FlangeHubViewsDialog dlg(model_, this);
         dlg.exec();
     });
 

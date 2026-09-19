@@ -47,6 +47,7 @@ set(CORE_SOURCES
     src/core/FlangeViews.cpp
     src/core/BearingViews.cpp
     src/core/HousingViews.cpp
+    src/core/FlangeHubViews.cpp
     src/core/Section.cpp
     src/core/CadFormats.cpp
 )
@@ -76,6 +77,7 @@ set(UI_SOURCES
     src/ui/FlangeViewsDialog.cpp
     src/ui/BearingViewsDialog.cpp
     src/ui/HousingViewsDialog.cpp
+    src/ui/FlangeHubViewsDialog.cpp
     src/ui/ArrayDialog.cpp
     src/ui/SectionDialog.cpp
 )
@@ -218,6 +220,17 @@ add_executable(HousingViewsTest
 target_link_libraries(HousingViewsTest PRIVATE Qt6::Widgets)
 target_include_directories(HousingViewsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(HousingViewsTest PRIVATE -Wall -Wextra)
+
+# 法兰盘轮毂视图（主视图全剖 A—A + 左视图圆形）回归：参数→几何不变式、
+# 投影对齐（两视图轴线等高、几何随参数变化）、GB 剖面线/剖切符号/粗糙度、
+# 以及结构不变式（非法参数必须收敛而非画出错误几何）。同时写出 PNG 预览供人工核对。
+add_executable(FlangeHubViewsTest
+    tests/flange_hub_views_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(FlangeHubViewsTest PRIVATE Qt6::Widgets)
+target_include_directories(FlangeHubViewsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(FlangeHubViewsTest PRIVATE -Wall -Wextra)
 
 # ---- 图层（Layer）管理单元测试（核心层，无需 GUI）----
 # 验证：默认层 0、新建/重名/删除/改名、选中图元分配、批量改属性仅影响本层、
