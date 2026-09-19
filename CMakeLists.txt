@@ -48,6 +48,7 @@ set(CORE_SOURCES
     src/core/BearingViews.cpp
     src/core/HousingViews.cpp
     src/core/FlangeHubViews.cpp
+    src/core/FloorPlanViews.cpp
     src/core/Section.cpp
     src/core/CadFormats.cpp
 )
@@ -78,6 +79,7 @@ set(UI_SOURCES
     src/ui/BearingViewsDialog.cpp
     src/ui/HousingViewsDialog.cpp
     src/ui/FlangeHubViewsDialog.cpp
+    src/ui/FloorPlanViewsDialog.cpp
     src/ui/ArrayDialog.cpp
     src/ui/SectionDialog.cpp
 )
@@ -231,6 +233,17 @@ add_executable(FlangeHubViewsTest
 target_link_libraries(FlangeHubViewsTest PRIVATE Qt6::Widgets)
 target_include_directories(FlangeHubViewsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(FlangeHubViewsTest PRIVATE -Wall -Wextra)
+
+# 户型平面图（建筑装修专业）回归：墙体/门窗/家具/尺寸链/图签的参数化生成，
+# 结构不变式（非法参数收敛）、比例选取（A3 → 1:50）、落框检查（fits）。
+# 同时写出 PNG 预览供人工核对。
+add_executable(FloorPlanViewsTest
+    tests/floor_plan_views_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(FloorPlanViewsTest PRIVATE Qt6::Widgets)
+target_include_directories(FloorPlanViewsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(FloorPlanViewsTest PRIVATE -Wall -Wextra)
 
 # ---- 图层（Layer）管理单元测试（核心层，无需 GUI）----
 # 验证：默认层 0、新建/重名/删除/改名、选中图元分配、批量改属性仅影响本层、

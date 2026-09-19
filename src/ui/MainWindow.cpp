@@ -28,6 +28,7 @@
 #include "ui/BearingViewsDialog.h"
 #include "ui/HousingViewsDialog.h"
 #include "ui/FlangeHubViewsDialog.h"
+#include "ui/FloorPlanViewsDialog.h"
 #include "ui/ArrayDialog.h"
 #include "ui/SectionDialog.h"
 #include "core/Section.h"
@@ -969,6 +970,14 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     flangeHubAct->setStatusTip(flangeHubAct->toolTip());
     connect(flangeHubAct, &QAction::triggered, this, [this] {
         FlangeHubViewsDialog dlg(model_, this);
+        dlg.exec();
+    });
+
+    QAction* floorPlanAct = m->addAction(QStringLiteral("户型平面图..."));
+    floorPlanAct->setToolTip(QStringLiteral("按默认或自定义参数生成建筑户型平面图：墙体（剪力墙涂黑/双线内墙）、门（开启弧）、窗、家具图块、房间标注、四周建筑尺寸链与右侧图签"));
+    floorPlanAct->setStatusTip(floorPlanAct->toolTip());
+    connect(floorPlanAct, &QAction::triggered, this, [this] {
+        FloorPlanViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
