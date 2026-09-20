@@ -12,10 +12,14 @@
 //   2. 门 —— 门扇线 + 90° 开启弧（Arc），推拉门为双错位滑扇；
 //   3. 窗 —— 洞口内三条平行细线（建筑平立面惯例）；
 //   4. 家具图块 —— 床/沙发/餐桌椅/洁具/衣柜/洗衣机等由直线/圆/椭圆/矩形组合；
-//   5. 建筑尺寸链 —— 斜短线(45°)起止符号的连续标注链。原 Dimension 体系只有
-//      箭头/圆点终端且 arrowForm 由标准全局决定、不可逐元素覆盖，故尺寸链以
-//      直线 + 文字 + 斜短线图元组合绘制（见 buildHChain / buildVChain）；
-//   6. 装饰图签 —— 右侧整幅装饰公司图签（设计单位/建设单位/工程名称/图名等）。
+//   5. 建筑尺寸链 —— 斜短线(45°)起止符号的**三级**连续标注链（分格 → 分间 → 总尺寸，
+//      界线贯通三级，数字水平书写：横链居中于线上方、竖链居中于线上，对齐附图）。
+//      原 Dimension 体系只有箭头/圆点终端且 arrowForm 由标准全局决定、不可逐元素
+//      覆盖，故尺寸链以直线 + 文字 + 斜短线图元组合绘制（见 ChainBuilder）；
+//   6. 引线标注 —— 箭头 + 折线 + 多行文字（附图左下「降板构造」说明，见 addLeader）；
+//   7. 装饰图签 —— 右侧通高装饰公司图签（设计单位标识/全称、工程地址、工程名称、
+//      项目名称、审核~图名六行签字栏、图纸名称大字、专业|设计阶段、图号|比例、
+//      平面方案、快速搜索、出版图签、备注，行序对齐附图）。
 //
 // 坐标体系：模型坐标 = 户型实际尺寸(mm)，原点在户型外框左下角，Y 轴向上；
 //           图纸坐标 = 纸面 mm，原点在图纸左下角。build 内部经 X()/Y() 变换。
@@ -35,7 +39,7 @@ class SketchModel;
 struct FloorPlanParams {
     // ---- 户型总尺寸（外框轴线尺寸，模型 mm）----
     double outerW = 9200.0;      // 总开间（附图 9200）
-    double outerH = 11460.0;     // 总进深（附图 11460）
+    double outerH = 11756.0;     // 总进深（附图 11756，含右上多功能间抬高 900）
 
     // ---- 墙体 ----
     double shearWallT = 200.0;   // 外墙/剪力墙厚（涂黑表达）
@@ -54,8 +58,8 @@ struct FloorPlanParams {
     double sheetW = 420.0;
     double sheetH = 297.0;
     double margin = 10.0;        // 图框边距（建筑图惯例 10）
-    double titleBlockW = 115.0;  // 右侧图签宽（通高）
-    double dimBand = 22.0;       // 尺寸链占用的纸面带宽（平面图四周）
+    double titleBlockW = 75.0;   // 右侧图签宽（通高，附图约 1/6 图宽）
+    double dimBand = 19.0;       // 尺寸链占用的纸面带宽（三级链：5/10/15 + 文字）
 
     // ---- 比例 ----
     bool   autoScale   = true;
@@ -67,9 +71,11 @@ struct FloorPlanParams {
     bool showLabels    = true;   // 绘制房间名标注
 
     // ---- 图签文本 ----
-    QString company     = QStringLiteral("昊尚装饰 HAOSHANG DECORATION");
-    QString client      = QStringLiteral("建设单位：金地景业");
-    QString projectName = QStringLiteral("金地景域43-1101");
+    QString company     = QStringLiteral("昊尚装饰 HAOSHANG DECORATION");   // 标识行（logo 区）
+    QString companyFull = QStringLiteral("上海昊尚装饰设计有限公司");         // 设计单位全称
+    QString projectSite = QStringLiteral("金地景域43-1101");                 // 工程地址
+    QString projectName;                                                     // 工程名称（附图为空）
+    QString client;                                                          // 项目名称（附图为空）
     QString drawingName = QStringLiteral("C户型101M²三房两厅两卫");
     QString drawScale   = QStringLiteral("1:50");   // 图签内标注的比例文本
 

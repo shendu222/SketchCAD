@@ -805,6 +805,8 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("zoomout"));
     mk(v, QStringLiteral("适配窗口"), QKeySequence("Ctrl+0"), [this] { view_->fitView(); })
         ->setIcon(icons::make("fit"));
+    mk(v, QStringLiteral("窗口缩放"), QKeySequence("Ctrl+9"), [this] { view_->setZoomBoxMode(true); })
+        ->setIcon(icons::make("zoombox"));
     v->addSeparator();
     QAction* aGrid = mk(v, QStringLiteral("显示栅格"), QKeySequence("F7"),
                         [this] { model_->setShowGrid(!model_->showGrid()); });
@@ -1918,6 +1920,8 @@ void MainWindow::buildToolbar() {
         [this] { view_->zoomBy(1.0 / 1.2); });
     act(QStringLiteral("适配"), QStringLiteral("适配窗口 (Fit)"), "Ctrl+0", "fit",
         [this] { view_->fitView(); });
+    act(QStringLiteral("窗口缩放"), QStringLiteral("窗口缩放：拖拽框选目标区域，释放后该区域充满整个绘图工作区域 (Zoom to Box)"), "Ctrl+9", "zoombox",
+        [this] { view_->setZoomBoxMode(true); });
     eflush();
 
     etitle = QStringLiteral("工作平面");

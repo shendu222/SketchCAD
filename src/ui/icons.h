@@ -636,6 +636,24 @@ inline void paintGlyph(QPainter& g, const QString& id)
         g.restore();
         return;
     }
+    if (id == "zoombox") {                      // 窗口缩放：虚线框 + 四角折线 + 放大镜角标
+        QPen p(guide, 1.3); p.setStyle(Qt::DashLine); p.setDashPattern({3, 2});
+        g.save(); g.setPen(p);
+        g.drawRect(QRectF(3.5, 5.5, 17, 13)); g.restore();
+        // 四角折线（强调"框选"）
+        g.save(); g.setPen(QPen(ink, 1.5, Qt::SolidLine, Qt::RoundCap));
+        g.drawPolyline(QPolygonF{{7, 9}, {7, 12}});   g.drawPolyline(QPolygonF{{7, 9}, {10, 9}});
+        g.drawPolyline(QPolygonF{{17, 9}, {17, 12}}); g.drawPolyline(QPolygonF{{17, 9}, {14, 9}});
+        g.drawPolyline(QPolygonF{{7, 15}, {7, 12}});  g.drawPolyline(QPolygonF{{7, 15}, {10, 15}});
+        g.drawPolyline(QPolygonF{{17, 15}, {17, 12}});g.drawPolyline(QPolygonF{{17, 15}, {14, 15}});
+        g.restore();
+        // 放大镜角标（右下）：表示该区域将被放大充满
+        g.save(); g.setPen(QPen(mark, 1.4));
+        g.drawEllipse(QPointF(16.5, 16.5), 3.2, 3.2);
+        g.drawLine(QPointF(18.8, 18.8), QPointF(21.5, 21.5));
+        g.restore();
+        return;
+    }
     if (id == "plane_xy" || id == "plane_yz" || id == "plane_xz") {
         // 坐标轴象限图：Y 向上、X 向右（与视图实际方向一致，起提示作用）
         g.save(); g.setPen(QPen(guide, 1.3));

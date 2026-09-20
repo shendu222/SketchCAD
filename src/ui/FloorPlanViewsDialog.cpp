@@ -78,6 +78,8 @@ void FloorPlanViewsDialog::buildUi() {
 
     // ---- 图签文本 ----
     auto* edCompany = new QLineEdit(p_.company, this);
+    auto* edCompFull = new QLineEdit(p_.companyFull, this);
+    auto* edSite    = new QLineEdit(p_.projectSite, this);
     auto* edClient  = new QLineEdit(p_.client, this);
     auto* edProject = new QLineEdit(p_.projectName, this);
     auto* edDwgName = new QLineEdit(p_.drawingName, this);
@@ -103,11 +105,13 @@ void FloorPlanViewsDialog::buildUi() {
     form->addRow(QString(), ckFurn);
     form->addRow(QString(), ckDims);
     form->addRow(QString(), ckLabels);
-    form->addRow(QStringLiteral("设计单位"),    edCompany);
-    form->addRow(QStringLiteral("建设单位"),    edClient);
-    form->addRow(QStringLiteral("工程名称"),    edProject);
-    form->addRow(QStringLiteral("图纸名称"),    edDwgName);
-    form->addRow(QStringLiteral("比例标注"),    edScale);
+    form->addRow(QStringLiteral("设计单位（标识）"), edCompany);
+    form->addRow(QStringLiteral("设计单位全称"),    edCompFull);
+    form->addRow(QStringLiteral("工程地址"),        edSite);
+    form->addRow(QStringLiteral("项目名称"),        edClient);
+    form->addRow(QStringLiteral("工程名称"),        edProject);
+    form->addRow(QStringLiteral("图纸名称"),        edDwgName);
+    form->addRow(QStringLiteral("比例标注"),        edScale);
 
     root->addLayout(form);
 
@@ -119,7 +123,7 @@ void FloorPlanViewsDialog::buildUi() {
             [this, sbOuterW, sbOuterH, sbShearT, sbPartT, sbDoorW, sbBathW, sbSlideW,
              sbLabelH, sbDimH, sbTitleH, sbSheetW, sbSheetH, sbMargin, sbTbW, sbDimBand,
              ckAuto, sbManual, ckFurn, ckDims, ckLabels,
-             edCompany, edClient, edProject, edDwgName, edScale]() {
+             edCompany, edCompFull, edSite, edClient, edProject, edDwgName, edScale]() {
         FloorPlanParams p;
         p.outerW = sbOuterW->value();  p.outerH = sbOuterH->value();
         p.shearWallT = sbShearT->value(); p.partWallT = sbPartT->value();
@@ -134,6 +138,8 @@ void FloorPlanViewsDialog::buildUi() {
         p.showFurniture = ckFurn->isChecked(); p.showDims = ckDims->isChecked();
         p.showLabels = ckLabels->isChecked();
         p.company = edCompany->text().trimmed();
+        p.companyFull = edCompFull->text().trimmed();
+        p.projectSite = edSite->text().trimmed();
         p.client = edClient->text().trimmed();
         p.projectName = edProject->text().trimmed();
         p.drawingName = edDwgName->text().trimmed();

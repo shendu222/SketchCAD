@@ -53,6 +53,9 @@ public:
 
     // 把一个图元转成绘制路径（样条在这里被展开成三次贝塞尔）
     static QPainterPath buildPath(const Element& e);
+    // 图元的「几何」包围盒（世界坐标，**不含** cosmetic 描边余量），
+    // 供「适配窗口 / 窗口缩放」精确取景——用 boundingRect() 会带上描边余量，导致取景略微不满。
+    static QRectF geometryBounds(const Element& e);
 
 private:
     double viewZoom() const;                 // 当前视图缩放，用于把像素余量换算成场景单位
@@ -69,9 +72,15 @@ class GraphicsView : public QGraphicsView {
 public:
     explicit GraphicsView(SketchModel* m, QWidget* parent = nullptr);
     ~GraphicsView();
+    // 适配窗口：按所有可见图元（绘制的图形）的世界包围盒精确缩放并充满整个绘图工作区域。
+    // 坐标轴(drawAxes)与程序提示文字(HUD)是覆盖层、不计入 model_->elements()，天然被排除，
+    // 缩放/平移时保持屏幕常量显示不变。
     void fitView();
-    void fitToRect(const QRectF& world);   // 将给定世界坐标矩形适配居中到视口（新建图纸后整幅可见）
+    void fitToRect(const QRectF& world);   // 将给定世界坐标矩形以 0.92 边距适配居中到视口（新建图纸后整幅可见）
     void zoomBy(double f);
+    // ---- 窗口缩放（框选放大）：进入后左键拖拽框选目标区域，释放后该区域充满整个绘图工作区域 ----
+    void setZoomBoxMode(bool on);
+    bool zoomBoxMode() const { return zoomBoxMode_; }
     void cancelDrawing();                    // 供菜单「取消当前绘制」调用
     void injectPoint(const Vec3& p);         // 供命令行键盘输入坐标注入（分段式命令流程）
 
@@ -146,6 +155,11 @@ private:
     // 区域拾取模式（剖面填充）：左键点击 → regionPickRequested；不进入绘制/选择逻辑。
     bool regionPickMode_ = false;
     std::vector<std::vector<Vec3>> regionHighlight_;   // 区域拾取预览高亮（世界坐标多边形）
+    // 窗口缩放框选模式：进入后左键拖拽框选目标区域，释放后该区域精确缩放并充满整个绘图工作区域。
+    bool zoomBoxMode_ = false;             // 是否处于「窗口缩放」框选模式
+    bool zoomBoxActive_ = false;           // 当前是否正在拖拽框选矩形
+    QPointF zoomBoxStart_;                 // 框选起点（世界坐标）
+    QRectF zoomBoxRect_;                   // 当前框选矩形（世界坐标，未经归一化）
     bool rightMoved_ = false; // 右键按下后是否发生了拖动（用于区分「右键单击」与「右键拖拽平移」）
     QPoint lastPan_;
     std::vector<Vec3> pendingPts_;
@@ -206,6 +220,9 @@ private:
 
     void applyTransform();
     void rebuild();
+    // ---- 适配窗口 / 窗口缩放 的私有辅助 ----
+    QRectF contentBounds() const;          // 所有可见图元的世界包围盒（不含坐标轴/提示文字覆盖层）
+    void fitWorldRect(const QRectF& r, double margin);  // 将世界矩形以 margin 系数适配居中到视口
     void updatePreview(const Vec3& cur);
     void showPreview(const Element& tmp, std::vector<Element> guides = {});
     void clearPreview();

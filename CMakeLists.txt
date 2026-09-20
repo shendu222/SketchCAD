@@ -451,6 +451,17 @@ target_link_libraries(ViewRenderTest2 PRIVATE Qt6::Widgets)
 target_include_directories(ViewRenderTest2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(ViewRenderTest2 PRIVATE -Wall -Wextra)
 
+# ---- 适配窗口 / 窗口缩放 集成测试（合成鼠标事件：内容精确充满视口 + 框选放大）----
+add_executable(ViewFitZoomTest
+    tests/view_fit_zoom_test.cpp
+    ${CORE_SOURCES}
+    src/ui/GraphicsView.cpp
+    ${TOOL_SOURCES}
+)
+target_link_libraries(ViewFitZoomTest PRIVATE Qt6::Widgets)
+target_include_directories(ViewFitZoomTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(ViewFitZoomTest PRIVATE -Wall -Wextra)
+
 # ---- GB/T 14665-2012 整改回归（T1/T2/T3/T5/T6/T10/T13/T14/T16/T17/T20）----
 # GbLineTest：线宽组别(表1)、线型齐备(4.1)、线素长度(4.2)、相位对齐(4.4)、重合优先(4.3)。
 add_executable(GbLineTest

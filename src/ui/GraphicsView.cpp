@@ -790,20 +790,28 @@ void GraphicsView::applyTransform() {
     emit viewTransformChanged();    // 通知标尺刷新
 }
 
-void GraphicsView::fitView() {
-    zoom_ = 4.0;
-    panX_ = viewport() ? viewport()->width() / 2.0 : 400;
-    panY_ = viewport() ? viewport()->height() / 2.0 : 300;
-    applyTransform();
-    model_->setViewScale(zoom_);
-    viewport()->update();
+// 所有可见图元的世界包围盒（不含坐标轴/提示文字覆盖层——它们本就不是 element）。
+// 作为「适配窗口」与「窗口缩放」框选结算的统一几何来源。
+QRectF GraphicsView::contentBounds() const {
+    bool any = false;
+    double x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+    for (const auto& e : model_->elements()) {
+        if (!e.visible) continue;
+        const QRectF b = ElementItem::geometryBounds(e);   // 几何范围（不含描边余量，精确取景）
+        if (b.isNull()) continue;                 // 跳过退化/空包围盒（零面积且零宽高，如空文本）
+        x0 = std::min(x0, b.left());  y0 = std::min(y0, b.top());
+        x1 = std::max(x1, b.right()); y1 = std::max(y1, b.bottom());
+        any = true;
+    }
+    if (!any) return QRectF();
+    return QRectF(x0, y0, x1 - x0, y1 - y0);
 }
 
-// 将给定世界坐标矩形（如图纸幅面）适配居中到视口，新建图纸后整幅可见
-void GraphicsView::fitToRect(const QRectF& r) {
-    if (!viewport() || r.width() < 1e-6 || r.height() < 1e-6) { fitView(); return; }
+// 将世界矩形以 margin 系数适配居中到视口（margin=1.0 即精确充满整个绘图工作区域）。
+// 缩放保持等比（min 取较小边），避免图形被拉伸；居中用 panX_/panY_ 平移。
+void GraphicsView::fitWorldRect(const QRectF& r, double margin) {
+    if (!viewport() || r.width() < 1e-6 || r.height() < 1e-6) return;
     const double vw = viewport()->width(), vh = viewport()->height();
-    const double margin = 0.92;                       // 留一点边距，避免图框贴边
     double z = std::min(vw / r.width(), vh / r.height()) * margin;
     z = qBound(0.05, z, 500.0);
     zoom_ = z;
@@ -813,6 +821,30 @@ void GraphicsView::fitToRect(const QRectF& r) {
     applyTransform();
     model_->setViewScale(zoom_);
     viewport()->update();
+}
+
+void GraphicsView::fitView() {
+    // 适配窗口：将所有可见图元（绘制的图形）精确缩放并充满整个绘图工作区域。
+    // 坐标轴(drawAxes)与程序提示文字(HUD)是覆盖层、不计入 elements()，天然被排除，
+    // 缩放/平移时保持屏幕常量显示不变。
+    QRectF bb = contentBounds();
+    if (bb.isEmpty() || bb.width() < 1e-6 || bb.height() < 1e-6) {
+        // 无内容：回退到默认视图（原点居中、zoom=4），避免除零
+        zoom_ = 4.0;
+        panX_ = viewport() ? viewport()->width() / 2.0 : 400;
+        panY_ = viewport() ? viewport()->height() / 2.0 : 300;
+        applyTransform();
+        model_->setViewScale(zoom_);
+        if (viewport()) viewport()->update();
+        return;
+    }
+    fitWorldRect(bb, 1.0);   // margin=1.0：精确缩放并充满整个绘图工作区域
+}
+
+// 将给定世界坐标矩形（如图纸幅面）适配居中到视口，新建图纸后整幅可见
+void GraphicsView::fitToRect(const QRectF& r) {
+    if (!viewport() || r.width() < 1e-6 || r.height() < 1e-6) { fitView(); return; }
+    fitWorldRect(r, 0.92);   // 留一点边距，避免图框贴边
 }
 
 void GraphicsView::zoomBy(double f) {
@@ -1087,6 +1119,18 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         p->restore();
     }
 
+    // 窗口缩放框选橡皮筋：绿色虚线矩形 + 半透明填充（与多选框选区分配色）
+    if (zoomBoxActive_) {
+        p->save();
+        QPen zp(QColor(30, 160, 90));
+        zp.setStyle(Qt::DashLine);
+        zp.setCosmetic(true);                 // 线宽按屏幕像素，不随缩放变化
+        p->setPen(zp);
+        p->setBrush(QColor(30, 160, 90, 24));
+        p->drawRect(zoomBoxRect_.normalized());
+        p->restore();
+    }
+
     // 区域拾取预览（剖面填充）：高亮"将要填充的封闭区域"，让用户在点击前就能
     // 确认程序识别到的边界是否正确。外边界+内孔用奇偶规则（OddEvenFill）自动掏空。
     if (regionPickMode_ && !regionHighlight_.empty()) {
@@ -1181,6 +1225,13 @@ QRectF GraphicsView::elementSceneBounds(const Element& e) const {
     // 保证「框住即选中」与绘制的几何范围严格一致。
     ElementItem tmp(e);
     return tmp.boundingRect();
+}
+
+QRectF ElementItem::geometryBounds(const Element& e) {
+    // 与 boundingRect() 同源，但**不**做 cosmetic 描边余量膨胀：
+    // 「适配窗口/窗口缩放」要的是图形真实几何范围，多出的像素余量会让取景不满。
+    ElementItem t(e);
+    return t.rawBounds(e);
 }
 
 // angleDeg / lineIntersect 已消除（DRY）：
@@ -2806,6 +2857,15 @@ void GraphicsView::setRegionHighlight(const std::vector<std::vector<Vec3>>& poly
     viewport()->update();
 }
 
+// ---- 窗口缩放框选模式（【视图>窗口缩放】）：进入后左键拖拽框选目标区域，
+//      释放后该区域精确缩放并充满整个绘图工作区域；右键/Esc 取消并自动退出模式。 ----
+void GraphicsView::setZoomBoxMode(bool on) {
+    zoomBoxMode_ = on;
+    if (!on) { zoomBoxActive_ = false; zoomBoxRect_ = QRectF(); }   // 退出即清除框选状态
+    setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+    viewport()->update();
+}
+
 void GraphicsView::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::MiddleButton ||
         (e->button() == Qt::LeftButton && spaceDown_)) {
@@ -2815,6 +2875,12 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
         return;
     }
     if (e->button() == Qt::RightButton) {
+        // 窗口缩放框选模式下：右键直接取消并退出模式（不触发平移）
+        if (zoomBoxMode_) {
+            setZoomBoxMode(false);
+            e->accept();
+            return;
+        }
         // 右键按下：先进入平移预备态，移动则平移视图，未移动（单击）则保留原「结束/取消」语义
         panning_ = true;
         panRight_ = true;
@@ -2841,6 +2907,17 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
         e->accept();
         return;
     }
+    // 窗口缩放框选模式：左键按下即开始拖拽框选矩形（不进入绘制/选择逻辑）
+    if (zoomBoxMode_) {
+        const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
+        zoomBoxActive_ = true;
+        zoomBoxStart_ = QPointF(w.x, w.y);
+        zoomBoxRect_  = QRectF(zoomBoxStart_, zoomBoxStart_);
+        setCursor(Qt::CrossCursor);
+        viewport()->update();
+        e->accept();
+        return;
+    }
     handlePress(toVec3(mapToScene(e->position().toPoint())), e);
     e->accept();
 }
@@ -2854,6 +2931,13 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
     // 不进入绘制/捕捉悬停逻辑（避免与点选语义混淆）。
     if (regionPickMode_ && !panning_) {
         emit regionHoverMoved(w.x, w.y);
+        return;
+    }
+    // 窗口缩放框选进行中：实时更新框选矩形并刷新视图（必须早于绘制预览分支，
+    // 否则若当前恰好是绘制子工具会被 updatePreview 抢先 return，框选矩形不再跟随光标）。
+    if (zoomBoxActive_) {
+        zoomBoxRect_.setBottomRight(QPointF(w.x, w.y));
+        viewport()->update();
         return;
     }
     if ((e->buttons() & Qt::RightButton) && !panning_)
@@ -3001,6 +3085,24 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
         e->accept();
         return;
     }
+    // 窗口缩放框选结算：释放左键 → 该区域精确缩放并充满整个绘图工作区域
+    if (zoomBoxActive_ && e->button() == Qt::LeftButton) {
+        zoomBoxActive_ = false;
+        const QRectF r = zoomBoxRect_.normalized();
+        zoomBoxRect_ = QRectF();
+        const double tol = worldTol();
+        if (r.width() < tol && r.height() < tol) {
+            // 几乎未拖出有效矩形（视为单击）：回退「适配窗口」作为兜底，并退出框选模式
+            setZoomBoxMode(false);
+            fitView();
+        } else {
+            setZoomBoxMode(false);          // 框选完成，自动退出模式
+            fitWorldRect(r, 1.0);           // 该区域精确缩放并充满整个绘图工作区域
+        }
+        viewport()->update();
+        e->accept();
+        return;
+    }
     if (draggingHandle_ && e->button() == Qt::LeftButton) {
         draggingHandle_ = false;
         const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
@@ -3075,6 +3177,11 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
         if (regionPickMode_) {         // 区域拾取模式（剖面填充）：Esc 退出并通知上层
             setRegionPickMode(false);
             emit regionPickCancelled();
+            e->accept();
+            return;
+        }
+        if (zoomBoxMode_ || zoomBoxActive_) {   // 窗口缩放框选：Esc 取消并退出模式
+            setZoomBoxMode(false);
             e->accept();
             return;
         }

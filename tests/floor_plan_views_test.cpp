@@ -150,20 +150,22 @@ int main(int argc, char** argv) {
               "A3 + 图签避让 → 自动比例 1:50",
               R.scaleLabel + QString(" (%1)").arg(R.scale));
 
-        // ---- 图元统计 ----
-        check(R.wallRunCount >= 20, "实墙段充分（外墙洞口切分 + 内墙）",
+        // ---- 图元统计（与新布局/三级尺寸链一致）----
+        check(R.wallRunCount >= 20, "实墙段充分（9 外围剪力墙 + 14 内墙，按洞口切分）",
               QString::number(R.wallRunCount));
-        check(R.pocheCount == 14, "剪力墙涂黑区域 = 14（外墙 4 面按洞口切分）",
+        check(R.pocheCount == 28, "剪力墙涂黑区域 = 28（外围不规则轮廓按洞口切分）",
               QString::number(R.pocheCount));
-        check(R.doorCount == 8, "门 8 樘（7 平开门 + 1 推拉门）",
+        check(R.doorCount == 11, "门 11 樘（10 平开门 + 1 推拉门）",
               QString::number(R.doorCount));
-        check(R.windowCount == 9, "窗 9 樘", QString::number(R.windowCount));
-        check(R.furnitureCount >= 15, "家具图块 ≥15", QString::number(R.furnitureCount));
-        check(R.dimChainCount == 8, "尺寸链 8 条（四边 × 两级）",
+        check(R.windowCount == 11, "窗 11 樘", QString::number(R.windowCount));
+        check(R.furnitureCount >= 25, "家具图块 ≥25", QString::number(R.furnitureCount));
+        check(R.dimChainCount == 36, "尺寸链 36 条（四边 × 三级链）",
               QString::number(R.dimChainCount));
-        check(R.dimCount >= 20, "尺寸分格 ≥20", QString::number(R.dimCount));
+        check(R.dimCount == 165, "尺寸分格 = 165（三级链逐级累计）",
+              QString::number(R.dimCount));
         check(R.labelCount == 11, "房间名标注 11 处", QString::number(R.labelCount));
-        check(R.titleFieldCount >= 10, "图签栏目 ≥10", QString::number(R.titleFieldCount));
+        check(R.titleFieldCount == 32, "图签栏目 = 32（行序对齐附图）",
+              QString::number(R.titleFieldCount));
 
         // ---- 涂黑通道：所有 Hatch 均为 SmallAreaSolid（SolidFill）----
         int hatchBad = 0;
@@ -171,14 +173,17 @@ int main(int argc, char** argv) {
             if (e.type == ElementType::Hatch && e.sectionExempt != int(SectionExempt::SmallAreaSolid))
                 ++hatchBad;
         check(hatchBad == 0, "全部墙体填充走 SolidFill 涂黑通道");
-        check(countType(R.elems, ElementType::Arc) == 7, "平开门开启弧 7 处（推拉门无弧）",
+        check(countType(R.elems, ElementType::Arc) == 10, "平开门开启弧 10 处（推拉门无弧）",
               QString::number(countType(R.elems, ElementType::Arc)));
 
         // ---- 文本内容 ----
         check(hasText(R.elems, QStringLiteral("客厅")) && hasText(R.elems, QStringLiteral("主卧")),
               "房间名标注存在");
-        check(hasText(R.elems, QStringLiteral("9200")) && hasText(R.elems, QStringLiteral("11460")),
-              "总尺寸链数字（9200 / 11460）存在");
+        check(hasText(R.elems, QStringLiteral("9200")) && hasText(R.elems, QStringLiteral("11756")),
+              "总尺寸链数字（9200 / 11756）存在");
+        check(hasText(R.elems, QStringLiteral("降板构造详见图集")) &&
+              hasText(R.elems, QStringLiteral("结构降板 -0.050")),
+              "左下降板引线标注文本存在");
         check(hasText(R.elems, p.drawingName), "图签图纸名称存在");
         check(hasText(R.elems, p.company), "图签设计单位存在");
 
@@ -186,12 +191,14 @@ int main(int argc, char** argv) {
         const double s = R.scale;
         check(near(R.planW, p.outerW * s, 1e-6) && near(R.planH, p.outerH * s, 1e-6),
               "平面图纸面尺寸 = 总尺寸 × 比例");
-        check(R.bounds.width() > R.planW + 20.0 && R.bounds.width() < R.planW + 40.0 &&
-              R.bounds.height() > R.planH + 20.0 && R.bounds.height() < R.planH + 40.0,
-              "内容包围盒 = 平面图 + 两侧尺寸链带宽",
-              QString("%1 x %2 vs plan %3 x %4")
-                  .arg(R.bounds.width(), 0, 'f', 1).arg(R.bounds.height(), 0, 'f', 1)
-                  .arg(R.planW, 0, 'f', 1).arg(R.planH, 0, 'f', 1));
+        // 内容包围盒 = 平面图 + 两侧尺寸链带宽；三级链外伸 o3+2=17，叠加 5 位数字
+        // 尺寸文本半宽（≈3.9mm）后，每侧约外伸 21mm。
+        const double extW = R.bounds.width() - R.planW;
+        const double extH = R.bounds.height() - R.planH;
+        check(extW > 36.0 && extW < 50.0, "水平方向比平面图宽出尺寸链带宽（≈42mm）",
+              QString("%1 vs plan %2").arg(extW, 0, 'f', 1).arg(R.planW, 0, 'f', 1));
+        check(extH > 30.0 && extH < 40.0, "竖直方向比平面图高出尺寸链带宽（≈34mm）",
+              QString("%1 vs plan %2").arg(extH, 0, 'f', 1).arg(R.planH, 0, 'f', 1));
 
         printf("  [INFO] 比例=%s 图元数=%d\n", R.scaleLabel.toUtf8().constData(),
                int(R.elems.size()));
