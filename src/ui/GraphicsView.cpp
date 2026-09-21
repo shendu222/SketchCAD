@@ -721,6 +721,7 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     connect(model_, &SketchModel::viewChanged, this, &GraphicsView::onViewChanged);
     connect(model_, &SketchModel::planeChanged, this, &GraphicsView::onModelChanged);
     connect(model_, &SketchModel::activeToolChanged, this, &GraphicsView::onActiveToolChanged);
+    connect(model_, &SketchModel::currentLayerChanged, this, [this]() { viewport()->update(); });
     // 创建 E/T/M/C/X 五个「捕捉切换」快捷键（默认禁用，仅绘制命令期间启用）。
     // 采用正规 QShortcut 重映射，而非事件过滤器拦截：进入绘制命令时临时禁用与之冲突的
     // 全局快捷键（如 C=圆），从根本上消除「按 C 被误判为切圆命令」的冲突（要求 4）。
@@ -1198,6 +1199,37 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                                 .arg(mk(snapCfg_.midpoint))
                                 .arg(mk(snapCfg_.center))
                                 .arg(mk(snapCfg_.intersection)));
+    }
+
+    // ---- 当前活动图层（醒目显示）：右上角彩色徽标，实时跟随切换 ----
+    // 元素是覆盖层（不计入 elements()，不参与 fit/zoom），因此始终固定在屏幕右上角、
+    // 不随缩放漂移；图层一切换即由 currentLayerChanged 信号触发本视图重绘而实时刷新。
+    {
+        const QString cl = model_->currentLayer();
+        const Layer* L = model_->findLayer(cl);
+        const QColor lc = (L && L->color.isValid()) ? L->color : QColor(26, 29, 40);
+        const QString txt = QStringLiteral("当前图层：") + cl;
+        QFont bf = p->font(); bf.setPixelSize(13); bf.setBold(true);
+        QFontMetrics fm(bf);
+        const int padX = 10, padY = 6, sw = 12;          // sw = 图层色块边长
+        const int tw = fm.horizontalAdvance(txt);
+        const int bw = tw + padX * 2 + sw + 6;
+        const int bh = fm.height() + padY * 2;
+        const int margin = 12;
+        const int bx = viewport()->width() - bw - margin;
+        const int by = margin;
+        p->setPen(Qt::NoPen);
+        p->setBrush(QColor(255, 255, 255, 235));        // 半透明白底
+        p->drawRoundedRect(bx, by, bw, bh, 6, 6);
+        p->setPen(QColor(120, 130, 150));               // 边框
+        p->setBrush(Qt::NoBrush);
+        p->drawRoundedRect(bx, by, bw, bh, 6, 6);
+        p->setPen(Qt::NoPen);
+        p->setBrush(lc);                                // 图层色块
+        p->drawRoundedRect(bx + padX, by + (bh - sw) / 2, sw, sw, 2, 2);
+        p->setPen(QColor(28, 32, 42));
+        p->setFont(bf);
+        p->drawText(bx + padX + sw + 6, by + padY + fm.ascent(), txt);
     }
     p->restore();
 }
@@ -3195,6 +3227,7 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
         if (pointPickMode_) {          // 拾取模式下的 Esc：取消拾取，复位光标
             pointPickMode_ = false;
             setCursor(Qt::ArrowCursor);
+            emit pointPickCancelled();
             e->accept();
             return;
         }

@@ -2214,11 +2214,92 @@ int main(int argc, char** argv) {
             Element l = ElementFactory::create(ElementType::Line, "L", &mm);
             l.pts = {Vec3(0, 1), Vec3(10, 1)};
             src.push_back(l);
-            // 关于 y=0 翻转：(0,1)→(0,-1), (10,1)→(10,-1)
-            auto cs = modify::makeMirror(src, 2, Vec3(0, 0), Vec3(1, 0));
+            // 关于直线(0,0)→(1,0)（即 x 轴）翻转：(0,1)→(0,-1), (10,1)→(10,-1)
+            auto cs = modify::makeMirror(src, false, Vec3(0, 0), Vec3(1, 0));
             check(!cs.empty() && qFuzzyCompare(cs[0].replacement.pts[0].y, -1.0),
                   "makeMirror 关于 x 轴：y=1 → y=-1",
                   QString("实际=%1").arg(cs.empty() ? 0.0 : cs[0].replacement.pts[0].y));
+        }
+
+        // --- 20b) makeMirror 点镜像：圆 → 圆心关于点对称，半径不变，新增副本 ---
+        {
+            std::vector<Element> src;
+            Element c = ElementFactory::create(ElementType::Circle, "C", &mm);
+            c.pts = {Vec3(10, 0, 0)}; c.radius = 7;
+            c.layer = "2"; c.lineStyle = LineStyle::Dashed; c.color = QColor(255, 0, 0);
+            src.push_back(c);
+            // 关于 (0,0) 点对称：圆心 (10,0) → (-10,0)
+            auto cs = modify::makeMirror(src, true, Vec3(0, 0));
+            check(!cs.empty() && cs[0].id < 0, "点镜像：生成新增副本（id=-1）");
+            const Element& m = cs[0].replacement;
+            check(qFuzzyCompare(m.pts[0].x, -10.0) && qFuzzyCompare(m.pts[0].y, 0.0),
+                  "点镜像圆：圆心 (10,0)→(-10,0)",
+                  QString("cx=%1").arg(m.pts[0].x));
+            check(qFuzzyCompare(m.radius, 7.0), "点镜像圆：半径不变 (7)");
+            check(m.layer == "2" && m.lineStyle == LineStyle::Dashed && m.color == QColor(255, 0, 0),
+                  "点镜像：图层/线型/颜色属性完整继承");
+        }
+
+        // --- 20c) makeMirror 线镜像：圆弧起止角按 2β−θ 反射（β = 镜像轴世界角）---
+        {
+            std::vector<Element> src;
+            Element a = ElementFactory::create(ElementType::Arc, "A", &mm);
+            a.pts = {Vec3(0, 0, 0)}; a.radius = 5; a.startAngle = 30; a.endAngle = 120;
+            src.push_back(a);
+            // 镜像轴取 x 轴 (0,0)→(1,0)，β=0 → 角度反射 θ'=−θ
+            auto cs = modify::makeMirror(src, false, Vec3(0, 0), Vec3(1, 0));
+            const Element& m = cs[0].replacement;
+            check(qFuzzyCompare(m.startAngle, -30.0) && qFuzzyCompare(m.endAngle, -120.0),
+                  "线镜像弧：起止角 30/120 → -30/-120（镜轴 x 轴，β=0）",
+                  QString("s=%1 e=%2").arg(m.startAngle).arg(m.endAngle));
+        }
+
+        // --- 20d) makeMirror 线镜像：椭圆长轴角按 2β−θ 反射 ---
+        {
+            std::vector<Element> src;
+            Element e = ElementFactory::create(ElementType::Ellipse, "E", &mm);
+            e.pts = {Vec3(0, 0, 0)}; e.radius = 8; e.radiusY = 4; e.rotation = 30;
+            src.push_back(e);
+            // 镜像轴取 y 轴 (0,0)→(0,1)，β=90 → 角度反射 θ'=180−θ
+            auto cs = modify::makeMirror(src, false, Vec3(0, 0), Vec3(0, 1));
+            const Element& m = cs[0].replacement;
+            check(qFuzzyCompare(m.rotation, 150.0),
+                  "线镜像椭圆：长轴角 30 → 150（镜轴 y 轴，β=90）",
+                  QString("rot=%1").arg(m.rotation));
+            check(qFuzzyCompare(m.radius, 8.0) && qFuzzyCompare(m.radiusY, 4.0),
+                  "线镜像椭圆：半轴不变");
+        }
+
+        // --- 20e) makeMirror 点镜像：椭圆长轴角 +180，半轴不变 ---
+        {
+            std::vector<Element> src;
+            Element e = ElementFactory::create(ElementType::Ellipse, "E", &mm);
+            e.pts = {Vec3(0, 0, 0)}; e.radius = 8; e.radiusY = 4; e.rotation = 30;
+            src.push_back(e);
+            auto cs = modify::makeMirror(src, true, Vec3(0, 0));
+            const Element& m = cs[0].replacement;
+            check(qFuzzyCompare(m.rotation, 210.0),
+                  "点镜像椭圆：长轴角 30 → 210（绕点旋转 180°）",
+                  QString("rot=%1").arg(m.rotation));
+        }
+
+        // --- 20f) makeMirror 线镜像：剖面区域（Hatch）边界 + 内孔 + 剖面线角同步反射 ---
+        {
+            std::vector<Element> src;
+            Element h = ElementFactory::create(ElementType::Hatch, "H", &mm);
+            h.pts = {Vec3(0, 2), Vec3(4, 2), Vec3(4, 6), Vec3(0, 6)};  // 边界
+            h.holes = {{ Vec3(1, 3), Vec3(2, 3), Vec3(2, 4), Vec3(1, 4) }};  // 内孔
+            h.rotation = 45;  // 剖面线方向角
+            src.push_back(h);
+            // 关于 x 轴 (0,0)→(1,0) 镜像：y → -y；剖面线角 β=0 → 45 → -45
+            auto cs = modify::makeMirror(src, false, Vec3(0, 0), Vec3(1, 0));
+            const Element& m = cs[0].replacement;
+            check(qFuzzyCompare(m.pts[0].y, -2.0) && qFuzzyCompare(m.holes[0][0].y, -3.0),
+                  "线镜像剖面：边界与内孔 y 同步取反",
+                  QString("by=%1 hy=%2").arg(m.pts[0].y).arg(m.holes[0][0].y));
+            check(qFuzzyCompare(m.rotation, -45.0),
+                  "线镜像剖面：剖面线方向角 45 → -45",
+                  QString("rot=%1").arg(m.rotation));
         }
 
         // --- 21) makeExplode 折线 ---

@@ -28,6 +28,7 @@ public:
 
 private slots:
     void onCurrentRowChanged(int row);
+    void onCurrentLayerChanged(const QString& name);   // 活动层切换 → 刷新"●当前"标记
     void onVisibleToggled(const QString& layer, int state);
     void onLockToggled(const QString& layer, int state);
     void onColorClicked();

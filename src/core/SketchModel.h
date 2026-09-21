@@ -135,8 +135,10 @@ public:
     bool renameLayer(const QString& oldName, const QString& newName); // 同步重命名图元归属
     bool removeLayer(const QString& name);              // 保留层"0"不可删；其图元回落"0"
     // 修改图层样式：color/lineWidth/ls 为 nullptr 表示"不改动该项"。
-    // 任一被指定的项，除写入图层定义外，还会同步推送到本层全部图元的对应属性；
-    // 只遍历 e.layer == name 的图元，其他图层图元的内容与显示状态保持不动。
+    // 【解耦】仅更新该图层的"定义"（颜色/线宽/线型三项），不再反向推送到已有图元；
+    //   本层已有图元的属性保持不变，只有此后新建的图元（经 ElementFactory::create →
+    //   applyActiveLayer 快照）才会采用该层的新属性。
+    //   （若需把图层当前样式强制套用到本层图元，调用 applyLayerStyleToElements 显式同步。）
     bool setLayerStyle(const QString& name, const QColor* color, const double* lineWidth, const LineStyle* ls);
     bool setLayerVisible(const QString& name, bool visible);   // 批量翻转本层图元 visible
     bool setLayerLocked(const QString& name, bool locked);
@@ -150,6 +152,13 @@ public:
     // 序列化：layers_ <-> JSON 数组（写档/读档用；旧文件无此字段则回退单层"0"）
     QJsonArray layersToJson() const;
     void setLayersFromJson(const QJsonArray& arr);
+
+    // ---- 当前活动图层（绘制目标层）----
+    // 新创建的图元自动归属此层并继承其属性；默认 "0"。
+    // 切换活动层只改变"新图元去哪一层 + 继承哪层属性"，不改动任何已有图元，
+    // 也不影响正在绘制的图元（正在绘制的预览仍按当前活动层渲染，符合"新图元归属当前层"）。
+    QString currentLayer() const { return currentLayer_; }
+    void    setCurrentLayer(const QString& name);
 
     // ---- 交互/视图状态 ----
     void setActiveTool(const QString& t);
@@ -192,6 +201,12 @@ public:
         e.lineWidthAuto = true;                       // 线宽随线型派生
         e.lineWidth = LineStyleConfig::instance().defaultWidth(e.lineStyle);
     }
+    // 把"当前活动图层"套用到新图元：归属该层 + 继承其颜色/线型/线宽（一次性快照拷贝）。
+    // 默认层 "0" 不覆盖——保留 applyDefaultStyle 的既有行为（工具栏默认色/线型，线宽自动）；
+    // 仅当活动层为非默认层时才套用图层属性，满足"切换图层后新建图元继承该层属性"。
+    // 继承是快照：图元从此拥有自己的属性副本，后续图层样式变化（setLayerStyle）或单个图元
+    // 单独编辑都不会反向影响彼此，天然满足"单个图元可单独修改、互不影响"。
+    void   applyActiveLayer(Element& e) const;
     // 把样式写入当前选中图元；无选中返回 false
     bool   styleSelected(const QColor* c, const double* px);
     bool   styleSelectedEx(const QColor* c, const double* px, const LineStyle* ls);
@@ -258,6 +273,7 @@ signals:
     void commandPromptChanged(const QString& prompt);
     void scaleChanged(double ratio);
     void layersChanged();                    // 图层表增删/改名/样式/可见性变化
+    void currentLayerChanged(const QString& name);   // 活动图层切换（用于 HUD 实时显示 / 面板高亮）
 
 private:
     struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; };
@@ -278,6 +294,7 @@ private:
     double scaleRatio_ = 1.0;  // 绘图比例（图形:实际），1.0 = 1:1
     QString commandPrompt_;    // 当前分段命令提示文本
     std::vector<Layer> layers_;   // 图层表（默认含一层 "0"）
+    QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"
     Element clipboard_;
     bool hasClip_ = false;
     std::vector<Memento> undoStack_, redoStack_;

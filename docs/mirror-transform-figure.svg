@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="470" viewBox="0 0 920 470" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="920" height="470" fill="#ffffff"/>
+
+  <!-- ===================== Panel A: 点镜像 ===================== -->
+  <text x="230" y="34" font-size="16" font-weight="700" fill="#1a202c" text-anchor="middle">点镜像（关于点 C 中心对称）</text>
+  <text x="230" y="56" font-size="13" fill="#4a5568" text-anchor="middle">P′ = 2C − P　（等价：绕 C 旋转 180°）</text>
+
+  <!-- source triangle -->
+  <polygon points="140,330 215,330 152,272" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="122" y="350" font-size="12" fill="#2b6cb0">P₁</text>
+  <text x="220" y="350" font-size="12" fill="#2b6cb0">P₂</text>
+  <text x="128" y="266" font-size="12" fill="#2b6cb0">P₃</text>
+
+  <!-- mirrored triangle -->
+  <polygon points="360,110 285,110 348,168" fill="#fffaf0" stroke="#dd6b20" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="366" y="106" font-size="12" fill="#dd6b20">P₁′</text>
+  <text x="262" y="106" font-size="12" fill="#dd6b20">P₂′</text>
+  <text x="352" y="186" font-size="12" fill="#dd6b20">P₃′</text>
+
+  <!-- rays through C -->
+  <line x1="140" y1="330" x2="360" y2="110" stroke="#a0aec0" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="215" y1="330" x2="285" y2="110" stroke="#a0aec0" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="152" y1="272" x2="348" y2="168" stroke="#a0aec0" stroke-width="1.2" stroke-dasharray="4 4"/>
+
+  <!-- center C -->
+  <circle cx="250" cy="220" r="4.5" fill="#c53030"/>
+  <text x="258" y="216" font-size="13" font-weight="700" fill="#c53030">C</text>
+
+  <!-- ===================== Panel B: 线镜像 ===================== -->
+  <text x="690" y="34" font-size="16" font-weight="700" fill="#1a202c" text-anchor="middle">线镜像（关于直线 L 轴对称）</text>
+  <text x="690" y="56" font-size="13" fill="#4a5568" text-anchor="middle">P′ = 2F − P　（F 为 P 在 L 上的垂足）</text>
+
+  <!-- mirror line -->
+  <line x1="500" y1="300" x2="880" y2="180" stroke="#718096" stroke-width="2.2" stroke-dasharray="9 5"/>
+  <text x="884" y="178" font-size="13" font-weight="700" fill="#718096">L</text>
+
+  <!-- source triangle -->
+  <polygon points="580,200 670,230 620,150" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="2"/>
+  <text x="566" y="200" font-size="12" fill="#2b6cb0">P</text>
+  <text x="675" y="240" font-size="12" fill="#2b6cb0">Q</text>
+  <text x="612" y="144" font-size="12" fill="#2b6cb0">R</text>
+
+  <!-- mirrored triangle -->
+  <polygon points="624,332 678,254 686,348" fill="#fffaf0" stroke="#dd6b20" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="596" y="340" font-size="12" fill="#dd6b20">P′</text>
+  <text x="684" y="252" font-size="12" fill="#dd6b20">Q′</text>
+  <text x="690" y="360" font-size="12" fill="#dd6b20">R′</text>
+
+  <!-- reflection of P: P -> F -> P' -->
+  <line x1="580" y1="200" x2="624" y2="332" stroke="#a0aec0" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <line x1="670" y1="230" x2="678" y2="254" stroke="#a0aec0" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <circle cx="602" cy="266" r="3.4" fill="#38a169"/>
+  <text x="596" y="284" font-size="12" font-weight="700" fill="#38a169">F</text>
+
+  <!-- legend -->
+  <rect x="24" y="412" width="16" height="10" fill="#ebf4ff" stroke="#2b6cb0" stroke-width="1.6"/>
+  <text x="48" y="422" font-size="12.5" fill="#2b6cb0">源图元（保留）</text>
+  <rect x="176" y="412" width="16" height="10" fill="#fffaf0" stroke="#dd6b20" stroke-width="1.6" stroke-dasharray="5 3"/>
+  <text x="200" y="422" font-size="12.5" fill="#dd6b20">镜像副本（新增，严格对称）</text>
+  <line x1="430" y1="417" x2="456" y2="417" stroke="#718096" stroke-width="2" stroke-dasharray="8 4"/>
+  <text x="464" y="422" font-size="12.5" fill="#718096">镜像基准（点 C / 直线 L）</text>
+  <text x="24" y="450" font-size="12" fill="#a0aec0">注：反射为等距变换，源图元半径 / 半轴 / 字高在镜像后保持不变；方向角按 θ′ = 2β − θ 反射（β 为轴的世界角）。</text>
+</svg>

@@ -637,6 +637,7 @@ int SketchModel::smartDimension() {
         const Vec3 P = (A + B) * 0.5 + n * off;
         el.name = QStringLiteral("对齐标注");
         applyDefaultStyle(el);
+        applyActiveLayer(el);
         el.dtype = DimensionType::Aligned;
         el.refA = s->id;          // 关联源图元，使标注数值可驱动几何
         el.pts = {A, B, P};
@@ -646,6 +647,7 @@ int SketchModel::smartDimension() {
         const double R = s->radius;
         el.name = QStringLiteral("直径标注");
         applyDefaultStyle(el);
+        applyActiveLayer(el);
         el.dtype = DimensionType::Diameter;
         el.refA = s->id;          // 关联源图元，使标注数值可驱动几何
         el.radius = R;
@@ -663,6 +665,31 @@ int SketchModel::smartDimension() {
             .arg(el.name).arg(id).arg(g.label)
             .arg(dimensionStandardName(dimensionStandard_)));
     return id;
+}
+
+void SketchModel::setCurrentLayer(const QString& name) {
+    const QString n = name.trimmed();
+    if (!hasLayer(n)) {
+        log(QStringLiteral("切换活动图层失败：图层 %1 不存在").arg(n), "warn");
+        return;
+    }
+    if (currentLayer_ == n) return;          // 相同则短路，避免无意义重绘与信号
+    currentLayer_ = n;
+    emit currentLayerChanged(n);
+}
+
+void SketchModel::applyActiveLayer(Element& e) const {
+    // 把"当前活动图层"套用到新图元：归属该层 + 继承其颜色/线型/线宽（一次性快照）。
+    // 默认层 "0" 不覆盖——保留 applyDefaultStyle 的既有行为（工具栏默认色/线型，线宽自动）。
+    // 仅当活动层为非默认层时才套用图层属性，满足"切换图层后新建图元继承该层属性"。
+    const QString& cl = currentLayer_;
+    const Layer* L = (cl == QStringLiteral("0")) ? nullptr : findLayer(cl);
+    if (!L) { e.layer = QStringLiteral("0"); return; }
+    e.layer = cl;
+    if (L->color.isValid()) e.color = L->color;
+    e.lineStyle = L->lineStyle;
+    e.lineWidth = L->lineWidth;
+    e.lineWidthAuto = false;   // 继承的线宽作为固定值，不被线型自动派生覆盖
 }
 void SketchModel::setActiveTool(const QString& t) {
     if (activeTool_ == t) return;
@@ -788,6 +815,10 @@ bool SketchModel::renameLayer(const QString& oldName, const QString& newName) {
     ol->name = nn;
     // 同步图元归属：只改 e.layer == on 的图元
     for (auto& e : elems_) if (e.layer == on) e.layer = nn;
+    if (currentLayer_ == on) {                     // 活动层被改名 → 同步更新活动层名
+        currentLayer_ = nn;
+        emit currentLayerChanged(nn);
+    }
     emit layersChanged(); emit modelChanged();
     log(QStringLiteral("图层 %1 已改名为 %2").arg(on).arg(nn));
     return true;
@@ -802,6 +833,10 @@ bool SketchModel::removeLayer(const QString& name) {
     beginEdit(QStringLiteral("删除图层 ") + n);
     for (auto& e : elems_) if (e.layer == n) e.layer = QStringLiteral("0");   // 回落默认层
     layers_.erase(it);
+    if (currentLayer_ == n) {                       // 删除的恰是当前活动层 → 回落默认层
+        currentLayer_ = QStringLiteral("0");
+        emit currentLayerChanged(currentLayer_);
+    }
     emit layersChanged(); emit modelChanged();
     log(QStringLiteral("已删除图层：%1（其图元回落到层 0）").arg(n));
     return true;
@@ -813,22 +848,16 @@ bool SketchModel::setLayerStyle(const QString& name, const QColor* color,
     if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
     // 没有任何字段要改，直接返回
     if (!color && !lineWidth && !ls) return true;
-    // 单层操作也要可撤销：先压快照（记录旧图层定义与本层图元样式），再改
+    // 单层操作也要可撤销：先压快照（记录旧图层定义），再改
     beginEdit(QStringLiteral("修改图层样式 ") + name);
     if (color)     l->color = *color;
     if (lineWidth) l->lineWidth = *lineWidth > 0 ? *lineWidth : l->lineWidth;
     if (ls)        l->lineStyle = *ls;
-    // 同步：把本层图元的「对应属性」更新为图层新值。
-    // 只遍历 e.layer == name 的图元，其他图层图元纹丝不动（互不干扰）。
-    // 用指针判空，保证只有被改动的对应属性被推送，未指定的属性（含图元的单独覆盖）保留不动。
-    for (auto& e : elems_) {
-        if (e.layer != name) continue;
-        if (color)      e.color = *color;
-        if (lineWidth)  { e.lineWidth = *lineWidth; e.lineWidthAuto = false; }
-        if (ls)         e.lineStyle = *ls;
-    }
-    emit layersChanged(); emit modelChanged();   // modelChanged 触发重绘
-    log(QStringLiteral("已修改图层 %1 的样式并同步到本层图元").arg(name));
+    // 【解耦】不再把图层新属性反向推送到已有图元：本层已有图元的颜色/线宽/线型保持不变，
+    //   只有此后经 ElementFactory::create → applyActiveLayer 新建的图元才会快照本层最新属性。
+    //   若用户希望把图层当前样式套用到本层图元，可显式调用 applyLayerStyleToElements。
+    emit layersChanged(); emit modelChanged();   // modelChanged 触发重绘（图层定义已变）
+    log(QStringLiteral("已修改图层 %1 的样式（已有图元属性保持不变）").arg(name));
     return true;
 }
 
@@ -940,6 +969,8 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
     }
     // 保证默认层 "0" 始终存在（旧文件可能未保存该字段）
     if (!findLayer(QStringLiteral("0"))) layers_.insert(layers_.begin(), Layer(QStringLiteral("0")));
+    // 读档后若当前活动层不在新图层表中（旧文件无 layers 字段时常见），回落默认层
+    if (!findLayer(currentLayer_)) currentLayer_ = QStringLiteral("0");
     emit layersChanged();
 }
 
@@ -1033,7 +1064,9 @@ void SketchModel::clear() {
     pushMemento(QStringLiteral("清空"));
     elems_.clear(); selectedIds_.clear(); selectedId_ = -1;
     layers_.clear(); layers_.push_back(Layer(QStringLiteral("0")));   // 新建图纸只留默认层
+    currentLayer_ = QStringLiteral("0");                              // 新建图纸活动层回落默认层
     emit modelChanged(); emit selectionChanged(-1); emit layersChanged();
+    emit currentLayerChanged(currentLayer_);
 }
 
 void SketchModel::emitModelChanged() { emit modelChanged(); }

@@ -57,11 +57,17 @@ std::vector<Change> makeRotate(const std::vector<Element>& src,
 std::vector<Change> makeScale(const std::vector<Element>& src,
                               const Vec3& center, double factor);
 
-// ---------- 6. 镜像 ----------
-// axis: 0=水平(沿 +Y 翻转), 1=竖直(沿 +X 翻转), 2=自定义直线（轴上两点 axisP1, axisP2）
+// ---------- 6. 镜像（严格对称：点对称 / 轴对称）----------
+//   isPointMirror == true  : 关于 base1 点中心对称（等价绕 base1 旋转 180°）；base2 忽略。
+//   isPointMirror == false : 关于直线 base1→base2 轴对称。
+// 行为：保留源图元，新增一份镜像副本（replacement.id = -1，由模型分配新 ID）；
+//       除几何被严格反射外，图层 / 颜色 / 线宽 / 线型 / 文本等属性全部继承源图元。
+// 角度处理：圆弧起止角、椭圆长轴角、剖面线方向角按反射公式 2β−θ 修正（β 为镜像轴世界角）；
+//           点对称按「旋转 180°」处理（角度 +180°）。半径 / 半轴 / 字高保距不变。
 std::vector<Change> makeMirror(const std::vector<Element>& src,
-                               int axis, const Vec3& axisP1 = Vec3(),
-                               const Vec3& axisP2 = Vec3(1, 0, 0));
+                               bool isPointMirror,
+                               const Vec3& base1,
+                               const Vec3& base2 = Vec3(1, 0, 0));
 
 // ---------- 7. 反向 (Revert Direction) ----------
 // 直线：交换 pts[0] / pts[1]；圆弧：startAngle / endAngle 互换 + 重新归一化到 (-180,180]

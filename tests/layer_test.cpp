@@ -1,8 +1,8 @@
 // 图层（Layer）管理功能单元测试：在核心层 SketchModel 上验证图元与图层的交互规则
 //   * 默认层 "0" 始终存在；新建/重名/删除图层；
 //   * 【要求1】把选中图元分配（assign）到指定图层时"保留图元原有属性"，不套用图层样式；
-//   * 【要求2】修改图层属性（setLayerStyle）时，该层"对应属性"同步推送到本层全部图元；
-//            未指定的属性（含图元单独覆盖的值）保持不动；其他图层图元不受影响；
+//   * 【要求2·解耦】修改图层属性（setLayerStyle）时，仅更新图层定义；本层已有图元属性保持不变，
+//            不反向推送；只有此后再新建的图元才快照该层新属性；其他图层图元不受影响；
 //   * 【要求3】单个图元可单独编辑（styleSelectedEx），只作用于该图元本身，
 //            不反向改变图层定义，也不影响其他图元；
 //   * 对某一图层执行显示控制（setLayerVisible）只翻转本层图元的 visible；
@@ -12,6 +12,7 @@
 //   * 图层表可随图存盘/读回（layersToJson / setLayersFromJson），旧文件无该字段时回退单层"0"。
 // 运行平台：纯核心层，无需 GUI（QT_QPA_PLATFORM 任意）。
 #include "core/SketchModel.h"
+#include "core/ElementFactory.h"
 #include "core/Layer.h"
 #include <cstdio>
 
@@ -75,37 +76,50 @@ int main() {
           "【要求1】assign：c 保留原有属性");
     check(model.element(a)->layer == QStringLiteral("0"), "assign：未选中的 a 仍在层 0（互不干扰）");
 
-    // ---- 4. 【要求2】修改图层属性 -> 本层图元对应属性同步更新；其他层不受影响 ----
-    // 4a. 只改颜色：应同步到 b 的颜色，但不动 b 的线宽/线型，也不动其他层
+    // ---- 4. 【要求2·解耦】修改图层属性 -> 仅更新图层定义，本层已有图元属性保持不变 ----
+    //   （不再反向推送；只有此后再新建的图元才快照该层新属性）
+    // 4a. 只改颜色：图层定义颜色=蓝；本层已有图元 b 颜色保持原样，其他层不受影响
     const QColor blue(0, 0, 255);
     check(model.setLayerStyle(QStringLiteral("尺寸线"), &blue, nullptr, nullptr),
           "setLayerStyle 尺寸线：仅改颜色为蓝");
     check(model.findLayer(QStringLiteral("尺寸线"))->color == blue, "图层定义 尺寸线 颜色=蓝");
-    check(model.element(b)->color == blue, "【要求2】本层图元 b 颜色同步为蓝");
-    check(model.element(b)->lineWidth == 1.0 && model.element(b)->lineStyle == LineStyle::Solid,
-          "【要求2】仅改颜色：b 的线宽/线型保持原样（对应属性，未整体覆盖）");
+    check(model.element(b)->color == def, "【解耦】本层已有图元 b 颜色保持不变(仍为默认色)");
+    check(model.element(b)->lineWidth == 1.0 && model.element(b)->lineStyle == LineStyle::Solid
+          && model.element(b)->lineWidthAuto,
+          "【解耦】b 的线宽/线型/自动派生均未被图层属性覆盖");
     check(model.element(a)->color == def && model.element(c)->color == def,
-          "【要求2】其他层(a/c)颜色不变（互不干扰）");
+          "【解耦】其他层(a/c)颜色不变（互不干扰）");
 
-    // 4b. 只改线宽：应同步到 b 的线宽，且标记为手动覆盖
+    // 4b. 只改线宽：图层定义线宽=2.5；已有图元 b 线宽保持 1.0（lineWidthAuto 不变）
     const double w25 = 2.5;
     check(model.setLayerStyle(QStringLiteral("尺寸线"), nullptr, &w25, nullptr),
           "setLayerStyle 尺寸线：仅改线宽为 2.5px");
     check(model.findLayer(QStringLiteral("尺寸线"))->lineWidth == 2.5, "图层定义 尺寸线 线宽=2.5");
-    check(model.element(b)->lineWidth == 2.5 && !model.element(b)->lineWidthAuto,
-          "【要求2】本层图元 b 线宽同步为 2.5，且 lineWidthAuto=false");
+    check(model.element(b)->lineWidth == 1.0 && model.element(b)->lineWidthAuto,
+          "【解耦】本层已有图元 b 线宽保持 1.0/自动派生，未被层线宽覆盖");
     check(model.element(a)->lineWidth == 1.0 && model.element(c)->lineWidth == 1.0,
-          "【要求2】其他层(a/c)线宽不变");
+          "【解耦】其他层(a/c)线宽不变");
 
-    // 4c. 只改线型：应同步到 b 的线型
+    // 4c. 只改线型：图层定义线型=点划线；已有图元 b 线型保持实线
     const LineStyle dashDot = LineStyle::DashDot;
     check(model.setLayerStyle(QStringLiteral("尺寸线"), nullptr, nullptr, &dashDot),
           "setLayerStyle 尺寸线：仅改线型为点划线");
     check(model.findLayer(QStringLiteral("尺寸线"))->lineStyle == LineStyle::DashDot,
           "图层定义 尺寸线 线型=点划线");
-    check(model.element(b)->lineStyle == LineStyle::DashDot, "【要求2】本层图元 b 线型同步为点划线");
+    check(model.element(b)->lineStyle == LineStyle::Solid, "【解耦】本层已有图元 b 线型保持实线");
     check(model.element(a)->lineStyle == LineStyle::Solid && model.element(c)->lineStyle == LineStyle::Solid,
-          "【要求2】其他层(a/c)线型不变");
+          "【解耦】其他层(a/c)线型不变");
+
+    // 4d. 改层属性后新建图元：经 ElementFactory::create → applyActiveLayer 快照图层"当前"属性
+    model.setCurrentLayer(QStringLiteral("尺寸线"));
+    const int nb = model.addElement(ElementFactory::create(ElementType::Line,
+                                QStringLiteral("直线"), &model));
+    check(model.element(nb)->layer == QStringLiteral("尺寸线"), "改层属性后新建图元 nb 归属当前活动层 尺寸线");
+    check(model.element(nb)->color == blue && model.element(nb)->lineWidth == 2.5 &&
+          model.element(nb)->lineStyle == LineStyle::DashDot && !model.element(nb)->lineWidthAuto,
+          "【解耦】新建 nb 应用了图层新属性(蓝/2.5/点划线)，为固定快照副本");
+    check(model.element(b)->color == def && model.element(b)->lineStyle == LineStyle::Solid,
+          "【解耦】新建 nb 不影响已有图元 b（仍为旧属性）");
 
     // ---- 5. 【要求3】单个图元单独编辑：只影响该图元，不反向改变图层，不影响其他图元 ----
     model.setSelection({b});
@@ -125,7 +139,7 @@ int main() {
     const QColor purple(150, 0, 200);
     check(model.setLayerStyle(QStringLiteral("尺寸线"), &purple, nullptr, nullptr),
           "改图层 尺寸线 颜色=紫(只改颜色)");
-    check(model.element(b)->color == purple, "图层改色后 b 颜色同步为紫");
+    check(model.element(b)->color == green, "【解耦】图层改色后已有图元 b 颜色保持绿(不被层色覆盖)");
     check(model.element(b)->lineStyle == LineStyle::Dotted,
           "【要求2】只改颜色未覆盖 b 的单独线型覆盖(仍为点线)");
     check(model.findLayer(QStringLiteral("尺寸线"))->color == purple &&
@@ -134,7 +148,7 @@ int main() {
 
     // ---- 6. applyLayerStyleToElements：强制把图层当前全部三项样式写回本层图元（重新同步）----
     int applied = model.applyLayerStyleToElements(QStringLiteral("尺寸线"));
-    check(applied == 1, "apply：影响 1 个本层图元");
+    check(applied == 2, "apply：影响 2 个本层图元(b 与改层后新建的 nb)");
     check(model.element(b)->color == purple && model.element(b)->lineWidth == 2.5 &&
           model.element(b)->lineStyle == LineStyle::DashDot && !model.element(b)->lineWidthAuto,
           "apply：本层图元 b 被强制同步为图层当前全部样式(覆盖其单独线型覆盖)");

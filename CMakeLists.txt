@@ -256,6 +256,25 @@ target_link_libraries(LayerTest PRIVATE Qt6::Widgets)
 target_include_directories(LayerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(LayerTest PRIVATE -Wall -Wextra)
 
+# ---- 活动图层（current layer）逻辑：默认层 / 切换继承 / 已有图元不变 ----
+add_executable(LayerCurrentTest
+    tests/layer_current_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(LayerCurrentTest PRIVATE Qt6::Widgets)
+target_include_directories(LayerCurrentTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(LayerCurrentTest PRIVATE -Wall -Wextra)
+
+# ---- 一次性预览：渲染「当前图层」HUD 徽标（非回归测试，人工核对用）----
+add_executable(LayerHudPreview
+    tests/layer_hud_preview.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(LayerHudPreview PRIVATE Qt6::Widgets)
+target_include_directories(LayerHudPreview PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(LayerHudPreview PRIVATE -Wall -Wextra)
+
 # ---- 标题栏插入 + 累加选择（核心层回归）----
 add_executable(TitleBlockTest
     tests/title_block_test.cpp

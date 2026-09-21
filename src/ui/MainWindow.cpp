@@ -379,37 +379,7 @@ void MainWindow::buildMenu() {
         modify::applyChanges(model_, changes, QString());
         model_->log(QStringLiteral("已缩放 %1 个图元（因子=%2）").arg(src.size()).arg(r.factor, 0, 'f', 3));
     })->setIcon(icons::make("scale"));
-    mk(mod, QStringLiteral("镜像..."), QKeySequence(), [this] {
-        // 提供三个二级选项：水平 / 竖直 / 自定义直线
-        QMenu m(QStringLiteral("镜像方式"), this);
-        QAction* aH = m.addAction(QStringLiteral("水平镜像"));
-        QAction* aV = m.addAction(QStringLiteral("竖直镜像"));
-        m.addSeparator();
-        QAction* aL = m.addAction(QStringLiteral("自定义直线轴..."));
-        QAction* picked = m.exec(QCursor::pos());
-        if (!picked) return;
-        std::vector<Element> src;
-        for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可镜像图元"), "warn"); return; }
-        int axis = 0;
-        if (picked == aH) axis = 0;
-        else if (picked == aV) axis = 1;
-        else if (picked == aL) {
-            ModifyInputDialog dlg(ModifyInputDialog::M_MirrorLine, QStringLiteral("镜像 — 自定义轴"), -1, -1, this);
-            if (dlg.exec() != QDialog::Accepted) return;
-            auto r = dlg.result();
-            auto changes = modify::makeMirror(src, 2, r.p1, r.p2);
-            model_->beginEdit(QStringLiteral("修改-镜像"));
-            modify::applyChanges(model_, changes, QString());
-            model_->log(QStringLiteral("已镜像 %1 个图元（自定义轴）").arg(src.size()));
-            return;
-        }
-        auto changes = modify::makeMirror(src, axis);
-        model_->beginEdit(QStringLiteral("修改-镜像"));
-        modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已镜像 %1 个图元（%2）").arg(src.size())
-                        .arg(axis == 0 ? "水平" : "竖直"));
-    })->setIcon(icons::make("mirror"));
+    mk(mod, QStringLiteral("镜像..."), QKeySequence(), [this] { mirror(); })->setIcon(icons::make("mirror"));
     mk(mod, QStringLiteral("移动并旋转..."), QKeySequence(), [this] {
         // 复合：先移动，再旋转（链式应用两次 modify）
         ModifyInputDialog dlg(ModifyInputDialog::M_Rotate, QStringLiteral("移动并旋转（先平移到原点，再绕原点旋转）"), -1, -1, this);
@@ -1728,23 +1698,8 @@ void MainWindow::buildToolbar() {
                 modify::applyChanges(model_, changes, QString());
                 model_->log(QStringLiteral("已旋转 %1 个图元 %2°").arg(src.size()).arg(r.angleDeg, 0, 'f', 2));
             });
-        cmd(QStringLiteral("镜像"), QStringLiteral("镜像 (Mirror)：选中图元 + 镜像轴"), "mirror",
-            [this] {
-                QMenu m(QStringLiteral("镜像方式"), this);
-                m.addAction(QStringLiteral("水平镜像"));
-                m.addAction(QStringLiteral("竖直镜像"));
-                QAction* picked = m.exec(QCursor::pos());
-                if (!picked) return;
-                std::vector<Element> src;
-                for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-                if (src.empty()) { model_->log(QStringLiteral("无可镜像图元"), "warn"); return; }
-                int axis = picked->text().startsWith(QStringLiteral("水平")) ? 0 : 1;
-                auto changes = modify::makeMirror(src, axis);
-                model_->beginEdit(QStringLiteral("修改-镜像"));
-                modify::applyChanges(model_, changes, QString());
-                model_->log(QStringLiteral("已镜像 %1 个图元（%2）").arg(src.size())
-                                .arg(axis == 0 ? "水平" : "竖直"));
-            });
+        cmd(QStringLiteral("镜像"), QStringLiteral("镜像 (Mirror)：选中图元 → 选基准(点/直线) → 生成镜像副本"), "mirror",
+            [this] { mirror(); });
         cmd(QStringLiteral("偏移"), QStringLiteral("偏移 (Offset)：选中直线/圆/弧 + 偏移距离"), "offset",
             [this] {
                 ModifyInputDialog dlg(ModifyInputDialog::M_Offset, QStringLiteral("偏移"), -1, -1, this);
@@ -2099,6 +2054,7 @@ void MainWindow::connectSignals() {
     // 注：该模式此前只置位、无人消费，左键取点从未回抛（功能实际不可用），在此补齐。
     connect(view_, &GraphicsView::canvasPointPicked, this,
             [this](double x, double y) { onCanvasPointPicked(Vec3(x, y, 0)); });
+    connect(view_, &GraphicsView::pointPickCancelled, this, &MainWindow::onPointPickCancelled);
 
     // Ctrl+回车：把焦点交给命令行，便于纯键盘连续作业
     auto* focusCmd = new QAction(this);
@@ -2562,6 +2518,8 @@ void MainWindow::arrayPolar() {
 }
 
 void MainWindow::onCanvasPointPicked(const Vec3& p) {
+    // 镜像（点 / 线）基准拾取优先处理：拦截后不进入阵列对话框回填逻辑。
+    if (mirrorPending_) { handleMirrorPick(p); return; }
     // 仅当处于拾取态且有活动对话框时回填；否则复位拾取态（避免左键被永久吞掉）。
     if (!view_->pointPickMode()) return;
     if (!activeArrayDialog_) {
@@ -2572,6 +2530,76 @@ void MainWindow::onCanvasPointPicked(const Vec3& p) {
     view_->setPointPickMode(false);      // 复位拾取态与光标
     activeArrayDialog_->raise();
     activeArrayDialog_->activateWindow();
+}
+
+// ============================ 镜像（点 / 线）============================
+// 交互：菜单【修改>镜像】或命令「镜像」→ 弹出"点镜像 / 线镜像"选择 →
+//   点镜像：进入视图取点模式，单击指定对称中心点；
+//   线镜像：进入视图取点模式，依次单击两点定义镜像轴（先第一点，后第二点）；
+//   确认后保留源图元、自动生成一份严格对称的镜像副本，并选中该副本。
+// 复用 GraphicsView 的 pointPickMode（与环形阵列中心点拾取同一套基础设施）。
+
+void MainWindow::mirror() {
+    if (model_->selection().empty()) {
+        model_->log(QStringLiteral("请先选中要镜像的图元"), "warn");
+        return;
+    }
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("镜像"));
+    box.setText(QStringLiteral("请选择镜像基准："));
+    QPushButton* bPoint = box.addButton(QStringLiteral("点镜像（指定对称中心点）"), QMessageBox::ActionRole);
+    QPushButton* bLine  = box.addButton(QStringLiteral("线镜像（指定一条直线）"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() == bPoint) {
+        mirrorPending_ = true; mirrorIsPoint_ = true;  mirrorP1Valid_ = false;
+        model_->setActiveTool(QStringLiteral("select"));
+        view_->setPointPickMode(true);
+        model_->log(QStringLiteral("点镜像：请在画布上单击指定对称中心点"));
+    } else if (box.clickedButton() == bLine) {
+        mirrorPending_ = true; mirrorIsPoint_ = false; mirrorP1Valid_ = false;
+        model_->setActiveTool(QStringLiteral("select"));
+        view_->setPointPickMode(true);
+        model_->log(QStringLiteral("线镜像：请依次单击两点定义镜像轴（先第一点，后第二点）"));
+    }
+}
+
+void MainWindow::handleMirrorPick(const Vec3& p) {
+    if (mirrorIsPoint_) {
+        applyMirror(true, p, p);
+        finishMirror();
+        return;
+    }
+    // 线镜像：收集两点
+    if (!mirrorP1Valid_) {
+        mirrorP1_ = p; mirrorP1Valid_ = true;
+        model_->log(QStringLiteral("线镜像：已拾取第一点，请拾取第二点定义镜像轴"));
+        // pointPickMode 在每次左键拾取后仍保持开启（见 GraphicsView::mousePressEvent），
+        // 无需重新 setPointPickMode(true)；保持十字光标等待第二点。
+        return;
+    }
+    applyMirror(false, mirrorP1_, p);
+    finishMirror();
+}
+
+void MainWindow::applyMirror(bool isPoint, const Vec3& b1, const Vec3& b2) {
+    std::vector<Element> src = collectSelectedElements(model_);
+    if (src.empty()) { model_->log(QStringLiteral("无可镜像图元"), "warn"); return; }
+    auto changes = modify::makeMirror(src, isPoint, b1, b2);
+    model_->beginEdit(QStringLiteral("修改-镜像"));
+    const auto newIds = modify::applyChanges(model_, changes, QString());
+    if (!newIds.empty()) model_->setSelection(newIds);  // 选中新生成的镜像副本，便于继续编辑
+    model_->log(QStringLiteral("已生成 %1 个镜像图元（%2）")
+                    .arg(newIds.size()).arg(isPoint ? "点镜像" : "线镜像"));
+}
+
+void MainWindow::finishMirror() {
+    mirrorPending_ = false; mirrorIsPoint_ = false; mirrorP1Valid_ = false;
+    if (view_->pointPickMode()) view_->setPointPickMode(false);
+}
+
+void MainWindow::onPointPickCancelled() {
+    if (mirrorPending_) finishMirror();
 }
 
 // ============================ 剖面填充（区域选择模式） ============================

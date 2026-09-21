@@ -973,7 +973,7 @@ bool ListCommand::execute(const CommandContext& ctx) {
 //   duplicate                                 复制当前选中的图元（默认偏置 10, 0）
 //   rotate      <cx> <cy> <angleDeg>         绕 (cx, cy) 旋转选中
 //   scale       <cx> <cy> <factor>           绕 (cx, cy) 缩放选中（>0）
-//   mirror      <axis: h|v|line <x1> <y1> <x2> <y2>>
+//   mirror      point <x> <y> | line <x1> <y1> <x2> <y2> | h | v（新增镜像副本）
 //   revert                                   反向（直线交换端点 / 圆弧交换起止角 / 折线反转）
 //   lengthen    <side: 0|1> <deltaMm>        延长 / 缩短直线端点
 //   offset      <distMm>                     直线 / 圆 / 圆弧 偏移
@@ -1089,25 +1089,36 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         return true;
     }
     if (cmd == "mirror") {
-        if (ctx.toks.size() < 2) { m->log("用法: mirror h|v|line <x1> <y1> <x2> <y2>", "warn"); return false; }
+        if (ctx.toks.size() < 2) {
+            m->log("用法: mirror point <x> <y> | mirror line <x1> <y1> <x2> <y2> | mirror h | mirror v", "warn");
+            return false;
+        }
         const QString kind = ctx.toks[1].toLower();
-        int axis = 0;
-        Vec3 p1, p2(1, 0, 0);
-        if (kind == "h" || kind == "horizontal") axis = 0;
-        else if (kind == "v" || kind == "vertical") axis = 1;
-        else if (kind == "line") {
-            if (ctx.toks.size() < 6) { m->log("用法: mirror line <x1> <y1> <x2> <y2>", "warn"); return false; }
-            if (!ctx.parsePoint(2, p1) || !ctx.parsePoint(4, p2)) {
-                m->log("轴点解析失败", "warn"); return false;
-            }
-            axis = 2;
-        } else { m->log("未知镜像轴: " + kind, "warn"); return false; }
         auto src = selectedElems();
         if (src.empty()) { m->log("无可镜像图元", "warn"); return false; }
-        auto changes = modify::makeMirror(src, axis, p1, p2);
+        bool isPoint = false;
+        Vec3 b1, b2(1, 0, 0);
+        if (kind == "point") {
+            if (ctx.toks.size() < 4) { m->log("用法: mirror point <x> <y>", "warn"); return false; }
+            if (!ctx.parsePoint(2, b1)) { m->log("中心点解析失败", "warn"); return false; }
+            isPoint = true;
+        } else if (kind == "line") {
+            if (ctx.toks.size() < 6) { m->log("用法: mirror line <x1> <y1> <x2> <y2>", "warn"); return false; }
+            if (!ctx.parsePoint(2, b1) || !ctx.parsePoint(4, b2)) { m->log("轴点解析失败", "warn"); return false; }
+            isPoint = false;
+        } else if (kind == "h" || kind == "horizontal" || kind == "v" || kind == "vertical") {
+            // 便捷：关于「选区所有控制点的几何中心」的水平 / 竖直直线镜像
+            double cx = 0, cy = 0, n = 0;
+            for (const auto& e : src) for (const auto& p : e.pts) { cx += p.x; cy += p.y; ++n; }
+            if (n > 0) { cx /= n; cy /= n; }
+            if (kind == "h" || kind == "horizontal") { b1 = Vec3(0, cy, 0); b2 = Vec3(1, cy, 0); }
+            else                                     { b1 = Vec3(cx, 0, 0); b2 = Vec3(cx, 1, 0); }
+            isPoint = false;
+        } else { m->log("未知镜像方式: " + kind, "warn"); return false; }
+        auto changes = modify::makeMirror(src, isPoint, b1, b2);
         m->beginEdit(QStringLiteral("修改-镜像"));
-        modify::applyChanges(m, changes, QString());
-        m->log(QString("已镜像 %1 个图元（轴=%2）").arg(src.size()).arg(kind));
+        auto added = modify::applyChanges(m, changes, QString());
+        m->log(QString("已生成 %1 个镜像图元（%2）").arg(added.size()).arg(kind));
         return true;
     }
     if (cmd == "revert" || cmd == "revert_direction") {

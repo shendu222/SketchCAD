@@ -224,20 +224,11 @@ std::vector<Element> buildSheetFrame(const SheetSpec& spec) {
     labelInCell(xNameDate, y1, QStringLiteral("日期"), 3.0);
     fieldInCell(xNameDate, by0, QStringLiteral("approveDate"), 3.5);
 
-    // ---- 对中符号（GB/T 14689 6.1）：位于【图纸各边中点】，用粗实线自纸边界画起、
-    //      向图框内伸入约 5mm，线宽不小于 0.5mm ----
-    {
-        const double midX = W * 0.5;                 // 上/下边中点 X
-        const double midY = H * 0.5;                 // 左/右边中点 Y
-        const double in5  = 5.0;                     // 伸入图框内 5mm
-        auto mark = [&](double x1, double y1, double x2, double y2) {
-            line(x1, y1, x2, y2, QStringLiteral("图框"), 0.5);
-        };
-        mark(0.0, midY, a + in5, midY);                    // 左边（自 x=0 起，跨装订边）
-        mark(W - c - in5, midY, W, midY);                  // 右边
-        mark(midX, 0.0, midX, c + in5);                    // 下边
-        mark(midX, H - c - in5, midX, H);                  // 上边
-    }
+    // 注：原此处绘制 GB/T 14689 6.1 的「对中符号」——图纸四边中点各一条自纸边界伸入
+    //      图框内 5mm 的短线（线宽 0.5）。这些短线在新建图纸时于图框四周形成视觉噪声
+    //      （表现为"图纸四周各多出一条短线"），按产品要求移除。纸张外边界（细实线矩形）
+    //      与图框（粗实线矩形）不受影响，网格为视图叠加层亦不受影响。
+    //      如需恢复，可按「图纸各边中点 + 自纸边界向图框内伸入 5mm、线宽 0.5」补回。
 
     // ---- 投影法识别符号（GB/T 14665-2012 第7章 表5）----
     {

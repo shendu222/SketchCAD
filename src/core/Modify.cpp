@@ -174,41 +174,73 @@ std::vector<Change> makeScale(const std::vector<Element>& src,
 }
 
 // ============================================================
-// 6. 镜像
+// 6. 镜像（严格对称：点对称 / 轴对称）
+// ------------------------------------------------------------
+// 数学基础（世界坐标，X 右 / Y 上）：
+//   * 点对称（关于点 C）：逐点 P' = 2C − P。等价「绕 C 旋转 180°」，
+//     故方向角类字段统一 +180°（圆弧起止角、椭圆长轴角、剖面线方向角）。
+//   * 轴对称（关于直线 p1→p2）：逐点沿该直线镜像（见 mirrorPtAcrossLine）。
+//     方向角类字段按反射公式 θ' = 2β − θ 修正，其中 β = atan2(p2−p1) 为镜像轴世界角。
+// 反射是等距变换（保距），故半径 / 半轴 / 字高一律不变；折线 / 样条的弧段由
+// 三个相邻节点定心，反射控制点即反射整条弧（无需单独处理角度）。
+// 行为：保留源图元，新增一份镜像副本（replacement.id = -1，由模型分配新 ID），
+//       图层 / 颜色 / 线宽 / 线型 / 文本等属性全部继承源图元。
 // ============================================================
 std::vector<Change> makeMirror(const std::vector<Element>& src,
-                               int axis, const Vec3& axisP1, const Vec3& axisP2) {
+                               bool isPointMirror,
+                               const Vec3& base1,
+                               const Vec3& base2) {
     std::vector<Change> out;
     out.reserve(src.size());
+
+    // 线对称轴角 β（世界 CCW 角），用于角度反射 θ' = 2β − θ
+    const double dx = base2.x - base1.x, dy = base2.y - base1.y;
+    const double L2 = dx * dx + dy * dy;
+    const double beta = (L2 < 1e-18) ? 0.0
+                                      : std::atan2(dy, dx) * 180.0 / M_PI;
+
     for (const auto& s : src) {
         Element e = s;
-        e.id = s.id;
-        // 自定义直线镜像
-        if (axis == 2) {
-            for (auto& p : e.pts) p = mirrorPtAcrossLine(p, axisP1, axisP2);
-        } else if (axis == 0) {
-            // 水平镜像 = 关于 y = (y轴所在水平线) 翻转：选 y 为中位数
-            double yMid = 0;
-            for (const auto& p : s.pts) yMid += p.y;
-            yMid = s.pts.empty() ? 0 : yMid / (int)s.pts.size();
-            for (auto& p : e.pts) p.y = 2 * yMid - p.y;
-        } else if (axis == 1) {
-            // 竖直镜像 = 关于 x = (x中位数) 翻转
-            double xMid = 0;
-            for (const auto& p : s.pts) xMid += p.x;
-            xMid = s.pts.empty() ? 0 : xMid / (int)s.pts.size();
-            for (auto& p : e.pts) p.x = 2 * xMid - p.x;
+        e.id = -1;                       // 新增镜像副本，源图元保留
+        // ---- 逐点反射 ----
+        if (isPointMirror) {
+            for (auto& p : e.pts)
+                p = Vec3(2 * base1.x - p.x, 2 * base1.y - p.y, 0);
+        } else {
+            for (auto& p : e.pts)
+                p = mirrorPtAcrossLine(p, base1, base2);
         }
-        // 圆 / 圆弧：圆心已镜像，半径不变；圆弧起止角镜像翻转（角度沿轴反向）
-        // 这里只处理中心点已被反射；标注弧的角度方向不必严格修正（按视觉近似即可）
+        // ---- 剖面区域：内孔点列同步反射 ----
+        if (e.type == ElementType::Hatch) {
+            for (auto& hole : e.holes) {
+                for (auto& p : hole) {
+                    p = isPointMirror
+                          ? Vec3(2 * base1.x - p.x, 2 * base1.y - p.y, 0)
+                          : mirrorPtAcrossLine(p, base1, base2);
+                }
+            }
+        }
+        // ---- 角度类字段的反射修正 ----
+        if (e.type == ElementType::Arc) {
+            if (isPointMirror) { e.startAngle += 180.0; e.endAngle += 180.0; }
+            else                { e.startAngle = 2.0 * beta - e.startAngle;
+                                 e.endAngle   = 2.0 * beta - e.endAngle; }
+        }
         if (e.type == ElementType::Ellipse) {
-            // 长轴方向对水平/竖直轴对称：镜像后旋转角变为 -rotation
-            e.rotation = -e.rotation;
+            e.rotation = isPointMirror ? (e.rotation + 180.0)
+                                       : (2.0 * beta - e.rotation);
         }
-        Change c; c.id = s.id; c.replacement = e;
-        c.note = (axis == 0) ? QStringLiteral("水平镜像")
-                : (axis == 1) ? QStringLiteral("竖直镜像")
-                              : QStringLiteral("自定义轴镜像");
+        if (e.type == ElementType::Hatch) {
+            e.rotation = isPointMirror ? (e.rotation + 180.0)
+                                       : (2.0 * beta - e.rotation);
+        }
+        // 半径 / 半轴 / 字高：反射保距，不变。
+        // 圆 / 圆弧 / 椭圆 / 文本 / 标注 / 折线 / 样条 / 矩形 / 多边形 / 约束：
+        //   几何已由 pts（及 holes）逐点反射覆盖，无需额外处理。
+
+        Change c; c.id = -1; c.replacement = e;
+        c.note = isPointMirror ? QStringLiteral("点镜像")
+                               : QStringLiteral("线镜像");
         out.push_back(c);
     }
     return out;

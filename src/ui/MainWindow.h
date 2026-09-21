@@ -102,6 +102,12 @@ private:
     RulerWidget* vRuler_ = nullptr;   // 左侧垂直标尺
     ArrayDialog* activeArrayDialog_ = nullptr;   // 当前打开的阵列对话框（用于视图拾取回填）
 
+    // 镜像（点 / 线）交互状态机：选中图元 → 点「镜像」→ 选基准 → 自动生成镜像副本
+    bool mirrorPending_ = false;   // 处于镜像基准拾取阶段
+    bool mirrorIsPoint_  = false;  // true=点镜像；false=线镜像
+    bool mirrorP1Valid_  = false;  // 线镜像：第一点已拾取
+    Vec3 mirrorP1_;                // 线镜像：已拾取的第一点
+
     // ---- 剖面填充（区域拾取模式）状态 ----
     SectionStyle   sectionStyle_;            // 最近一次使用的剖面样式（点选填充复用）
     SectionLoopSet pickLoops_;               // 全图闭环集合缓存（惰性重建，避免逐帧解析）
@@ -175,6 +181,13 @@ private:
     void arrayRectangular();   // 矩形阵列...：打开 ArrayDialog(矩形页) → makeRectangularArray
     void arrayPolar();         // 环形阵列...：打开 ArrayDialog(环形页) → makePolarArray（非模态，支持视图拾取中心）
     void onCanvasPointPicked(const Vec3& p);   // 视图拾取中心点完成后回填对话框并复位拾取态
+
+    // 镜像（点 / 线）：选中图元 → 点「镜像」→ 选基准（点 / 直线）→ 自动生成镜像副本
+    void mirror();                          // 入口：弹出"点镜像 / 线镜像"选择
+    void handleMirrorPick(const Vec3& p);   // 拾取回调：收集基准（点 / 线的两点）并执行
+    void applyMirror(bool isPoint, const Vec3& b1, const Vec3& b2);  // 生成镜像副本并写回模型
+    void finishMirror();                    // 复位镜像交互状态与光标
+    void onPointPickCancelled();            // 拾取阶段 Esc/右键取消
 
     // 剖面填充（GB/T 4457.5-2013）：进入「区域选择模式」——按鼠标点击位置自动识别
     // 该点所在的封闭区域并只填充它（相邻区域不受影响，嵌套闭环自动作内孔掏空）。

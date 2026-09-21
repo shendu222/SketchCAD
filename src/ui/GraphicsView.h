@@ -110,6 +110,7 @@ signals:
     void cursorMoved(double x, double y, double z);
     void viewTransformChanged();             // 缩放/平移变化时通知标尺刷新
     void canvasPointPicked(double x, double y);     // 中心点拾取模式：左键取点（世界坐标）
+    void pointPickCancelled();                      // 中心点拾取模式：Esc/右键取消
     // ---- 区域拾取（剖面填充）----
     void regionPickRequested(double x, double y);   // 点选模式：左键点选（世界坐标）
     void regionHoverMoved(double x, double y);      // 点选模式：光标移动（实时预览识别结果）

@@ -116,6 +116,7 @@ LayerPanel::LayerPanel(SketchModel* model, QWidget* parent)
     // 模型变化即刷新面板：图层表增删/改名/样式/可见性、图元层归属或可见性变化都反映到列表
     connect(model_, &SketchModel::layersChanged, this, &LayerPanel::refresh);
     connect(model_, &SketchModel::modelChanged,  this, &LayerPanel::refresh);
+    connect(model_, &SketchModel::currentLayerChanged, this, &LayerPanel::onCurrentLayerChanged);
     connect(model_, &SketchModel::selectionChanged, this, [this](int) { assignBtn_->setEnabled(model_->hasSelection()); });
 
     refresh();
@@ -176,6 +177,13 @@ QWidget* LayerPanel::makeRowWidget(const Layer& l) {
     setColorSwatch(sw, l.color.isValid() ? l.color : QColor(26, 29, 40));
     h->addWidget(sw);
 
+    // 活动图层标记："●当前"，让用户一眼看到"正在哪个层上画图"
+    if (l.name == model_->currentLayer()) {
+        auto* cur = new QLabel(QStringLiteral("●当前"), this);
+        cur->setStyleSheet(QStringLiteral("color:#1a73e8;font-weight:bold;font-size:11px;"));
+        h->addWidget(cur);
+    }
+
     auto* name = new QLabel(l.name, this);
     name->setStyleSheet(l.visible ? QStringLiteral("") : QStringLiteral("color:#999;"));
     h->addWidget(name, 1);
@@ -205,7 +213,18 @@ void LayerPanel::updateControls() {
     }
 }
 
-void LayerPanel::onCurrentRowChanged(int /*row*/) { updateControls(); }
+void LayerPanel::onCurrentRowChanged(int /*row*/) {
+    updateControls();
+    // 选中即设为活动绘制层：新建图元将归属该层并继承其属性（满足"切换图层"的行为）
+    const QString n = selectedLayer();
+    if (!n.isEmpty()) model_->setCurrentLayer(n);
+}
+
+void LayerPanel::onCurrentLayerChanged(const QString& /*name*/) {
+    // 活动层变化（可能来自面板选择，也可能来自其它入口）→ 重绘列表，
+    // 让"●当前"标记落到新的活动层行；setCurrentLayer 同名会短路，不会形成刷新回路。
+    refresh();
+}
 
 void LayerPanel::onVisibleToggled(const QString& layer, int state) {
     model_->setLayerVisible(layer, state != Qt::Unchecked);

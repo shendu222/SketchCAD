@@ -10,7 +10,10 @@ Element ElementFactory::create(ElementType t, const QString& name, const SketchM
     e.id = 0;
     // 套用模型默认样式（颜色/线宽/线型），保证命令行、工具条、属性面板
     // 三条输入通路画出来的图元样式完全一致。
-    if (model) model->applyDefaultStyle(e);
+    if (model) {
+        model->applyDefaultStyle(e);
+        model->applyActiveLayer(e);   // 归属当前活动图层并继承其属性（默认层"0"不覆盖）
+    }
     return e;
 }
 
