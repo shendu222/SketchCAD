@@ -25,7 +25,7 @@ void SketchModel::pushMemento(const QString& label) {
     // 也记录图层表：撤销"隐藏图层/改图层样式"等操作时，图层定义与图元需一起回退。
     Memento m;
     m.label = label; m.elems = elems_; m.nextId = nextId_;
-    m.scale = scaleRatio_; m.layers = layers_;
+    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_;
     undoStack_.push_back(std::move(m));
     if (undoStack_.size() > 200) undoStack_.erase(undoStack_.begin());
     redoStack_.clear();
@@ -412,7 +412,7 @@ void SketchModel::selectWindow(const QRectF& rect, bool additive) {
     std::vector<int> ids;
     for (const auto& e : elems_) {
         if (!e.visible) continue;
-        if (r.intersects(geo::elementBounds(e).adjusted(-eps, -eps, eps, eps))) ids.push_back(e.id);
+        if (r.intersects(boundsOf(e).adjusted(-eps, -eps, eps, eps))) ids.push_back(e.id);
     }
     if (additive) addToSelection(ids); else setSelection(ids);
     log(QStringLiteral("框选完成：选中 %1 个图元%2")
@@ -426,7 +426,7 @@ void SketchModel::deselectWindow(const QRectF& rect) {
     for (int id : selectedIds_) {
         const Element* e = element(id);
         if (!e) { keep.push_back(id); continue; }                 // 已不存在，保留以防误删
-        if (!r.intersects(geo::elementBounds(*e).adjusted(-eps, -eps, eps, eps))) keep.push_back(id);
+        if (!r.intersects(boundsOf(*e).adjusted(-eps, -eps, eps, eps))) keep.push_back(id);
     }
     if ((int)keep.size() != (int)selectedIds_.size()) setSelection(keep);
     log(QStringLiteral("框取消完成：剩余选中 %1 个图元").arg(keep.size()));
@@ -974,6 +974,305 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
     emit layersChanged();
 }
 
+// ============================================================================
+// 块（Block）管理
+// ----------------------------------------------------------------------------
+// 引用式模型：块表只有一份定义；BlockRef 只存"块名 + 插入变换 + 属性值 + 动态参数值"。
+// 因此重定义块（改一份定义）就是"同步更新所有引用"—— 展开在渲染/命中/导出时实时进行。
+// ============================================================================
+namespace {
+int countBlockRefs(const std::vector<Element>& elems, const QString& name) {
+    int n = 0;
+    for (const auto& e : elems)
+        if (e.type == ElementType::BlockRef && e.blockName == name) ++n;
+    return n;
+}
+} // namespace
+
+// 图元世界包围盒：块引用取"展开后子图元"并集（geometryBounds 是静态函数，拿不到块表）
+QRectF SketchModel::boundsOf(const Element& e) const {
+    if (e.type != ElementType::BlockRef) return geo::elementBounds(e);
+    QRectF b;
+    bool any = false;
+    for (const auto& s : expandBlockRef(e)) {
+        const QRectF sb = geo::elementBounds(s);
+        if (sb.isNull()) continue;
+        if (!any) { b = sb; any = true; } else { b = b.united(sb); }
+    }
+    if (!any && !e.pts.empty()) b = QRectF(e.pts[0].x, e.pts[0].y, 0, 0);
+    return b;
+}
+
+const BlockDef* SketchModel::findBlockDef(const QString& name) const {
+    for (const auto& d : blocks_) if (d.name == name) return &d;
+    return nullptr;
+}
+BlockDef* SketchModel::findBlockDef(const QString& name) {
+    for (auto& d : blocks_) if (d.name == name) return &d;
+    return nullptr;
+}
+
+bool SketchModel::addBlockDef(const BlockDef& def) {
+    const QString n = def.name.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
+    if (hasBlock(n)) { log(QStringLiteral("块 %1 已存在").arg(n), "warn"); return false; }
+    pushMemento(QStringLiteral("新建块 ") + n);
+    BlockDef d = def; d.name = n;
+    blocks_.push_back(std::move(d));
+    emit blocksChanged();
+    log(QStringLiteral("已创建块定义 %1（块内 %2 个图元 / 属性 %3 / 动态参数 %4）")
+            .arg(n).arg(def.entities.size()).arg(def.attdefs.size()).arg(def.dynParams.size()));
+    return true;
+}
+
+bool SketchModel::redefineBlock(const BlockDef& def) {
+    const QString n = def.name.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
+    pushMemento(QStringLiteral("重定义块 ") + n);
+    BlockDef d = def; d.name = n;
+    if (BlockDef* ex = findBlockDef(n)) *ex = std::move(d);
+    else                                blocks_.push_back(std::move(d));
+    emit blocksChanged();
+    emit modelChanged();     // 引用几何随之变化，必须重绘
+    log(QStringLiteral("已重定义块 %1，%2 个引用同步更新")
+            .arg(n).arg(countBlockRefs(elems_, n)));
+    return true;
+}
+
+bool SketchModel::removeBlock(const QString& name) {
+    auto it = std::find_if(blocks_.begin(), blocks_.end(),
+                           [&](const BlockDef& d) { return d.name == name; });
+    if (it == blocks_.end()) { log(QStringLiteral("块 %1 不存在").arg(name), "warn"); return false; }
+    const int refs = countBlockRefs(elems_, name);
+    pushMemento(QStringLiteral("删除块 ") + name);
+    blocks_.erase(it);
+    emit blocksChanged();
+    emit modelChanged();
+    log(refs > 0
+            ? QStringLiteral("已删除块 %1；%2 个引用因块定义缺失而暂不绘制（可撤销恢复）").arg(name).arg(refs)
+            : QStringLiteral("已删除块 %1").arg(name));
+    return true;
+}
+
+bool SketchModel::renameBlock(const QString& oldName, const QString& newName) {
+    BlockDef* d = findBlockDef(oldName);
+    if (!d) { log(QStringLiteral("块 %1 不存在").arg(oldName), "warn"); return false; }
+    const QString nn = newName.trimmed();
+    if (nn.isEmpty()) { log(QStringLiteral("新块名不能为空"), "warn"); return false; }
+    if (nn == oldName) return true;
+    if (hasBlock(nn)) { log(QStringLiteral("块 %1 已存在").arg(nn), "warn"); return false; }
+    pushMemento(QStringLiteral("重命名块 ") + oldName);
+    d->name = nn;
+    int cnt = 0;
+    for (auto& e : elems_)
+        if (e.type == ElementType::BlockRef && e.blockName == oldName) { e.blockName = nn; ++cnt; }
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("块 %1 已改名为 %2（%3 个引用同步）").arg(oldName).arg(nn).arg(cnt));
+    return true;
+}
+
+int SketchModel::createBlockFromSelection(const QString& name, const Vec3& basePt,
+                                          bool deleteSource, const QString& description) {
+    const QString n = name.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return -1; }
+    if (hasBlock(n)) {
+        log(QStringLiteral("块 %1 已存在（如需更新块内几何请用「重定义块」）").arg(n), "warn");
+        return -1;
+    }
+    if (selectedIds_.empty()) { log(QStringLiteral("请先选择要收进块的图元"), "warn"); return -1; }
+
+    std::vector<Element> srcs;
+    srcs.reserve(selectedIds_.size());
+    for (int id : selectedIds_) if (const Element* e = element(id)) srcs.push_back(*e);
+    if (srcs.empty()) { log(QStringLiteral("选中图元为空"), "warn"); return -1; }
+
+    pushMemento(QStringLiteral("创建块 ") + n);
+    BlockDef def = block::makeDefFromEntities(n, basePt, srcs, description);
+    blocks_.push_back(def);
+
+    int refId = -1;
+    if (deleteSource) {
+        // 先拷一份 ID：removeElementQuiet 会就地改写 selectedIds_，
+        // 直接边遍历边删会失效迭代器（且漏删）。
+        const std::vector<int> ids = selectedIds_;
+        for (int id : ids) removeElementQuiet(id);
+        Element ref = block::makeRef(def, basePt, 0.0, 1.0, 1.0);
+        auto newIds = addElementsQuiet({ref});
+        if (!newIds.empty()) { refId = newIds.front(); setSelected(refId); }
+    }
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("已创建块 %1：块内 %2 个图元%3")
+            .arg(n).arg(srcs.size())
+            .arg(deleteSource ? QStringLiteral("，原图元已替换为块引用")
+                              : QStringLiteral("（原图元保留）")));
+    return refId;
+}
+
+bool SketchModel::redefineBlockFromSelection(const QString& name) {
+    BlockDef* d = findBlockDef(name);
+    if (!d) { log(QStringLiteral("块 %1 不存在，无法重定义").arg(name), "warn"); return false; }
+    if (selectedIds_.empty()) { log(QStringLiteral("请先选择作为新块内几何的图元"), "warn"); return false; }
+    std::vector<Element> srcs;
+    srcs.reserve(selectedIds_.size());
+    for (int id : selectedIds_) if (const Element* e = element(id)) srcs.push_back(*e);
+    if (srcs.empty()) { log(QStringLiteral("选中图元为空"), "warn"); return false; }
+
+    pushMemento(QStringLiteral("重定义块 ") + name);
+    d->entities = std::move(srcs);
+    for (auto& e : d->entities) e.id = 0;
+    // 属性定义 / 动态参数定义保持不变；其中"影响图元索引"若越界在展开时被安全忽略
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("已重定义块 %1：%2 个引用同步更新")
+            .arg(name).arg(countBlockRefs(elems_, name)));
+    return true;
+}
+
+int SketchModel::insertBlock(const QString& name, const Vec3& pos,
+                             double rotationDeg, double sx, double sy) {
+    const BlockDef* d = findBlockDef(name);
+    if (!d) { log(QStringLiteral("块 %1 不存在").arg(name), "warn"); return -1; }
+    pushMemento(QStringLiteral("插入块 ") + name);
+    Element ref = block::makeRef(*d, pos, rotationDeg, sx, sy);
+    auto ids = addElementsQuiet({ref});
+    if (ids.empty()) return -1;
+    setSelected(ids.front());
+    emit modelChanged();
+    log(QStringLiteral("已插入块 %1 @(%2,%3) 旋转 %4° 缩放 %5×%6")
+            .arg(name).arg(pos.x, 0, 'f', 2).arg(pos.y, 0, 'f', 2)
+            .arg(rotationDeg, 0, 'f', 1).arg(sx, 0, 'f', 2).arg(sy, 0, 'f', 2));
+    return ids.front();
+}
+
+std::vector<Element> SketchModel::expandBlockRef(const Element& ref) const {
+    return block::expandRef(ref, blocks_);
+}
+
+std::vector<int> SketchModel::explodeBlockRef(int refId) {
+    auto it = find(refId);
+    if (it == elems_.end() || it->type != ElementType::BlockRef) {
+        log(QStringLiteral("分解失败：图元 #%1 不是块引用").arg(refId), "warn");
+        return {};
+    }
+    const QString bn = it->blockName;
+    auto subs = expandBlockRef(*it);
+    if (subs.empty()) {
+        log(QStringLiteral("分解失败：块 %1 未定义或为空").arg(bn), "warn");
+        return {};
+    }
+    pushMemento(QStringLiteral("分解块 ") + bn);
+    removeElementQuiet(refId);
+    auto ids = addElementsQuiet(subs);
+    setSelection(ids);
+    emit modelChanged();
+    log(QStringLiteral("已分解块 %1 为 %2 个独立图元").arg(bn).arg(ids.size()));
+    return ids;
+}
+
+bool SketchModel::setBlockAttribute(int refId, const QString& tag, const QString& value) {
+    auto it = find(refId);
+    if (it == elems_.end() || it->type != ElementType::BlockRef) {
+        log(QStringLiteral("属性编辑失败：图元 #%1 不是块引用").arg(refId), "warn");
+        return false;
+    }
+    // 常量属性拒绝修改（与 AutoCAD ATTDEF 常量语义一致）
+    if (const BlockDef* d = findBlockDef(it->blockName)) {
+        for (const auto& ad : d->attdefs)
+            if (ad.tag == tag && ad.constant) {
+                log(QStringLiteral("属性 %1 为常量属性，不可修改").arg(tag), "warn");
+                return false;
+            }
+    }
+    pushMemento(QStringLiteral("修改块属性 ") + tag);
+    it = find(refId);   // pushMemento 不改变 elems_，但重新定位更稳妥
+    bool found = false;
+    for (auto& a : it->blockAttrs) if (a.tag == tag) { a.value = value; found = true; break; }
+    if (!found) it->blockAttrs.push_back(BlockAttrValue{tag, value});
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("块 #%1 属性 %2 = %3").arg(refId).arg(tag).arg(value));
+    return true;
+}
+
+bool SketchModel::setBlockDynValue(int refId, const QString& name, double value) {
+    auto it = find(refId);
+    if (it == elems_.end() || it->type != ElementType::BlockRef) {
+        log(QStringLiteral("动态参数设置失败：图元 #%1 不是块引用").arg(refId), "warn");
+        return false;
+    }
+    // 值域钳制（若该参数声明了范围）
+    if (const BlockDef* d = findBlockDef(it->blockName)) {
+        for (const auto& p : d->dynParams) {
+            if (p.name != name) continue;
+            if (p.maxValue > p.minValue)
+                value = std::min(std::max(value, p.minValue), p.maxValue);
+            break;
+        }
+    }
+    pushMemento(QStringLiteral("设置动态参数 ") + name);
+    it = find(refId);
+    bool found = false;
+    for (auto& dv : it->dynValues) if (dv.name == name) { dv.value = value; found = true; break; }
+    if (!found) it->dynValues.push_back(BlockDynValue{name, value, QString()});
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("块 #%1 动态参数 %2 = %3").arg(refId).arg(name).arg(value, 0, 'f', 3));
+    return true;
+}
+
+bool SketchModel::setBlockDynState(int refId, const QString& name, const QString& state) {
+    auto it = find(refId);
+    if (it == elems_.end() || it->type != ElementType::BlockRef) {
+        log(QStringLiteral("可见性状态设置失败：图元 #%1 不是块引用").arg(refId), "warn");
+        return false;
+    }
+    // 状态必须已在该可见性参数中声明
+    bool declared = false;
+    if (const BlockDef* d = findBlockDef(it->blockName)) {
+        for (const auto& p : d->dynParams) {
+            if (p.name != name || p.type != DynParamType::Visibility) continue;
+            for (const auto& s : p.states) if (s.name == state) { declared = true; break; }
+            break;
+        }
+    }
+    if (!declared) {
+        log(QStringLiteral("可见性参数 %1 未声明状态「%2」").arg(name, state), "warn");
+        return false;
+    }
+    pushMemento(QStringLiteral("切换可见性状态 ") + state);
+    it = find(refId);
+    bool found = false;
+    for (auto& dv : it->dynValues) if (dv.name == name) { dv.state = state; found = true; break; }
+    if (!found) it->dynValues.push_back(BlockDynValue{name, 0.0, state});
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("块 #%1 可见性 %2 = %3").arg(refId).arg(name).arg(state));
+    return true;
+}
+
+std::vector<BlockAttrValue> SketchModel::extractBlockAttributes(int refId) const {
+    const Element* r = element(refId);
+    if (!r || r->type != ElementType::BlockRef) return {};
+    return block::extractAttributes(*r, blocks_);
+}
+
+QJsonArray SketchModel::blocksToJson() const {
+    QJsonArray arr;
+    for (const auto& d : blocks_) arr.append(block::blockDefToJson(d));
+    return arr;
+}
+
+void SketchModel::setBlocksFromJson(const QJsonArray& arr) {
+    blocks_.clear();
+    for (const auto& v : arr) {
+        BlockDef d = block::blockDefFromJson(v.toObject());
+        if (!d.name.trimmed().isEmpty()) blocks_.push_back(std::move(d));
+    }
+    emit blocksChanged();
+}
+
 void SketchModel::setChainLine(bool b) {
     if (chainLine_ == b) return;
     chainLine_ = b;
@@ -1003,27 +1302,27 @@ void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged
 
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_;
     redoStack_.push_back(std::move(rb));
     auto m = undoStack_.back(); undoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已撤销: ") + m.label);
 }
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_;
     undoStack_.push_back(std::move(rb));
     auto m = redoStack_.back(); redoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已重做: ") + m.label);
 }
@@ -1064,8 +1363,9 @@ void SketchModel::clear() {
     pushMemento(QStringLiteral("清空"));
     elems_.clear(); selectedIds_.clear(); selectedId_ = -1;
     layers_.clear(); layers_.push_back(Layer(QStringLiteral("0")));   // 新建图纸只留默认层
+    blocks_.clear();                                                  // 新建图纸不保留块定义
     currentLayer_ = QStringLiteral("0");                              // 新建图纸活动层回落默认层
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged();
     emit currentLayerChanged(currentLayer_);
 }
 

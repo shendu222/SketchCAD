@@ -40,6 +40,9 @@ public:
     // 当前绘图比例（图形:实物）。标注的数字必须写**实物尺寸**，而 el.pts 是图纸坐标，
     // 故绘制标注时要用它把比例除回去；由 GraphicsView::rebuild() 从模型注入。
     double dimScale = 1.0;
+    // 块引用展开所需的块表（模型持有）。仅当 el.type == BlockRef 时被使用；
+    // 为 nullptr 时块引用不绘制（渲染入口新图元/预览场景不会遇到块引用）。
+    const SketchModel* model = nullptr;
     std::vector<Element> guides;
 
     explicit ElementItem(const Element& e) : el(e) { setData(0, e.id); }
@@ -64,6 +67,13 @@ private:
     void   paintDimension(QPainter* p, const Element& e) const;  // GB/T 4458.4-2003
     void   paintText(QPainter* p, const Element& e) const;       // 文本图元（标题栏栏目等）
     void   paintHatch(QPainter* p, const Element& e) const;      // 剖面区域（GB/T 4457.5-2013）
+    // 块引用：把引用按块表展开为世界坐标子图元（无模型/未定义块 → 空）
+    std::vector<Element> expandedBlock() const;
+    void   paintBlockRef(QPainter* p, const Element& e) const;
+    QPainterPath blockPath(const Element& e) const;              // 展开后各子图元路径的并
+    // 由图元推导画笔（颜色/线宽/线型；预览与高亮的覆盖一并处理）。
+    // 抽取出来是为了让"块引用内的子图元"与"独立图元"走**同一套**笔参数，观感完全一致。
+    QPen   penFor(const Element& e) const;
 };
 
 // 图形区：工作平面、网格、坐标系、平移缩放、绘制交互、选中

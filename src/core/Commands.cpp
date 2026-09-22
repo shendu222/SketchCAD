@@ -1654,6 +1654,267 @@ bool LayerCommand::execute(const CommandContext& ctx) {
 }
 
 // ============================================================
+// 块（Block）命令族
+// ============================================================
+
+namespace {
+// 选择集的世界包围盒（用于 block create 未指定基点时的默认基点 = 包围盒中心）
+bool selectionBounds(SketchModel* m, QRectF& out) {
+    bool any = false;
+    double x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+    for (int id : m->selection()) {
+        const Element* e = m->element(id);
+        if (!e) continue;
+        const QRectF b = geo::elementBounds(*e);
+        if (b.isNull()) continue;
+        x0 = std::min(x0, b.left());  y0 = std::min(y0, b.top());
+        x1 = std::max(x1, b.right()); y1 = std::max(y1, b.bottom());
+        any = true;
+    }
+    if (!any) return false;
+    out = QRectF(x0, y0, x1 - x0, y1 - y0);
+    return true;
+}
+} // namespace
+
+bool BlockCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    const QStringList& t = ctx.toks;
+    const QString cmd = t[0].toLower();
+
+    // ---------------- attdef：为块定义追加属性定义 ----------------
+    if (cmd == "attdef") {
+        if (t.size() < 3) {
+            m->log("用法: attdef <块名> <标签> [提示] [x,y] [字高]", "warn");
+            return false;
+        }
+        BlockDef* d = m->findBlockDef(t[1]);
+        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[1]), "warn"); return false; }
+        AttributeDef a;
+        a.tag = t[2];
+        for (const auto& e : d->attdefs)
+            if (e.tag == a.tag) { m->log(QStringLiteral("属性 %1 已存在").arg(a.tag), "warn"); return false; }
+        if (t.size() >= 4) a.prompt = t[3];
+        a.defaultValue = a.tag;                       // 默认值 = 标签（便于插入后立即辨认）
+        Vec3 pos(0, 0, 0);
+        if (t.size() >= 5) { Vec3 p; if (CommandContext::tryParsePoint(t[4], p)) pos = p; }
+        a.pos = pos;
+        if (t.size() >= 6) { bool ok; double h = t[5].toDouble(&ok); if (ok) a.height = h; }
+        // 通过整份定义替换触发一次可撤销写入
+        BlockDef copy = *d;
+        copy.attdefs.push_back(a);
+        m->redefineBlock(copy);
+        m->log(QStringLiteral("块 %1 已新增属性定义 %2（位置 %3,%4，字高 %5）")
+                   .arg(t[1]).arg(a.tag).arg(a.pos.x, 0, 'f', 1).arg(a.pos.y, 0, 'f', 1)
+                   .arg(a.height, 0, 'f', 1));
+        return true;
+    }
+
+    // ---------------- attedit：编辑某引用的属性值 ----------------
+    if (cmd == "attedit") {
+        if (t.size() < 4) {
+            m->log("用法: attedit <引用id> <标签> <值>", "warn");
+            return false;
+        }
+        bool ok; const int id = t[1].toInt(&ok);
+        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+        // 值可含空格：从 t[3] 起拼接
+        QString value = t[3];
+        for (int i = 4; i < t.size(); ++i) value += QStringLiteral(" ") + t[i];
+        return m->setBlockAttribute(id, t[2], value);
+    }
+
+    // ---------------- attlist：属性提取 ----------------
+    if (cmd == "attlist") {
+        auto show = [&](int id) {
+            const auto attrs = m->extractBlockAttributes(id);
+            if (attrs.empty()) return;
+            QString line = QStringLiteral("块引用 #%1 属性: ").arg(id);
+            for (const auto& a : attrs)
+                line += QStringLiteral("[%1=%2] ").arg(a.tag, a.value);
+            m->log(line);
+        };
+        if (t.size() >= 2) {
+            bool ok; const int id = t[1].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+            show(id);
+            return true;
+        }
+        int n = 0;
+        for (const auto& e : m->elements()) {
+            if (e.type != ElementType::BlockRef) continue;
+            show(e.id);
+            ++n;
+        }
+        if (n == 0) m->log(QStringLiteral("当前图纸没有块引用"), "warn");
+        else        m->log(QStringLiteral("属性提取完成：%1 个块引用").arg(n));
+        return true;
+    }
+
+    // ---------------- dynset：设置动态参数值 / 可见性状态 ----------------
+    if (cmd == "dynset") {
+        if (t.size() < 4) {
+            m->log("用法: dynset <引用id> <参数名> <值|状态名>", "warn");
+            return false;
+        }
+        bool ok; const int id = t[1].toInt(&ok);
+        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+        const QString pname = t[2];
+        const QString vraw  = t[3];
+        // 优先按数值解释；若该参数是可见性（或数值解析失败且有同名状态），则按状态名处理
+        bool numOk = false;
+        const double num = vraw.toDouble(&numOk);
+        const Element* ref = m->element(id);
+        bool isVis = false;
+        QString stateForVis;
+        if (ref && ref->type == ElementType::BlockRef) {
+            if (const BlockDef* d = m->findBlockDef(ref->blockName)) {
+                for (const auto& p : d->dynParams) {
+                    if (p.name != pname) continue;
+                    if (p.type == DynParamType::Visibility) { isVis = true; stateForVis = vraw; }
+                    break;
+                }
+            }
+        }
+        if (isVis) return m->setBlockDynState(id, pname, stateForVis);
+        if (!numOk) {
+            m->log(QStringLiteral("参数值「%1」既不是数值、也不是已声明的可见性状态").arg(vraw), "warn");
+            return false;
+        }
+        return m->setBlockDynValue(id, pname, num);
+    }
+
+    // ---------------- dynlist：列出块定义的动态参数 ----------------
+    if (cmd == "dynlist") {
+        if (t.size() < 2) { m->log("用法: dynlist <块名>", "warn"); return false; }
+        const BlockDef* d = m->findBlockDef(t[1]);
+        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[1]), "warn"); return false; }
+        if (d->dynParams.empty()) { m->log(QStringLiteral("块 %1 没有动态参数").arg(t[1])); return true; }
+        for (const auto& p : d->dynParams) {
+            QString s = QStringLiteral("动态参数 %1（%2）：影响 %3 个图元 默认 %4")
+                            .arg(p.name, QString::fromUtf8(dynParamTypeName(p.type)))
+                            .arg(p.affected.size()).arg(p.defaultValue, 0, 'f', 2);
+            if (p.type == DynParamType::Visibility) {
+                s += QStringLiteral(" 状态[");
+                for (const auto& st : p.states) s += st.name + QStringLiteral(" ");
+                s += QStringLiteral("]");
+            }
+            m->log(s);
+        }
+        return true;
+    }
+
+    // ---------------- block 子命令 ----------------
+    if (t.size() < 2) {
+        m->log("用法: block <create|insert|list|info|redefine|explode|delete|rename> ...", "warn");
+        return false;
+    }
+    const QString sub = t[1].toLower();
+
+    if (sub == "list") {
+        if (m->blockCount() == 0) { m->log(QStringLiteral("当前没有块定义")); return true; }
+        QString s = QStringLiteral("块表(%1): ").arg(m->blockCount());
+        for (const auto& d : m->blockTable())
+            s += QStringLiteral("[%1 图元%2 属性%3 参数%4] ")
+                     .arg(d.name).arg(d.entities.size()).arg(d.attdefs.size()).arg(d.dynParams.size());
+        m->log(s);
+        return true;
+    }
+
+    if (sub == "info") {
+        if (t.size() < 3) { m->log("用法: block info <块名>", "warn"); return false; }
+        const BlockDef* d = m->findBlockDef(t[2]);
+        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[2]), "warn"); return false; }
+        m->log(QStringLiteral("块 %1：基点(%2,%3)，块内 %4 个图元，属性 %5，动态参数 %6%7")
+                   .arg(d->name).arg(d->basePoint.x, 0, 'f', 2).arg(d->basePoint.y, 0, 'f', 2)
+                   .arg(d->entities.size()).arg(d->attdefs.size()).arg(d->dynParams.size())
+                   .arg(d->description.isEmpty() ? QString() : QStringLiteral(" 说明：") + d->description));
+        for (const auto& a : d->attdefs)
+            m->log(QStringLiteral("  属性 %1（%2）默认=%3 @(%4,%5) 字高%6")
+                       .arg(a.tag, a.prompt, a.defaultValue)
+                       .arg(a.pos.x, 0, 'f', 1).arg(a.pos.y, 0, 'f', 1).arg(a.height, 0, 'f', 1));
+        return true;
+    }
+
+    if (sub == "create") {
+        if (t.size() < 3) {
+            m->log("用法: block create <块名> [基点x,y] [delete|keep]（delete 默认：用块引用替换原图元）", "warn");
+            return false;
+        }
+        const QString name = t[2];
+        bool baseSet = false, deleteSource = true;
+        Vec3 base(0, 0, 0);
+        for (int i = 3; i < t.size(); ++i) {
+            const QString a = t[i].toLower();
+            if (a == "delete") { deleteSource = true;  continue; }
+            if (a == "keep")   { deleteSource = false; continue; }
+            Vec3 p;
+            if (CommandContext::tryParsePoint(t[i], p)) { base = p; baseSet = true; }
+        }
+        if (!baseSet) {
+            QRectF b;
+            if (selectionBounds(m, b)) base = Vec3(b.center().x(), b.center().y(), 0);
+        }
+        const bool existed = m->hasBlock(name);
+        const int refId = m->createBlockFromSelection(name, base, deleteSource);
+        if (!existed && m->hasBlock(name)) {
+            m->log(QStringLiteral("块 %1 创建成功（基点 %2,%3%4）")
+                       .arg(name).arg(base.x, 0, 'f', 2).arg(base.y, 0, 'f', 2)
+                       .arg(deleteSource ? QStringLiteral("，已放置块引用") : QString()));
+            (void)refId;
+            return true;
+        }
+        return false;
+    }
+
+    if (sub == "redefine") {
+        if (t.size() < 3) { m->log("用法: block redefine <块名>（用当前选择集替换块内几何）", "warn"); return false; }
+        return m->redefineBlockFromSelection(t[2]);
+    }
+
+    if (sub == "insert") {
+        if (t.size() < 4) {
+            m->log("用法: block insert <块名> <x,y> [旋转角] [sx] [sy]", "warn");
+            return false;
+        }
+        Vec3 pos;
+        if (!CommandContext::tryParsePoint(t[3], pos)) {
+            m->log(QStringLiteral("无效插入点: %1").arg(t[3]), "warn");
+            return false;
+        }
+        double rot = 0, sx = 1, sy = 1;
+        if (t.size() >= 5) {
+            bool ok; const double v = t[4].toDouble(&ok);
+            if (!ok) { m->log(QStringLiteral("无效旋转角: %1").arg(t[4]), "warn"); return false; }
+            rot = v;
+        }
+        if (t.size() >= 6) { bool ok; const double v = t[5].toDouble(&ok); if (ok) sx = v; }
+        if (t.size() >= 7) { bool ok; const double v = t[6].toDouble(&ok); if (ok) sy = v; }
+        return m->insertBlock(t[2], pos, rot, sx, sy) >= 0;
+    }
+
+    if (sub == "explode") {
+        if (t.size() < 3) { m->log("用法: block explode <引用id>", "warn"); return false; }
+        bool ok; const int id = t[2].toInt(&ok);
+        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[2]), "warn"); return false; }
+        return !m->explodeBlockRef(id).empty();
+    }
+
+    if (sub == "delete") {
+        if (t.size() < 3) { m->log("用法: block delete <块名>", "warn"); return false; }
+        return m->removeBlock(t[2]);
+    }
+
+    if (sub == "rename") {
+        if (t.size() < 4) { m->log("用法: block rename <旧名> <新名>", "warn"); return false; }
+        return m->renameBlock(t[2], t[3]);
+    }
+
+    m->log(QStringLiteral("未知块命令: block %1").arg(sub), "warn");
+    return false;
+}
+
+// ============================================================
 // 飞机三面图（航空制图模板）
 // ============================================================
 
@@ -1703,6 +1964,12 @@ bool HelpCommand::execute(const CommandContext& ctx) {
     m->log("图层: layer add <名称> [颜色] [线宽] [线型] / layer delete <名称> / layer rename <旧> <新>");
     m->log("      layer visible <名称> [on|off] / layer lock <名称> [on|off] / layer set <名称> <color|width|style> <值>");
     m->log("      layer assign <名称>（选中图元移入该层） / layer apply <名称>（图层样式套用到本层图元） / layer list");
+    m->log("块: block create <块名> [基点x,y] [delete|keep]（从选择集建块，delete=用块引用替换原图元）");
+    m->log("      block insert <块名> <x,y> [旋转] [sx] [sy] / block list / block info <块名>");
+    m->log("      block redefine <块名>（用当前选择集重定义块，所有引用同步） / block explode <引用id>");
+    m->log("      block delete <块名> / block rename <旧名> <新名>");
+    m->log("属性块: attdef <块名> <标签> [提示] [x,y] [字高] / attedit <引用id> <标签> <值> / attlist [引用id]");
+    m->log("动态块: dynset <引用id> <参数名> <值|状态名> / dynlist <块名>");
     m->log("点格式: x,y 或 x y 或 x,y,z（单位 mm，Y 轴向上为正）");
     return true;
 }
@@ -1836,6 +2103,17 @@ void CommandRegistry::registerBuiltins() {
 
     // ---- 图层管理 ----
     registerExact("layer", std::make_shared<LayerCommand>());
+
+    // ---- 块（Block）命令族：块定义 / 插入 / 重定义 / 分解 / 属性块 / 动态块 ----
+    {
+        auto blk = std::make_shared<BlockCommand>();
+        registerExact("block",   blk);   // block create|insert|list|info|redefine|explode|delete|rename
+        registerExact("attdef",  blk);   // 属性定义（属性块）
+        registerExact("attedit", blk);   // 属性值编辑
+        registerExact("attlist", blk);   // 属性提取
+        registerExact("dynset",  blk);   // 动态参数赋值 / 可见性状态切换
+        registerExact("dynlist", blk);   // 动态参数列表
+    }
 
     // ---- 样条子模式（前缀分派：绘制 spline_parabola/spline_hyperbola/
     //      spline_parabola_4p/spline_parabola_fd/spline_through_points，

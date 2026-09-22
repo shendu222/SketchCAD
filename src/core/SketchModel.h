@@ -9,6 +9,7 @@
 #include "LineStyleConfig.h"
 #include "DimStyle.h"
 #include "Layer.h"
+#include "Block.h"
 
 namespace SketchCAD {
 
@@ -153,6 +154,47 @@ public:
     QJsonArray layersToJson() const;
     void setLayersFromJson(const QJsonArray& arr);
 
+    // ---- 块（Block）管理 ----
+    // 采用「引用式」：块表存唯一一份 BlockDef；元素 BlockRef 只存块名 + 插入变换 +
+    // 属性值 + 动态参数值。因此"块内图元被修改后同步更新所有引用"= 改一份定义即可，
+    // 无需任何反向推送（所有引用在渲染/命中/导出时按定义实时展开）。
+    int blockCount() const { return (int)blocks_.size(); }
+    const std::vector<BlockDef>& blockTable() const { return blocks_; }
+    const BlockDef* findBlockDef(const QString& name) const;
+    BlockDef*       findBlockDef(const QString& name);
+    bool hasBlock(const QString& name) const { return findBlockDef(name) != nullptr; }
+    // 新增块定义：空名 / 重名 / 与保留名冲突 → false。
+    bool addBlockDef(const BlockDef& def);
+    // 用当前选择集创建块定义：以 basePt 为基点收进定义。
+    //   deleteSource=true  → 删除原图元并在 basePt 放置一个块引用（AutoCAD BLOCK 语义），返回引用 id；
+    //   deleteSource=false → 保留原图元、不放置引用，返回 -1。
+    int  createBlockFromSelection(const QString& name, const Vec3& basePt,
+                                  bool deleteSource, const QString& description = QString());
+    // 用当前选择集重定义已有块：替换其块内图元，所有引用立即同步为新几何。
+    bool redefineBlockFromSelection(const QString& name);
+    // 直接替换块定义（名字保持不变；不存在则视为新增）。引用同步更新。
+    bool redefineBlock(const BlockDef& def);
+    bool removeBlock(const QString& name);          // 删除块定义（引用将退化为"未定义"不绘制）
+    bool renameBlock(const QString& oldName, const QString& newName);  // 同步更新所有引用的块名
+    // 插入块引用：返回新图元 id（块不存在 → -1）。
+    int  insertBlock(const QString& name, const Vec3& pos,
+                     double rotationDeg = 0.0, double sx = 1.0, double sy = 1.0);
+    // 展开块引用为世界坐标子图元（渲染 / 命中 / 导出共用）。非块引用或块未定义 → 空。
+    std::vector<Element> expandBlockRef(const Element& ref) const;
+    // 分解：把块引用 refId 替换为其展开所得的真实图元（可一次 Ctrl+Z 回滚）。返回新图元 id 列表。
+    std::vector<int> explodeBlockRef(int refId);
+    // 属性编辑：设置实例的某属性值（tag 不存在则追加）。常量属性拒绝修改。
+    bool setBlockAttribute(int refId, const QString& tag, const QString& value);
+    // 动态参数：设置数值（拉伸距离 / 旋转角 / 翻转 0|1）
+    bool setBlockDynValue(int refId, const QString& name, double value);
+    // 动态参数：设置可见性状态名（须是该参数已声明的状态之一）
+    bool setBlockDynState(int refId, const QString& name, const QString& state);
+    // 属性提取：返回某引用的全部属性（含不可见属性；定义中存在而实例缺失的取默认值）。
+    std::vector<BlockAttrValue> extractBlockAttributes(int refId) const;
+    // 序列化：块表 <-> JSON 数组（写档/读档；旧文件无此字段则不加载任何块）
+    QJsonArray blocksToJson() const;
+    void setBlocksFromJson(const QJsonArray& arr);
+
     // ---- 当前活动图层（绘制目标层）----
     // 新创建的图元自动归属此层并继承其属性；默认 "0"。
     // 切换活动层只改变"新图元去哪一层 + 继承哪层属性"，不改动任何已有图元，
@@ -274,9 +316,10 @@ signals:
     void scaleChanged(double ratio);
     void layersChanged();                    // 图层表增删/改名/样式/可见性变化
     void currentLayerChanged(const QString& name);   // 活动图层切换（用于 HUD 实时显示 / 面板高亮）
+    void blocksChanged();                    // 块表增删/改名/重定义变化（引用需重绘）
 
 private:
-    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; };
+    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; };
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
@@ -295,6 +338,7 @@ private:
     QString commandPrompt_;    // 当前分段命令提示文本
     std::vector<Layer> layers_;   // 图层表（默认含一层 "0"）
     QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"
+    std::vector<BlockDef> blocks_;   // 块表（唯一一份定义，所有 BlockRef 共享）
     Element clipboard_;
     bool hasClip_ = false;
     std::vector<Memento> undoStack_, redoStack_;
@@ -302,6 +346,8 @@ private:
     std::vector<Element>::iterator find(int id);
     // 从种子图元沿「共享端点」连通性收集整条轮廓（selectContour/toggleContour 共用）
     std::vector<int> collectContourIds(int seedId) const;
+    // 图元的世界包围盒：块引用取"展开后子图元"的并集，其余走 geo::elementBounds
+    QRectF boundsOf(const Element& e) const;
 };
 
 } // namespace SketchCAD

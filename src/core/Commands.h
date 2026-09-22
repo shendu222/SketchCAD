@@ -160,6 +160,22 @@ class SelectCommand : public ICommand { public: bool execute(const CommandContex
 // 所有"改属性/显示控制"都只作用于本层图元，其他图层不受影响。
 class LayerCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 块（Block）命令族 ----
+// 单一类按 ctx.cmd 分派（与 ModifyCommand / SelectCommand 同构）：
+//   block create <块名> [基点x,y] [delete|keep]  从当前选择集创建块定义（delete=用引用替换原图元）
+//   block insert <块名> <x,y> [旋转] [sx] [sy]   插入块引用
+//   block list                                    列出所有块定义
+//   block info <块名>                             打印块定义详情（图元数/属性/动态参数）
+//   block redefine <块名>                         用当前选择集重定义块（所有引用同步）
+//   block explode <引用id>                        把块引用分解为独立图元
+//   block delete <块名> / block rename <旧名> <新名>
+//   attdef  <块名> <标签> [提示] [x,y] [字高]      为块定义追加属性定义（属性块）
+//   attedit <引用id> <标签> <值>                   编辑块引用的属性值
+//   attlist [引用id]                               属性提取：无 id 时列出全部引用的属性
+//   dynset  <引用id> <参数名> <值|状态名>          设置动态参数（数值或可见性状态）
+//   dynlist <块名>                                 列出块定义的动态参数
+class BlockCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
 // ---- 飞机三面图（航空制图模板）----
 class AircraftViewsCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 

@@ -101,6 +101,18 @@ Element ElementFactory::createText(const Vec3& pos, const QString& text, double 
     return e;
 }
 
+Element ElementFactory::createBlockRef(const QString& blockName, const Vec3& insertPos,
+                                       double rotationDeg, double sx, double sy,
+                                       const SketchModel* model) {
+    Element e = create(ElementType::BlockRef, blockName, model);
+    e.blockName = blockName;
+    e.pts = {insertPos};
+    e.rotation = rotationDeg;
+    e.scaleX = sx;
+    e.scaleY = sy;
+    return e;
+}
+
 // ---- 引导线 ----
 
 Element ElementFactory::createGuideLine(const Vec3& a, const Vec3& b) {

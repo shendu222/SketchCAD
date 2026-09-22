@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
         QStringLiteral("偏移..."), QStringLiteral("倒角..."), QStringLiteral("圆角..."),
         QStringLiteral("等分..."), QStringLiteral("拉伸..."),
         QStringLiteral("属性..."), QStringLiteral("属性模板..."), QStringLiteral("文本分解为字..."),
-        QStringLiteral("分解"), QStringLiteral("删除"),
+        QStringLiteral("分解"), QStringLiteral("删除"), QStringLiteral("块(B)"),
     };
     QStringList actual;
     for (QAction* a : mod->actions())

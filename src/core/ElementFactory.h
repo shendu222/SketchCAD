@@ -42,6 +42,14 @@ public:
     static Element createText(const Vec3& pos, const QString& text, double heightMm,
                               const QColor& color = QColor(26, 29, 40));
 
+    // 块引用（BlockRef）：只创建"引用骨架"（块名 + 插入点/旋转/缩放）。
+    // 属性默认值与动态参数默认值需由调用方从块定义补全 —— 常规路径请用
+    // SketchModel::insertBlock()（它会调 block::makeRef 一并填好），本方法供
+    // 反序列化 / 测试等已持有完整字段的场景使用。
+    static Element createBlockRef(const QString& blockName, const Vec3& insertPos,
+                                  double rotationDeg, double sx, double sy,
+                                  const SketchModel* model);
+
     // ---- 引导线（预览辅助线，不套样式）----
     static Element createGuideLine(const Vec3& a, const Vec3& b);
     static Element createGuideCircle(const Vec3& center, double radius);

@@ -310,8 +310,20 @@ double distanceToElement(const Element& e, const Vec3& p) {
             for (const auto& h : e.holes) best = std::min(best, distPolyline(h, p, true));
             return best;
         }
+
+        case ElementType::BlockRef:
+            // 块引用的精确命中需要块表（本函数是纯几何、无模型依赖），故由调用方
+            // （GraphicsView::hitTest）展开后走 distanceToElements；这里返回到插入点的
+            // 距离作为兜底，保证"未定义块"仍可被近距选中。
+            return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
     }
     return kBig;
+}
+
+double distanceToElements(const std::vector<Element>& es, const Vec3& p) {
+    double best = kBig;
+    for (const auto& e : es) best = std::min(best, distanceToElement(e, p));
+    return best;
 }
 
 // ============================ 直线极坐标属性 ============================

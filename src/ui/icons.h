@@ -722,6 +722,12 @@ inline void paintGlyph(QPainter& g, const QString& id)
         return;
     }
 
+    if (id == "block") {                        // 块：外框方块 + 内部小方块（定义 + 实例）
+        g.drawRect(QRectF(3.5, 3.5, 17, 17));
+        g.drawRect(QRectF(10.0, 10.0, 7, 7));
+        return;
+    }
+
     // 兜底：画个空心方块，避免"看不见的按钮"
     g.drawRect(QRectF(5.5, 5.5, 13, 13));
 }

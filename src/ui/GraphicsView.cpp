@@ -299,6 +299,10 @@ QPainterPath ElementItem::buildPath(const Element& e) {
         case ElementType::Text:
             break;   // 文本本身由 paintText 绘制，几何包围盒在 rawBounds 里按文字尺寸展开
 
+        case ElementType::BlockRef:
+            // 块引用自身没有几何：展开后的子路径由 blockPath()（shape）与 paintBlockRef 处理
+            break;
+
         case ElementType::Hatch: {
             // 剖面区域：外边界 + 内孔（子路径）。采用 OddEvenFill，使内孔被掏空
             // （带孔剖面如法兰螺栓孔即靠此正确留白）。实际剖面线绘制见 paintHatch。
@@ -360,6 +364,18 @@ QRectF ElementItem::rawBounds(const Element& e) const {
         grow(Vec3(e.pts[0].x,           e.pts[0].y - thh * 0.5, 0));
         grow(Vec3(e.pts[0].x + tw,      e.pts[0].y + thh * 0.5, 0));
     }
+    // 块引用：几何范围来自"展开后的子图元并集"（而非插入点）。
+    // 展开结果一定是基础图元（嵌套块已在 block::expandRef 内递归展开），不会自我递归。
+    if (e.type == ElementType::BlockRef) {
+        for (const auto& sub : expandedBlock()) {
+            if (sub.type == ElementType::BlockRef) continue;
+            const QRectF sb = rawBounds(sub);
+            if (!has) { r = sb; has = true; }
+            else { r = r.united(sb); }
+        }
+        // 未定义块 / 空块：退化为插入点，保证仍可被选中
+        if (!has && !e.pts.empty()) { r = QRectF(e.pts[0].x, e.pts[0].y, 0, 0); has = true; }
+    }
     if (!has) r = QRectF(-1, -1, 2, 2);
     if (r.width()  < 1e-6) r.adjust(-1e-3, 0, 1e-3, 0);
     if (r.height() < 1e-6) r.adjust(0, -1e-3, 0, 1e-3);
@@ -390,6 +406,19 @@ QPainterPath ElementItem::shape() const {
         st.setWidth(std::max(mmToScreenPx(el.effectiveLineWidth()) + 2.0, 5.0) / z);
         return p.united(st.createStroke(p));
     }
+    if (el.type == ElementType::BlockRef) {
+        // 块引用以「展开后所有子图元路径的并 ∪ 描边」作为命中范围：
+        // 点块内任一图形都能选中整个块（与 AutoCAD 选块一致）
+        const QPainterPath p = blockPath(el);
+        if (p.isEmpty()) {
+            QPainterPath d;
+            if (!el.pts.empty()) d.addEllipse(qpt(el.pts[0]), 7.0 / z, 7.0 / z);
+            return d;
+        }
+        QPainterPathStroker st;
+        st.setWidth(std::max(mmToScreenPx(el.effectiveLineWidth()), 7.0) / z);
+        return p.united(st.createStroke(p));
+    }
     QPainterPath p = buildPath(el);
     if (p.isEmpty()) {
         QPainterPath d;
@@ -414,26 +443,32 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
         for (const auto& g : guides) paintOne(p, g);
     }
 
-    QPen pen(preview ? PREVIEW : (highlight ? HL : el.color));
+    p->setPen(penFor(el));
+    paintOne(p, el);
+}
+
+// 由图元推导画笔。预览固定虚线；正式图元按 GB/T 14665-2012 4.2 用线素公式设置
+// dash pattern（单位 = 线宽 d），并按 4.4 相位对齐；短于最小长度回落细实线；
+// 波浪线/双折线由 buildPath 自定义路径绘制，这里用实线笔（避免叠加虚线）。
+// 抽取为独立函数：块引用内的子图元复用同一套笔参数，观感与独立图元完全一致。
+QPen ElementItem::penFor(const Element& e) const {
+    QPen pen(preview ? PREVIEW : (highlight ? HL : e.color));
     pen.setCosmetic(true);                       // 线宽按屏幕像素固定，缩放不改变视觉粗细
-    const double effW = el.effectiveLineWidth(); // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
+    const double effW = e.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
     const double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
     pen.setWidthF(preview ? std::max(1.0, wpx)
                           : (highlight ? wpx + 1.2 : wpx));
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
-    // 线型：预览固定虚线；正式图元按 GB/T 14665-2012 4.2 用线素公式设置 dash pattern
-    // （单位 = 线宽 d），并按 4.4 相位对齐；短于最小长度回落细实线；
-    // 波浪线/双折线由 buildPath 自定义路径绘制，这里用实线笔（避免叠加虚线）。
     if (preview) {
         pen.setStyle(Qt::DashLine);
-    } else if (el.lineStyle == LineStyle::Wave || el.lineStyle == LineStyle::DoubleBreak) {
+    } else if (e.lineStyle == LineStyle::Wave || e.lineStyle == LineStyle::DoubleBreak) {
         pen.setStyle(Qt::SolidLine);
         pen.setCapStyle(Qt::FlatCap);
     } else {
-        const DashSpec spec = dashSpecFor(el.lineStyle);
-        const double lenMm = worldLengthOf(el);
-        if (spec.valid && !shouldFallbackToSolid(el.lineStyle, lenMm, effW)) {
+        const DashSpec spec = dashSpecFor(e.lineStyle);
+        const double lenMm = worldLengthOf(e);
+        if (spec.valid && !shouldFallbackToSolid(e.lineStyle, lenMm, effW)) {
             pen.setStyle(Qt::CustomDashLine);
             QVector<qreal> pat;
             pat.reserve((int)spec.pattern.size());
@@ -442,13 +477,41 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
             pen.setDashOffset(dashPhaseOffset(lenMm, effW, spec));
             pen.setCapStyle(Qt::FlatCap);
         } else {
-            const Qt::PenStyle ps = toPenStyle(el.lineStyle);
+            const Qt::PenStyle ps = toPenStyle(e.lineStyle);
             pen.setStyle(ps);
             pen.setCapStyle(ps == Qt::SolidLine ? Qt::FlatCap : Qt::RoundCap);
         }
     }
-    p->setPen(pen);
-    paintOne(p, el);
+    return pen;
+}
+
+// 块引用：把引用按块表展开为世界坐标子图元（无模型 / 未定义块 → 空）
+std::vector<Element> ElementItem::expandedBlock() const {
+    if (!model || el.type != ElementType::BlockRef) return {};
+    return model->expandBlockRef(el);
+}
+
+// 块引用的命中/取景路径：展开后各子图元路径的并（文本以矩形代替其字形路径）
+QPainterPath ElementItem::blockPath(const Element& e) const {
+    QPainterPath total;
+    (void)e;
+    for (const auto& sub : expandedBlock()) {
+        if (sub.type == ElementType::BlockRef) continue;
+        if (sub.type == ElementType::Text) { total.addRect(rawBounds(sub)); continue; }
+        const QPainterPath sp = buildPath(sub);
+        if (!sp.isEmpty()) total.addPath(sp);
+    }
+    return total;
+}
+
+// 绘制块引用：逐个子图元复用 paintOne（即"独立图元怎么画，块内就怎么画"）
+void ElementItem::paintBlockRef(QPainter* p, const Element&) const {
+    p->setBrush(Qt::NoBrush);
+    for (const auto& sub : expandedBlock()) {
+        if (sub.type == ElementType::BlockRef) continue;   // 展开即递归，理论上不出现
+        p->setPen(penFor(sub));
+        paintOne(p, sub);
+    }
 }
 
 void ElementItem::paintOne(QPainter* p, const Element& e) const {
@@ -465,6 +528,7 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
     if (e.type == ElementType::Dimension) { paintDimension(p, e); return; }
     if (e.type == ElementType::Text)      { paintText(p, e); return; }
     if (e.type == ElementType::Hatch)     { paintHatch(p, e); return; }
+    if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e); return; }
 
     const QPainterPath path = buildPath(e);
     if (!path.isEmpty()) p->drawPath(path);
@@ -798,7 +862,20 @@ QRectF GraphicsView::contentBounds() const {
     double x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
     for (const auto& e : model_->elements()) {
         if (!e.visible) continue;
-        const QRectF b = ElementItem::geometryBounds(e);   // 几何范围（不含描边余量，精确取景）
+        QRectF b;
+        if (e.type == ElementType::BlockRef) {
+            // 块引用的几何来自展开后的子图元并集
+            // （geometryBounds 是静态函数、拿不到块表，故在此显式展开）
+            bool got = false;
+            for (const auto& sub : model_->expandBlockRef(e)) {
+                const QRectF sb = ElementItem::geometryBounds(sub);
+                if (sb.isNull()) continue;
+                if (!got) { b = sb; got = true; } else b = b.united(sb);
+            }
+            if (!got && !e.pts.empty()) b = QRectF(e.pts[0].x, e.pts[0].y, 0, 0);
+        } else {
+            b = ElementItem::geometryBounds(e);   // 几何范围（不含描边余量，精确取景）
+        }
         if (b.isNull()) continue;                 // 跳过退化/空包围盒（零面积且零宽高，如空文本）
         x0 = std::min(x0, b.left());  y0 = std::min(y0, b.top());
         x1 = std::max(x1, b.right()); y1 = std::max(y1, b.bottom());
@@ -865,6 +942,7 @@ void GraphicsView::rebuild() {
     for (const auto& e : model_->elements()) {
         if (!e.visible) continue;
         auto* it = new ElementItem(e);
+        it->model = model_;                      // 块引用展开需要块表
         it->highlight = model_->isSelected(e.id);
         it->dimScale = model_->scaleRatio();     // 标注数字按实物尺寸显示
         // GB/T 14665-2012 4.3：重合图线按优先级叠放（可见轮廓最上，尺寸线最下）
@@ -1246,7 +1324,16 @@ int GraphicsView::hitTest(const QPoint& viewPos) const {
     // 逆序遍历：后创建的图元视觉在上层，距离相同时优先选中它
     for (int i = (int)es.size() - 1; i >= 0; --i) {
         if (!es[i].visible) continue;
-        const double d = geo::distanceToElement(es[i], w);
+        double d;
+        if (es[i].type == ElementType::BlockRef) {
+            // 块引用：点块内任一图形都应命中整个块 —— 对展开后的子图元取最小距离
+            const auto subs = model_->expandBlockRef(es[i]);
+            d = subs.empty()
+                    ? (es[i].pts.empty() ? 1e18 : w.distTo(es[i].pts[0]))
+                    : geo::distanceToElements(subs, w);
+        } else {
+            d = geo::distanceToElement(es[i], w);
+        }
         if (d < bestD) { bestD = d; best = es[i].id; }
     }
     return best;
@@ -1256,6 +1343,7 @@ QRectF GraphicsView::elementSceneBounds(const Element& e) const {
     // 复用 ElementItem 的几何包围盒计算（已覆盖标注的尺寸线/界线/引线），
     // 保证「框住即选中」与绘制的几何范围严格一致。
     ElementItem tmp(e);
+    tmp.model = model_;          // 块引用：包围盒须来自展开后的子图元
     return tmp.boundingRect();
 }
 

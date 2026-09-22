@@ -75,6 +75,10 @@ inline DimensionType lineDimType(DimensionType requested) {
 // 点到图元真实几何的最短距离（世界单位）。用于替代「包围盒命中」。
 double distanceToElement(const Element& e, const Vec3& p);
 
+// 点到一组图元的最短距离（取各图元最小值）。块引用命中即对"展开后的子图元集合"
+// 调用本函数：点块内任一图形都能命中整个块。
+double distanceToElements(const std::vector<Element>& es, const Vec3& p);
+
 // ---------- 控制点（端点拖拽 / 捕捉）----------
 // 图元的可拖拽控制点。索引语义按类型固定，setElementHandle 与之严格对应：
 //   直线   [起点, 终点]

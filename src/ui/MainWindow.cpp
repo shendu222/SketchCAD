@@ -30,6 +30,7 @@
 #include "ui/FlangeHubViewsDialog.h"
 #include "ui/FloorPlanViewsDialog.h"
 #include "ui/ArrayDialog.h"
+#include "ui/BlockDialogs.h"
 #include "ui/SectionDialog.h"
 #include "core/Section.h"
 #include "core/SheetSpec.h"
@@ -691,6 +692,12 @@ void MainWindow::buildMenu() {
     mk(mod, QStringLiteral("删除"), QKeySequence::Delete, [this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
 
+    // 块（Block）：把命令行块操作封装为可视化子菜单（与【绘图>块】共用 buildBlockMenu）
+    {
+        QMenu* blk = mod->addMenu(icons::make("block"), QStringLiteral("块(&B)"));
+        buildBlockMenu(blk);
+    }
+
     e->addSeparator();
     // 挂到【编辑】菜单下（不再作为顶级菜单），保持「编辑类功能一个入口」
     e->addMenu(mod);
@@ -825,6 +832,72 @@ void MainWindow::buildMenu() {
     bar->addMenu(h);
 }
 
+// ============================================================================
+// 块（Block）GUI 入口：把命令行 block 操作封装为可视化菜单/对话框
+// ============================================================================
+void MainWindow::buildBlockMenu(QMenu* m) {
+    // 与 buildMenu 中的 mk 等价的局部构造器（buildBlockMenu 是独立成员，复用 mk 不便）
+    auto add = [this](QMenu* menu, const QString& text, const QKeySequence& key,
+                      auto fn, const QString& icon) {
+        QAction* a = menu->addAction(text);
+        if (!key.isEmpty()) a->setShortcut(key);
+        a->setShortcutContext(Qt::ApplicationShortcut);
+        a->setIcon(icons::make(icon));
+        connect(a, &QAction::triggered, this, fn);
+        return a;
+    };
+    add(m, QStringLiteral("创建块..."), QKeySequence("Ctrl+Shift+B"),
+        [this] { openCreateBlockDialog(); }, "block");
+    add(m, QStringLiteral("插入块..."), QKeySequence(),
+        [this] { openInsertBlockDialog(); }, "block");
+    m->addSeparator();
+    add(m, QStringLiteral("块管理器..."), QKeySequence(),
+        [this] { openBlockManagerDialog(); }, "block");
+    add(m, QStringLiteral("分解块..."), QKeySequence(),
+        [this] { explodeBlockFromMenu(); }, "explode");
+}
+
+void MainWindow::openInsertBlockDialog() {
+    InsertBlockDialog dlg(model_, this);
+    dlg.exec();
+}
+
+void MainWindow::openCreateBlockDialog() {
+    if (model_->selection().empty()) {
+        QMessageBox::information(this, QStringLiteral("创建块"),
+            QStringLiteral("请先选中要收进块的图元，再执行「创建块」。"));
+        return;
+    }
+    CreateBlockDialog dlg(model_, this);
+    dlg.exec();
+}
+
+void MainWindow::openBlockManagerDialog() {
+    BlockManagerDialog dlg(model_, this);
+    dlg.exec();
+}
+
+void MainWindow::explodeBlockFromMenu() {
+    // 优先分解当前选中的块引用；多选则逐个分解
+    std::vector<int> refs;
+    for (int id : model_->selection()) {
+        const Element* e = model_->element(id);
+        if (e && e->type == ElementType::BlockRef) refs.push_back(id);
+    }
+    if (refs.empty()) {
+        QMessageBox::information(this, QStringLiteral("分解块"),
+            QStringLiteral("请先选中至少一个块引用（已插入的块），再执行「分解块」。"));
+        return;
+    }
+    int total = 0;
+    for (int id : refs) {
+        auto added = model_->explodeBlockRef(id);
+        total += (int)added.size();
+    }
+    model_->log(QStringLiteral("已分解 %1 个块引用 → %2 个图元")
+                    .arg(refs.size()).arg(total));
+}
+
 // 【绘图】菜单 —— 不新建动作，直接挂载工具条已有的 QAction。
 // 复用带来的直接好处：菜单项与工具条按钮共享 checked 状态、图标、快捷键，
 // 用户从任一入口切换工具，另一处立刻同步高亮，不需要额外写同步代码。
@@ -952,6 +1025,12 @@ void MainWindow::buildSketchMenu(QMenu* m) {
         FloorPlanViewsDialog dlg(model_, this);
         dlg.exec();
     });
+
+    // 块（Block）：创建/插入/管理/分解的可视化入口（与【编辑>修改>块】共用 buildBlockMenu）
+    {
+        QMenu* blk = m->addMenu(icons::make("block"), QStringLiteral("块(&B)"));
+        buildBlockMenu(blk);
+    }
 
     m->addSeparator();
     // 不给它绑 Esc：Esc 已经绑在「选择」工具上，两处都注册会触发 Qt 的
@@ -2180,20 +2259,34 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     for (const auto& e2 : model_->elements()) arr.append(elementToJson(e2));
     root["elements"] = arr;
     root["layers"] = model_->layersToJson();   // 图层表随图存档（旧文件无此字段则读回时回退单层"0"）
+    root["blocks"] = model_->blocksToJson();   // 块表随图存档（旧文件无此字段则读回时无块定义）
+
+    // 导出用图元：DXF/DWG/STEP 都不认识 BlockRef，导出前把块引用展开为其真实子图元，
+    // 保证"导出物即所见"（几何不丢；块引用实例的层级关系仅在本程序 JSON 中保留）。
+    std::vector<Element> exp;
+    exp.reserve(model_->elements().size());
+    for (const auto& e2 : model_->elements()) {
+        if (e2.type == ElementType::BlockRef) {
+            const auto subs = model_->expandBlockRef(e2);
+            exp.insert(exp.end(), subs.begin(), subs.end());
+        } else {
+            exp.push_back(e2);
+        }
+    }
 
     QByteArray out;
     // 把绘图比例传给导出层，保证标注数字导出的是实物尺寸（GB/T 14690）
     const double ds = model_->scaleRatio();
     switch (fmt) {
     case cadfmt::CadFormat::Dxf:
-        out = cadfmt::toDxf(model_->elements(), &e, ds);
+        out = cadfmt::toDxf(exp, &e, ds);
         break;
     case cadfmt::CadFormat::Dwg:
-        out = cadfmt::toDwg(model_->elements(), &e, ds);
+        out = cadfmt::toDwg(exp, &e, ds);
         break;
     case cadfmt::CadFormat::Step: {
         cadfmt::StepStats st;
-        out = cadfmt::toStep(model_->elements(), &st, &e, ds).toUtf8();
+        out = cadfmt::toStep(exp, &st, &e, ds).toUtf8();
         if (st.skippedText > 0 && e.isEmpty())
             e = QStringLiteral("（%1 个文字/标注未随 STEP 导出）").arg(st.skippedText);
         break;
@@ -2304,6 +2397,9 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     // 读回图层表（若有）。必须在 addElementsQuiet 之后、setScaleRatioValue 之前：
     // 图层表不依赖比例；若文件无 layers 字段则回退为单层"0"，不影响旧图兼容。
     model_->setLayersFromJson(root["layers"].toArray());
+    // 读回块表（若有）。块引用图元（type=BlockRef）在渲染/命中时按此表展开，
+    // 因此必须与图元一并读回，否则引用会退化为"未定义块"而不绘制。旧文件无此字段 → 无块定义。
+    model_->setBlocksFromJson(root["blocks"].toArray());
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
@@ -2757,91 +2853,13 @@ void MainWindow::exportDxf() {
 }
 
 QJsonObject MainWindow::elementToJson(const Element& e) {
-    QJsonObject o;
-    o["id"] = e.id; o["type"] = (int)e.type; o["name"] = e.name; o["layer"] = e.layer;
-    o["color"] = e.color.name(); o["lineWidth"] = e.lineWidth; o["lineWidthAuto"] = e.lineWidthAuto; o["lineStyle"] = (int)e.lineStyle; o["radius"] = e.radius;
-    o["startAngle"] = e.startAngle; o["endAngle"] = e.endAngle;
-    o["radiusY"] = e.radiusY;
-    o["rotation"] = e.rotation;
-    o["ctype"] = (int)e.ctype; o["dtype"] = (int)e.dtype;
-    o["closed"] = e.closed;                 // 剪切过的矩形/多边形是开放折线，必须存盘
-    o["splineSubType"] = e.splineSubType;   // 样条子类型（0=Catmull-Rom, 1=抛物线, 2=双曲线）
-    o["text"] = e.text; o["refA"] = e.refA; o["refB"] = e.refB;
-    o["standard"] = (int)e.standard; o["tolUpper"] = e.tolUpper; o["tolLower"] = e.tolLower; o["fitCode"] = e.fitCode;
-    QJsonArray pts;
-    for (const auto& p : e.pts) pts.append(QJsonArray{p.x, p.y, p.z});
-    o["pts"] = pts;
-    // 折线段类型标记（仅 Polyline 写入；空数组也写入以便读端判定）
-    QJsonArray arcs;
-    for (bool a : e.arcFlags) arcs.append(a);
-    o["arcFlags"] = arcs;
-    // 剖面区域（Hatch）专用字段：内孔 / 豁免类别 / 材料类别
-    // （角度复用 rotation、间距复用 radius、线宽复用 lineWidth，已在上方写入）
-    QJsonArray holesArr;
-    for (const auto& h : e.holes) {
-        QJsonArray ring;
-        for (const auto& p : h) ring.append(QJsonArray{p.x, p.y, p.z});
-        holesArr.append(ring);
-    }
-    o["holes"] = holesArr;
-    o["sectionExempt"] = e.sectionExempt;
-    o["sectionMaterial"] = e.sectionMaterial;
-    return o;
+    // 单一实现已下沉到核心层（SketchCAD::elementToJson，见 Element.cpp），
+    // 顶层图纸与块定义内图元共用同一份字段表，避免两处漂移。
+    return ::SketchCAD::elementToJson(e);
 }
 
 Element MainWindow::elementFromJson(const QJsonObject& o) {
-    Element e;
-    e.id = o["id"].toInt();
-    e.type = (ElementType)o["type"].toInt();
-    e.name = o["name"].toString();
-    e.layer = o["layer"].toString();
-    e.color = QColor(o["color"].toString());
-    // 兼容旧存档：没有 lineWidth 字段时回落到 1px，而不是 0（0 在 Qt 里是"最细可见线"，
-    // 语义上可用，但会让属性面板显示成 0，容易被误解为"无线宽"）
-    e.lineWidth = o.contains("lineWidth") ? o["lineWidth"].toDouble(1.0) : 1.0;
-    // 旧存档没有 lineWidthAuto 字段：默认按"手动覆盖"处理，保留老图纸原有的线宽外观，
-    // 不因新机制而让旧图突变为按线型派生的新档位。
-    e.lineWidthAuto = o.contains("lineWidthAuto") ? o["lineWidthAuto"].toBool(false) : false;
-    // 旧存档没有 lineStyle 字段：默认实线(0)，向后兼容
-    e.lineStyle = o.contains("lineStyle") ? (LineStyle)o["lineStyle"].toInt(0) : LineStyle::Solid;
-    e.radius = o["radius"].toDouble();
-    e.startAngle = o["startAngle"].toDouble();
-    e.endAngle = o["endAngle"].toDouble();
-    // 旧存档没有 ellipse 专用字段：默认退化成长轴=短轴=0 的圆
-    e.radiusY = o.contains("radiusY") ? o["radiusY"].toDouble() : e.radius;
-    e.rotation = o.contains("rotation") ? o["rotation"].toDouble() : 0.0;
-    e.ctype = (ConstraintType)o["ctype"].toInt();
-    e.dtype = (DimensionType)o["dtype"].toInt();
-    // 旧存档没有 closed 字段：那时矩形/多边形一律闭合，默认 true 正好向后兼容
-    e.closed = o.contains("closed") ? o["closed"].toBool(true) : true;
-    // 旧存档没有 splineSubType 字段：默认 0（Catmull-Rom），向后兼容
-    e.splineSubType = o.contains("splineSubType") ? o["splineSubType"].toInt(0) : 0;
-    e.text = o["text"].toString();
-    e.refA = o["refA"].toInt();
-    e.refB = o["refB"].toInt();
-    // 旧存档没有 standard 字段：默认 GB/T 4458（国标），向后兼容
-    e.standard = o.contains("standard") ? (DimensionStandard)o["standard"].toInt((int)DimensionStandard::GBT) : DimensionStandard::GBT;
-    e.tolUpper = o["tolUpper"].toDouble();
-    e.tolLower = o["tolLower"].toDouble();
-    e.fitCode  = o["fitCode"].toString();
-    for (const auto& v : o["pts"].toArray()) {
-        QJsonArray a = v.toArray();
-        e.pts.push_back(Vec3(a[0].toDouble(), a[1].toDouble(), a[2].toDouble()));
-    }
-    // 旧存档没有 arcFlags 字段：默认空数组（全部直线段）
-    for (const auto& v : o["arcFlags"].toArray()) e.arcFlags.push_back(v.toBool());
-    // 剖面区域（Hatch）专用字段（旧存档无键时回落默认：无内孔 / 无豁免 / 通用金属）
-    for (const auto& ringVal : o["holes"].toArray()) {
-        std::vector<Vec3> ring;
-        for (const auto& v : ringVal.toArray()) {
-            QJsonArray a = v.toArray();
-            ring.push_back(Vec3(a[0].toDouble(), a[1].toDouble(), a[2].toDouble()));
-        }
-        e.holes.push_back(ring);
-    }
-    e.sectionExempt   = o.contains("sectionExempt")   ? o["sectionExempt"].toInt(0)   : 0;
-    e.sectionMaterial = o.contains("sectionMaterial") ? o["sectionMaterial"].toInt(0) : 0;
-    return e;
+    return ::SketchCAD::elementFromJson(o);
 }
 
 } // namespace SketchCAD

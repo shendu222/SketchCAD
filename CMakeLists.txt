@@ -50,6 +50,7 @@ set(CORE_SOURCES
     src/core/FlangeHubViews.cpp
     src/core/FloorPlanViews.cpp
     src/core/Section.cpp
+    src/core/Block.cpp
     src/core/CadFormats.cpp
 )
 set(UI_SOURCES
@@ -81,6 +82,7 @@ set(UI_SOURCES
     src/ui/FlangeHubViewsDialog.cpp
     src/ui/FloorPlanViewsDialog.cpp
     src/ui/ArrayDialog.cpp
+    src/ui/BlockDialogs.cpp
     src/ui/SectionDialog.cpp
 )
 
@@ -264,6 +266,18 @@ add_executable(LayerCurrentTest
 target_link_libraries(LayerCurrentTest PRIVATE Qt6::Widgets)
 target_include_directories(LayerCurrentTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(LayerCurrentTest PRIVATE -Wall -Wextra)
+
+# ---- 块（Block）功能回归：块定义/插入/重定义同步/动态块/属性块/嵌套/序列化/撤销 ----
+# 核心层，无需 GUI。断言面覆盖：引用式模型的三个推论（几何不复制、重定义一份生效、
+# 展开即世界坐标）、动态参数四类（可见性/拉伸/旋转/翻转）与值域钳制、
+# 属性块的默认值/编辑/提取/不可见/常量语义、嵌套变换复合与自引用环检测、块表往返。
+add_executable(BlockTest
+    tests/block_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(BlockTest PRIVATE Qt6::Widgets)
+target_include_directories(BlockTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(BlockTest PRIVATE -Wall -Wextra)
 
 # ---- 一次性预览：渲染「当前图层」HUD 徽标（非回归测试，人工核对用）----
 add_executable(LayerHudPreview

@@ -1,14 +1,16 @@
 #pragma once
 #include <QString>
 #include <QColor>
+#include <QJsonObject>
+#include <QJsonArray>
 #include <vector>
 #include "Vec.h"
 #include "DimensionStandard.h"
 
 namespace SketchCAD {
 
-enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch };
-// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11）。
+enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef };
+// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12）。
 // 已存盘 .json 文件里存的是整数序号，改顺序会让老文件读出错误类型。
 
 // 线型（GB/T 4457.4-2002 技术制图 图线 → GB/T 14665-2012 4.1 九种线型）
@@ -138,6 +140,7 @@ inline const char* elementTypeName(ElementType t) {
         case ElementType::Polyline:  return "折线";
     case ElementType::Text:      return "文本";
     case ElementType::Hatch:     return "剖面区域";
+    case ElementType::BlockRef:  return "块引用";
     }
     return "未知";
 }
@@ -163,6 +166,22 @@ inline const char* lineWidthName(double px) {
     if (px <= 3.0) return "粗线 3px";
     return "特粗线 5px";
 }
+
+// ---- 块引用（ElementType::BlockRef）实例上的数据 ----
+// 之所以把这两个小 POD 定义在 Element.h（而非 Block.h）：BlockDef 需要 Element，
+// 而 Element 需要它们；反向包含会造成头文件循环。它们是纯数据、无外部依赖。
+//
+// 属性值（ATTRIB）：tag 与块定义 AttributeDef::tag 对应，value 为本实例的取值。
+struct BlockAttrValue {
+    QString tag;
+    QString value;
+};
+// 动态参数取值（按参数名索引）：可见性用 state，其余用 value。
+struct BlockDynValue {
+    QString name;             // 参数名
+    double  value = 0.0;      // 拉伸距离(mm) / 旋转角(度)；翻转用 0/1
+    QString state;            // 可见性状态名（仅可见性参数使用）
+};
 
 // 草图图元（统一数据模型）。坐标为世界坐标，遵循标准笛卡尔右手系：X 向右为正、Y 向上为正。
 // （视图层通过 Y 轴翻转把它映射到 Qt 的屏幕坐标，模型层不感知屏幕方向。）
@@ -231,6 +250,29 @@ struct Element {
     int sectionExempt = 0;      // 0 == SectionExempt::None
     int sectionMaterial = 0;    // 0 == SectionMaterial::General
 
+    // ---- 块引用（ElementType::BlockRef）专用字段 ----
+    // 采用「引用式」：只存块名 + 插入变换 + 属性值 + 动态参数值，**不复制**块内几何。
+    //   pts[0]   = 插入点（世界坐标；与 BlockDef::basePoint 对齐）
+    //   rotation = 插入旋转角(度)（复用；与椭圆/剖面线方向角同字段）
+    // 渲染 / 命中 / 导出时按 BlockDef 实时展开（SketchModel::expandBlockRef）。
+    // 因此「块内图元被重定义后，所有引用同步更新」天然成立：全球共享同一份定义。
+    QString blockName;                        // 引用的块定义名（唯一键）
+    double  scaleX = 1.0;                     // X 方向插入缩放
+    double  scaleY = 1.0;                     // Y 方向插入缩放
+    std::vector<BlockAttrValue> blockAttrs;   // 属性值（tag→value）
+    std::vector<BlockDynValue>  dynValues;    // 动态参数取值
+
+    // 便捷查询：块引用的属性值（不存在返回 fallback）
+    QString blockAttr(const QString& tag, const QString& fallback = QString()) const {
+        for (const auto& a : blockAttrs) if (a.tag == tag) return a.value;
+        return fallback;
+    }
+    // 便捷查询：动态参数取值（不存在返回 fallback）
+    double blockDyn(const QString& name, double fallback = 0.0) const {
+        for (const auto& d : dynValues) if (d.name == name) return d.value;
+        return fallback;
+    }
+
     Element() = default;
     QString typeName() const { return elementTypeName(type); }
     QString sizeDesc() const;            // 主尺寸描述
@@ -241,5 +283,15 @@ struct Element {
         return (type == ElementType::Rectangle || type == ElementType::Polygon) && closed;
     }
 };
+
+// ============================================================================
+// 图元序列化（单一实现，核心层）
+// ----------------------------------------------------------------------------
+// 顶层图纸（MainWindow::writeDrawing）与块定义内图元（Block.cpp）共用这一对函数，
+// 避免"同一份字段表写两遍、改一处漏一处"的漂移。所有字段对未知类型无副作用，
+// 旧存档缺键时一律回落默认值（向后兼容）。
+// ============================================================================
+QJsonObject elementToJson(const Element& e);
+Element     elementFromJson(const QJsonObject& o);
 
 } // namespace SketchCAD

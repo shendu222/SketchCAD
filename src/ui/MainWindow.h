@@ -35,6 +35,9 @@ class StatusBar;
 class RulerWidget;
 class Element;
 class ArrayDialog;
+class InsertBlockDialog;
+class CreateBlockDialog;
+class BlockManagerDialog;
 struct SheetSpec;
 
 // 主窗口：菜单栏、工具条、三栏 dock 布局、面板联动、文件 IO
@@ -199,6 +202,16 @@ private:
     void onRegionPickParams();                        // Enter → 打开剖面参数对话框
     void exitRegionPick(const QString& logMsg);       // 统一退出拾取模式（复位光标与高亮）
     void refreshPickLoopSet();                        // 惰性重建全图闭环集合缓存
+
+    // ---- 块（Block）GUI 入口 ----
+    // 把命令行 block create/insert/redefine/explode/delete/rename 封装为可视化操作。
+    // 两个菜单（【编辑>修改>块】与【绘图>块】）共用同一个 buildBlockMenu 填充，
+    // 保证两处入口完全一致。
+    void buildBlockMenu(QMenu* m);                    // 填充一个「块(&B)」子菜单
+    void openInsertBlockDialog();                     // 插入块...（带预览）
+    void openCreateBlockDialog();                     // 创建块...
+    void openBlockManagerDialog();                    // 块管理器...（重命名/删除/重定义）
+    void explodeBlockFromMenu();                      // 分解块...（当前选中的块引用）
 
     // ---- 样式（线宽 / 颜色）----
     void applyWidth(double px);               // 设默认线宽；若有选中则同时改选中图元
