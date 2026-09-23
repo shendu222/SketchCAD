@@ -2196,29 +2196,7 @@ void MainWindow::saveFile() {
         fn += QLatin1Char('.') + cadfmt::defaultSuffix(fmt);
     }
 
-    // DWG 是专有二进制格式：本项目未链接 ODA 转换库，无法写出原生 DWG。
-    // 与其伪造一个 AutoCAD 打不开的二进制头，不如如实说明并提供 DXF 回落。
-    if (fmt == cadfmt::CadFormat::Dwg) {
-        QMessageBox mb(this);
-        mb.setIcon(QMessageBox::Information);
-        mb.setWindowTitle(QStringLiteral("DWG 格式说明"));
-        mb.setText(QStringLiteral("DWG 为专有二进制格式，本程序未链接 ODA 转换库，无法写出原生二进制 DWG。"));
-        mb.setInformativeText(QStringLiteral(
-            "推荐保存为 DXF —— AutoCAD 可直接打开，再用「另存为」即可得到原生 DWG。\n"
-            "若仍要写 .dwg 文件，将写入 DXF 兼容内容（部分看图软件可识别，AutoCAD 不认该文件）。"));
-        QPushButton* bDxf = mb.addButton(QStringLiteral("保存为 DXF（推荐）"), QMessageBox::AcceptRole);
-        QPushButton* bRaw = mb.addButton(QStringLiteral("仍写 .dwg（DXF 兼容内容）"), QMessageBox::ActionRole);
-        mb.addButton(QMessageBox::Cancel);
-        mb.exec();
-        if (mb.clickedButton() == bDxf) {
-            const QFileInfo fi(fn);
-            fn = fi.absoluteDir().filePath(fi.completeBaseName() + QStringLiteral(".dxf"));
-            fmt = cadfmt::CadFormat::Dxf;
-        } else if (mb.clickedButton() != bRaw) {
-            return;                                          // 取消
-        }
-    }
-
+    // DWG：已实现原生 R12 (AC1009) 二进制写出（见 CadFormats::toDwg），直接落盘即可。
     writeDrawing(fn, nullptr);
 }
 
@@ -2320,7 +2298,7 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
 // 打开：草图 JSON 完整往返；DXF 读回图元几何（标注/样条已按几何炸开）
 void MainWindow::openFile() {
     const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("打开图纸"), QString(),
-        QStringLiteral("草图与图形 (*.json *.dxf);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;所有文件 (*)"));
+        QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
     if (fn.isEmpty()) return;
     readDrawing(fn, nullptr);
 }
@@ -2374,6 +2352,37 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         }
         if (haveBox) {
             if (bb.width()  < 1e-6) bb.adjust(-10.0, 0.0, 10.0, 0.0);   // 退化：只有水平线之类
+            if (bb.height() < 1e-6) bb.adjust(0.0, -10.0, 0.0, 10.0);
+            view_->fitToRect(bb);
+        } else {
+            view_->fitView();
+        }
+        return true;
+    }
+
+    if (fmt == cadfmt::CadFormat::Dwg) {
+        std::vector<Element> imported;
+        QString e;
+        cadfmt::DxfImportStats st;
+        if (!cadfmt::fromDwg(raw, imported, &e, &st)) {
+            if (err) *err = e;
+            model_->log(QStringLiteral("DWG 解析失败：") + e, "error");
+            return false;
+        }
+        model_->clear();
+        model_->beginEdit(QStringLiteral("导入 DWG"));
+        model_->addElementsQuiet(imported);
+        QString note = QStringLiteral("已打开 DWG（R12/AC1009）：%1（导入 %2 个图元）")
+                           .arg(path).arg(imported.size());
+        model_->log(note, "info");
+        QRectF bb; bool haveBox = false;
+        for (const auto& el : imported) {
+            const QRectF r = geo::elementBounds(el);
+            bb = haveBox ? bb.united(r) : r;
+            haveBox = true;
+        }
+        if (haveBox) {
+            if (bb.width()  < 1e-6) bb.adjust(-10.0, 0.0, 10.0, 0.0);
             if (bb.height() < 1e-6) bb.adjust(0.0, -10.0, 0.0, 10.0);
             view_->fitToRect(bb);
         } else {

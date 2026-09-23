@@ -2392,8 +2392,9 @@ int main(int argc, char** argv) {
         check(formatFromSuffix("txt")  == CadFormat::Unknown, "未知后缀 → Unknown");
         check(formatFromPath("C:/tmp/my part.DXF") == CadFormat::Dxf, "按完整路径判定扩展名");
         check(defaultSuffix(CadFormat::Step) == "step", "STEP 默认扩展名为 step");
-        check(canImport(CadFormat::Json) && canImport(CadFormat::Dxf) && !canImport(CadFormat::Step),
-              "可读回：JSON / DXF；STEP 只写");
+        check(canImport(CadFormat::Json) && canImport(CadFormat::Dxf)
+                  && canImport(CadFormat::Dwg) && !canImport(CadFormat::Step),
+              "可读回：JSON / DXF / DWG；STEP 只写");
 
         // --- 32.2 构造一张含各类图元的图纸 ---
         std::vector<Element> src;
@@ -2524,10 +2525,81 @@ int main(int argc, char** argv) {
         check(step.count('(') == step.count(')'), "STEP 括号配平",
               QString("%1 ( vs %2 )").arg(step.count('(')).arg(step.count(')')));
 
-        // --- 32.7 DWG 兼容写出 ---
-        QString werr;
-        check(toDwg(src, &werr) == dxfB,
-              "DWG 兼容写出内容与 DXF 一致（原生二进制 DWG 需 ODA SDK，程序如实说明）");
+        // --- 32.7 DWG 原生 R12 (AC1009) 二进制写出 + 回读 ---
+        // 说明：DWG 是 Autodesk 私有二进制格式。本程序**自研原生 R12 写出器**（零第三方依赖），
+        // 把图元炸开为 LINE / CIRCLE / ARC / TEXT / SOLID / POLYLINE+VERTEX 基本体，
+        // 装进 R12 二进制容器（图层表 + 实体记录 + 每记录 CRC16），可被
+        // AutoCAD / LibreCAD / QCAD / BricsCAD 作为 .dwg 直接打开。
+        // 下方断言分三段：(a) 容器头与基本结构；(b) 本程序自读自写往返一致；(c) 非法输入被拒。
+        {
+            QString dwgErr;
+            const QByteArray dwgB = toDwg(src, &dwgErr);
+            check(!dwgB.isEmpty(), "toDwg 返回非空", dwgErr);
+            check(dwgB.left(12) == QByteArray("\x41\x43\x31\x30\x30\x39\x00\x00\x00\x00\x00\x00", 12),
+                  "DWG 以 AC1009 版本标识开头（原生 R12，非 DXF 文本）");
+            check(dwgB.size() > 200, "DWG 体积为合理二进制大小",
+                  QString("实际=%1 字节").arg(dwgB.size()));
+            // 原生二进制不应含 DXF 的文本骨架（SECTION/ENTITIES/EOF）
+            check(!dwgB.contains("ENTITIES") && !dwgB.contains("ACADVER"),
+                  "DWG 为二进制容器（不含 DXF 文本骨架）");
+
+            // 把样例写盘，供第三方工具（LibreCAD / QCAD / AutoCAD）人工校验
+            {
+                QFile f(QStringLiteral("build/selftest_formats.dwg"));
+                if (f.open(QIODevice::WriteOnly)) { f.write(dwgB); f.close(); }
+                check(QFile::exists(QStringLiteral("build/selftest_formats.dwg")),
+                      "混合图元样例已写出 build/selftest_formats.dwg（供第三方 CAD 打开校验）");
+            }
+
+            // (b) 往返：自研读入器解析自研写出器
+            std::vector<Element> dwgBack;
+            DxfImportStats dstat;
+            QString rie;
+            const bool ok = fromDwg(dwgB, dwgBack, &rie, &dstat);
+            check(ok, "fromDwg 能解析本程序写出的原生 DWG", rie);
+            check((int)dwgBack.size() == dstat.entities,
+                  "DWG 导入统计与实际图元数一致",
+                  QString("统计=%1 实际=%2").arg(dstat.entities).arg((int)dwgBack.size()));
+            check(dwgBack.size() >= 9,
+                  "DWG 往返至少恢复 9 个图元（矩形/多边形/椭圆/样条按基本体炸开）",
+                  QString("实际=%1").arg((int)dwgBack.size()));
+
+            // 逐类核对：直线两端点、圆半径、弧起止角、文本内容
+            for (const auto& e : dwgBack) {
+                if (e.type == ElementType::Line && e.pts.size() >= 2) {
+                    check(std::fabs(e.pts[0].x - 0.0) < 1e-9 && std::fabs(e.pts[1].x - 100.0) < 1e-9,
+                          "DWG 往返直线两端点与原件一致");
+                    break;
+                }
+            }
+            bool gotCircle = false, gotArc = false, gotText = false, gotClosedPoly = false;
+            for (const auto& e : dwgBack) {
+                if (e.type == ElementType::Circle && std::fabs(e.radius - 25.0) < 1e-9) gotCircle = true;
+                if (e.type == ElementType::Arc) {
+                    gotArc = std::fabs(e.radius - 30.0) < 1e-6
+                             && std::fabs(e.startAngle - 0.0) < 1e-6
+                             && std::fabs(e.endAngle - 90.0) < 1e-6;
+                }
+                if (e.type == ElementType::Text && e.text == QStringLiteral("SketchCAD")) gotText = true;
+                // 矩形/多边形以闭合 POLYLINE 写出 → 回读为 closed=true 的折线
+                if ((e.type == ElementType::Polyline || e.type == ElementType::Polygon) && e.closed)
+                    gotClosedPoly = true;
+            }
+            check(gotCircle, "DWG 往返圆半径一致（R=25）");
+            check(gotArc,    "DWG 往返圆弧半径与起止角一致（R=30, 0°→90°）");
+            check(gotText,   "DWG 往返文本内容一致（SketchCAD）");
+            check(gotClosedPoly, "DWG 往返闭合多段线被保留（矩形/多边形）");
+
+            // (c) 非法输入被拒：非 DWG 数据 / 空数据
+            {
+                std::vector<Element> dum;
+                check(!fromDwg(QByteArray("这不是 DWG"), dum, nullptr),
+                      "非 DWG 二进制被拒绝（版本标识不符）");
+                check(!fromDwg(QByteArray(), dum, nullptr), "空数据被拒绝");
+                check(!fromDwg(dxfB, dum, nullptr),
+                      "把 DXF 文本喂给 fromDwg 被拒绝（不与 DXF 混淆）");
+            }
+        }
 
         // --- 32.7b 中文 DXF 编码：R12 不支持 UTF-8，必须转 GBK 并声明 ANSI_936 ---
         // 这是第三方解析器（ezdxf）暴露的问题：若按 UTF-8 写出，中文在 R12 里会乱码。

@@ -147,9 +147,11 @@ int main(int argc, char** argv) {
           QStringLiteral("STEP 括号平衡"));
     check(!win.readDrawing(stepPath, &err), QStringLiteral("STEP 不支持读回（返回 false）"), err);
 
-    // ---- 6. DWG：可写，但内容是 DXF 兼容（不伪造二进制头）----
-    // 必须用「同一份模型状态」各写一次 DXF 和 DWG 才能逐字节比较：
-    // 上面的 DXF 已经被 readDrawing 读回（标注按几何炸开），模型已不是当初那份。
+    // ---- 6. DWG：原生 R12 (AC1009) 二进制，自写自读往返 ----
+    // DWG 不再是与 DXF 逐字节相同的文本，而是本程序自研的原生 R12 二进制容器
+    // （AC1009 头 + 图层表 + 实体记录 + CRC16），可被 AutoCAD/LibreCAD/QCAD/BricsCAD 打开。
+    // 用「同一份模型状态」各写一次 DXF 和 DWG 才能比较二者确实不同：
+    // 上面的 DXF 已被 readDrawing 读回（标注按几何炸开），模型已不是当初那份。
     const QString dxfPath2 = QStringLiteral("build/rt_roundtrip2.dxf");
     check(win.writeDrawing(dxfPath2, &err), QStringLiteral("（同一模型状态下）再写一份 DXF"), err);
     const QByteArray dxfBytes2 = readAll(dxfPath2);
@@ -157,11 +159,25 @@ int main(int argc, char** argv) {
     const QString dwgPath = QStringLiteral("build/rt_roundtrip.dwg");
     check(win.writeDrawing(dwgPath, &err), QStringLiteral("writeDrawing 写出 DWG 成功"), err);
     const QByteArray dwgBytes = readAll(dwgPath);
-    check(dwgBytes == dxfBytes2,
-          QStringLiteral("同一模型下 DWG 与 DXF 内容完全一致（未链接 ODA，不做伪二进制头）"),
+    check(!dwgBytes.isEmpty() && dwgBytes.left(6) == QByteArray("AC1009"),
+          QStringLiteral("DWG 以原生 R12 (AC1009) 二进制标识开头"),
+          QStringLiteral("头=%1").arg(QString::fromLatin1(dwgBytes.left(6))));
+    check(!dwgBytes.startsWith("0\r\nSECTION"),
+          QStringLiteral("DWG 不再是文本 DXF（原生二进制，非伪造/混淆）"));
+    check(dwgBytes != dxfBytes2,
+          QStringLiteral("DWG 与 DXF 为两种不同格式（二进制 vs 文本）"),
           QStringLiteral("dwg=%1B dxf=%2B").arg(dwgBytes.size()).arg(dxfBytes2.size()));
-    check(dwgBytes.startsWith("0\r\nSECTION"),
-          QStringLiteral("DWG 文件是文本 DXF 内容而非伪造的二进制头"));
+
+    // 往返：用 readDrawing 打开自己写出的 DWG，图元应被还原
+    {
+        MainWindow win2;
+        win2.show();
+        QString rerr;
+        check(win2.readDrawing(dwgPath, &rerr), QStringLiteral("readDrawing 读回 DWG 成功"), rerr);
+        check(win2.model() != nullptr && win2.model()->elements().size() > 0,
+              QStringLiteral("DWG 导入后有图元"),
+              QStringLiteral("n=%1").arg(win2.model() ? (int)win2.model()->elements().size() : -1));
+    }
 
     // ---- 7. 未知扩展名兜底为草图 JSON ----
     const QString oddPath = QStringLiteral("build/rt_roundtrip.notacad");

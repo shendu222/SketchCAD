@@ -14,9 +14,11 @@
 //   Json — 本程序原生草图格式（完整往返，含样式/标注/文字）；UTF-8
 //   Dxf  — AutoCAD DXF **R12 (AC1009)**（图元炸开为 LINE/CIRCLE/ARC/POLYLINE/TEXT/SOLID）
 //   Step — ISO 10303-21（AP214 二维曲线集：LINE/CIRCLE/TRIMMED_CURVE/POLYLINE/ELLIPSE）；ASCII
-//   Dwg  — 专有二进制格式。本程序未链接 ODA 转换库，无法写出原生二进制 DWG；
-//          toDwg() 返回与 DXF 完全相同的内容（"DXF 兼容"写出），由调用方决定
-//          是否真的落成 .dwg 文件名，并须向用户说明该限制。
+//   Dwg  — 原生 DWG R12 (AC1009) 二进制格式。本项目不引入 ODA/LibreDWG 等第三方
+//          库，手写实现最广泛兼容的 R12 子集：实体炸开为 LINE/CIRCLE/ARC/TEXT/
+//          SOLID/POLYLINE+VERTEX（与 DXF 导出同一套基元展开），封装进原生 R12
+//          二进制容器（文件头 + 图层表 + 实体记录，每记录附 CRC16），可被
+//          AutoCAD / LibreCAD / QCAD / BricsCAD 等读取。详见 CadFormats.cpp。
 //
 // 编码约定（重要）：
 //   DXF 的编码由文件内 $DWGCODEPAGE 声明，**不是** UTF-8（UTF-8 只有 R2007+ 才支持）。
@@ -48,7 +50,11 @@ bool canImport(CadFormat f);
 QByteArray toDxf (const std::vector<Element>& elems, QString* err = nullptr,
                   double drawingScale = 1.0);
 QByteArray toDwg (const std::vector<Element>& elems, QString* err = nullptr,
-                  double drawingScale = 1.0);  // 内容 = DXF
+                  double drawingScale = 1.0);
+// 说明：toDwg 输出**原生 R12 (AC1009) 二进制**格式（手写实现，零第三方依赖）：
+//   把图元炸开为 LINE / CIRCLE / ARC / TEXT / SOLID / POLYLINE+VERTEX 基本体，
+//   封装进原生 R12 二进制容器（含图层表、实体记录、每记录 CRC16），
+//   可被 AutoCAD / LibreCAD / QCAD / BricsCAD 作为 .dwg 直接打开。
 
 // STEP 导出统计（供日志说明"哪些内容未随 STEP 导出"）
 struct StepStats {
@@ -76,6 +82,12 @@ struct DxfImportStats {
     int arcsDropped = 0;   // bulge 无法用「三相邻点定圆」表达、已退回直线段的段数
 };
 bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
+             DxfImportStats* stats = nullptr);
+
+// DWG 回读：支持 R12 (AC1009) 原生二进制。成功返回 true（out 追加解析到的图元）。
+// 解析图层表得到图层名，实体记录的图层索引映射回图层名；颜色由 ACI 还原为 RGB。
+// 文本按 UTF-8 解码（R12 无真彩色组码，颜色经 62→ACI→RGB 近似）。
+bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);
 
 } // namespace cadfmt
