@@ -4,6 +4,7 @@
 #include "Element.h"
 #include "Geometry.h"
 #include "Modify.h"   // modify::Change（剖面填充以 Change 形式产出，供 applyChanges 落盘）
+#include "HatchLibrary.h"  // PAT 填充图案文件（AutoCAD .pat）解析与加载
 
 namespace SketchCAD {
 
@@ -35,8 +36,22 @@ enum class SectionMaterial {
     Glass     = 4,   // 玻璃：特定符号
     Liquid    = 5,   // 液体：液面细实线
     Concrete  = 6,   // 混凝土
-    NonMetal  = 7    // 非金属：交叉网格线（4.7 相邻同符号非金属用疏密区分）
+    NonMetal  = 7,   // 非金属：交叉网格线（4.7 相邻同符号非金属用疏密区分）
+    Aluminum  = 8,   // 铝（非铁金属）：与钢反向 45° 单族（GB 4.7 相邻金属反向/异距区分）
+    Brick     = 9,   // 砖墙：水平砌缝 + 错缝竖线（砌筑图案）
+    Stone     = 10,  // 石材墙面：错缝块石（不规则砌缝，近似毛石）
+    Insulation= 11,  // 保温层：点阵符号
+    Plywood   = 12,  // 胶合板：交叉层（水平 + 垂直细线，示意多层胶合）
+    // —— 以下为 GB/T 4457.5-2013 表1「剖面符号」其余材料（2026-09-22 扩展，追加式，保留原序号）——
+    CoilWinding = 13,  // 线圈绕组元件：45° 细实线 + 点阵（GB 表1）
+    LaminatedSteel = 14,  // 叠钢片：薄 45° 细实线（GB 表1）
+    Sand = 15,  // 型砂/填砂/粉末冶金/砂轮/陶瓷刀片/硬质合金刀片等：自由分布点阵（GB 表1）
+    Soil = 16,  // 基础周围的泥土：稀疏点阵（GB 表1）
+    ReinforcedConcrete = 17,  // 钢筋混凝土：45° 线 + 点阵（钢筋示意，GB 表1）
+    Mesh = 18   // 筛网/过滤网等：交叉网格（GB 表1）
 };
+// 材料类别总数（含 0），供 UI 循环与测试遍历上界使用。
+static constexpr int kSectionMaterialCount = 19;
 
 // 豁免类别（不画或特殊处理剖面线）
 enum class SectionExempt {
@@ -105,17 +120,43 @@ Element makeHatchElement(const SectionRegion& r, const QString& name = QStringLi
 // 生成剖面线（裁剪到 region，含内孔 even-odd），返回世界坐标线段集合。
 std::vector<geo::Seg> generateHatchLines(const SectionRegion& region);
 
+// 由 PAT 图案定义（AutoCAD .pat，见 HatchLibrary.h）生成剖面线。
+// 图案自带角度/间距/笔段，忽略 region.style 的 anglesDeg/spacingMm；返回世界坐标线段，
+// 由 paintHatch 的 setClipPath 裁剪到区域（含内孔）。
+std::vector<geo::Seg> generateHatchLinesFromPat(const PatPattern& pat, const SectionRegion& region);
+
 // 剖面填充图案：由「材料类别」决定剖面线族（GB/T 4457.5-2013 及行业材料符号惯例）。
 //   * 通用金属/钢：与主要轮廓成 45° 的单一族细实线（间隔相等、方向相同）；
 //   * 铸铁/非金属/混凝土：45° + 135° 双向交叉（网状 / 交叉网格 / 碎石点）；
 //   * 木材：顺纹水平线族（近似木纹）；
-//   * 玻璃/液体：点阵（无斜线族，dots=true）。
+//   * 玻璃：45° 长短画线（断续线，dashes=true + dashLongShort=true）；
+//   * 液体：液面以下水平短画线（断续线，dashes=true + 水平族）；
+//   * 线圈绕组元件/钢筋混凝土：45° 细实线 + 点阵；型砂/粉末冶金/泥土：自由分布点阵；
+//   * 筛网/过滤网：交叉网格（0° + 90°）。
 // 间距沿用 region.style.spacingMm；角度族对「通用金属/钢」尊重用户设定的 angleDeg，
 // 其余材料按标准固定方向（网状等仍锚定在 45° 基准上旋转）。
 struct HatchPattern {
     std::vector<double> anglesDeg;   // 各斜线族方向角（度）；空表示无斜线族（纯点阵）
     double spacingMm = 3.0;          // 线族间距（mm）
-    bool   dots = false;             // 是否同时绘制点阵（玻璃/液体/混凝土）
+    QString patName;                 // 非空=改用 hatch/ 目录下同名 PAT 图案（忽略 anglesDeg/spacingMm）
+    bool   dots = false;             // 是否同时绘制点阵（线圈/型砂/泥土/钢筋混凝土/混凝土）
+    double dotStepScale = 1.0;       // 点阵步长缩放（1.0=常规；>1 更稀疏，如基础周围泥土）
+    // 断续线（虚线）剖面符号（GB/T 4457.5-2013 表1：玻璃=45° 长短画线；液体=液面下水平短画线）。
+    // generateHatchLines 在生成斜线族后按 dash 参数把每条长线切成「实段+间隔」的断续线；
+    // 非 brick 路径才生效。longShort=true → 长/短交替（玻璃）；false → 均匀短线（液面）。
+    bool   dashes = false;           // 是否以断续线（虚线）绘制剖面线
+    bool   dashLongShort = false;    // true=长+短交替（玻璃）；false=均匀短线（液面）
+    double dashLenMm  = 8.0;         // 实段长（均匀模式）或长段长（长+短模式，mm）
+    double dashShortMm = 4.0;        // 短段长（仅长+短模式，mm）
+    double dashGapMm  = 4.0;         // 实段之间的间隔（mm）
+    // 砌体图案（砖墙/石材）：由 generateHatchLines 的 brick 分支消费（见 Section.cpp）。
+    // 线段均超出区域包围盒，实际裁剪由 GraphicsView::paintHatch 的 setClipPath 完成，
+    // 故生成器只需按砌层/块宽铺满包围盒即可。
+    bool   brick = false;            // 是否生成砌体图案（水平砌缝 + 竖缝）；true 时忽略 anglesDeg
+    bool   brickStagger = true;      // 竖缝是否错缝（砖墙=错缝；均质块石可关）
+    double brickCourseMm = 30.0;     // 砌层高度（每皮砖/石高，mm）
+    double brickWidthMm  = 60.0;     // 单块宽度（错缝步距，mm）
+    bool   brickIrregular = false;   // 石材：竖缝位置确定性伪随机偏移，近似毛石/块石墙面
 };
 HatchPattern hatchPatternFor(const SectionStyle& style);
 

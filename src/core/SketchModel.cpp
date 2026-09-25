@@ -3,10 +3,13 @@
 #include "ConstraintSolver.h"
 #include "DimStyle.h"
 #include "Modify.h"
+#include "Xref.h"
 #include <algorithm>
 #include <cmath>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDir>
+#include <QFileInfo>
 
 namespace SketchCAD {
 
@@ -1271,6 +1274,223 @@ void SketchModel::setBlocksFromJson(const QJsonArray& arr) {
         if (!d.name.trimmed().isEmpty()) blocks_.push_back(std::move(d));
     }
     emit blocksChanged();
+}
+
+// ============================================================================
+// 外部参照（Xref）
+// ----------------------------------------------------------------------------
+// 「附加」的产物是一条 Xref 块记录 + 一个参照实例。几何在附加时按源文件读入定义，
+// 之后渲染 / 命中 / 导出全部复用既有的引用式展开路径（BlockRef → expandRef），
+// 不必为 Xref 另写一套图形管线。
+//
+// 两条不可违背的约束：
+//   1) 定义内的 entities 不得在附加后被局部增删改 —— DynParam::affected / VisibilityState
+//      按**索引**引用它们，删一条就会整体错位；因此嵌套实例的清理一律以「整份 BlockDef」
+//      为单位，绝不到定义内部去摘图元。
+//   2) 依赖（源图自带、本图尚缺的块定义）只引入被引用的那些；未被引用的定义不污染宿主图。
+// ============================================================================
+
+QString SketchModel::drawingDir() const {
+    if (drawingPath_.isEmpty()) return QString();
+    return QFileInfo(drawingPath_).absolutePath();
+}
+
+int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
+                            const Vec3& insertPt, double rotationDeg, double sx, double sy) {
+    const QString raw = filePath.trimmed();
+    if (raw.isEmpty()) { log(QStringLiteral("附加外部参照失败：文件路径为空"), "warn"); return -1; }
+    const QFileInfo fi(raw);
+    if (!fi.exists() || !fi.isFile()) {
+        log(QStringLiteral("附加外部参照失败：文件不存在 %1").arg(raw), "warn");
+        return -1;
+    }
+    const QString abs = fi.absoluteFilePath();
+
+    // 「已被附加」按符号名判定（与 AutoCAD 一致：块名 = 文件名主体）；
+    // 同名普通块则拒绝，避免把普通块当成参照来分离。
+    const QString bname = xref::blockNameForPath(abs);
+    if (hasBlock(bname)) {
+        const BlockDef* ex = findBlockDef(bname);
+        log(ex && ex->isXref
+                ? QStringLiteral("外部参照 %1 已附加（如需更换请先「分离」）").arg(bname)
+                : QStringLiteral("附加外部参照失败：块名 %1 已被普通块占用").arg(bname),
+            "warn");
+        return -1;
+    }
+
+    XrefSource src;
+    QString err;
+    if (!xref::readSource(abs, src, &err)) {
+        log(QStringLiteral("附加外部参照失败：%1").arg(err), "warn");
+        return -1;
+    }
+
+    const QString stored = xref::storedPath(abs, pathType, drawingDir());
+    pushMemento(QStringLiteral("附加外部参照 ") + bname);
+
+    // 依赖引入：源图自带、本图尚缺的定义一律标为「嵌套参照」（不可直接分离、可级联清理）。
+    // 依赖之间也可能互相引用（A→B→C），用队列迭代到不再新增为止；已经在表里的跳过，
+    // 因此依赖成环也不会死循环。
+    int nested = 0;
+    std::vector<QString> queue;
+    for (const auto& n : xref::missingDependencies(src.elements, blocks_)) queue.push_back(n);
+    for (int guard = 0; guard < 1024 && !queue.empty(); ++guard) {
+        const QString nm = queue.back();
+        queue.pop_back();
+        if (hasBlock(nm)) continue;
+        const BlockDef* dep = nullptr;
+        for (const auto& b : src.blocks) if (b.name == nm) { dep = &b; break; }
+        // 源图也没有定义 → 未定义块：展开为空（与本地未定义块同语义，不报错）
+        if (!dep) continue;
+        BlockDef nb = *dep;
+        for (auto& e : nb.entities) e.id = 0;
+        // 随参照带入的依赖一律视为「外部内容」：不可在本图编辑，也不可直接分离，
+        // 宿主被分离且再无引用者时随之一并消失（与 AutoCAD 嵌套 Xref 的语义一致）。
+        nb.isXref     = true;
+        nb.xrefNested = true;
+        // 依赖本身若在源图里就是一条 Xref 记录，其路径是相对**源图**的，在本图中不可解，
+        // 一律清空，避免留下一条指向错误基准的路径（几何已随定义带入，不影响绘制）。
+        if (!nb.xrefPath.isEmpty() && !QFileInfo(nb.xrefPath).isAbsolute()) nb.xrefPath.clear();
+        std::vector<QString> ndeps = xref::missingDependencies(nb.entities, blocks_);
+        blocks_.push_back(std::move(nb));
+        ++nested;
+        for (const auto& m : ndeps) queue.push_back(m);
+    }
+
+    BlockDef def;
+    def.name        = bname;
+    def.description = QStringLiteral("外部参照 ← %1").arg(stored);
+    def.basePoint   = Vec3(0, 0, 0);      // 定义保持源文件世界坐标 → 插入到原点即原位
+    def.entities    = std::move(src.elements);
+    for (auto& e : def.entities) e.id = 0;
+    def.isXref       = true;
+    def.xrefPath     = stored;
+    def.xrefPathType = (int)pathType;
+    def.xrefNested   = false;
+    def.xrefStatus   = (int)XrefStatus::Loaded;
+    blocks_.push_back(def);
+
+    const Element ref = block::makeRef(blocks_.back(), insertPt, rotationDeg, sx, sy);
+    auto ids = addElementsQuiet({ref});
+    if (ids.empty()) {
+        log(QStringLiteral("附加外部参照失败：无法放置参照实例"), "warn");
+        return -1;
+    }
+    setSelected(ids.front());
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("已附加外部参照 %1 ← %2（%3，%4 个图元%5），插入点 (%6,%7) 旋转 %8° 缩放 %9×%10")
+            .arg(bname).arg(stored).arg(src.formatName).arg(def.entities.size())
+            .arg(nested > 0 ? QStringLiteral("，引入 %1 个嵌套参照").arg(nested) : QString())
+            .arg(insertPt.x, 0, 'f', 2).arg(insertPt.y, 0, 'f', 2)
+            .arg(rotationDeg, 0, 'f', 1).arg(sx, 0, 'f', 2).arg(sy, 0, 'f', 2));
+    return ids.front();
+}
+
+bool SketchModel::detachXref(const QString& blockName) {
+    const QString n = blockName.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("分离外部参照失败：块名不能为空"), "warn"); return false; }
+    const BlockDef* d = findBlockDef(n);
+    if (!d) { log(QStringLiteral("分离外部参照失败：块 %1 不存在").arg(n), "warn"); return false; }
+    if (!d->isXref) {
+        log(QStringLiteral("分离失败：%1 不是外部参照（普通块请用「块管理器」删除）").arg(n), "warn");
+        return false;
+    }
+    if (d->xrefNested) {
+        log(QStringLiteral("分离失败：%1 是嵌套参照，只能在直接附加它的宿主图中分离").arg(n), "warn");
+        return false;
+    }
+
+    // 统计：本图中的参照实例 + 其它块定义内部对本参照的嵌套引用（分离后将成为未定义块）
+    std::vector<int> victims;
+    for (const auto& e : elems_)
+        if (e.type == ElementType::BlockRef && e.blockName == n) victims.push_back(e.id);
+    int inDefs = 0;
+    for (const auto& b : blocks_)
+        for (const auto& e : b.entities)
+            if (e.type == ElementType::BlockRef && e.blockName == n) ++inDefs;
+
+    pushMemento(QStringLiteral("分离外部参照 ") + n);
+    for (int id : victims) removeElementQuiet(id);
+    auto it = std::find_if(blocks_.begin(), blocks_.end(),
+                           [&](const BlockDef& b) { return b.name == n; });
+    if (it != blocks_.end()) blocks_.erase(it);
+
+    // 级联清理：嵌套参照随宿主存在，宿主被分离后若再无引用者，一并清除。
+    // 「是否还有引用者」在当前表上现算（顶图 + 其余定义），故依赖成链也能收敛
+    // （每轮清掉一层，下一轮里层自然变为无人引用）；最多 64 轮作保险。
+    auto referencedAnywhere = [&](const QString& nm) {
+        for (const auto& e : elems_)
+            if (e.type == ElementType::BlockRef && e.blockName == nm) return true;
+        for (const auto& b : blocks_)
+            for (const auto& e : b.entities)
+                if (e.type == ElementType::BlockRef && e.blockName == nm) return true;
+        return false;
+    };
+    int cascaded = 0;
+    for (int guard = 0; guard < 64; ++guard) {
+        std::vector<QString> dead;
+        for (const auto& b : blocks_) {
+            if (!b.isXref || !b.xrefNested) continue;
+            if (referencedAnywhere(b.name)) continue;
+            dead.push_back(b.name);
+        }
+        if (dead.empty()) break;
+        for (const auto& nm : dead) {
+            auto jt = std::find_if(blocks_.begin(), blocks_.end(),
+                                   [&](const BlockDef& b) { return b.name == nm; });
+            if (jt != blocks_.end()) { blocks_.erase(jt); ++cascaded; }
+        }
+    }
+
+    emit blocksChanged();
+    emit modelChanged();
+    log(QStringLiteral("已分离外部参照 %1：删除 %2 个参照实例%3%4")
+            .arg(n).arg(victims.size())
+            .arg(inDefs > 0
+                     ? QStringLiteral("（另有 %1 处嵌套引用因定义缺失不再绘制）").arg(inDefs)
+                     : QString())
+            .arg(cascaded > 0 ? QStringLiteral("，级联清理 %1 个嵌套参照").arg(cascaded) : QString()));
+    return true;
+}
+
+QStringList SketchModel::xrefNames(bool includeNested) const {
+    QStringList out;
+    for (const auto& d : blocks_) {
+        if (!d.isXref) continue;
+        if (!includeNested && d.xrefNested) continue;
+        out << d.name;
+    }
+    return out;
+}
+
+int SketchModel::xrefCount(bool includeNested) const {
+    int n = 0;
+    for (const auto& d : blocks_) {
+        if (!d.isXref) continue;
+        if (!includeNested && d.xrefNested) continue;
+        ++n;
+    }
+    return n;
+}
+
+bool SketchModel::hasXrefSource(const QString& filePath) const {
+    if (filePath.trimmed().isEmpty()) return false;
+    const QString target = QFileInfo(filePath).absoluteFilePath();
+    for (const auto& d : blocks_) {
+        if (!d.isXref || d.xrefPath.isEmpty()) continue;
+        const QString rp = QFileInfo(xref::resolvedPath(d.xrefPath,
+                                                        (XrefPathType)d.xrefPathType,
+                                                        drawingDir())).absoluteFilePath();
+        if (rp == target) return true;
+    }
+    return false;
+}
+
+QString SketchModel::xrefResolvedPath(const QString& blockName) const {
+    const BlockDef* d = findBlockDef(blockName);
+    if (!d || !d->isXref) return QString();
+    return xref::resolvedPath(d->xrefPath, (XrefPathType)d->xrefPathType, drawingDir());
 }
 
 void SketchModel::setChainLine(bool b) {

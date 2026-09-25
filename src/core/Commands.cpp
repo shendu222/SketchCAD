@@ -10,6 +10,7 @@
 #include "EllipseModes.h"
 #include "ElementFactory.h"
 #include "Modify.h"
+#include "Xref.h"
 #include "AircraftViews.h"
 #include <QRegularExpression>
 #include <algorithm>
@@ -1915,6 +1916,80 @@ bool BlockCommand::execute(const CommandContext& ctx) {
 }
 
 // ============================================================
+// 外部参照（Xref）：附加 / 分离 / 列表 / 路径诊断
+// ============================================================
+// 与 block 命令族同构（单一入口 + 子命令分派）。所有错误信息由 SketchModel 统一
+// 产出并写日志，此处只做参数解析与结果判真，避免出现"两处各说一半"的错乱提示。
+
+bool XrefCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    const QStringList& t = ctx.toks;
+    if (t.size() < 2) {
+        m->log("用法: xref <attach|detach|list|path> ...", "warn");
+        return false;
+    }
+    const QString sub = t[1].toLower();
+
+    if (sub == "list") {
+        if (m->xrefCount() == 0) { m->log(QStringLiteral("当前图纸没有外部参照")); return true; }
+        m->log(QStringLiteral("外部参照(%1):").arg(m->xrefCount()));
+        for (const auto& d : m->blockTable()) {
+            if (!d.isXref || d.xrefNested) continue;
+            m->log(QStringLiteral("  %1  [%2]  %3  图元%4  ← %5")
+                       .arg(d.name)
+                       .arg(QString::fromUtf8(xrefStatusName((XrefStatus)d.xrefStatus)))
+                       .arg(QString::fromUtf8(xrefPathTypeName((XrefPathType)d.xrefPathType)))
+                       .arg(d.entities.size())
+                       .arg(d.xrefPath));
+        }
+        const int nestedCount = m->xrefCount(true) - m->xrefCount();
+        if (nestedCount > 0)
+            m->log(QStringLiteral("（另有 %1 个嵌套参照，只能在直接附加它的宿主图中分离）")
+                       .arg(nestedCount));
+        return true;
+    }
+
+    if (sub == "path") {
+        if (t.size() < 3) { m->log("用法: xref path <块名>", "warn"); return false; }
+        const QString p = m->xrefResolvedPath(t[2]);
+        if (p.isEmpty()) { m->log(QStringLiteral("%1 不是外部参照").arg(t[2]), "warn"); return false; }
+        m->log(QStringLiteral("外部参照 %1 的绝对路径：%2").arg(t[2], p));
+        return true;
+    }
+
+    if (sub == "attach") {
+        if (t.size() < 3) {
+            m->log("用法: xref attach <文件路径> [full|relative|none] [x,y] [旋转] [sx] [sy]", "warn");
+            return false;
+        }
+        XrefPathType pt = XrefPathType::FullPath;
+        Vec3 ins(0, 0, 0);
+        double rot = 0.0, sx = 1.0, sy = 1.0;
+        for (int i = 3; i < t.size(); ++i) {
+            bool asType = false;
+            const XrefPathType cand = xrefPathTypeFromName(t[i], &asType);
+            if (asType) { pt = cand; continue; }
+            Vec3 p;
+            if (CommandContext::tryParsePoint(t[i], p)) { ins = p; continue; }
+            bool ok = false; const double v = t[i].toDouble(&ok);
+            if (!ok) continue;                       // 无法识别的 token 忽略（保持宽松）
+            if (rot == 0.0)      rot = v;             // 第 1 个裸数值 = 旋转角
+            else if (sx == 1.0)  sx  = v;             // 第 2 个 = X 缩放
+            else                 sy  = v;             // 第 3 个 = Y 缩放
+        }
+        return m->attachXref(t[2], pt, ins, rot, sx, sy) >= 0;
+    }
+
+    if (sub == "detach") {
+        if (t.size() < 3) { m->log("用法: xref detach <块名>", "warn"); return false; }
+        return m->detachXref(t[2]);
+    }
+
+    m->log(QStringLiteral("未知外部参照命令: xref %1").arg(sub), "warn");
+    return false;
+}
+
+// ============================================================
 // 飞机三面图（航空制图模板）
 // ============================================================
 
@@ -2130,6 +2205,9 @@ void CommandRegistry::registerBuiltins() {
     // ---- 折线（精确 polyline + 前缀 polyline_ 共 9 个编辑）----
     registerExact("polyline", std::make_shared<PolylineModeCommand>());
     registerPrefix("polyline_", std::make_shared<PolylineModeCommand>());
+
+    // ---- 外部参照（Xref）：附加 / 分离 ----
+    registerExact("xref", std::make_shared<XrefCommand>());
 
     // ---- 飞机三面图（航空制图模板）----
     registerExact("aircraft_views", std::make_shared<AircraftViewsCommand>());

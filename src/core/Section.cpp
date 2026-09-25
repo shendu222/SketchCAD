@@ -1047,6 +1047,16 @@ static Element makeHatchForRegion(const SectionRegion& r, int id, const Element*
 }
 
 // 由材料决定剖面线族（GB/T 4457.5-2013 + 行业材料符号惯例）。
+// 材料 → PAT 图案名（对应 hatch/ 目录下 .pat 文件的内部名或文件名，小写键）。
+// 返回非空时，generateHatchLines 将改用该 PAT 定义生成剖面线（忽略内置 anglesDeg/spacingMm）。
+// 当前仅 Wood 映射到 wood.pat（用户需求样例）；可在此按需扩展更多材料。
+static QString patNameForMaterial(SectionMaterial m) {
+    switch (m) {
+    case SectionMaterial::Wood: return QStringLiteral("wood");  // 对应 hatch/wood.pat（首个图案）
+    default: return QString();
+    }
+}
+
 HatchPattern hatchPatternFor(const SectionStyle& style) {
     HatchPattern pat;
     pat.spacingMm = style.spacingMm;          // 间距统一尊重用户设定
@@ -1064,19 +1074,154 @@ HatchPattern hatchPatternFor(const SectionStyle& style) {
     case SectionMaterial::Wood:              // 木材：顺纹水平线族（近似木纹）
         pat.anglesDeg = { 0.0 };
         break;
-    case SectionMaterial::Glass:            // 玻璃：点阵符号（无斜线族）
-    case SectionMaterial::Liquid:           // 液体：液面以下点阵
+    case SectionMaterial::Glass:            // 玻璃：45° 长短画线（GB 表1，断续线）
+        // Table 1：玻璃及供观察用的其他透明材料——45° 方向、由长/短画构成的断续线。
+        pat.anglesDeg = { style.angleDeg };
+        pat.dashes = true;
+        pat.dashLongShort = true;           // 长 + 短交替
+        break;
+    case SectionMaterial::Liquid:           // 液体：液面以下水平短画线（GB 表1 注3，断续线）
+        // Note 3：在图形中一般按可见轮廓绘制，液面以下画水平细实线（此处以断续水平短线表示）。
+        pat.anglesDeg = { 0.0 };            // 水平
+        pat.dashes = true;
+        pat.dashLongShort = false;          // 均匀短画线
+        break;
+    case SectionMaterial::Aluminum:         // 铝（非铁金属）：与钢反向 45° 单族
+        // GB 4.7：装配图中相邻金属零件剖面线方向应相反（或同向而间隔不等）。
+        // 钢取 +45°，铝取其反向 −45°（即 135°），既符合标准又可在拾取填充时直观区分。
+        pat.anglesDeg = { -style.angleDeg };
+        break;
+    case SectionMaterial::Plywood:          // 胶合板：交叉层（水平 + 垂直细线，示意多层胶合）
+        pat.anglesDeg = { 0.0, 90.0 };
+        break;
+    case SectionMaterial::Brick:            // 砖墙：砌体图案（水平砌缝 + 错缝竖线）
+        pat.brick = true;
+        pat.brickStagger = true;
+        pat.brickCourseMm = 30.0;
+        pat.brickWidthMm  = 60.0;
+        pat.brickIrregular = false;
+        break;
+    case SectionMaterial::Stone:            // 石材墙面：错缝块石（不规则砌缝，近似毛石）
+        pat.brick = true;
+        pat.brickStagger = true;
+        pat.brickCourseMm = 40.0;
+        pat.brickWidthMm  = 70.0;
+        pat.brickIrregular = true;
+        break;
+    case SectionMaterial::Insulation:       // 保温层：点阵符号（无斜线族）
         pat.anglesDeg.clear();
         pat.dots = true;
         break;
+    // —— 以下 6 项：GB/T 4457.5-2013 表1「剖面符号」其余材料（2026-09-22 扩展）——
+    case SectionMaterial::CoilWinding:      // 线圈绕组元件：45° 细实线 + 点阵（表1）
+        pat.anglesDeg = { style.angleDeg };
+        pat.dots = true;
+        break;
+    case SectionMaterial::LaminatedSteel:   // 叠钢片：薄 45° 细实线（表1；与钢同族，靠更细线宽区分）
+        pat.anglesDeg = { style.angleDeg };
+        break;
+    case SectionMaterial::Sand:             // 型砂/填砂/粉末冶金/砂轮/陶瓷刀片/硬质合金刀片：自由分布点阵
+        pat.anglesDeg.clear();
+        pat.dots = true;
+        break;
+    case SectionMaterial::Soil:             // 基础周围的泥土：稀疏点阵（表1）
+        pat.anglesDeg.clear();
+        pat.dots = true;
+        pat.dotStepScale = 1.8;             // 比常规更稀疏
+        break;
+    case SectionMaterial::ReinforcedConcrete: // 钢筋混凝土：45° 线 + 点阵（钢筋示意用点，表1）
+        pat.anglesDeg = { style.angleDeg };
+        pat.dots = true;
+        break;
+        case SectionMaterial::Mesh:             // 筛网/过滤网等：交叉网格（表1）
+        pat.anglesDeg = { 0.0, 90.0 };
+        break;
     }
+    // PAT 覆盖：若材料映射到 hatch/ 目录下的 PAT 图案，标记 patName 以改用 PAT 生成。
+    const QString pn = patNameForMaterial(style.material);
+    if (!pn.isEmpty()) pat.patName = pn;
     return pat;
+}
+
+// 生成砌体图案（砖墙/石材）：水平砌缝（每皮一道）+ 竖缝（按块宽错缝/伪随机）。
+// 所有线段均超出区域包围盒，由 GraphicsView::paintHatch 的 setClipPath 裁剪到区域，
+// 故此处只需按砌层高度 / 块宽铺满包围盒即可，无需 even-odd 抠内孔（painter 统一裁剪）。
+static std::vector<geo::Seg> generateBrickLines(const SectionRegion& region, const HatchPattern& pat) {
+    std::vector<geo::Seg> out;
+    out.reserve(256);
+    if (region.boundary.size() < 3) return out;
+    const QRectF bb = bboxOfPoints(region.boundary);
+    const double xmin = bb.left(), ymin = bb.top(), xmax = bb.right(), ymax = bb.bottom();
+    const double H = std::max(4.0, pat.brickCourseMm);   // 砌层高（mm）
+    const double W = std::max(4.0, pat.brickWidthMm);     // 单块宽（mm）
+
+    // 水平砌缝：每皮一道（含顶/底边界外扩，避免首末皮被截断）。
+    for (double y = ymin - H; y <= ymax + H + 1e-6; y += H)
+        out.push_back(geo::Seg{ Vec3(xmin - W, y, 0), Vec3(xmax + W, y, 0) });
+
+    // 竖缝：逐皮偏移错缝；石材模式用确定性哈希扰动竖缝位置，近似毛石/块石墙面。
+    int course = 0;
+    for (double y0 = ymin - H, y1 = ymin; y1 <= ymax + H + 1e-6; y0 += H, y1 += H, ++course) {
+        const double off = (pat.brickStagger && (course % 2 == 1)) ? W * 0.5 : 0.0;
+        for (double x = xmin - W + off; x <= xmax + W + 1e-6; x += W) {
+            double xj = x;
+            if (pat.brickIrregular) {
+                // 确定性伪随机：基于（皮号, 竖缝序号）的哈希，扰动 ±35%，不引入全局随机。
+                const long long col = (long long)((x - off) / W);
+                const long long key = (long long)course * 1000003 + col;
+                const double hsh = (double)(key & 1023) / 1023.0;   // [0,1)
+                xj += (hsh - 0.5) * W * 0.7;
+            }
+            out.push_back(geo::Seg{ Vec3(xj, y0, 0), Vec3(xj, y1, 0) });
+        }
+    }
+    return out;
+}
+
+// 把连续剖面线切成「实段 + 间隔」的断续线（虚线），实现 GB/T 4457.5-2013 表1 的
+// 玻璃（45° 长短画线）与液体（液面下水平短画线）符号。每条输入长线沿其方向依次排布
+// 实段：dashLongShort=true 时长/短交替（长段=dashLenMm、短段=dashShortMm），false 时
+// 全部取 dashShortMm（均匀短线）；实段之间留 dashGapMm 间隔。输出仍为普通线段集合，
+// 下游 paintHatch 按普通线段绘制即呈现断续效果（预览/出图天然一致）。
+static std::vector<geo::Seg> dashedSegments(const std::vector<geo::Seg>& in, const HatchPattern& pat) {
+    std::vector<geo::Seg> out;
+    out.reserve(in.size() * 6);
+    for (const auto& s : in) {
+        const double dx = s.b.x - s.a.x, dy = s.b.y - s.a.y;
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1e-9) continue;
+        const double ux = dx / len, uy = dy / len;
+        double pos = 0.0;
+        bool longPhase = true;             // 长/短交替状态（仅 dashLongShort 时生效）
+        while (pos < len - 1e-9) {
+            const double segLen = pat.dashLongShort
+                                  ? (longPhase ? pat.dashLenMm : pat.dashShortMm)
+                                  : pat.dashShortMm;   // 液面：全部取短段
+            const double end = std::min(len, pos + segLen);
+            out.push_back(geo::Seg{ Vec3(s.a.x + ux * pos, s.a.y + uy * pos, 0),
+                                   Vec3(s.a.x + ux * end, s.a.y + uy * end, 0) });
+            pos = end + pat.dashGapMm;
+            longPhase = !longPhase;
+        }
+    }
+    return out;
 }
 
 std::vector<geo::Seg> generateHatchLines(const SectionRegion& region) {
     const HatchPattern pat = hatchPatternFor(region.style);
+    // PAT 覆盖：材料映射到 hatch/ 目录下的 .pat 图案时，改用 PAT 定义生成（自带角度/间距/笔段）。
+    if (!pat.patName.isEmpty()) {
+        const PatPattern* pp = HatchPatternLibrary::instance().find(pat.patName);
+        if (pp) return generateHatchLinesFromPat(*pp, region);
+        // 未找到 PAT（文件缺失）：清空 patName 回退到内置逻辑，保证不退化成空白
+    }
     std::vector<geo::Seg> out;
     out.reserve(256);
+    if (pat.brick) {                       // 砌体图案（砖墙/石材）：直接铺砌缝，不走斜线族
+        auto fam = generateBrickLines(region, pat);
+        out.insert(out.end(), fam.begin(), fam.end());
+        return out;
+    }
     for (double ang : pat.anglesDeg) {
         // 扫描包围盒外扩一个间距，保证首末线不被截断（even-odd 配对把多余部分裁掉）。
         // trustedClosed=true：region.boundary 已由上游 sectionOutline /
@@ -1087,6 +1232,100 @@ std::vector<geo::Seg> generateHatchLines(const SectionRegion& region) {
                                    /*trustedClosed=*/true);
         out.insert(out.end(), fam.begin(), fam.end());
     }
+    // 断续线（虚线）后处理：玻璃/液体等表1 符号（非 brick 路径才生效）。
+    if (pat.dashes && !out.empty())
+        out = dashedSegments(out, pat);
+    return out;
+}
+
+// 由 PAT 图案（AutoCAD .pat）生成剖面线。
+// 与 brick 分支同理：生成的线段超出区域包围盒，由 GraphicsView::paintHatch 的
+// setClipPath 裁剪到区域（含内孔 even-odd），故此处只需把图案铺满包围盒，不手动抠内孔。
+//
+// 几何约定严格对齐 geo::hatchLines：toLocal = 旋转 -angle 使剖面线水平；toWorld = 旋转 +angle。
+// 在「图案空间」（未旋转）中，第 k 条平行线经过 (x0 + k·dx, y0 + k·dy)（k 为整数，铺满包围盒）；
+//   * 相邻平行线垂直间距 = |dy|，沿线的错位 = dx（营造错缝/木纹感）；
+//   * 笔段序列正负交替（正=落笔实段，负=抬笔间隔），从实段起；长度 0 已在前端解析时丢弃；
+//   * 该行笔段相位从 xbase = x0 + k·dx 处为 0，沿图案空间 Xp 重复。
+std::vector<geo::Seg> generateHatchLinesFromPat(const PatPattern& pat, const SectionRegion& region) {
+    std::vector<geo::Seg> out;
+    if (region.boundary.size() < 3) return out;
+    out.reserve(512);
+    const double BIG = 1e30;
+    const double pad = 2.0;   // 包围盒外扩（mm），保证首末线/笔段不被截断
+
+    for (const PatLine& pl : pat.lines) {
+        const double a = pl.angleDeg * kPi / 180.0;
+        const double c = std::cos(a), s = std::sin(a);
+        auto toLocal = [&](const Vec3& p) -> Vec3 {
+            return Vec3(p.x * c + p.y * s, -p.x * s + p.y * c, 0.0);
+        };
+        auto toWorld = [&](double xp, double yp) -> Vec3 {
+            return Vec3(xp * c - yp * s, xp * s + yp * c, 0.0);
+        };
+
+        // 区域包围盒变换到图案空间（含内孔）。
+        double lxmin =  BIG, lxmax = -BIG, lymin =  BIG, lymax = -BIG;
+        auto upd = [&](double x, double y) {
+            if (x < lxmin) lxmin = x;
+            if (x > lxmax) lxmax = x;
+            if (y < lymin) lymin = y;
+            if (y > lymax) lymax = y;
+        };
+        for (const auto& p : region.boundary) { const Vec3 q = toLocal(p); upd(q.x, q.y); }
+        for (const auto& h : region.holes)
+            for (const auto& p : h) { const Vec3 q = toLocal(p); upd(q.x, q.y); }
+        const double xStart = lxmin - pad, xEnd = lxmax + pad;
+        const double yLo = lymin - pad, yHi = lymax + pad;
+
+        // 笔段周期与空笔段（实线）判定。
+        const std::vector<double>& ds = pl.dashes;
+        double period = 0.0;
+        for (double d : ds) period += std::fabs(d);
+        const bool solid = (period <= 1e-9);
+
+        // k 范围：使 yp = y0 + k·dy ∈ [yLo, yHi]。dy≈0 时退化为单条线（k=0）。
+        int k0, k1;
+        if (std::fabs(pl.dy) < 1e-9) { k0 = 0; k1 = 0; }
+        else {
+            k0 = (int)std::ceil((yLo - pl.y0) / pl.dy - 1e-9);
+            k1 = (int)std::floor((yHi - pl.y0) / pl.dy + 1e-9);
+        }
+
+        for (int k = k0; k <= k1; ++k) {
+            const double yp = pl.y0 + k * pl.dy;
+            const double xbase = pl.x0 + k * pl.dx;   // 该行相位 0 点（图案空间 Xp）
+
+            if (solid) {                              // 无笔段 → 整条实线
+                out.push_back(geo::Seg{ toWorld(xStart, yp), toWorld(xEnd, yp) });
+                continue;
+            }
+
+            // 沿 Xp 按相位循环排布笔段。初始相位 = (xStart - xbase) mod period。
+            double phase = std::fmod(xStart - xbase, period);
+            if (phase < 0) phase += period;
+            // 定位初始相位落在第几个笔段及段内已消费长度。
+            int idx = 0; double cons = 0.0;
+            double cum = 0.0;
+            for (int i = 0; i < (int)ds.size(); ++i) {
+                const double L = std::fabs(ds[i]);
+                if (phase < cum + L - 1e-12) { idx = i; cons = phase - cum; break; }
+                cum += L;
+                if (i == (int)ds.size() - 1) { idx = 0; cons = 0.0; }
+            }
+            double x = xStart;
+            while (x < xEnd - 1e-9) {
+                const double L = std::fabs(ds[idx]);
+                const double remain = L - cons;       // 当前笔段剩余长度
+                const double segEnd = std::min(xEnd, x + remain);
+                if (ds[idx] > 0.0 && segEnd > x + 1e-9)   // 落笔 → 实段
+                    out.push_back(geo::Seg{ toWorld(x, yp), toWorld(segEnd, yp) });
+                x = segEnd;
+                cons = 0.0;                           // 该笔段已用尽
+                ++idx; if (idx >= (int)ds.size()) idx = 0;   // 循环到下一个笔段
+            }
+        }
+    }
     return out;
 }
 
@@ -1095,10 +1334,11 @@ std::vector<Vec3> generateHatchDots(const SectionRegion& region) {
     if (!pat.dots) return {};
     if (region.boundary.size() < 3) return {};
 
-    // 包围盒 + 点阵步长（用线间距的 0.7 倍，点阵疏于斜线）
+    // 包围盒 + 点阵步长（用线间距的 0.7 倍，点阵疏于斜线；dotStepScale 可整体放大步长，
+    // 用于「基础周围的泥土」等需更稀疏点阵的材料）。
     const QRectF bb = bboxOfPoints(region.boundary);
     const double xmin = bb.left(), ymin = bb.top(), xmax = bb.right(), ymax = bb.bottom();
-    const double step = std::max(1.5, region.style.spacingMm * 0.7);
+    const double step = std::max(1.5, region.style.spacingMm * 0.7 * pat.dotStepScale);
     std::vector<Vec3> dots;
     for (double y = ymin + step * 0.5; y < ymax; y += step) {
         for (double x = xmin + step * 0.5; x < xmax; x += step) {

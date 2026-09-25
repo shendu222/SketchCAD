@@ -79,6 +79,18 @@ struct BlockDef {
     std::vector<AttributeDef> attdefs;    // 属性定义
     std::vector<DynParam> dynParams;      // 动态参数定义
     bool    annotative = false;           // 注释性（占位，暂不参与展开）
+
+    // ---- 外部参照（Xref）属性 ----
+    // 外部参照在本模型中同样占用一条块表记录（AutoCAD 语义：Xref 是 Block 表的一类记录），
+    // 用下面几个字段把它与普通块区分开。路径类型字段用 int 而非 XrefPathType 枚举，
+    // 以避免 Block.h ↔ Xref.h 循环包含（与 Element::sectionExempt/sectionMaterial 同手法）：
+    // 具体枚举见 Xref.h，此处仅存整数，使用时按枚举解释。
+    // 旧存档缺这些键时全部回落默认（isXref=false），语义与普通块完全一致。
+    bool    isXref       = false;         // 是否为外部参照记录
+    QString xrefPath;                     // 源文件路径（按 xrefPathType 的形态存储）
+    int     xrefPathType = 0;             // 0 == XrefPathType::FullPath（见 Xref.h）
+    bool    xrefNested   = false;         // 嵌套参照（随宿主参照带入），不可在本图直接分离
+    int     xrefStatus   = 0;             // 0 == XrefStatus::Loaded（见 Xref.h）
 };
 
 // ============================================================================

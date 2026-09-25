@@ -84,6 +84,37 @@ private:
 };
 
 // ============================================================================
+// 附加外部参照对话框
+// ----------------------------------------------------------------------------
+// 对应 AutoCAD 的「附加参照」（XATTACH）：指定参照图形文件 + 路径类型
+// （完整路径 / 相对路径 / 无路径）。插入点、缩放比例与旋转一律取默认值
+// （原点 / 1.0 / 0°），因此确认后立即在原点以原尺寸放一个参照实例。
+// 失败原因（文件不存在、格式不支持、已附加、块名被普通块占用）由模型层写日志，
+// 此处只做统一的提示，不重复判定。
+// ============================================================================
+class AttachXrefDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit AttachXrefDialog(SketchModel* model, QWidget* parent = nullptr);
+
+    int attachedId() const { return attachedId_; }   // 成功为参照实例 id，失败为 -1
+
+public slots:
+    void accept() override;
+
+private slots:
+    void onBrowse();                    // 浏览选择参照图形文件
+    void onInputChanged();              // 路径/类型变化 → 刷新提示信息
+
+private:
+    SketchModel* model_ = nullptr;
+    QLineEdit*   pathEdit_  = nullptr;
+    QComboBox*   typeCombo_ = nullptr;
+    QLabel*      infoLabel_ = nullptr;
+    int attachedId_ = -1;
+};
+
+// ============================================================================
 // 块管理器对话框
 // ----------------------------------------------------------------------------
 // 集中管理已有块：列表 + 重命名 / 删除 / 用当前选择集重定义（redefine）。

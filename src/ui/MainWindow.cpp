@@ -333,6 +333,12 @@ void MainWindow::buildMenu() {
     mk(mod, QStringLiteral("剖面填充(&H)..."), QKeySequence("Ctrl+Shift+H"), [this] { sectionFill(); })
         ->setIcon(icons::make("hatch"));
 
+    // ---- 剖面填充参数（对已填充的区域重新选材料/换图案）----
+    // 不需重新框选区域：直接对当前选中的 Hatch 图元就地重设材料类别 / 角度 / 间距，
+    // 让用户随时把「通用金属」改成「砖墙」「石材」「木材」等工程图案。
+    mk(mod, QStringLiteral("剖面填充参数(&P)..."), QKeySequence(), [this] { sectionFillParams(); })
+        ->setIcon(icons::make("hatch"));
+
     auto* alignMenu = mod->addMenu(icons::make("align"), QStringLiteral("对齐(&A)"));
     mk(alignMenu, QStringLiteral("对齐..."), QKeySequence(), [this] {
         std::vector<Element> src;
@@ -855,6 +861,11 @@ void MainWindow::buildBlockMenu(QMenu* m) {
         [this] { openBlockManagerDialog(); }, "block");
     add(m, QStringLiteral("分解块..."), QKeySequence(),
         [this] { explodeBlockFromMenu(); }, "explode");
+    m->addSeparator();
+    add(m, QStringLiteral("附加外部参照..."), QKeySequence(),
+        [this] { openAttachXrefDialog(); }, "block");
+    add(m, QStringLiteral("分离外部参照..."), QKeySequence(),
+        [this] { detachXrefFromMenu(); }, "block");
 }
 
 void MainWindow::openInsertBlockDialog() {
@@ -896,6 +907,35 @@ void MainWindow::explodeBlockFromMenu() {
     }
     model_->log(QStringLiteral("已分解 %1 个块引用 → %2 个图元")
                     .arg(refs.size()).arg(total));
+}
+
+void MainWindow::openAttachXrefDialog() {
+    AttachXrefDialog dlg(model_, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    const int id = dlg.attachedId();
+    if (id < 0) return;
+    // 附加后把视口适配到新参照，避免它落在当前视野之外而被误判为"没进来"
+    view_->fitView();
+}
+
+void MainWindow::detachXrefFromMenu() {
+    const QStringList names = model_->xrefNames();
+    if (names.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("分离外部参照"),
+            QStringLiteral("当前图纸没有已附加的外部参照。"));
+        return;
+    }
+    bool ok = false;
+    const QString pick = QInputDialog::getItem(this, QStringLiteral("分离外部参照"),
+        QStringLiteral("选择要分离的外部参照（嵌套参照只能在它的宿主图中分离）："),
+        names, 0, false, &ok);
+    if (!ok || pick.isEmpty()) return;
+    if (QMessageBox::question(this, QStringLiteral("分离外部参照"),
+            QStringLiteral("确定分离外部参照「%1」？它的全部参照实例将一并删除（可撤销）。")
+                .arg(pick),
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+        return;
+    model_->detachXref(pick);
 }
 
 // 【绘图】菜单 —— 不新建动作，直接挂载工具条已有的 QAction。
@@ -2207,6 +2247,7 @@ void MainWindow::applyNewDrawing(const SheetSpec& spec, double scaleRatio) {
     if (scaleRatio <= 0.0) scaleRatio = 1.0;
     setCurrentSheetFormat(spec.format);                // T6：字高等「随幅面」的量据此派生
     model_->clear();
+    model_->setDrawingPath(QString());                 // 新图尚未存盘 → 外部参照无相对路径基准
     model_->setScaleRatio(scaleRatio, false);          // 本次新建的绘图比例，不压撤销
     // GB/T 14665-2012 表6：预置标准图层模板（01~12），便于按标准标识分层出图（T9）
     for (const Layer& l : standardLayers())
@@ -2289,6 +2330,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     }
     f.write(out);
     f.close();
+    // 登记图纸路径：外部参照的「相对路径」以此为解析基准
+    model_->setDrawingPath(path);
     if (err) *err = e;
     model_->log(QStringLiteral("已保存：%1（%2，%3 字节）%4")
                     .arg(path).arg(cadfmt::formatName(fmt)).arg(out.size()).arg(e));
@@ -2412,6 +2455,8 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
+    // 登记图纸路径：它是外部参照「相对路径」的解析基准（读回后 xref 才能被重新定位）
+    model_->setDrawingPath(path);
     syncTitleBlockScale();
     model_->log(QStringLiteral("已打开：%1（比例 %2）").arg(path).arg(model_->scaleLabel()));
     view_->fitView();
@@ -2707,6 +2752,32 @@ void MainWindow::onPointPickCancelled() {
     if (mirrorPending_) finishMirror();
 }
 
+// 材料类别 → 中文标签（供日志/提示使用；与 SectionDialog 的可选项一致）。
+static const char* sectionMaterialLabel(SectionMaterial m) {
+    switch (m) {
+    case SectionMaterial::General:    return "通用金属（45°细实线）";
+    case SectionMaterial::CastIron:   return "铸铁（网状）";
+    case SectionMaterial::Steel:      return "钢";
+    case SectionMaterial::Aluminum:   return "铝（反向 45°）";
+    case SectionMaterial::Wood:       return "木材（顺纹）";
+    case SectionMaterial::Glass:      return "玻璃（45°长短画线）";
+    case SectionMaterial::Liquid:     return "液体（水平短画线）";
+    case SectionMaterial::Concrete:   return "混凝土（交叉线+点）";
+    case SectionMaterial::NonMetal:   return "非金属（交叉网格）";
+    case SectionMaterial::Brick:      return "砖墙（错缝砌体）";
+    case SectionMaterial::Stone:      return "石材墙面（块石）";
+    case SectionMaterial::Insulation: return "保温层（点阵）";
+    case SectionMaterial::Plywood:    return "胶合板（交叉层）";
+    case SectionMaterial::CoilWinding: return "线圈绕组元件（45°线+点）";
+    case SectionMaterial::LaminatedSteel: return "叠钢片（薄45°线）";
+    case SectionMaterial::Sand:       return "型砂/粉末冶金等（点阵）";
+    case SectionMaterial::Soil:       return "基础周围泥土（疏点）";
+    case SectionMaterial::ReinforcedConcrete: return "钢筋混凝土（45°线+点）";
+    case SectionMaterial::Mesh:       return "筛网/过滤网（网格）";
+    }
+    return "通用金属";
+}
+
 // ============================ 剖面填充（区域选择模式） ============================
 //
 // 交互：菜单【修改>剖面填充】→ 进入区域选择模式（十字光标）→ 在要填充的封闭区域内
@@ -2842,6 +2913,59 @@ void MainWindow::onRegionPickParams() {
     model_->log(QStringLiteral("剖面填充参数：角度 %1°、间距 %2mm（继续在区域内单击即可填充）")
                     .arg(sectionStyle_.angleDeg, 0, 'f', 1)
                     .arg(sectionStyle_.spacingMm, 0, 'f', 2));
+}
+
+// 【修改>剖面填充参数】：对当前选中的 Hatch 图元（已填充的剖面区域）就地重设
+// 材料类别 / 豁免 / 角度 / 间距，实现"换填充类型"。
+//   * 无选中 Hatch 时，只把参数存为默认（下次点选填充即生效），并给出提示；
+//   * 有选中 Hatch 时，逐一无损改写（保留边界/内孔/颜色/图层/线宽），一次 Ctrl+Z 回滚。
+// 关键：不要重建图元（会丢 holes/边界），只改 style 字段并写回即可。
+void MainWindow::sectionFillParams() {
+    SectionDialog dlg(SectionDialog::Result{ sectionStyle_, true }, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const SectionStyle st = dlg.result().style;
+    sectionStyle_ = st;   // 同时更新默认样式：后续点选填充沿用本次选择
+
+    // 收集当前选中的 Hatch 图元
+    std::vector<int> hatchIds;
+    for (int id : model_->selection()) {
+        if (const Element* e = model_->element(id))
+            if (e->type == ElementType::Hatch) hatchIds.push_back(id);
+    }
+
+    if (hatchIds.empty()) {
+        model_->log(QStringLiteral("剖面填充参数已设为：%1（角度 %2°、间距 %3mm）；"
+                                   "下次点选填充即按此生效。若想改已填充区域，请先选中该剖面区域。")
+                        .arg(QString::fromUtf8(sectionMaterialLabel(st.material)))
+                        .arg(st.angleDeg, 0, 'f', 1)
+                        .arg(st.spacingMm, 0, 'f', 2));
+        return;
+    }
+
+    model_->beginEdit(QStringLiteral("剖面填充参数"));
+    int n = 0;
+    for (int id : hatchIds) {
+        const Element* src = model_->element(id);
+        if (!src || src->type != ElementType::Hatch) continue;
+        Element e = *src;                          // 复制：保留 boundary/holes/颜色/图层/线宽
+        e.sectionMaterial = (int)st.material;
+        e.sectionExempt   = (int)st.exempt;
+        e.rotation        = st.angleDeg;
+        e.radius          = st.spacingMm;
+        model_->updateElementQuiet(id, [&e](Element& dst) {
+            dst.sectionMaterial = e.sectionMaterial;
+            dst.sectionExempt   = e.sectionExempt;
+            dst.rotation        = e.rotation;
+            dst.radius          = e.radius;
+        });
+        ++n;
+    }
+    model_->log(QStringLiteral("已把 %1 个剖面区域改为：%2（角度 %3°、间距 %4mm）")
+                    .arg(n)
+                    .arg(QString::fromUtf8(sectionMaterialLabel(st.material)))
+                    .arg(st.angleDeg, 0, 'f', 1)
+                    .arg(st.spacingMm, 0, 'f', 2));
 }
 
 void MainWindow::exportDxf() {

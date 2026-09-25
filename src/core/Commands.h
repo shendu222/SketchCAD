@@ -176,6 +176,16 @@ class LayerCommand : public ICommand { public: bool execute(const CommandContext
 //   dynlist <块名>                                 列出块定义的动态参数
 class BlockCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 外部参照（Xref）命令族 ----
+// 按 ctx.cmd 分派（与 LayerCommand / BlockCommand 同构），语义对齐 AutoCAD 的 XATTACH/XDETACH：
+//   xref attach <文件路径> [full|relative|none] [x,y] [旋转] [sx] [sy]
+//                                  附加外部参照：路径类型默认 full；插入点默认 (0,0)、
+//                                  缩放默认 1.0、旋转默认 0°
+//   xref detach <块名>             分离外部参照：删除该 Xref 定义及其全部参照实例
+//   xref list                      列出本图直接附加的外部参照（含路径与状态）
+//   xref path <块名>               打印该外部参照解析后的绝对路径（诊断用）
+class XrefCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
 // ---- 飞机三面图（航空制图模板）----
 class AircraftViewsCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 

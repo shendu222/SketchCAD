@@ -13,6 +13,8 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QDialogButtonBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QPainter>
@@ -21,6 +23,7 @@
 #include "core/SketchModel.h"
 #include "core/Element.h"
 #include "core/Block.h"
+#include "core/Xref.h"
 #include "ui/GraphicsView.h"   // ElementItem
 
 namespace SketchCAD {
@@ -375,6 +378,100 @@ void BlockManagerDialog::onRedefine() {
         return;
     }
     rebuildList();
+}
+
+// ============================================================================
+// AttachXrefDialog（附加外部参照）
+// ============================================================================
+AttachXrefDialog::AttachXrefDialog(SketchModel* model, QWidget* parent)
+    : QDialog(parent), model_(model)
+{
+    setWindowTitle(QStringLiteral("附加外部参照"));
+    setMinimumWidth(460);
+
+    pathEdit_ = new QLineEdit;
+    pathEdit_->setPlaceholderText(QStringLiteral("参照图形文件（*.json / *.dxf / *.dwg）"));
+    auto* browseBtn = new QPushButton(QStringLiteral("浏览..."));
+
+    typeCombo_ = new QComboBox;
+    typeCombo_->addItem(QStringLiteral("完整路径"), (int)XrefPathType::FullPath);
+    typeCombo_->addItem(QStringLiteral("相对路径（相对本图所在目录）"), (int)XrefPathType::RelativePath);
+    typeCombo_->addItem(QStringLiteral("无路径（只记录文件名）"), (int)XrefPathType::NoPath);
+    typeCombo_->setCurrentIndex(0);
+
+    // 未存盘的宿主图没有解析基准，"相对路径"会退化为文件名 —— 在此如实告知，
+    // 不让对话框给出一个它兑现不了的承诺。
+    if (model_ && model_->drawingDir().isEmpty()) {
+        typeCombo_->setItemText(1, QStringLiteral("相对路径（本图未存盘 → 退化为文件名）"));
+    }
+
+    infoLabel_ = new QLabel(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）"));
+    infoLabel_->setWordWrap(true);
+
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    connect(box, &QDialogButtonBox::accepted, this, &AttachXrefDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    auto* row = new QHBoxLayout;
+    row->addWidget(pathEdit_, 1);
+    row->addWidget(browseBtn);
+
+    auto* form = new QFormLayout;
+    form->addRow(QStringLiteral("参照图形："), row);
+    form->addRow(QStringLiteral("路径类型："), typeCombo_);
+
+    auto* main = new QVBoxLayout(this);
+    main->addLayout(form);
+    main->addWidget(new QLabel(QStringLiteral("插入参数：")));
+    main->addWidget(infoLabel_);
+    main->addWidget(box);
+
+    connect(browseBtn, &QPushButton::clicked, this, &AttachXrefDialog::onBrowse);
+    connect(pathEdit_, &QLineEdit::textChanged, this, &AttachXrefDialog::onInputChanged);
+    connect(typeCombo_, &QComboBox::currentIndexChanged, this, &AttachXrefDialog::onInputChanged);
+    onInputChanged();
+}
+
+void AttachXrefDialog::onBrowse() {
+    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("选择参照图形"), QString(),
+        QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
+    if (fn.isEmpty()) return;
+    pathEdit_->setText(fn);
+}
+
+void AttachXrefDialog::onInputChanged() {
+    const QString path = pathEdit_->text().trimmed();
+    if (path.isEmpty()) {
+        infoLabel_->setText(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）"));
+        return;
+    }
+    const QFileInfo fi(path);
+    const bool missing = !fi.exists() || !fi.isFile();
+    const XrefPathType pt = (XrefPathType)typeCombo_->currentData().toInt();
+    const QString stored = xref::storedPath(fi.absoluteFilePath(), pt, model_ ? model_->drawingDir() : QString());
+    infoLabel_->setText(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）\n"
+                                       "参照块名：%1\n记录路径：%2%3")
+                            .arg(xref::blockNameForPath(path), stored,
+                                 missing ? QStringLiteral("\n⚠ 该文件不存在或不是文件") : QString()));
+}
+
+void AttachXrefDialog::accept() {
+    const QString path = pathEdit_->text().trimmed();
+    if (path.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("附加外部参照"),
+                            QStringLiteral("请选择参照图形文件。"));
+        return;
+    }
+    const XrefPathType pt = (XrefPathType)typeCombo_->currentData().toInt();
+    const int id = model_->attachXref(path, pt);
+    if (id < 0) {
+        QMessageBox::warning(this, QStringLiteral("附加外部参照"),
+                            QStringLiteral("附加失败，详见日志：可能是文件不存在、格式不支持、"
+                                           "该参照已附加，或块名被普通块占用。"));
+        return;
+    }
+    attachedId_ = id;
+    QDialog::accept();
 }
 
 } // namespace SketchCAD

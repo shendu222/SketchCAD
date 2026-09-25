@@ -71,6 +71,7 @@ int main(int argc, char** argv) {
     const QStringList expect = {
         QStringLiteral("移动 / 复制..."), QStringLiteral("复制"), QStringLiteral("阵列(R)"),
         QStringLiteral("剖面填充(H)..."),
+        QStringLiteral("剖面填充参数(P)..."),
         QStringLiteral("对齐(A)"),
         QStringLiteral("旋转..."), QStringLiteral("缩放..."), QStringLiteral("镜像..."),
         QStringLiteral("移动并旋转..."), QStringLiteral("旋转两条图元..."), QStringLiteral("反向"),

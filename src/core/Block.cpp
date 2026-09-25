@@ -421,6 +421,17 @@ QJsonObject blockDefToJson(const BlockDef& d) {
         pps.append(po);
     }
     o["dynParams"] = pps;
+
+    // 外部参照属性：仅当本记录确实是 Xref 时才写入，
+    // 保证普通块的存档内容与引入 Xref 之前**逐字节一致**（旧档兼容）。
+    if (d.isXref) {
+        QJsonObject x;
+        x["path"]     = d.xrefPath;
+        x["pathType"] = d.xrefPathType;
+        x["nested"]   = d.xrefNested;
+        x["status"]   = d.xrefStatus;
+        o["xref"] = x;
+    }
     return o;
 }
 
@@ -469,6 +480,16 @@ BlockDef blockDefFromJson(const QJsonObject& o) {
             p.states.push_back(std::move(s));
         }
         d.dynParams.push_back(std::move(p));
+    }
+
+    // 外部参照属性：旧存档无 "xref" 键 → 保持 isXref=false（与普通块一致）
+    if (o.contains(QStringLiteral("xref"))) {
+        const QJsonObject x = o[QStringLiteral("xref")].toObject();
+        d.isXref       = true;
+        d.xrefPath     = x[QStringLiteral("path")].toString();
+        d.xrefPathType = x[QStringLiteral("pathType")].toInt(0);
+        d.xrefNested   = x[QStringLiteral("nested")].toBool(false);
+        d.xrefStatus   = x[QStringLiteral("status")].toInt(0);
     }
     return d;
 }

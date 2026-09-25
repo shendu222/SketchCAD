@@ -5,6 +5,7 @@
 class QComboBox;
 class QDoubleSpinBox;
 class QCheckBox;
+class QLabel;
 
 namespace SketchCAD {
 
@@ -41,11 +42,14 @@ protected:
     void accept() override;
 
 private:
+    void updatePreview();   // 根据材料/角度/间距实时重绘剖面图案缩略图
+
     QComboBox*      cbMaterial_ = nullptr;
     QComboBox*      cbExempt_   = nullptr;
     QDoubleSpinBox* sbAngle_    = nullptr;
     QDoubleSpinBox* sbSpacing_  = nullptr;
     QCheckBox*      cbAuto_     = nullptr;
+    QLabel*         previewLabel_ = nullptr;
     Result          res_;
 };
 

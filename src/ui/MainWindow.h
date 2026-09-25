@@ -195,6 +195,9 @@ private:
     // 剖面填充（GB/T 4457.5-2013）：进入「区域选择模式」——按鼠标点击位置自动识别
     // 该点所在的封闭区域并只填充它（相邻区域不受影响，嵌套闭环自动作内孔掏空）。
     void sectionFill();
+    // 剖面填充参数：对**已填充的剖面区域（选中的 Hatch 图元）**就地重设材料类别/角度/间距，
+    // 随时把「通用金属」换成「砖墙/石材/木材」等工程图案；无选中时仅更新默认样式。
+    void sectionFillParams();
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"
@@ -212,6 +215,8 @@ private:
     void openCreateBlockDialog();                     // 创建块...
     void openBlockManagerDialog();                    // 块管理器...（重命名/删除/重定义）
     void explodeBlockFromMenu();                      // 分解块...（当前选中的块引用）
+    void openAttachXrefDialog();                      // 附加外部参照...（选择文件 + 路径类型）
+    void detachXrefFromMenu();                        // 分离外部参照...（从已附加列表中选择）
 
     // ---- 样式（线宽 / 颜色）----
     void applyWidth(double px);               // 设默认线宽；若有选中则同时改选中图元

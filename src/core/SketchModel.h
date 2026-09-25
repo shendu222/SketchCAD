@@ -10,6 +10,7 @@
 #include "DimStyle.h"
 #include "Layer.h"
 #include "Block.h"
+#include "Xref.h"
 
 namespace SketchCAD {
 
@@ -195,6 +196,34 @@ public:
     QJsonArray blocksToJson() const;
     void setBlocksFromJson(const QJsonArray& arr);
 
+    // ---- 外部参照（Xref）管理 ----
+    // 附加：读入外部图形文件，登记为一条 Xref 块记录，并在 insertPt 放置一个参照实例。
+    //   pathType 决定 xrefPath 的**存盘形态**（完整路径 / 相对宿主图目录 / 仅文件名），
+    //   解析时按同一天基准还原。插入点 / 缩放 / 旋转均有默认值（原点、1.0、0°）。
+    //   返回新参照实例的图元 id；失败返回 -1 并写 warn 日志，
+    //   覆盖：文件路径为空、文件不存在、格式不支持、该参照已附加、块名被普通块占用。
+    int  attachXref(const QString& filePath, XrefPathType pathType = XrefPathType::FullPath,
+                    const Vec3& insertPt = Vec3(0, 0, 0),
+                    double rotationDeg = 0.0, double sx = 1.0, double sy = 1.0);
+    // 分离：按块名移除 Xref 定义与它的**全部**参照实例（一次 Ctrl+Z 可撤）。
+    //   因本次分离而失去全部引用者的嵌套参照会被级联清除（AutoCAD 语义）。
+    //   块名不存在 / 不是外部参照 / 是嵌套参照 → false 并写 warn 日志。
+    bool detachXref(const QString& blockName);
+    // 已附加的外部参照名列表；includeNested=false 时只列本图直接附加的那些
+    QStringList xrefNames(bool includeNested = false) const;
+    int  xrefCount(bool includeNested = false) const;
+    // 同一源文件是否已附加（按解析后的绝对路径比对，不受路径类型影响）
+    bool hasXrefSource(const QString& filePath) const;
+    // 把记录的 xrefPath 按路径类型还原为绝对路径（诊断 / 日志用）；非 Xref 返回空串
+    QString xrefResolvedPath(const QString& blockName) const;
+
+    // ---- 当前图纸文件路径（外部参照相对路径的解析基准）----
+    // 相对路径必须相对「宿主图所在目录」才有意义，故读写档时由 UI 层登记；
+    // 未存盘宿主图为空串，此时相对路径退化为纯文件名。
+    QString drawingPath() const { return drawingPath_; }
+    void    setDrawingPath(const QString& p) { drawingPath_ = p; }
+    QString drawingDir() const;              // drawingPath 所在目录；空 → 返回空串
+
     // ---- 当前活动图层（绘制目标层）----
     // 新创建的图元自动归属此层并继承其属性；默认 "0"。
     // 切换活动层只改变"新图元去哪一层 + 继承哪层属性"，不改动任何已有图元，
@@ -336,6 +365,7 @@ private:
     LineDrawParams lp_;        // 直线绘制参数输入条（角度/长度、平行间隔/条数）
     double scaleRatio_ = 1.0;  // 绘图比例（图形:实际），1.0 = 1:1
     QString commandPrompt_;    // 当前分段命令提示文本
+    QString drawingPath_;      // 当前图纸文件路径（Xref 相对路径的解析基准；未存盘为空）
     std::vector<Layer> layers_;   // 图层表（默认含一层 "0"）
     QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"
     std::vector<BlockDef> blocks_;   // 块表（唯一一份定义，所有 BlockRef 共享）

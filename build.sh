@@ -33,6 +33,20 @@ fi
 "$NINJA" -C "$WROOT/build"
 echo "[OK] 构建完成: $ROOT/build/SketchCAD.exe"
 
+# 同步剖面填充 PAT 图案库（exe 同级 hatch/ 子目录）。
+# 运行时 HatchPatternLibrary 从 applicationDirPath()/hatch 自动加载，
+# 故开发期 build/SketchCAD.exe 与发布 dist/SketchCAD.exe 都需该目录。
+# 图案源文件统一放在仓库根的 hatch/（已纳入版本控制，dist/ 被 .gitignore 忽略）。
+sync_hatch() {
+    local dst="$1"; mkdir -p "$dst"
+    for f in "$ROOT"/hatch/*.pat; do
+        [ -e "$f" ] || continue
+        cp "$f" "$dst/"
+    done
+}
+sync_hatch "$ROOT/build/hatch"
+echo "[OK] 剖面 PAT 图案已同步到 build/hatch/"
+
 if [ "$MODE" = "test" ]; then
     echo "---- 核心层自测 ----"
     # Qt 在 MSYS 伪终端下默认不写 stderr，需显式声明有控制台
@@ -44,5 +58,7 @@ if [ "$MODE" = "dist" ]; then
     cp "$ROOT/build/SketchCAD.exe" "$ROOT/dist/"
     "$QT_ROOT/bin/windeployqt.exe" --release --no-translations \
         --no-system-d3d-compiler --no-opengl-sw "$WROOT/dist/SketchCAD.exe" >/dev/null
+    sync_hatch "$ROOT/dist/hatch"
     echo "[OK] 已打包: $ROOT/dist/SketchCAD.exe（含 Qt 运行时，可拷贝到无 Qt 环境运行）"
+    echo "[OK] 剖面 PAT 图案已同步到 dist/hatch/"
 fi

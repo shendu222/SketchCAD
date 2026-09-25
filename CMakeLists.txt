@@ -50,7 +50,9 @@ set(CORE_SOURCES
     src/core/FlangeHubViews.cpp
     src/core/FloorPlanViews.cpp
     src/core/Section.cpp
+    src/core/HatchLibrary.cpp
     src/core/Block.cpp
+    src/core/Xref.cpp
     src/core/CadFormats.cpp
 )
 set(UI_SOURCES
@@ -278,6 +280,33 @@ add_executable(BlockTest
 target_link_libraries(BlockTest PRIVATE Qt6::Widgets)
 target_include_directories(BlockTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(BlockTest PRIVATE -Wall -Wextra)
+
+# ---- 外部参照（Xref）UI 回归：附加对话框 / 菜单入口 ----
+# AttachXrefDialog 属于 UI 层：验证默认路径类型、确认后模型真的被写入（定义 + 实例）、
+# 相对路径分支，以及【块】子菜单两项新入口存在且带图标。
+add_executable(XrefDialogTest
+    tests/xref_dialog_test.cpp
+    src/ui/MainWindow.cpp
+    src/ui/BlockDialogs.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(XrefDialogTest PRIVATE Qt6::Widgets)
+target_include_directories(XrefDialogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(XrefDialogTest PRIVATE -Wall -Wextra)
+
+# ---- 外部参照（Xref）回归：附加 / 路径类型 / 失败分支 / 嵌套引入 / 分离级联 / 序列化 ----
+# 断言面：① 附加后 = 一条 Xref 块表记录 + 一个参照实例，默认插入点/比例/旋转下展开与源图一致；
+# ② 完整/相对/无路径三种记录的写法与还原；③ 文件不存在/重复附加/同名普通块/不支持格式四类拒绝；
+# ④ DXF 可作参照源、STEP 只写格式拒绝；⑤ 依赖引入为嵌套参照且不可直接分离、随宿主级联清理；
+# ⑥ 分离同时抹掉定义与全部实例并可一次撤销；⑦ Xref 字段随块表往返、普通块存档格式不变。
+add_executable(XrefTest
+    tests/xref_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(XrefTest PRIVATE Qt6::Widgets)
+target_include_directories(XrefTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(XrefTest PRIVATE -Wall -Wextra)
 
 # ---- 一次性预览：渲染「当前图层」HUD 徽标（非回归测试，人工核对用）----
 add_executable(LayerHudPreview
