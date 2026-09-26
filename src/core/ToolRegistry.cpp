@@ -105,6 +105,28 @@ ToolRegistry::ToolRegistry() {
     registerTool({"line_from_point_to_line",   QStringLiteral("点到直线垂线"),
                   ToolCategory::LineSub});
 
+    // ==================== 构造线（Xline，6 种子模式）====================
+    // 向两端无限延伸的辅助线。复用直线几何计算（line::Mode），结果线段转无限直线。
+    registerTool({"xline",        QStringLiteral("构造线"),
+                  ToolCategory::DrawBasic, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("构造线(Xline)：选择绘制方式(H/V/A/两点/角平分线/平行)，向两端无限延伸")});
+    registerTool({"xline_h",       QStringLiteral("水平构造线"),
+                  ToolCategory::XlineSub});
+    registerTool({"xline_v",       QStringLiteral("竖直构造线"),
+                  ToolCategory::XlineSub});
+    registerTool({"xline_angle",   QStringLiteral("角度构造线"),
+                  ToolCategory::XlineSub, ParamBarMode::AngleLength,
+                  DimensionType::Distance,
+                  QStringLiteral("角度构造线：点击基点即按「角度 + 长度」方向无限延伸")});
+    registerTool({"xline_2pt",     QStringLiteral("两点构造线"),
+                  ToolCategory::XlineSub});
+    registerTool({"xline_bisector", QStringLiteral("角平分线构造线"),
+                  ToolCategory::XlineSub});
+    registerTool({"xline_parallel", QStringLiteral("平行构造线"),
+                  ToolCategory::XlineSub, ParamBarMode::None,
+                  DimensionType::Distance,
+                  QStringLiteral("平行构造线：先选参考直线，再点击决定平行线位置")});
+
     // ==================== 圆形子模式（10 种）====================
     registerTool({"circle_2p",          QStringLiteral("两点圆"),
                   ToolCategory::CircleSub});
@@ -322,6 +344,8 @@ ToolRegistry::ToolRegistry() {
     for (auto it = tools_.constBegin(); it != tools_.constEnd(); ++it) {
         if (it.value().category == ToolCategory::LineSub)
             lineSubIds_ << it.key();
+        else if (it.value().category == ToolCategory::XlineSub)
+            xlineSubIds_ << it.key();
         else if (it.value().category == ToolCategory::CircleSub)
             circleSubIds_ << it.key();
         else if (it.value().category == ToolCategory::ArcSub)
@@ -353,6 +377,7 @@ bool ToolRegistry::isDrawTool(const QString& id) const {
     if (!s) return false;
     return s->category == ToolCategory::DrawBasic ||
            s->category == ToolCategory::LineSub ||
+           s->category == ToolCategory::XlineSub ||
            s->category == ToolCategory::CircleSub ||
            s->category == ToolCategory::ArcSub ||
            s->category == ToolCategory::PolySub ||
@@ -374,6 +399,11 @@ bool ToolRegistry::isPolylineEditTool(const QString& id) const {
 bool ToolRegistry::isLineSubTool(const QString& id) const {
     const ToolSpec* s = find(id);
     return s && s->category == ToolCategory::LineSub;
+}
+
+bool ToolRegistry::isXlineSubTool(const QString& id) const {
+    const ToolSpec* s = find(id);
+    return s && s->category == ToolCategory::XlineSub;
 }
 
 bool ToolRegistry::isCircleSubTool(const QString& id) const {

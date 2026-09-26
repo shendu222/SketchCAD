@@ -983,6 +983,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
         return sm;
     };
     sub(QStringLiteral("直线(&L)"),   QStringLiteral("line"),     &MainWindow::buildLineMenu);
+    sub(QStringLiteral("构造线(&X)"), QStringLiteral("xline"),    &MainWindow::buildXlineMenu);
     sub(QStringLiteral("圆(&C)"),     QStringLiteral("circle"),   &MainWindow::buildCircleMenu);
     sub(QStringLiteral("圆弧(&A)"),   QStringLiteral("arc"),      &MainWindow::buildArcMenu);
     sub(QStringLiteral("多边形(&P)"), QStringLiteral("poly"),     &MainWindow::buildPolyMenu);
@@ -1117,6 +1118,14 @@ void MainWindow::buildLineMenu(QMenu* m) {
         "line_orthogonal_from_line", "line_from_point_to_line"});
     addSubMenu(m, "line", QStringLiteral("正交折线"), {
         "line_snake", "line_snake_x", "line_snake_y"});
+}
+
+// 【构造线】菜单：XLINE 六种绘制方式（对应 AutoCAD Through/Hor/Ver/Angle/Bisect/Offset）。
+// 全部复用工具条的 toolActions_ 指针，与「草图绘制 > 构造线」是同一批动作的两个入口。
+void MainWindow::buildXlineMenu(QMenu* m) {
+    addSubMenu(m, "xline", QStringLiteral("基本"), {
+        "xline", "xline_h", "xline_v", "xline_angle",
+        "xline_bisector", "xline_parallel"});
 }
 
 // 【圆】菜单：把圆形绘制方式按类别拆成中文二级子菜单。
@@ -1366,6 +1375,20 @@ const QVector<MainWindow::ToolSubMode>& MainWindow::lineSubModes() {
     return modes;
 }
 
+const QVector<MainWindow::ToolSubMode>& MainWindow::xlineSubModes() {
+    // 顺序与 AutoCAD XLINE 选项对应：Through(两点) / Hor / Ver / Angle / Bisect / Offset。
+    // 主按钮 xline 固定排第一（默认方式 = 两点定线）。
+    static const QVector<ToolSubMode> modes = {
+        {QStringLiteral("两点构造线"),     "xline",           QStringLiteral("构造线 (XLINE 两点)：点两个点，过两点向两端无限延伸")},
+        {QStringLiteral("水平构造线"),     "xline_h",         QStringLiteral("水平构造线 (H)：点击通过点，水平无限延伸")},
+        {QStringLiteral("竖直构造线"),     "xline_v",         QStringLiteral("竖直构造线 (V)：点击通过点，竖直无限延伸")},
+        {QStringLiteral("角度构造线"),     "xline_angle",     QStringLiteral("角度构造线 (A)：参数输入条设角度，点击基点即按该方向无限延伸")},
+        {QStringLiteral("角平分构造线"),   "xline_bisector",  QStringLiteral("角平分构造线 (B)：选两条直线，沿其角平分方向无限延伸")},
+        {QStringLiteral("平行构造线"),     "xline_parallel",  QStringLiteral("平行构造线 (O)：选参考直线后点通过点，平行于参考线无限延伸")},
+    };
+    return modes;
+}
+
 const QVector<MainWindow::ToolSubMode>& MainWindow::circleSubModes() {
     static const QVector<ToolSubMode> modes = {
         {QStringLiteral("圆心+点"),          "circle",              QStringLiteral("圆心 + 圆周点：半径 = 两点距离")},
@@ -1501,7 +1524,7 @@ QStringList MainWindow::allSubModeToolIds() {
     // 每个 id 都在 ToolRegistry 有对应工具实现（instant 项直接调 model_，不纳入）。
     QSet<QString> ids;
     const QVector<const QVector<ToolSubMode>*> lists = {
-        &lineSubModes(), &circleSubModes(), &arcSubModes(),
+        &lineSubModes(), &xlineSubModes(), &circleSubModes(), &arcSubModes(),
         &polySubModes(), &splineSubModes(), &splineEditSubModes(),
         &ellipseSubModes(), &polylineSubModes(), &selectSubModes(),
     };
@@ -1688,6 +1711,10 @@ void MainWindow::buildToolbar() {
     createDropdownTool(curTb, group, bucket, "line", QStringLiteral("直线"),
                        "line", QStringLiteral("直线 (两点)：连续模式下右键结束"),
                        "L", QStringLiteral("直线绘制方式"), lineSubModes());
+    // 构造线：主按钮 = 两点构造线，下拉菜单包含 H/V/A/B/O 六种绘制方式
+    createDropdownTool(curTb, group, bucket, "xline", QStringLiteral("构造线"),
+                       "xline", QStringLiteral("构造线 (Xline)：向两端无限延伸的辅助线，连续绘制，右键/Esc 退出"),
+                       "", QStringLiteral("构造线绘制方式"), xlineSubModes());
     add(QStringLiteral("矩形"),   "rect", QStringLiteral("矩形 (Rectangle)"), "R", "rect");
     // 多边形：主按钮 = 自由多边形(右键闭合)，下拉菜单包含正多边形/倒角矩形/圆角矩形/星形等绘制方式
     createDropdownTool(curTb, group, bucket, "poly", QStringLiteral("多边形"),

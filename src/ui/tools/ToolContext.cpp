@@ -88,6 +88,7 @@ void ToolContext::finalizeSnake()    { view->finalizeSnake(); }
 
 // ---- 子模式分派 ----
 void ToolContext::handleLineSubTool(const Vec3& w, QMouseEvent* e)   { view->handleLineSubTool(w, e); }
+void ToolContext::handleXlineSubTool(const Vec3& w, QMouseEvent* e)  { view->handleXlineSubTool(w, e); }
 void ToolContext::handleCircleSubTool(const Vec3& w, QMouseEvent* e) { view->handleCircleSubTool(w, e); }
 void ToolContext::handleArcSubTool(const Vec3& w, QMouseEvent* e)    { view->handleArcSubTool(w, e); }
 void ToolContext::handlePolySubTool(const Vec3& w, QMouseEvent* e)   { view->handlePolySubTool(w, e); }

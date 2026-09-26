@@ -65,6 +65,7 @@ struct ToolContext {
 
     // ---- 子模式分派（委托 GraphicsView 已有方法）----
     void handleLineSubTool(const Vec3& w, QMouseEvent* e);
+    void handleXlineSubTool(const Vec3& w, QMouseEvent* e);
     void handleCircleSubTool(const Vec3& w, QMouseEvent* e);
     void handleArcSubTool(const Vec3& w, QMouseEvent* e);
     void handlePolySubTool(const Vec3& w, QMouseEvent* e);

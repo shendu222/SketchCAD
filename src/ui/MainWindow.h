@@ -120,6 +120,7 @@ private:
     void buildMenu();
     void buildSketchMenu(QMenu* m);           // 【草图绘制】菜单：镜像工具条全部绘图工具
     void buildLineMenu(QMenu* m);             // 【直线】菜单：直线绘制方式的中文二级子菜单
+    void buildXlineMenu(QMenu* m);            // 【构造线】菜单：XLINE 六种绘制方式
     void buildCircleMenu(QMenu* m);           // 【圆】菜单：圆形绘制方式的中文二级子菜单
     void buildArcMenu(QMenu* m);              // 【圆弧】菜单：圆弧绘制方式的中文二级子菜单
     void buildPolyMenu(QMenu* m);             // 【多边形】菜单：多边形绘制方式的中文二级子菜单
@@ -151,6 +152,7 @@ private:
                             const QVector<ToolSubMode>& subModes);
     // 直线 / 圆形子模式定义的唯一数据源（工具条与菜单共用）
     static const QVector<ToolSubMode>& lineSubModes();
+    static const QVector<ToolSubMode>& xlineSubModes();   // 构造线（Xline）子模式唯一数据源
     static const QVector<ToolSubMode>& circleSubModes();
     static const QVector<ToolSubMode>& arcSubModes();    // 圆弧子模式唯一数据源
     static const QVector<ToolSubMode>& polySubModes();   // 多边形子模式唯一数据源

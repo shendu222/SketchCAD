@@ -329,6 +329,15 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
         } else if (e.type == ElementType::Text && !e.pts.empty() && !e.text.isEmpty()) {
             // 标题栏栏目等文本：字高用 radius 字段的 mm 值
             textLines(e, e.text, e.pts[0], e.radius > 0.1 ? e.radius : 3.5, 0.0, false);
+        } else if (e.type == ElementType::Xline && !e.pts.empty()) {
+            // R12 DXF 无 XLINE 原生实体：降级为通过点沿方向 ±10m 的长线段
+            const double rad = e.rotation * M_PI / 180.0;
+            const Vec3 d(std::cos(rad), std::sin(rad), 0);
+            const Vec3 a(e.pts[0].x - d.x * 1e4, e.pts[0].y - d.y * 1e4, 0);
+            const Vec3 b(e.pts[0].x + d.x * 1e4, e.pts[0].y + d.y * 1e4, 0);
+            ent(QStringLiteral("LINE"), e);
+            L << "10" << num(a.x) << "20" << num(a.y) << "30" << "0.0"
+              << "11" << num(b.x) << "21" << num(b.y) << "31" << "0.0";
         }
     }
     L << "0" << "ENDSEC" << "0" << "EOF";
@@ -518,6 +527,16 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
                 if(!g.label.isEmpty()) dwgAddTextR(R, g.textPos, st.textHeight, g.textRotDeg, g.label, layer,color);
             } break;
             case ElementType::Text: if(!e.pts.empty()&&!e.text.isEmpty()) dwgAddTextR(R, e.pts[0], e.radius>0.1?e.radius:3.5, 0.0, e.text, layer,color); break;
+            case ElementType::Xline: {
+                // R12 无 XLINE 原生实体：降级为通过点沿方向 ±10m 的长线段
+                if(!e.pts.empty()){
+                    const double rad=e.rotation*M_PI/180.0;
+                    const Vec3 d(std::cos(rad),std::sin(rad),0);
+                    const Vec3 a(e.pts[0].x-d.x*1e4, e.pts[0].y-d.y*1e4, 0);
+                    const Vec3 b(e.pts[0].x+d.x*1e4, e.pts[0].y+d.y*1e4, 0);
+                    dwgAddLineR(R,a,b,layer,color);
+                }
+            } break;
             default: break;
         }
     }
@@ -812,6 +831,15 @@ QString toStep(const std::vector<Element>& elems, StepStats* stats, QString* err
         switch (e.type) {
             case ElementType::Line:
                 if (e.pts.size() >= 2) addTrimLine(e.pts[0], e.pts[1]);
+                break;
+            case ElementType::Xline:
+                // STEP 无 XLINE：降级为通过点沿方向 ±10m 的截断长线段
+                if (!e.pts.empty()) {
+                    const double rad = e.rotation * M_PI / 180.0;
+                    const Vec3 d(std::cos(rad), std::sin(rad), 0);
+                    addTrimLine(Vec3(e.pts[0].x - d.x * 1e4, e.pts[0].y - d.y * 1e4, 0),
+                                Vec3(e.pts[0].x + d.x * 1e4, e.pts[0].y + d.y * 1e4, 0));
+                }
                 break;
             case ElementType::Circle:
                 if (!e.pts.empty() && e.radius > 0.0) addCurveRef(addCircle(e.pts[0], e.radius));

@@ -308,6 +308,19 @@ target_link_libraries(XrefTest PRIVATE Qt6::Widgets)
 target_include_directories(XrefTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(XrefTest PRIVATE -Wall -Wextra)
 
+# ---- 构造线 Xline（核心层回归）----
+# 验证：工厂/枚举序号/序列化往返、命令行六种模式(H/V/A/两点/角平分/平行)、
+# 点到无限直线距离与交点(线×线/线×圆/构造线×构造线)、捕捉仅通过点、
+# flatten 排除(剪切与面积长度统计不参与)、ToolRegistry 注册、
+# DXF/DWG 导出降级为长线段、撤销重做。
+add_executable(XlineTest
+    tests/xline_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(XlineTest PRIVATE Qt6::Widgets)
+target_include_directories(XlineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(XlineTest PRIVATE -Wall -Wextra)
+
 # ---- 一次性预览：渲染「当前图层」HUD 徽标（非回归测试，人工核对用）----
 add_executable(LayerHudPreview
     tests/layer_hud_preview.cpp

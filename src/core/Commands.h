@@ -97,6 +97,15 @@ public:
 // ---- 直线子模式（line_* 前缀家族） ----
 class LineModeCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 构造线（Xline）：精确 "xline" + 前缀 "xline_" 家族 ----
+// 无限直线 = 通过点 + 方向角；复用 line:: 几何计算，结果线段转无限直线。
+//   xline x,y <角度> | xline x1,y1 x2,y2   两点/过点+角度（默认方式）
+//   xline_h x,y / xline_v x,y              水平 / 竖直过点
+//   xline_angle x,y [角度]                  指定角度（缺省 30°）
+//   xline_bisector refId1 refId2 x,y        两直线角平分线
+//   xline_parallel refId x,y                平行于参考直线过点
+class XlineCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
 // ---- 圆弧子模式（arc_* 前缀家族）----
 class ArcModeCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 

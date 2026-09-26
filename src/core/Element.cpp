@@ -64,6 +64,12 @@ QString Element::sizeDesc() const {
                    .arg(blockAttrs.empty()
                             ? QString()
                             : QString(" / 属性 %1").arg(blockAttrs.size()));
+        case ElementType::Xline:
+            // 构造线：无限延伸，仅显示通过点与方向角（不由长度统计，参与 fit 取景时排除）。
+            return QString("构造线 通过(%1,%2) 角度 %3°")
+                   .arg(pts.empty() ? 0.0 : pts[0].x, 0, 'f', 1)
+                   .arg(pts.empty() ? 0.0 : pts[0].y, 0, 'f', 1)
+                   .arg(rotation, 0, 'f', 1);
     }
     return QString();
 }

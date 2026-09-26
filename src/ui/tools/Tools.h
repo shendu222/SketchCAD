@@ -125,7 +125,7 @@ private:
 // onPress / onRightButton 委托 GraphicsView 已有的 handle*SubTool 方法。
 class SubToolHandler : public ITool {
 public:
-    enum class Family { Line, Circle, Arc, Poly, Spline, Ellipse };
+    enum class Family { Line, Xline, Circle, Arc, Poly, Spline, Ellipse };
 
     explicit SubToolHandler(Family family);
 

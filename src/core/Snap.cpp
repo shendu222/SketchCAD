@@ -38,6 +38,10 @@ std::vector<Vec3> snapHandles(const Element& e) {
         case ElementType::Spline:
             out = e.pts;
             break;
+        case ElementType::Xline:
+            // 构造线：无限线无端点，仅通过点是真实几何点（可被端点捕捉/联动拖拽）
+            if (!e.pts.empty()) out.push_back(e.pts[0]);
+            break;
         default:
             break;   // Constraint / Dimension 为注释性图元，不参与几何捕捉
     }

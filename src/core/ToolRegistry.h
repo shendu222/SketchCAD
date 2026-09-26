@@ -11,6 +11,7 @@ enum class ToolCategory {
     Select,       // 选择
     DrawBasic,    // 基本绘制（line, circle, circle3p, rect, arc, poly, spline）
     LineSub,      // 直线子模式（line_h, line_v, line_angle, line_parallel, ...）
+    XlineSub,     // 构造线子模式（xline_h, xline_v, xline_angle, xline_2pt, xline_bisector, xline_parallel）
     CircleSub,    // 圆形子模式（circle_2p, circle_cr, circle_t2e1p, ...）
     ArcSub,       // 圆弧子模式（arc_3p, arc_tpr, arc_tan, ...）
     PolySub,      // 多边形子模式（poly_regular, poly_circumscribed, poly_edge, ...）
@@ -76,6 +77,7 @@ public:
     // ---- 分类查询（替代 GraphicsView 中的多处 if-else 链）----
     bool isDrawTool(const QString& id) const;        // 绘制类（基本 + 直线子 + 圆形子）
     bool isLineSubTool(const QString& id) const;     // 直线子模式
+    bool isXlineSubTool(const QString& id) const;    // 构造线子模式
     bool isCircleSubTool(const QString& id) const;   // 圆形子模式
     bool isArcSubTool(const QString& id) const;     // 圆弧子模式
     bool isPolySubTool(const QString& id) const;    // 多边形子模式
@@ -98,6 +100,7 @@ public:
 
     // 获取各类工具 ID 列表
     const QStringList& lineSubToolIds() const { return lineSubIds_; }
+    const QStringList& xlineSubToolIds() const { return xlineSubIds_; }
     const QStringList& circleSubToolIds() const { return circleSubIds_; }
     const QStringList& arcSubToolIds() const { return arcSubIds_; }
     const QStringList& polySubToolIds() const { return polySubIds_; }
@@ -111,6 +114,7 @@ private:
 
     QHash<QString, ToolSpec> tools_;
     QStringList lineSubIds_;       // 直线子模式 ID 列表
+    QStringList xlineSubIds_;      // 构造线子模式 ID 列表
     QStringList circleSubIds_;     // 圆形子模式 ID 列表
     QStringList arcSubIds_;        // 圆弧子模式 ID 列表
     QStringList polySubIds_;       // 多边形子模式 ID 列表

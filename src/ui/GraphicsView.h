@@ -54,8 +54,14 @@ public:
     QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override;
 
-    // 把一个图元转成绘制路径（样条在这里被展开成三次贝塞尔）
-    static QPainterPath buildPath(const Element& e);
+    // 把一个图元转成绘制路径（样条在这里被展开成三次贝塞尔）。
+    // xlineClip：构造线(Xline)专用的裁剪矩形（世界坐标）——无限直线与其求交后只画出可见段，
+    // 空矩形时回落到场景范围级大矩形；其他图元类型忽略此参数。
+    static QPainterPath buildPath(const Element& e, const QRectF& xlineClip = QRectF());
+    // 构造线：无限直线（pts[0]=通过点，rotation=方向角度）与矩形求交，返回交线段端点（不相交返回 false）
+    static bool xlineClipToRect(const Element& e, const QRectF& r, Vec3& a, Vec3& b);
+    // 当前视图可见区域（世界坐标）——构造线「按视图边界裁剪显示」用
+    QRectF visibleWorldRect() const;
     // 图元的「几何」包围盒（世界坐标，**不含** cosmetic 描边余量），
     // 供「适配窗口 / 窗口缩放」精确取景——用 boundingRect() 会带上描边余量，导致取景略微不满。
     static QRectF geometryBounds(const Element& e);
@@ -249,6 +255,13 @@ private:
     void addLineSegment(const Vec3& a, const Vec3& b);
     void finalizeSnake();
     int pickRefElement(const QPoint& vp, const std::vector<ElementType>& allowed) const;
+
+    // ---- 构造线子模式（Xline：水平/竖直/角度/两点/角平分线/平行 共6种）----
+    bool isXlineSubTool(const QString& t) const;   // 委托 ToolRegistry
+    void handleXlineSubTool(const Vec3& w, QMouseEvent* e);
+    void previewXline(const Vec3& cur);            // 构造线动态预览（无限线按角度/参考线方向）
+    // 提交一条构造线并保持连续绘制（清空本轮采集但不退出命令，右键/Esc 退出）
+    void commitXlineAndContinue(const Vec3& through, double angleDeg, const QString& desc);
 
     // ---- 子模式采集机械（DRY）：收参考图元 / 收几何拾取点（含分段式命令反馈日志） ----
     // 各族 handle*SubTool 的"收参考→收点"只在下面两处定义一次；各族算法性分叉

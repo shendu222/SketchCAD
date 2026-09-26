@@ -9,9 +9,10 @@
 
 namespace SketchCAD {
 
-enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef };
-// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12）。
+enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef, Xline };
+// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12，Xline=13）。
 // 已存盘 .json 文件里存的是整数序号，改顺序会让老文件读出错误类型。
+// Xline（构造线）：向两端无限延伸的辅助线。复用 pts[0]=通过点 + rotation=方向角(度)，无需新增字段。
 
 // 线型（GB/T 4457.4-2002 技术制图 图线 → GB/T 14665-2012 4.1 九种线型）
 // 枚举值顺序只增不改：已存盘 .sketch 文件里存的是整数，改顺序会让老文件读出错误线型。
@@ -141,6 +142,7 @@ inline const char* elementTypeName(ElementType t) {
     case ElementType::Text:      return "文本";
     case ElementType::Hatch:     return "剖面区域";
     case ElementType::BlockRef:  return "块引用";
+    case ElementType::Xline:     return "构造线";
     }
     return "未知";
 }

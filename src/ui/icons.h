@@ -205,6 +205,11 @@ inline void paintGlyph(QPainter& g, const QString& id)
         dot(5, 19, mark); dot(19, 5, mark);
         return;
     }
+    if (id == "xline") {                        // 构造线：两端出界的贯通斜线 + 通过点（无限延伸、无端点）
+        g.drawLine(QPointF(2, 22), QPointF(22, 2));
+        dot(12, 12, mark, 1.5);
+        return;
+    }
     if (id == "circle") {                       // 圆 + 圆心 + 半径虚线
         g.drawEllipse(QPointF(12.0, 12.0), 8.0, 8.0);
         dash(12, 12, 12 + 8 * 0.707, 12 - 8 * 0.707);

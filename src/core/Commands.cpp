@@ -289,6 +289,84 @@ bool LineModeCommand::execute(const CommandContext& ctx) {
     }
 }
 
+// ============================================================
+// 构造线（Xline）命令族：精确 "xline" + 前缀 "xline_"
+// 无限直线 = 通过点 + 方向角（ElementFactory::createXline）。
+// 复用 line:: 几何计算，结果线段 (a,b) 经「通过点 a + 方向角 (b-a)」转无限直线。
+// ============================================================
+
+bool XlineCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+
+    auto makeXline = [&](const Vec3& through, double angleDeg, const QString& desc) {
+        Element e = ElementFactory::createXline(through, angleDeg, m);
+        const int id = m->addElement(e);
+        m->log(QString("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")
+                   .arg(id).arg(desc)
+                   .arg(through.x, 0, 'f', 2).arg(through.y, 0, 'f', 2)
+                   .arg(angleDeg, 0, 'f', 1));
+    };
+    auto fromResult = [&](const line::Result& r, const QString& desc) -> bool {
+        if (!r.valid) { m->log(r.msg, "warn"); return false; }
+        makeXline(r.a, (r.b - r.a).angleDeg(), desc);
+        return true;
+    };
+
+    const line::Mode lm = line::modeFromString(ctx.cmd);
+    switch (lm) {
+    case line::Mode::TwoPoint: {
+        // xline x1,y1 x2,y2（两点，默认方式）；xline x,y <角度> 单点+角度自动识别
+        //（"45" 不是合法点 → 走角度分支；"30,40" 是点 → 走两点分支）
+        if (ctx.cmd == QStringLiteral("xline") && ctx.toks.size() == 3) {
+            Vec3 p;
+            bool ok = false;
+            const double ang = ctx.toks[2].toDouble(&ok);
+            if (ctx.parsePoint(1, p) && ok) {
+                makeXline(p, ang, QStringLiteral("角度")); return true;
+            }
+        }
+        auto pts = ctx.parsePts(1, 2);
+        if (pts.size() < 2) { m->log(QString("用法: %1 x1,y1 x2,y2 或 %1 x,y 角度").arg(ctx.cmd), "warn"); return false; }
+        return fromResult(line::twoPoint(pts[0], pts[1]), QStringLiteral("两点")); }
+    case line::Mode::Horizontal: {
+        auto pts = ctx.parsePts(1, 1);
+        if (pts.empty()) { m->log("用法: xline_h x,y", "warn"); return false; }
+        makeXline(pts[0], 0.0, QStringLiteral("水平")); return true; }
+    case line::Mode::Vertical: {
+        auto pts = ctx.parsePts(1, 1);
+        if (pts.empty()) { m->log("用法: xline_v x,y", "warn"); return false; }
+        makeXline(pts[0], 90.0, QStringLiteral("竖直")); return true; }
+    case line::Mode::Angle: {
+        // xline_angle x,y [角度]（缺省 30°，与 line_angle 默认一致）
+        double ang = 30.0;
+        if (ctx.toks.size() >= 3) {
+            bool ok = false;
+            const double v = ctx.toks.back().toDouble(&ok);
+            if (ok) ang = v;
+        }
+        auto pts = ctx.parsePts(1, 1);
+        if (pts.empty()) { m->log("用法: xline_angle x,y [角度]", "warn"); return false; }
+        makeXline(pts[0], ang, QStringLiteral("角度")); return true; }
+    case line::Mode::Bisector: {
+        if (ctx.toks.size() < 4) { m->log("用法: xline_bisector refId1 refId2 x,y", "warn"); return false; }
+        auto refs = ctx.parseRefs(1, 2); auto pts = ctx.parsePts(3, 1);
+        if (refs.size() < 2 || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        const Element* l1 = m->element(refs[0]); const Element* l2 = m->element(refs[1]);
+        if (!l1 || !l2) { m->log("参考图元不存在", "warn"); return false; }
+        return fromResult(line::bisector(*l1, *l2, pts[0], pts[0]), QStringLiteral("角平分")); }
+    case line::Mode::Parallel: {
+        if (ctx.toks.size() < 3) { m->log("用法: xline_parallel refId x,y", "warn"); return false; }
+        auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 1);
+        if (refs.empty() || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        const Element* ref = m->element(refs[0]);
+        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        // 平行过点：方向取参考线方向，过点位置由用户给定（cur 取同一点，无偏移歧义）
+        return fromResult(line::parallelThroughPoint(*ref, pts[0], pts[0]), QStringLiteral("平行")); }
+    default:
+        m->log("未实现的构造线子命令: " + ctx.cmd, "warn"); return false;
+    }
+}
+
 // ---- 圆弧子模式（arc_* 前缀分派，与 LineModeCommand 同构）----
 bool ArcModeCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
@@ -2098,6 +2176,10 @@ void CommandRegistry::registerBuiltins() {
 
     // ---- 直线子模式（前缀分派，所有 line_* 共用一个 LineModeCommand） ----
     registerPrefix("line_", std::make_shared<LineModeCommand>());
+
+    // ---- 构造线（Xline）：精确 "xline" + 前缀 "xline_" 家族共用 XlineCommand ----
+    registerExact("xline",  std::make_shared<XlineCommand>());
+    registerPrefix("xline_", std::make_shared<XlineCommand>());
 
     // ---- 圆弧子模式（前缀分派，所有 arc_* 共用一个 ArcModeCommand）----
     registerPrefix("arc_", std::make_shared<ArcModeCommand>());

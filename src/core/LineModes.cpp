@@ -423,6 +423,15 @@ Mode modeFromString(const QString& s) {
     if (t == "line_angle_from_line") return Mode::AngleFromLine;
     if (t == "line_orthogonal_from_line") return Mode::OrthogonalFromLine;
     if (t == "line_from_point_to_line") return Mode::FromPointToLine;
+    // 构造线（Xline）复用直线几何计算：H/V/A/2pt/B/O → 对应 Mode，
+    // 结果线段 (a,b) 经 through-point a + 方向角(b-a) 转为无限直线。
+    if (t == "xline")        return Mode::TwoPoint;
+    if (t == "xline_h" || t == "xline_horizontal")      return Mode::Horizontal;
+    if (t == "xline_v" || t == "xline_vertical")        return Mode::Vertical;
+    if (t == "xline_angle" || t == "xline_a")           return Mode::Angle;
+    if (t == "xline_2pt" || t == "xline_2points")       return Mode::TwoPoint;
+    if (t == "xline_bisector" || t == "xline_b")        return Mode::Bisector;
+    if (t == "xline_parallel" || t == "xline_o")        return Mode::Parallel;
     return Mode::TwoPoint;
 }
 

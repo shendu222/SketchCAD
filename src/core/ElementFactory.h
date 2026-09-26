@@ -53,6 +53,11 @@ public:
     // ---- 引导线（预览辅助线，不套样式）----
     static Element createGuideLine(const Vec3& a, const Vec3& b);
     static Element createGuideCircle(const Vec3& center, double radius);
+
+    // 构造线（Xline）：向两端无限延伸的辅助线。through=通过点(世界坐标)，angleDeg=方向角(度)。
+    // 复用 Element.pts[0]=through + Element.rotation=angleDeg，无需新增字段。
+    static Element createXline(const Vec3& through, double angleDeg, const QString& name, const SketchModel* model);
+    static Element createXline(const Vec3& through, double angleDeg, const SketchModel* model);  // 默认名"构造线"
 };
 
 } // namespace SketchCAD

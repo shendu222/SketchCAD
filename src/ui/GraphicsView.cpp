@@ -108,6 +108,12 @@ static const QColor HL(31, 95, 139);           // 选中高亮蓝
 static const QColor PREVIEW(31, 95, 139, 215);
 static const QColor GUIDE(120, 140, 170, 170);
 
+// 构造线(Xline)的兜底裁剪范围 —— 与 GraphicsView 构造里的
+// scene_->setSceneRect(QRectF(-1e5,-1e5,2e5,2e5)) 保持一致。
+// 无限直线先与此矩形求交得到「有界长线段」，交给场景索引与光栅器；
+// 绘制阶段再按当前可见区域二次裁剪，实现「按视图边界裁剪显示、缩放平移同步更新」。
+static const QRectF kXlineBigRect(-1e5, -1e5, 2e5, 2e5);
+
 // ============================ ElementItem ============================
 
 double ElementItem::viewZoom() const {
@@ -118,9 +124,58 @@ double ElementItem::viewZoom() const {
     return 4.0;
 }
 
-QPainterPath ElementItem::buildPath(const Element& e) {
+// 当前视图可见区域（世界坐标）。构造线用它做「按视图边界裁剪显示」。
+QRectF ElementItem::visibleWorldRect() const {
+    if (!scene() || scene()->views().isEmpty()) return QRectF();
+    const QGraphicsView* v = scene()->views().first();
+    if (!v->viewport()) return QRectF();
+    return v->mapToScene(v->viewport()->rect()).boundingRect();
+}
+
+// 无限直线与矩形求交（slab 法）：通过点 p0、方向 d(rotation)，参数区间 [t0,t1]。
+// 直线平行于某边且在界外 → 不相交；否则返回交线段端点。
+bool ElementItem::xlineClipToRect(const Element& e, const QRectF& r, Vec3& a, Vec3& b) {
+    if (e.type != ElementType::Xline || e.pts.empty() || r.isNull()) return false;
+    const double rad = math::deg2rad(e.rotation);
+    const Vec3 d(std::cos(rad), std::sin(rad), 0);
+    const Vec3& p0 = e.pts[0];
+    double t0 = -1e18, t1 = 1e18;
+    const double p[2]  = { p0.x, p0.y };
+    const double dd[2] = { d.x, d.y };
+    const double lo[2] = { r.left(), r.top() };
+    const double hi[2] = { r.right(), r.bottom() };
+    for (int i = 0; i < 2; ++i) {
+        if (std::fabs(dd[i]) < 1e-12) {
+            if (p[i] < lo[i] || p[i] > hi[i]) return false;   // 平行且在界外
+        } else {
+            double ta = (lo[i] - p[i]) / dd[i];
+            double tb = (hi[i] - p[i]) / dd[i];
+            if (ta > tb) std::swap(ta, tb);
+            t0 = std::max(t0, ta);
+            t1 = std::min(t1, tb);
+            if (t0 > t1) return false;
+        }
+    }
+    a = Vec3(p0.x + d.x * t0, p0.y + d.y * t0, 0);
+    b = Vec3(p0.x + d.x * t1, p0.y + d.y * t1, 0);
+    return true;
+}
+
+QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
     QPainterPath path;
     switch (e.type) {
+        case ElementType::Xline: {
+            // 构造线：无限直线，按裁剪矩形（优先当前可见区域，空则回落场景级大矩形）
+            // 画出交线段。缩放/平移时 paintOne 每帧传入最新可见区域 → 显示自动同步。
+            const QRectF clip = xlineClip.isNull() ? kXlineBigRect : xlineClip;
+            Vec3 a, b;
+            if (xlineClipToRect(e, clip, a, b)) {
+                path.moveTo(qpt(a));
+                path.lineTo(qpt(b));
+            }
+            break;
+        }
+
         case ElementType::Line:
             if (e.pts.size() >= 2) {
                 // GB/T 14665-2012 4.1：波浪线（断裂）与双折线 Qt 无内建画笔，用自定义折线路径绘制。
@@ -326,6 +381,10 @@ QPainterPath ElementItem::buildPath(const Element& e) {
 }
 
 QRectF ElementItem::rawBounds(const Element& e) const {
+    // 构造线：几何范围只取「空矩形」——「适配窗口」不被 ±1e5 的无限线撑爆（fit 排除），
+    // 命中/拾取走 geo::distanceToElement 的点到无限直线距离；剔除用的包围盒由
+    // boundingRect() 的 Xline 专案（直线 ∩ 场景级大矩形）另行给出。
+    if (e.type == ElementType::Xline) return QRectF();
     QRectF r;
     bool has = false;
     const QPainterPath p = buildPath(e);
@@ -383,6 +442,18 @@ QRectF ElementItem::rawBounds(const Element& e) const {
 }
 
 QRectF ElementItem::boundingRect() const {
+    // 构造线：包围盒 = 无限直线 ∩ 场景级大矩形（恒定、不随视图变化），保证平移/缩放时
+    // 图元永不被场景索引剔除；实际绘制路径在 paint 阶段按当前可见区域二次裁剪。
+    if (el.type == ElementType::Xline) {
+        Vec3 a, b;
+        QRectF r;
+        if (xlineClipToRect(el, kXlineBigRect, a, b))
+            r = QRectF(qpt(a), qpt(b)).normalized();
+        else if (!el.pts.empty())
+            r = QRectF(qpt(el.pts[0]), qpt(el.pts[0]));
+        const double m = (std::max(6.0, mmToScreenPx(el.effectiveLineWidth()) + 4.0)) / viewZoom();
+        return r.adjusted(-m, -m, m, m);
+    }
     QRectF r = rawBounds(el);
     for (const auto& g : guides) r = r.united(rawBounds(g));
     // cosmetic 画笔的描边宽度以像素计，换算成场景单位后再留一点余量
@@ -530,7 +601,11 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
     if (e.type == ElementType::Hatch)     { paintHatch(p, e); return; }
     if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e); return; }
 
-    const QPainterPath path = buildPath(e);
+    QPainterPath path;
+    if (e.type == ElementType::Xline)
+        path = buildPath(e, visibleWorldRect());   // 无限线：每帧按当前可见区域裁剪
+    else
+        path = buildPath(e);
     if (!path.isEmpty()) p->drawPath(path);
 }
 
@@ -1572,6 +1647,12 @@ void GraphicsView::updatePreview(const Vec3& cur) {
         return;
     }
 
+    // ---- 构造线预览（xline / xline_h / xline_v / xline_angle / xline_2pt / xline_bisector / xline_parallel）----
+    if (t == "xline" || isXlineSubTool(t)) {
+        previewXline(cur);
+        return;
+    }
+
     // 标注两步流程预览：已选图元，鼠标位置决定尺寸线偏置方向
     if (dimPending_) {
         previewDimension(cur);
@@ -2500,6 +2581,118 @@ void GraphicsView::handleLineSubTool(const Vec3& w, QMouseEvent* e) {
         model_->log(r.msg, "warn");
         pendingPts_.pop_back();   // 允许重新拾取定位点
     }
+}
+
+// ---------------------------- 构造线（Xline）子模式 ----------------------------
+
+bool GraphicsView::isXlineSubTool(const QString& t) const {
+    return ToolRegistry::instance().isXlineSubTool(t);
+}
+
+// 提交一条构造线并保持连续绘制：与 commitElement 的差别在于**不** resetPending ——
+// 构造线常成组布置（中心线/辅助线），命令保持活跃直到用户右键/Esc 主动退出。
+void GraphicsView::commitXlineAndContinue(const Vec3& through, double angleDeg, const QString& desc) {
+    Element el = ElementFactory::createXline(through, angleDeg, model_);
+    const int id = model_->addElement(el);      // 触发 rebuild()，预览项在那里被销毁
+    model_->setSelected(id);
+    model_->log(QString("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")
+                    .arg(id).arg(desc)
+                    .arg(through.x, 0, 'f', 2).arg(through.y, 0, 'f', 2)
+                    .arg(angleDeg, 0, 'f', 1));
+    // 连续绘制：清空本轮采集但保持命令活跃；右键/Esc 走 handleRightButton 兜底退出
+    pendingPts_.clear();
+    pickedIds_.clear();
+    drawing_ = true;
+    clearPreview();
+    updateCommandPrompt();
+}
+
+// 构造线动态预览：与 line:: 共用几何计算，结果线段 (r.a,r.b) 经
+// 「通过点 r.a + 方向角 (r.b-r.a)」转为无限直线预览。
+void GraphicsView::previewXline(const Vec3& cur) {
+    const QString t = model_->activeTool();
+    const line::Mode m = line::modeFromString(t);
+    const auto& lp = model_->lineParams();
+
+    // 角度构造线：未拾取基点时，以光标为基点按参数角度预览（参数输入条提供角度）
+    if (m == line::Mode::Angle) {
+        showPreview(ElementFactory::createXline(cur, lp.angleDeg, model_));
+        return;
+    }
+
+    // 平行构造线：已选参考线、未点通过点时，按光标位置预览（方向取参考线方向）
+    if (m == line::Mode::Parallel && pickedIds_.size() == 1 && pendingPts_.empty()) {
+        line::Result r = line::compute(m, {}, pickedIds_, cur, model_->elements(), 0.0);
+        if (r.valid) showPreview(ElementFactory::createXline(r.a, (r.b - r.a).angleDeg(), model_));
+        else clearPreview();
+        return;
+    }
+
+    if (pendingPts_.empty()) { clearPreview(); return; }
+    line::Result r = line::compute(m, pendingPts_, pickedIds_, cur,
+                                   model_->elements(), lineAngleParam_);
+    if (r.valid) showPreview(ElementFactory::createXline(r.a, (r.b - r.a).angleDeg(), model_));
+    else clearPreview();
+}
+
+void GraphicsView::handleXlineSubTool(const Vec3& w, QMouseEvent* e) {
+    const line::Mode m = line::modeFromString(model_->activeTool());
+    const QPoint vp = e->position().toPoint();
+    const auto& lp = model_->lineParams();
+
+    // 角度构造线（A）：点击基点即按参数角度生成（长度无意义，方向无限延伸）
+    if (m == line::Mode::Angle) {
+        commitXlineAndContinue(snapWorld(w), lp.angleDeg, QStringLiteral("角度"));
+        return;
+    }
+
+    // 平行构造线（O）：先选参考直线，再点通过点；方向 = 参考线方向
+    if (m == line::Mode::Parallel) {
+        if (pickedIds_.empty()) {
+            if (!collectRef(vp, {ElementType::Line, ElementType::Rectangle})) return;
+            updatePreview(w);
+            return;
+        }
+        line::Result r = line::compute(m, {}, pickedIds_, snapWorld(w),
+                                       model_->elements(), 0.0);
+        if (!r.valid) { model_->log(r.msg, "warn"); resetPending(); return; }
+        commitXlineAndContinue(r.a, (r.b - r.a).angleDeg(), QStringLiteral("平行"));
+        return;
+    }
+
+    // 通例（水平/竖直/两点/角平分线）：按需收集参考图元（角平分线需 2 条），再收集定位点
+    const line::ReqCount rc = line::requirements(m);
+    if ((int)pickedIds_.size() < rc.refs) {
+        if (!collectRef(vp, line::allowedTypes(m))) return;
+        updatePreview(w);
+        return;
+    }
+
+    pendingPts_.push_back(snapWorld(w));
+    drawing_ = true;
+    model_->log(QString("已拾取点 %1: (%2, %3)").arg(pendingPts_.size())
+                    .arg(pendingPts_.back().x, 0, 'f', 2)
+                    .arg(pendingPts_.back().y, 0, 'f', 2));
+
+    // 判断是否足以生成：两点定线需 2 个定位点；角平分线有 2 条参考线 + 1 个点即可
+    const int needPts = std::max(rc.pts, 1);
+    if ((int)pendingPts_.size() < needPts) {
+        updatePreview(w);
+        return;
+    }
+
+    line::Result r = line::compute(m, pendingPts_, pickedIds_, snapWorld(w),
+                                   model_->elements(), lineAngleParam_);
+    if (!r.valid) {
+        model_->log(r.msg, "warn");
+        pendingPts_.pop_back();   // 允许重新拾取定位点
+        return;
+    }
+    const QString desc = (m == line::Mode::Horizontal) ? QStringLiteral("水平")
+                       : (m == line::Mode::Vertical)   ? QStringLiteral("竖直")
+                       : (m == line::Mode::Bisector)   ? QStringLiteral("角平分")
+                                                       : QStringLiteral("两点");
+    commitXlineAndContinue(r.a, (r.b - r.a).angleDeg(), desc);
 }
 
 void GraphicsView::finalizeCircle() {

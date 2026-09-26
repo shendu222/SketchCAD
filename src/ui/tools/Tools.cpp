@@ -413,11 +413,44 @@ QString splineStagePrompt(const QString& modeName, const SplineHintSpec& spec, i
     return modeName + QStringLiteral(" — 请操作:");
 }
 
+// 构造线族提示：H/V/A/2pt/B/O 六种模式。复用 line::modeFromString 的 xline_* 映射，
+// 文案按构造线语义改写（无限延伸 + 连续绘制提示）。
+QString xlinePrompt(const QString& toolId, int nRefs, int nPts) {
+    const line::Mode m = line::modeFromString(toolId);
+    switch (m) {
+    case line::Mode::Horizontal:
+        return (nPts == 0) ? QStringLiteral("水平构造线 — 请输入通过点:")
+                           : QStringLiteral("水平构造线 — 点击确认 (右键/Esc 退出):");
+    case line::Mode::Vertical:
+        return (nPts == 0) ? QStringLiteral("竖直构造线 — 请输入通过点:")
+                           : QStringLiteral("竖直构造线 — 点击确认 (右键/Esc 退出):");
+    case line::Mode::Angle:
+        return (nRefs == 0 && nPts == 0)
+                   ? QStringLiteral("角度构造线 — 请输入基点:")
+                   : QStringLiteral("角度构造线 — 点击确认 (右键/Esc 退出):");
+    case line::Mode::Bisector:
+        return (nRefs == 0) ? QStringLiteral("角平分构造线 — 请选择第一条直线:")
+             : (nRefs == 1) ? QStringLiteral("角平分构造线 — 请选择第二条直线:")
+                            : QStringLiteral("角平分构造线 — 移动鼠标选择方向, 点击确认:");
+    case line::Mode::Parallel:
+        return (nRefs == 0) ? QStringLiteral("平行构造线 — 请选择参考直线:")
+                            : QStringLiteral("平行构造线 — 请点击通过点:");
+    case line::Mode::TwoPoint:
+    default:
+        if (toolId == QStringLiteral("xline") && nPts == 0 && nRefs == 0)
+            return QStringLiteral("构造线 — 选择绘制方式(H/V/A/两点/角平分线/平行)或直接输入两点:");
+        return (nPts == 0) ? QStringLiteral("两点构造线 — 请输入第一点:")
+                           : QStringLiteral("两点构造线 — 请输入第二点:");
+    }
+}
+
 QString subModePrompt(const QString& t, SubToolHandler::Family family,
                       int nRefs, int nPts) {
     switch (family) {
     case SubToolHandler::Family::Line:
         return linePrompt(t, nRefs, nPts);
+    case SubToolHandler::Family::Xline:
+        return xlinePrompt(t, nRefs, nPts);
     case SubToolHandler::Family::Circle: {
         const circle::ReqCount rc = circle::requirements(circle::modeFromString(t));
         return phasedPrompt(t, nRefs, nPts, rc.refs, rc.pts);
@@ -455,6 +488,7 @@ QString SubToolHandler::prompt(const ToolContext& ctx) const {
 bool SubToolHandler::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     switch (family_) {
     case Family::Line:   ctx.handleLineSubTool(w, e);   break;
+    case Family::Xline:  ctx.handleXlineSubTool(w, e);  break;
     case Family::Circle: ctx.handleCircleSubTool(w, e); break;
     case Family::Arc:    ctx.handleArcSubTool(w, e);    break;
     case Family::Poly:   ctx.handlePolySubTool(w, e);   break;

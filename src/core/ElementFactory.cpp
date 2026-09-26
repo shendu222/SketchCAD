@@ -130,4 +130,16 @@ Element ElementFactory::createGuideCircle(const Vec3& center, double radius) {
     return g;
 }
 
+// 构造线（Xline）：无限延伸，render 时按当前视图边界裁剪。复用 pts[0]=通过点 + rotation=方向角。
+Element ElementFactory::createXline(const Vec3& through, double angleDeg, const QString& name, const SketchModel* model) {
+    Element e = create(ElementType::Xline, name, model);
+    e.pts = {through};
+    e.rotation = angleDeg;
+    return e;
+}
+
+Element ElementFactory::createXline(const Vec3& through, double angleDeg, const SketchModel* model) {
+    return createXline(through, angleDeg, QStringLiteral("构造线"), model);
+}
+
 } // namespace SketchCAD

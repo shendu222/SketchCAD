@@ -102,6 +102,12 @@ void ToolManager::registerBuiltins() {
     for (const QString& id : lineIds)
         registerTool(id, std::make_unique<SubToolHandler>(SubToolHandler::Family::Line));
 
+    // ---- 构造线（Xline）：主模式 + 6 个子模式，共用 Xline 族交互 ----
+    registerTool("xline", std::make_unique<SubToolHandler>(SubToolHandler::Family::Xline));
+    const QStringList& xlineIds = ToolRegistry::instance().xlineSubToolIds();
+    for (const QString& id : xlineIds)
+        registerTool(id, std::make_unique<SubToolHandler>(SubToolHandler::Family::Xline));
+
     // ---- 圆形子模式 ----
     const QStringList& circleIds = ToolRegistry::instance().circleSubToolIds();
     for (const QString& id : circleIds)

@@ -316,6 +316,15 @@ double distanceToElement(const Element& e, const Vec3& p) {
             // （GraphicsView::hitTest）展开后走 distanceToElements；这里返回到插入点的
             // 距离作为兜底，保证"未定义块"仍可被近距选中。
             return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
+
+        case ElementType::Xline: {
+            // 构造线：点到无限直线的距离（方向向量是单位向量，叉积绝对值即点线距离）。
+            // 命中整条延伸线 —— 与"无限延伸"的显示一致，交点捕捉/近距拾取都依赖它。
+            if (e.pts.empty()) return kBig;
+            const double rad = e.rotation * M_PI / 180.0;
+            const double dx = std::cos(rad), dy = std::sin(rad);
+            return std::fabs(dx * (p.y - e.pts[0].y) - dy * (p.x - e.pts[0].x));
+        }
     }
     return kBig;
 }
@@ -636,6 +645,42 @@ std::vector<Vec3> intersectElements(const Element& A, const Element& B) {
     auto isRound = [](const Element& e) {
         return e.type == ElementType::Circle || e.type == ElementType::Arc;
     };
+    auto isXline = [](const Element& e) { return e.type == ElementType::Xline; };
+
+    // 构造线（Xline）× 任意图元：把无限直线展开为「场景级长线段」（±1e5，与场景矩形同级）
+    // 后按常规路径求交 —— 交点捕捉是构造线的核心用途，必须参与。
+    if (isXline(A) || isXline(B)) {
+        const Element& xl = isXline(A) ? A : B;
+        const Element& ot = isXline(A) ? B : A;
+        if (xl.pts.empty()) return res;
+        const double rad = xl.rotation * M_PI / 180.0;
+        const Vec3 d(std::cos(rad), std::sin(rad), 0);
+        const Vec3 a(xl.pts[0].x - d.x * 1e5, xl.pts[0].y - d.y * 1e5, 0);
+        const Vec3 b(xl.pts[0].x + d.x * 1e5, xl.pts[0].y + d.y * 1e5, 0);
+        if (isXline(ot)) {                          // 构造线 × 构造线：两无限直线求交
+            if (ot.pts.empty()) return res;
+            const double rad2 = ot.rotation * M_PI / 180.0;
+            const Vec3 d2(std::cos(rad2), std::sin(rad2), 0);
+            Vec3 ip;
+            if (math::lineLineIntersect(xl.pts[0], xl.pts[0] + d,
+                                        ot.pts[0], ot.pts[0] + d2, ip))
+                pushUnique(res, ip);
+            return res;
+        }
+        if (isRound(ot)) {                          // 构造线 × 圆(弧)
+            if (ot.pts.empty()) return res;
+            Vec3 buf[2];
+            const int n = segCircleIntersect(a, b, ot.pts[0], ot.radius, buf);
+            for (int i = 0; i < n; ++i)
+                if (onArcSpan(ot, buf[i])) pushUnique(res, buf[i]);
+            return res;
+        }
+        Vec3 ip;                                    // 构造线 × 折线族
+        for (const auto& s : flatten(ot))
+            if (segSegIntersect(a, b, s.a, s.b, ip)) pushUnique(res, ip);
+        return res;
+    }
+
     const bool ra = isRound(A), rb = isRound(B);
 
     if (!ra && !rb) {                                    // 折线 × 折线
