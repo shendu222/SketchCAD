@@ -11,6 +11,7 @@
 #include "Modify.h"
 #include "SketchModel.h"
 #include "Geometry.h"
+#include "ChamferFillet.h"
 
 #include <cmath>
 #include <algorithm>
@@ -539,6 +540,36 @@ std::vector<Change> makeFillet(int id1, int id2, double radius,
         Change c; c.id = -1; c.replacement = e; c.note = QStringLiteral("倒角连线");
         out.push_back(c);
     }
+    return out;
+}
+
+// ============================================================
+// 11b. 倒角 / 倒圆（基于 corner 核心层）
+//      把 corner::CornerResult 转成 Change：删原两线 + 增裁短线×2 + 增倒角/圆角段。
+//      corner 层已复制源样式，这里只改 id 落盘；res.ok==false 返回空集合。
+// ============================================================
+std::vector<Change> makeCornerChanges(int id1, int id2, const corner::CornerResult& res) {
+    std::vector<Change> out;
+    if (!res.ok) return out;
+
+    // 原两直线删除
+    Change del1; del1.id = id1; del1.remove = true; del1.note = QStringLiteral("原线1删除");
+    out.push_back(del1);
+    Change del2; del2.id = id2; del2.remove = true; del2.note = QStringLiteral("原线2删除");
+    out.push_back(del2);
+
+    // 裁短后的两线（保留端不变、近端裁到裁断点），以新增方式落盘
+    Element ea = res.lineA; ea.id = -1;
+    Change c1; c1.id = -1; c1.replacement = ea; c1.note = QStringLiteral("裁短线1");
+    out.push_back(c1);
+    Element eb = res.lineB; eb.id = -1;
+    Change c2; c2.id = -1; c2.replacement = eb; c2.note = QStringLiteral("裁短线2");
+    out.push_back(c2);
+
+    // 倒角直线 / 倒圆圆弧（继承 a 样式）
+    Element cc = res.corner; cc.id = -1;
+    Change c3; c3.id = -1; c3.replacement = cc; c3.note = QStringLiteral("倒角/圆角段");
+    out.push_back(c3);
     return out;
 }
 

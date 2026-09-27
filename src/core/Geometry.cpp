@@ -109,7 +109,9 @@ std::vector<Vec3> sampleEllipse(const Vec3& center, double a, double b,
 // ============================ 折线（Polyline）========================
 // 弧段几何：arcThrough 取段 i (pts[i]→pts[i+1])，用三相邻节点 (pts[i-1],pts[i],pts[i+1])
 // 的外接圆作为该弧的圆（边界段用端点为圆心）。返回 startDeg 为 atan2(pts[i]-center)，
-// sweepDeg 按"扫到 pts[i+1]"且 sign 与前段方向一致。v1 简化：扫掠方向取正值（逆时针）。
+// sweepDeg 恒使弧终点 = pts[i+1]（端点保持不变式，渲染/命中/导出/测量三源同源）。
+// 方向：两条候选弧（CCW/CW）中选**不经过前驱节点 c** 的那条——弧凸向远离 c 的一侧，
+// 与「c,a,b 为曲线上相继节点」的连续语义一致（曲线在 a→b 段继续弯离 c）。
 ArcSeg arcThrough(const std::vector<Vec3>& pts, int segIdx, bool closed) {
     ArcSeg r{ Vec3(0,0,0), 0, 0, 0, false };
     const int n = (int)pts.size();
@@ -134,18 +136,16 @@ ArcSeg arcThrough(const std::vector<Vec3>& pts, int segIdx, bool closed) {
             r.center = cen; r.radius = rad;
             r.startDeg = std::atan2(a.y - cen.y, a.x - cen.x) * 180.0 / M_PI;
             const double endDeg = std::atan2(b.y - cen.y, b.x - cen.x) * 180.0 / M_PI;
-            // 让 sweepDeg ∈ (-180, 180]，按"经过 c 在弧的那侧"判定方向
-            double sweep = endDeg - r.startDeg;
-            while (sweep > 180.0) sweep -= 360.0;
-            while (sweep < -180.0) sweep += 360.0;
-            // 校准方向：让 c 与 c+0.1 在圆上的位置落入 (start, start+sweep) 区间
-            const double cDeg = std::atan2(c.y - cen.y, c.x - cen.x) * 180.0 / M_PI;
-            double dC = cDeg - r.startDeg;
-            while (dC > 180.0) dC -= 360.0;
-            while (dC < -180.0) dC += 360.0;
-            if (sweep > 0 && !(dC > 0 && dC < sweep)) sweep = -sweep;
-            else if (sweep < 0 && !(dC < 0 && dC > sweep)) sweep = -sweep;
-            r.sweepDeg = sweep;
+            const double cDeg  = std::atan2(c.y - cen.y, c.x - cen.x) * 180.0 / M_PI;
+            // CCW 张角与 c 的相对角位置都归一化到 [0, 360)
+            double dCcw = std::fmod(endDeg - r.startDeg, 360.0);
+            if (dCcw < 0) dCcw += 360.0;
+            double dC = std::fmod(cDeg - r.startDeg, 360.0);
+            if (dC < 0) dC += 360.0;
+            // c 落在 CCW 弧的角区间内（不含端点）→ 走 CW 那条（dCcw-360，凸向远离 c）；
+            // 否则 c 在 CW 弧区间内（或与 a/b 重合）→ 走 CCW 那条。终点恒为 b。
+            constexpr double kAngEps = 1e-9;
+            r.sweepDeg = (dC > kAngEps && dC < dCcw - kAngEps) ? (dCcw - 360.0) : dCcw;
             r.valid = true;
             return r;
         }
@@ -196,6 +196,84 @@ std::vector<Vec3> samplePolyline(const std::vector<Vec3>& pts,
         if (!out.empty()) out.push_back(out.front());
     } else {
         out.push_back(pts.back());
+    }
+    return out;
+}
+
+// 折线「拟合曲线」（PEDIT Fit）：Catmull-Rom 插值，平滑通过所有顶点。
+std::vector<Vec3> samplePolylineFit(const std::vector<Vec3>& pts, bool closed, int perSeg) {
+    if (perSeg < 1) perSeg = 1;
+    const int n = (int)pts.size();
+    if (n < 2) return pts;
+    if (!closed) return sampleSpline(pts, perSeg);   // 开放：直接走 Catmull-Rom
+    // 闭合：循环 Catmull-Rom（每段用环绕相邻点定切向）
+    std::vector<Vec3> out;
+    out.reserve(n * perSeg + 1);
+    for (int i = 0; i < n; ++i) {
+        const Vec3& p0 = pts[(i - 1 + n) % n];
+        const Vec3& p1 = pts[i];
+        const Vec3& p2 = pts[(i + 1) % n];
+        const Vec3& p3 = pts[(i + 2) % n];
+        Vec3 c1(p1.x + (p2.x - p0.x) / 6.0, p1.y + (p2.y - p0.y) / 6.0, 0);
+        Vec3 c2(p2.x - (p3.x - p1.x) / 6.0, p2.y - (p3.y - p1.y) / 6.0, 0);
+        if (i == 0) out.push_back(p1);
+        for (int k = 1; k <= perSeg; ++k) {
+            const double t = (double)k / perSeg, u = 1.0 - t;
+            const double w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+            out.push_back(Vec3(w0 * p1.x + w1 * c1.x + w2 * c2.x + w3 * p2.x,
+                               w0 * p1.y + w1 * c1.y + w2 * c2.y + w3 * p2.y, 0));
+        }
+    }
+    if (!out.empty()) out.push_back(out.front());
+    return out;
+}
+
+// 折线条样曲线（PEDIT Spline）：顶点作为三次 B 样条控制点的逼近曲线。
+std::vector<Vec3> samplePolylineSpline(const std::vector<Vec3>& P, bool closed, int perSeg) {
+    if (perSeg < 1) perSeg = 1;
+    const int n = (int)P.size();
+    if (n < 3) return P;   // 退化：不足以构成样条，退回原始点
+    // 均匀三次 B 样条基函数（t∈[0,1]）：
+    //   b0=(1-t)^3/6, b1=(3t^3-6t^2+4)/6, b2=(-3t^3+3t^2+3t+1)/6, b3=t^3/6
+    auto eval = [](double t, const Vec3& c0, const Vec3& c1, const Vec3& c2, const Vec3& c3) {
+        const double u = 1.0 - t;
+        const double b0 = u * u * u / 6.0;
+        const double b1 = (3 * t * t * t - 6 * t * t + 4) / 6.0;
+        const double b2 = (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6.0;
+        const double b3 = t * t * t / 6.0;
+        return Vec3(b0 * c0.x + b1 * c1.x + b2 * c2.x + b3 * c3.x,
+                    b0 * c0.y + b1 * c1.y + b2 * c2.y + b3 * c3.y, 0);
+    };
+    std::vector<Vec3> out;
+    if (closed) {
+        const int segCount = n;
+        out.reserve(segCount * perSeg + 1);
+        for (int s = 0; s < segCount; ++s) {
+            const Vec3 c0 = P[(s - 1 + n) % n];
+            const Vec3 c1 = P[s % n];
+            const Vec3 c2 = P[(s + 1) % n];
+            const Vec3 c3 = P[(s + 2) % n];
+            if (s == 0) out.push_back(c1);
+            for (int k = 1; k <= perSeg; ++k)
+                out.push_back(eval((double)k / perSeg, c0, c1, c2, c3));
+        }
+        if (!out.empty()) out.push_back(out.front());
+        return out;
+    }
+    // 开放：端点外插「幻影控制点」C_{-1}=2P0-P1、C_n=2P_{n-1}-P_{n-2}，
+    // 使曲线在首尾处严格通过 P0 / P_{n-1}（B(t=0)=(C_{-1}+4P0+P1)/6=P0）。
+    const Vec3 cPrev = P[0] * 2.0 - P[1];
+    const Vec3 cNext = P[n - 1] * 2.0 - P[n - 2];
+    const int segCount = n - 1;
+    out.reserve(segCount * perSeg + 1);
+    for (int s = 0; s < segCount; ++s) {
+        const Vec3 c0 = (s == 0) ? cPrev : P[s - 1];
+        const Vec3 c1 = P[s];
+        const Vec3 c2 = P[s + 1];
+        const Vec3 c3 = (s == segCount - 1) ? cNext : P[s + 2];
+        if (s == 0) out.push_back(c1);
+        for (int k = 1; k <= perSeg; ++k)
+            out.push_back(eval((double)k / perSeg, c0, c1, c2, c3));
     }
     return out;
 }
@@ -262,8 +340,12 @@ double distanceToElement(const Element& e, const Vec3& p) {
         }
 
         case ElementType::Polyline: {
-            // 折线含直线/弧段混合：按 samplePolyline 采样成密集点列再用 distPolyline
+            // 折线含直线/弧段混合：按对应模式采样成密集点列再用 distPolyline
             if (e.pts.size() < 2) return kBig;
+            if (e.splineSubType == 1)
+                return distPolyline(samplePolylineFit(e.pts, e.closed, 12), p, e.closed);
+            if (e.splineSubType == 2)
+                return distPolyline(samplePolylineSpline(e.pts, e.closed, 12), p, e.closed);
             return distPolyline(samplePolyline(e.pts, e.arcFlags, e.closed, 12), p, e.closed);
         }
 
@@ -563,10 +645,15 @@ std::vector<Seg> flatten(const Element& e, int splineSeg) {
                 pushPoly(sampleEllipse(e.pts[0], e.radius, e.radiusY, e.rotation, 160), true);
             break;
         case ElementType::Polyline:
-            // 折线：按 samplePolyline 离散为短段（弧段 = perSeg 段折线）
+            // 折线：按对应模式离散为短段（弧段 = perSeg 段折线；Fit/Spline 按曲线采样）
             if (e.pts.size() >= 2) {
-                const auto dense = samplePolyline(e.pts, e.arcFlags, e.closed,
-                                                  std::max(1, splineSeg));
+                std::vector<Vec3> dense;
+                if (e.splineSubType == 1)
+                    dense = samplePolylineFit(e.pts, e.closed, std::max(1, splineSeg));
+                else if (e.splineSubType == 2)
+                    dense = samplePolylineSpline(e.pts, e.closed, std::max(1, splineSeg));
+                else
+                    dense = samplePolyline(e.pts, e.arcFlags, e.closed, std::max(1, splineSeg));
                 pushPoly(dense, false);
             }
             break;
@@ -755,6 +842,56 @@ double polylineLength(const std::vector<Vec3>& v, bool closed) {
     for (size_t i = 0; i + 1 < v.size(); ++i) L += v[i].distTo(v[i + 1]);
     if (closed && v.size() >= 3) L += v.back().distTo(v.front());
     return L;
+}
+
+// 弧感知精确周长：弧段 = |sweep|·r（arcThrough 外接圆），直线段 = 弦长。
+double polylineArcLength(const std::vector<Vec3>& pts, const std::vector<bool>& arcFlags, bool closed) {
+    const int n = (int)pts.size();
+    if (n < 2) return 0;
+    const int nSegs = closed ? n : n - 1;
+    double L = 0;
+    for (int i = 0; i < nSegs; ++i) {
+        const Vec3& a = pts[i];
+        const Vec3& b = pts[(i + 1) % n];
+        const bool isArc = (i < (int)arcFlags.size()) && arcFlags[i];
+        if (isArc) {
+            const ArcSeg ar = arcThrough(pts, i, closed);
+            if (ar.valid && ar.radius > 1e-12)
+                L += std::fabs(ar.sweepDeg) * math::deg2rad(1.0) * ar.radius;
+            else
+                L += a.distTo(b);
+        } else {
+            L += a.distTo(b);
+        }
+    }
+    return L;
+}
+
+// 弧感知有向面积（CCW 为正）。推导见 Geometry.h 注释：
+//   直线段贡献 ½(xₐy_b − x_b yₐ)；
+//   弧段 a→b（圆心 c、半径 r、有向扫掠 Δ）贡献 ½[r²Δ + cx(b.y−a.y) + cy(a.x−b.x)]。
+double polylineSignedArea(const std::vector<Vec3>& pts, const std::vector<bool>& arcFlags, bool closed) {
+    const int n = (int)pts.size();
+    if (n < 3) return 0;
+    const int nSegs = closed ? n : n - 1;
+    double A = 0;
+    for (int i = 0; i < nSegs; ++i) {
+        const Vec3& a = pts[i];
+        const Vec3& b = pts[(i + 1) % n];
+        const bool isArc = (i < (int)arcFlags.size()) && arcFlags[i];
+        if (isArc) {
+            const ArcSeg ar = arcThrough(pts, i, closed);
+            if (ar.valid && ar.radius > 1e-12) {
+                const double dPhi = ar.sweepDeg * math::deg2rad(1.0);
+                A += 0.5 * (ar.radius * ar.radius * dPhi
+                            + ar.center.x * (b.y - a.y)
+                            + ar.center.y * (a.x - b.x));
+                continue;
+            }
+        }
+        A += 0.5 * (a.x * b.y - b.x * a.y);
+    }
+    return A;
 }
 
 // 内部：把折线按「是否闭合」展开成一串顶点（闭合时首点补到末尾）

@@ -32,9 +32,11 @@
 #include "ui/ArrayDialog.h"
 #include "ui/BlockDialogs.h"
 #include "ui/SectionDialog.h"
+#include "ui/InquiryDialog.h"
 #include "core/Section.h"
 #include "core/SheetSpec.h"
 #include "core/Modify.h"
+#include "core/ChamferFillet.h"
 #include "core/CadFormats.h"
 
 #include <QMenuBar>
@@ -565,19 +567,26 @@ void MainWindow::buildMenu() {
         model_->log(QStringLiteral("已偏移 %1 个图元（Δ=%2 mm）").arg(added.size()).arg(d, 0, 'f', 2));
     })->setIcon(icons::make("offset"));
     mk(mod, QStringLiteral("倒角..."), QKeySequence(), [this] {
-        // 等价于 fillet id1 id2 0
+        // 快速倒角：取选中两条直线的角点，沿两线各回退默认距离做距离-距离倒角。
+        // 无参数对话框、直接落盘（与「反向/分解/删除」同为一步式菜单项）。
+        // 需要设定距离/角度时，使用命令行 chamfer <id1> <id2> <d1> <d2> [angleDeg]。
         int id1 = model_->selection().size() >= 1 ? model_->selection()[0] : -1;
         int id2 = model_->selection().size() >= 2 ? model_->selection()[1] : -1;
         if (id1 < 0 || id2 < 0) { model_->log(QStringLiteral("倒角需要 2 条选中直线"), "warn"); return; }
-        std::vector<Element> pool = model_->elements();
-        auto changes = modify::makeFillet(id1, id2, 0.0, pool);
-        if (changes.empty()) { model_->log(QStringLiteral("倒角失败（两线平行或不相交）"), "warn"); return; }
+        const Element* ea = model_->element(id1);
+        const Element* eb = model_->element(id2);
+        if (!ea || !eb) { model_->log(QStringLiteral("图元不存在"), "warn"); return; }
+        const double defD = 5.0;   // 默认回退距离（mm），可由命令行 override
+        corner::CornerResult res = corner::chamferPair(*ea, *eb, defD, defD);
+        if (!res.ok) { model_->log(QStringLiteral("倒角失败：") + res.msg, "warn"); return; }
+        auto changes = modify::makeCornerChanges(id1, id2, res);
         model_->beginEdit(QStringLiteral("修改-倒角"));
         auto added = modify::applyChanges(model_, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        model_->log(QStringLiteral("已对 #%1 与 #%2 做倒角，新增 %3：%4")
-                        .arg(id1).arg(id2).arg(added.size()).arg(ids.join(", ")));
+        model_->log(QStringLiteral("已对 #%1 与 #%2 做倒角（默认 d=%3 mm），新增 %4：%5")
+                        .arg(id1).arg(id2).arg(defD, 0, 'f', 2)
+                        .arg(added.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("bevel"));
     mk(mod, QStringLiteral("圆角..."), QKeySequence(), [this] {
         int id1 = model_->selection().size() >= 1 ? model_->selection()[0] : -1;
@@ -781,6 +790,12 @@ void MainWindow::buildMenu() {
     buildSketchMenu(s);
     bar->addMenu(s);
 
+    // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
+    QMenu* q = new QMenu(QStringLiteral("测量查询(&I)"), this);
+    mk(q, QStringLiteral("打开测量查询面板..."), QKeySequence(), [this] { openInquiry(); })
+        ->setIcon(icons::make("query"));
+    bar->addMenu(q);
+
     QMenu* v = new QMenu(QStringLiteral("视图(&V)"), this);
     mk(v, QStringLiteral("放大"),     QKeySequence::ZoomIn,  [this] { view_->zoomBy(1.2); })
         ->setIcon(icons::make("zoomin"));
@@ -836,6 +851,11 @@ void MainWindow::buildMenu() {
     mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
         model_->log(QStringLiteral("航空CAD 草图模块 v1.0 — C++17 / Qt6 实现")); });
     bar->addMenu(h);
+}
+
+void MainWindow::openInquiry() {
+    InquiryDialog dlg(model_, this);
+    dlg.exec();
 }
 
 // ============================================================================
@@ -1219,7 +1239,9 @@ void MainWindow::buildPolylineMenu(QMenu* m) {
         {"polyline_add_node", "polyline_append_node", "polyline_delete_node",
          "polyline_delete_between", "polyline_trim_segments"},
         {"polyline_equidistant", "polyline_from_segments",
-         "polyline_arcs_to_chords", "polyline_change_segment_type"}
+         "polyline_arcs_to_chords", "polyline_change_segment_type"},
+        {"polyline_fit", "polyline_spline", "polyline_width",
+         "polyline_close", "polyline_join", "polyline_reverse"}
     });
 }
 
@@ -2023,6 +2045,9 @@ void MainWindow::buildToolbar() {
         [this] { view_->fitView(); });
     act(QStringLiteral("窗口缩放"), QStringLiteral("窗口缩放：拖拽框选目标区域，释放后该区域充满整个绘图工作区域 (Zoom to Box)"), "Ctrl+9", "zoombox",
         [this] { view_->setZoomBoxMode(true); });
+    // 测量查询：只读几何查询面板入口（与【测量查询】菜单共用 openInquiry()）
+    act(QStringLiteral("测量查询"), QStringLiteral("测量查询 (Inquiry)：距离 / 面积 / 质量特性 / 点坐标"), "", "query",
+        [this] { openInquiry(); });
     eflush();
 
     etitle = QStringLiteral("工作平面");

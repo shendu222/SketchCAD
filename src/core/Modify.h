@@ -7,6 +7,10 @@ namespace SketchCAD {
 
 class SketchModel;
 
+// 前向声明：倒角/倒圆核心层结果（定义在 core/ChamferFillet.h）。
+// 这里只引用，避免 Modify.h 直接包含整个几何实现。
+namespace corner { struct CornerResult; }
+
 namespace modify {
 
 // ============================================================
@@ -93,6 +97,14 @@ std::vector<Change> makeBreakDivide(const std::vector<Element>& src, int id,
 // 返回值：原 id1 / id2 标记删除 + 3 个新增（圆弧 + 两条裁短直线）。
 std::vector<Change> makeFillet(int id1, int id2, double radius,
                                const std::vector<Element>& pool);
+
+// ---------- 11b. 倒角 / 倒圆（基于 corner 核心层）----------
+// 把 corner::CornerResult（裁短两线 + 倒角直线 / 倒圆圆弧）转换为 Change 列表：
+//   * 删除原 id1 / id2；
+//   * 新增 2 条裁短线（lineA/lineB，保留端不变、近端裁到裁断点）+ 1 条倒角/圆角段（corner）。
+// 样式/图层/线宽从源图元继承（由 corner 层在完成几何的同时复制，这里只改 id 落盘）。
+// res.ok == false 时返回空集合（调用方据此提示 res.msg）。
+std::vector<Change> makeCornerChanges(int id1, int id2, const corner::CornerResult& res);
 
 // ---------- 12. 分解 (Explode) ----------
 // 把矩形/多边形/折线/样条拆成单段直线 / 单段圆弧。

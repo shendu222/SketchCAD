@@ -154,6 +154,12 @@ void ToolManager::registerBuiltins() {
     registerTool("polyline_from_segments",         std::make_unique<PolylineEditTool>("polyline_from_segments"));
     registerTool("polyline_arcs_to_chords",        std::make_unique<PolylineEditTool>("polyline_arcs_to_chords"));
     registerTool("polyline_change_segment_type",   std::make_unique<PolylineEditTool>("polyline_change_segment_type"));
+    registerTool("polyline_fit",                   std::make_unique<PolylineEditTool>("polyline_fit"));
+    registerTool("polyline_spline",                std::make_unique<PolylineEditTool>("polyline_spline"));
+    registerTool("polyline_width",                 std::make_unique<PolylineEditTool>("polyline_width"));
+    registerTool("polyline_close",                 std::make_unique<PolylineEditTool>("polyline_close"));
+    registerTool("polyline_join",                  std::make_unique<PolylineEditTool>("polyline_join"));
+    registerTool("polyline_reverse",               std::make_unique<PolylineEditTool>("polyline_reverse"));
 
     // ---- 标注工具 ----
     // 遍历 ToolRegistry 中所有 Dimension 类别的工具（单一真源，避免硬编码 id 双处维护），

@@ -2,7 +2,9 @@
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
 #include "core/Geometry.h"
+#include "core/PolylineOps.h"
 #include <QMouseEvent>
+#include <QInputDialog>
 #include <cmath>
 #include <algorithm>
 
@@ -42,6 +44,20 @@ QString PolylineEditTool::prompt(const ToolContext& ctx) const {
             return QStringLiteral("切换段类型 — 点击第一段:");
         return QStringLiteral("切换段类型 — 点击第二段（同一折线，可切换两段）:");
     }
+    if (id_ == "polyline_fit")
+        return QStringLiteral("拟合曲线 — 选择折线（平滑通过所有顶点）:");
+    if (id_ == "polyline_spline")
+        return QStringLiteral("样条化 — 选择折线（顶点作为样条控制点）:");
+    if (id_ == "polyline_width")
+        return QStringLiteral("设置线宽 — 选择折线（将弹出宽度输入）:");
+    if (id_ == "polyline_close")
+        return QStringLiteral("闭合/打开 — 选择折线（切换闭合状态）:");
+    if (id_ == "polyline_reverse")
+        return QStringLiteral("反转 — 选择折线:");
+    if (id_ == "polyline_join")
+        return firstId_ < 0
+            ? QStringLiteral("合并 — 选择目标折线（开放）:")
+            : QStringLiteral("合并 — 点击相邻的直线/圆弧/折线（右键结束）:");
     return id_ + QStringLiteral(" — 请操作:");
 }
 
@@ -54,6 +70,21 @@ bool PolylineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
         const Element* seg = pickSegmentLike(ctx, vp);
         if (!seg) { ctx.model->log(QStringLiteral("请选择线段、圆弧或折线"), "warn"); return true; }
         fromSegments(ctx, seg->id);
+        return true;
+    }
+
+    // 合并：第一步选目标折线，之后选相邻来源段（line/arc/polyline）
+    if (id_ == "polyline_join") {
+        if (firstId_ < 0) {
+            const Element* t = pickPolyline(ctx, vp);
+            if (!t) { ctx.model->log(QStringLiteral("请选择目标折线"), "warn"); return true; }
+            firstId_ = t->id;
+            ctx.model->log(QString("已选目标折线 #%1，点击相邻直线/圆弧/折线（右键结束）").arg(firstId_));
+            return true;
+        }
+        const Element* seg = pickSegmentLike(ctx, vp);
+        if (!seg) { ctx.model->log(QStringLiteral("请选择直线/圆弧/折线"), "warn"); return true; }
+        join(ctx, *seg, w);
         return true;
     }
 
@@ -73,6 +104,11 @@ bool PolylineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
     else if (id_ == "polyline_equidistant")       equidistant(ctx, *eptr, p);
     else if (id_ == "polyline_arcs_to_chords")    arcsToChords(ctx, *eptr);
     else if (id_ == "polyline_change_segment_type") changeSegmentType(ctx, *eptr, p);
+    else if (id_ == "polyline_fit")               fit(ctx, *eptr);
+    else if (id_ == "polyline_spline")            spline(ctx, *eptr);
+    else if (id_ == "polyline_width")             setWidth(ctx, *eptr);
+    else if (id_ == "polyline_close")             closePolyline(ctx, *eptr);
+    else if (id_ == "polyline_reverse")           reverse(ctx, *eptr);
     return true;
 }
 
@@ -82,6 +118,12 @@ bool PolylineEditTool::onRightButton(ToolContext& ctx) {
         fromIds_.clear();
         firstId_ = -1; firstIdx_ = -1; firstSeg_ = -1;
         ctx.model->log(QStringLiteral("已完成「从段生成折线」"));
+        return true;
+    }
+    if (id_ == "polyline_join" && firstId_ >= 0) {
+        // 结束合并，清空目标缓冲
+        firstId_ = -1; firstIdx_ = -1; firstSeg_ = -1;
+        ctx.model->log(QStringLiteral("已完成「合并」"));
         return true;
     }
     return false;
@@ -430,6 +472,44 @@ void PolylineEditTool::changeSegmentType(ToolContext& ctx, const Element& e, con
     });
     ctx.model->log(QString("已切换折线 #%1 第 %2 到 %3 段的类型").arg(e.id).arg(a + 1).arg(b + 1));
     firstId_ = -1; firstSeg_ = -1;
+}
+
+// ====================== PEDIT 式六操作 ======================
+
+void PolylineEditTool::fit(ToolContext& ctx, const Element& e) {
+    polyops::fit(*ctx.model, e.id);
+}
+
+void PolylineEditTool::spline(ToolContext& ctx, const Element& e) {
+    polyops::spline(*ctx.model, e.id);
+}
+
+void PolylineEditTool::setWidth(ToolContext& ctx, const Element& e) {
+    bool ok = false;
+    const double cur = e.lineWidth;
+    const double w = QInputDialog::getDouble(nullptr,
+                                            QStringLiteral("设置线宽"),
+                                            QStringLiteral("线宽 (mm/px):"),
+                                            cur, 0.0, 1000.0, 2, &ok);
+    if (!ok) { ctx.model->log(QStringLiteral("已取消设置线宽")); return; }
+    polyops::setWidth(*ctx.model, e.id, w);
+}
+
+void PolylineEditTool::closePolyline(ToolContext& ctx, const Element& e) {
+    // PEDIT Close 为切换：已闭合则打开，否则闭合
+    polyops::setClosed(*ctx.model, e.id, !e.closed);
+}
+
+void PolylineEditTool::reverse(ToolContext& ctx, const Element& e) {
+    polyops::reverse(*ctx.model, e.id);
+}
+
+void PolylineEditTool::join(ToolContext& ctx, const Element& e, const Vec3& p) {
+    (void)p;
+    if (firstId_ < 0) return;
+    if (!polyops::join(*ctx.model, firstId_, e.id, 1e-3)) {
+        // 失败信息已在 polyops 内 log；保持 target 以便重试
+    }
 }
 
 } // namespace SketchCAD

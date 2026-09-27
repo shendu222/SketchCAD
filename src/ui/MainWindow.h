@@ -200,6 +200,7 @@ private:
     // 剖面填充参数：对**已填充的剖面区域（选中的 Hatch 图元）**就地重设材料类别/角度/间距，
     // 随时把「通用金属」换成「砖墙/石材/木材」等工程图案；无选中时仅更新默认样式。
     void sectionFillParams();
+    void openInquiry();                                 // 测量查询面板入口（菜单 + 工具条共用）
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"

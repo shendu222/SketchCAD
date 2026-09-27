@@ -47,6 +47,15 @@ std::vector<Vec3> samplePolyline(const std::vector<Vec3>& pts,
                                  const std::vector<bool>& arcFlags,
                                  bool closed, int perSeg = 16);
 
+// 折线「拟合曲线」（PEDIT Fit）：平滑曲线**严格通过**所有顶点（Catmull-Rom 插值）。
+// 支持闭合（首尾节点间也用曲线相连）。用于 polyline.splineSubType == 1 的渲染/命中/离散。
+std::vector<Vec3> samplePolylineFit(const std::vector<Vec3>& pts, bool closed, int perSeg = 16);
+
+// 折线条样曲线（PEDIT Spline）：顶点作为三次 B 样条的控制点（逼近型，
+// 端点靠近首尾顶点、中间顶点一般不被曲线穿过，与 AutoCAD PEDIT 样条语义一致）。
+// 支持闭合。用于 polyline.splineSubType == 2 的渲染/命中/离散。
+std::vector<Vec3> samplePolylineSpline(const std::vector<Vec3>& pts, bool closed, int perSeg = 16);
+
 // ---------- 圆 ----------
 // 三点定圆（外接圆）。三点共线时返回 false。
 bool circleFrom3Points(const Vec3& a, const Vec3& b, const Vec3& c,
@@ -116,6 +125,13 @@ QRectF elementBounds(const Element& e);
 // ---------- 折线参数化（剪切用）----------
 // 折线总长；closed 时含收尾段
 double polylineLength(const std::vector<Vec3>& v, bool closed);
+// 弧感知精确周长：arcFlags[i]=true 的段用 arcThrough 外接圆算真实弧长 |sweep|·r，
+// 直线段用弦长。与渲染采样同源，替代旧「弦长×1.05」粗估。
+double polylineArcLength(const std::vector<Vec3>& pts, const std::vector<bool>& arcFlags, bool closed);
+// 弧感知有向面积（CCW 为正）：直线段贡献 shoelace 项 ½(xₐy_b−x_b yₐ)；
+// 弧段贡献弓形修正 ½[r²Δ + cx(b.y−a.y) + cy(a.x−b.x)]（Δ 为有向扫掠弧度）。
+// 退化弧（arcThrough 失效）按直线段处理。
+double polylineSignedArea(const std::vector<Vec3>& pts, const std::vector<bool>& arcFlags, bool closed);
 // 点 p 投影到折线上的累积弧长参数
 double polylineParam(const std::vector<Vec3>& v, bool closed, const Vec3& p);
 // 按累积弧长参数取点

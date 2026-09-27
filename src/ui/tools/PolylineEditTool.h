@@ -18,6 +18,12 @@ namespace SketchCAD {
 //   polyline_from_segments      从若干已有 line/arc 合并为折线
 //   polyline_arcs_to_chords     全部弧段转直线（清空 arcFlags）
 //   polyline_change_segment_type 切换段类型（直线↔弧）
+//   polyline_fit                拟合曲线（平滑通过所有顶点）
+//   polyline_spline             样条化（顶点作为三次 B 样条控制点）
+//   polyline_width              设置全局线宽
+//   polyline_close              闭合 / 打开折线
+//   polyline_join               合并相邻直线/圆弧/折线
+//   polyline_reverse           反转顶点顺序
 class PolylineEditTool : public ITool {
 public:
     explicit PolylineEditTool(QString id);
@@ -30,7 +36,7 @@ public:
 private:
     QString id_;
 
-    // 两步操作（delete_between / change_segment_type）状态
+    // 两步操作（delete_between / change_segment_type / join）状态
     int firstId_  = -1;        // 已选中的折线 id
     int firstIdx_ = -1;        // 已选中的节点或段索引
     int firstSeg_ = -1;        // 段索引（仅 change_segment_type 用）
@@ -40,7 +46,7 @@ private:
 
     // 通用：拾取 polyline 图元
     static const Element* pickPolyline(ToolContext& ctx, const QPoint& vp);
-    // 通用：拾取任意可作为「from segments」来源的图元（Line/Arc/Polyline）
+    // 通用：拾取任意可作为「from segments / join」来源的图元（Line/Arc/Polyline）
     static const Element* pickSegmentLike(ToolContext& ctx, const QPoint& vp);
     // 找 polyline 上离 p 最近的节点索引
     static int nearestNode(const Element& e, const Vec3& p);
@@ -57,6 +63,13 @@ private:
     void fromSegments(ToolContext& ctx, int pickedId);
     void arcsToChords(ToolContext& ctx, const Element& e);
     void changeSegmentType(ToolContext& ctx, const Element& e, const Vec3& p);
+    // PEDIT 式六操作
+    void fit(ToolContext& ctx, const Element& e);
+    void spline(ToolContext& ctx, const Element& e);
+    void setWidth(ToolContext& ctx, const Element& e);
+    void closePolyline(ToolContext& ctx, const Element& e);
+    void reverse(ToolContext& ctx, const Element& e);
+    void join(ToolContext& ctx, const Element& e, const Vec3& p);
 };
 
 } // namespace SketchCAD

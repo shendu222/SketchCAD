@@ -183,9 +183,9 @@ static void testForeign(const QString& path, bool lfOnly) {
 
     // bulge 处理：本模型的弧段是「三相邻点定圆」，与外部 bulge 的「起点 + 凸度」参数化并不等价。
     // 样例（tools/make_foreign_dxf.py）在段 0 上给了 bulge=0.41421356（即 90° 圆弧）。
-    // 经实测，该弧与本模型三相邻点定圆给出的是**镜像**关系（幅值同为 90°、方向相反），
-    // 故本模型无法表达它。契约是：能一致还原才还原，否则**如实退回直线段**并计入 dropped
-    // ——宁可少画一段弧，也绝不画出方向错误的圆弧（那比直线更糟）。
+    // arcThrough 端点保持修复后：三相邻点定圆 (220,20) r=28.284 给出的 CCW +90° 弧与
+    // bulge 参数化的真实弧（从 A(200,0) 逆时针 90° 到 B(240,0)，凸向 −y）**完全同弧**，
+    // 故段 0 被如实还原为弧段（互操作保真）。
     if (pl) {
         constexpr double kBulge0 = 0.41421356;      // 与生成脚本一致
         const double wantDeg = 4.0 * std::atan(kBulge0) * 180.0 / M_PI;
@@ -203,7 +203,7 @@ static void testForeign(const QString& path, bool lfOnly) {
         const geo::ArcSeg as0 = geo::arcThrough(pl->pts, 0, pl->closed);
         info(QStringLiteral("外部多段线 %1 段：标为弧段 %2 段；统计 kept=%3 dropped=%4")
                  .arg(nSegs).arg(flagged).arg(st.arcsKept).arg(st.arcsDropped));
-        info(QStringLiteral("段 0：bulge 期望 sweep %1°；三相邻点定圆给出 %2°（方向相反 = 不等价）")
+        info(QStringLiteral("段 0：bulge 期望 sweep %1°；三相邻点定圆给出 %2°")
                  .arg(wantDeg, 0, 'f', 3).arg(as0.valid ? as0.sweepDeg : 0.0, 0, 'f', 3));
         check(neverWrong, QStringLiteral("凡被标为弧段的段，几何都与 bulge 一致（绝不画出错误圆弧）"));
         // 不变式 2：带 bulge 的段必须被如实计数（既不静默丢弃，也不虚报还原）
@@ -211,8 +211,13 @@ static void testForeign(const QString& path, bool lfOnly) {
               QStringLiteral("含 bulge 的段数被如实计数（kept+dropped = 1）"),
               QStringLiteral("kept=%1 dropped=%2").arg(st.arcsKept).arg(st.arcsDropped));
         check(flagged == st.arcsKept, QStringLiteral("统计与实际标注的弧段数一致"));
-        check((pl->arcFlags.empty() || !pl->arcFlags[0]),
-              QStringLiteral("不等价的 bulge 已退回直线段（记录为 dropped，非静默丢弃）"));
+        // 段 0 的 90° bulge 弧与三相邻点定圆同弧 → 如实还原（半径/扫掠一致）
+        check(pl->arcFlags.size() > 0 && pl->arcFlags[0] && as0.valid
+                  && std::fabs(as0.sweepDeg - wantDeg) < 0.5,
+              QStringLiteral("外部 bulge 弧与三相邻点定圆同弧时被忠实还原（扫掠/半径一致）"),
+              QStringLiteral("flag0=%1 sweep=%2")
+                  .arg(!pl->arcFlags.empty() ? (int)pl->arcFlags[0] : -1)
+                  .arg(as0.valid ? as0.sweepDeg : 0.0, 0, 'f', 3));
     }
     check(st.entities == v.size(), QStringLiteral("统计的图元数与实际一致"),
           QStringLiteral("%1 vs %2").arg(st.entities).arg(v.size()));

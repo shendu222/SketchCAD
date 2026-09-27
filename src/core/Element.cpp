@@ -1,4 +1,5 @@
 #include "Element.h"
+#include "Geometry.h"
 #include <cmath>
 
 namespace SketchCAD {
@@ -22,26 +23,28 @@ QString Element::sizeDesc() const {
             }
             return QString();
         case ElementType::Polygon:
-        case ElementType::Spline:
-            return QString("顶点数 %1").arg(pts.size());
+        case ElementType::Spline: {
+            if (type == ElementType::Polygon) {
+                // 多边形：顶点数 + 总长（边为直线段，chord 和即精确值）
+                return QString("顶点数 %1 / 总长 %2 mm")
+                       .arg(pts.size())
+                       .arg(geo::polylineLength(pts, true), 0, 'f', 2);
+            }
+            // 样条：顶点数 + 曲线总长（flatten 离散，6 种子类型统一与渲染/命中同源）
+            double slen = 0;
+            if (pts.size() >= 2) {
+                for (const auto& s : geo::flatten(*this)) slen += s.a.distTo(s.b);
+            }
+            return QString("顶点数 %1 / 总长 %2 mm").arg(pts.size()).arg(slen, 0, 'f', 2);
+        }
         case ElementType::Polyline: {
-            // 折线：节点数 + 弧段数 + 总长
+            // 折线：节点数 + 段数 + 弧段数 + 精确总长
+            //   （弧段 = |sweep|·r 外接圆弧长，与渲染采样同源；取代旧「弦长×1.05」粗估）
             const int nNodes = (int)pts.size();
             const int nSegs  = nNodes - (closed ? 0 : 1);
             int nArcs = 0;
             for (bool a : arcFlags) if (a) ++nArcs;
-            // 总长：直线段取端点距离；弧段用 chord + 半径粗估
-            double total = 0;
-            for (int i = 0; i < (closed ? nNodes : nNodes - 1); ++i) {
-                const Vec3& a = pts[i];
-                const Vec3& b = pts[(i + 1) % nNodes];
-                if (i < (int)arcFlags.size() && arcFlags[i]) {
-                    // 弦长 + 弧高近似，简化用 chord*1.05
-                    total += a.distTo(b) * 1.05;
-                } else {
-                    total += a.distTo(b);
-                }
-            }
+            const double total = geo::polylineArcLength(pts, arcFlags, closed);
             return QString("节点 %1 / 段 %2 / 弧段 %3 / 总长 %4 mm")
                    .arg(nNodes).arg(nSegs).arg(nArcs).arg(total, 0, 'f', 2);
         }

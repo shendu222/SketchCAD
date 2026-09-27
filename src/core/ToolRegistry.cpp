@@ -307,6 +307,24 @@ ToolRegistry::ToolRegistry() {
     registerTool({"polyline_change_segment_type",  QStringLiteral("折线·切换段类型"),
                   ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
                   QStringLiteral("切换折线段的类型（直线↔弧）")});
+    registerTool({"polyline_fit",                  QStringLiteral("折线·拟合"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("拟合曲线：平滑通过所有顶点（PEDIT Fit）")});
+    registerTool({"polyline_spline",               QStringLiteral("折线·样条化"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("样条化：顶点作为三次 B 样条控制点（PEDIT Spline）")});
+    registerTool({"polyline_width",                QStringLiteral("折线·设宽"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("设置折线统一线宽（PEDIT Width）")});
+    registerTool({"polyline_close",                QStringLiteral("折线·闭合/打开"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("切换折线闭合状态（PEDIT Close）")});
+    registerTool({"polyline_join",                 QStringLiteral("折线·合并"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("把相邻直线/圆弧/折线合并到折线（PEDIT Join）")});
+    registerTool({"polyline_reverse",              QStringLiteral("折线·反转"),
+                  ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("反转折线顶点顺序")});
 
     // ==================== 标注工具（8 种）====================
     registerTool({"dim",          QStringLiteral("标注"),

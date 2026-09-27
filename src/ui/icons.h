@@ -732,6 +732,19 @@ inline void paintGlyph(QPainter& g, const QString& id)
         g.drawRect(QRectF(10.0, 10.0, 7, 7));
         return;
     }
+    if (id == "query") {                        // 测量查询：放大镜 + 镜内尺寸双向箭头
+        // 放大镜主体（镜框 + 手柄）
+        g.drawEllipse(QPointF(9.5, 9.5), 6.0, 6.0);
+        g.drawLine(QPointF(13.7, 13.7), QPointF(20.0, 20.0));
+        // 镜内尺寸线：双向箭头（量距），强调"量测"语义
+        QPen dp(mark, 1.6);
+        g.save(); g.setPen(dp);
+        g.drawLine(QPointF(5.5, 11.0), QPointF(13.5, 11.0));
+        arrow(13.5, 11.0, 0.0, mark, 3.0);          // 右向箭头
+        arrow(5.5, 11.0, 3.14159265, mark, 3.0);     // 左向箭头
+        g.restore();
+        return;
+    }
 
     // 兜底：画个空心方块，避免"看不见的按钮"
     g.drawRect(QRectF(5.5, 5.5, 13, 13));

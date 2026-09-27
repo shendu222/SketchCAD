@@ -1,5 +1,6 @@
 #include "Trim.h"
 #include "Geometry.h"
+#include "Vec.h"
 #include <cmath>
 #include <algorithm>
 
@@ -202,6 +203,72 @@ static bool trimArc(const Element& t, const std::vector<Vec3>& cuts,
     pushArc(0.0, br[k]);
     pushArc(br[k + 1], span);
     if (out.empty()) { msg = QStringLiteral("剪切后不剩任何圆弧"); return false; }
+    return true;
+}
+
+// ---------------------------- 对称修剪/延伸两条线段 ----------------------------
+
+// 浮点容差：
+//   kAngleEps  —— 两直线方向夹角的正弦小于它，视为平行（角度容差 ~1e-9 rad）
+//   kCollinearEps —— 一条线上的点落到另一条线上的距离小于它，视为共线
+//   kEndEps    —— 保留端离交点不足它，则整条线已在交点一侧，保持原状（避免零长线）
+static constexpr double kAngleEps    = 1e-9;
+static constexpr double kCollinearEps = 1e-6;
+static constexpr double kEndEps      = 1e-7;
+
+bool extendTrimPair(const Element& a, const Vec3& pa,
+                    const Element& b, const Vec3& pb,
+                    Element& oa, bool& aChanged,
+                    Element& ob, bool& bChanged,
+                    QString& msg) {
+    oa = a; ob = b; aChanged = bChanged = false;
+    msg.clear();
+
+    auto openEnds = [](const Element& e, Vec3& A, Vec3& B) -> bool {
+        if (e.type != ElementType::Line) return false;
+        if (e.pts.size() < 2) return false;
+        A = e.pts[0]; B = e.pts[1];
+        return true;
+    };
+    Vec3 a0, a1, b0, b1;
+    if (!openEnds(a, a0, a1)) { msg = QStringLiteral("修剪/延伸：第 1 条图元不是直线"); return false; }
+    if (!openEnds(b, b0, b1)) { msg = QStringLiteral("修剪/延伸：第 2 条图元不是直线"); return false; }
+
+    const Vec3 da = a1 - a0, db = b1 - b0;
+    const double la = std::hypot(da.x, da.y), lb = std::hypot(db.x, db.y);
+    if (la < kEndEps || lb < kEndEps) { msg = QStringLiteral("直线过短，几何不完整"); return false; }
+
+    const double cross = da.x * db.y - da.y * db.x;
+    // 方向夹角正弦 = |cross| / (|da|·|db|)；过小 → 平行（含共线）
+    if (std::fabs(cross) / (la * lb) < kAngleEps) {
+        const double dist = std::fabs(da.x * (a0.y - b0.y) - da.y * (a0.x - b0.x)) / la;
+        msg = (dist < kCollinearEps) ? QStringLiteral("两条直线共线，无法修剪/延伸")
+                                     : QStringLiteral("两条直线平行，无交点");
+        return false;
+    }
+
+    Vec3 P;
+    if (!math::lineLineIntersect(a0, a1, b0, b1, P)) {
+        msg = QStringLiteral("两条直线平行，无交点");
+        return false;
+    }
+
+    // 单条线处理：保留离 pick 最近的端点，移动远端到 P；保留端已贴交点则保持原状。
+    auto one = [&](const Element& src, const Vec3& p, Vec3& A, Vec3& B,
+                   Element& out, bool& changed) {
+        const int keepIdx = (p.distTo(A) <= p.distTo(B)) ? 0 : 1;
+        const int moveIdx = 1 - keepIdx;
+        const Vec3 keep = (keepIdx == 0) ? A : B;
+        if (keep.distTo(P) < kEndEps) return;   // 整条线已在交点一侧，无需改动
+        if (moveIdx == 0) A = P; else B = P;     // 仅移动远端
+        out = src;
+        out.pts = {A, B};
+        changed = true;
+    };
+    one(a, pa, a0, a1, oa, aChanged);
+    one(b, pb, b0, b1, ob, bChanged);
+
+    if (!aChanged && !bChanged) { msg = QStringLiteral("交点与选择端重合，无需修改"); return false; }
     return true;
 }
 

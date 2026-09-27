@@ -23,6 +23,9 @@ set(CORE_SOURCES
     src/core/Geometry.cpp
     src/core/DimStyle.cpp
     src/core/Trim.cpp
+    src/core/ChamferFillet.cpp
+    src/core/PolylineOps.cpp
+    src/core/Inquiry.cpp
     src/core/Snap.cpp
     src/core/SketchModel.cpp
     src/core/CommandInterpreter.cpp
@@ -86,6 +89,7 @@ set(UI_SOURCES
     src/ui/ArrayDialog.cpp
     src/ui/BlockDialogs.cpp
     src/ui/SectionDialog.cpp
+    src/ui/InquiryDialog.cpp
 )
 
 # ---- 主程序 ----
@@ -145,6 +149,20 @@ add_executable(ToolbarLayoutTest
 target_link_libraries(ToolbarLayoutTest PRIVATE Qt6::Widgets)
 target_include_directories(ToolbarLayoutTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(ToolbarLayoutTest PRIVATE -Wall -Wextra)
+
+# ---- 测量查询入口回归（offscreen 构造 MainWindow + InquiryDialog）----
+# 守住：① 主菜单新增【测量查询(&I)】含「打开测量查询面板...」动作且带图标；
+#      ② 工具栏存在【测量查询】按钮（图标+文字、tooltip 非空，风格与一致）；
+#      ③ InquiryDialog 四项查询（距离/面积(选区)/质量特性/点坐标）功能正确。
+add_executable(InquiryDialogTest
+    tests/inquiry_dialog_test.cpp
+    src/ui/MainWindow.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(InquiryDialogTest PRIVATE Qt6::Widgets)
+target_include_directories(InquiryDialogTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(InquiryDialogTest PRIVATE -Wall -Wextra)
 
 # ---- 图纸文件「新建 → 存盘 → 读回」端到端往返（offscreen 驱动 MainWindow 的无对话框接缝）----
 # 覆盖 JSON/DXF/STEP/DWG 四格式往返 + 比例随图往返 + 失败路径。
@@ -320,6 +338,46 @@ add_executable(XlineTest
 target_link_libraries(XlineTest PRIVATE Qt6::Widgets)
 target_include_directories(XlineTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(XlineTest PRIVATE -Wall -Wextra)
+
+# 对称修剪/延伸两条直线：交叉→修剪、不交→延伸、仅动远端、平行/共线提示、浮点容差
+add_executable(TrimExtendTest
+    tests/trim_extend_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(TrimExtendTest PRIVATE Qt6::Widgets)
+target_include_directories(TrimExtendTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(TrimExtendTest PRIVATE -Wall -Wextra)
+
+# ---- 倒角（Chamfer）/ 倒圆（Fillet）核心几何层回归（纯核心层，无需 GUI）----
+# 覆盖：距离-距离倒角、距离-角度倒角、半径倒圆、平行/共线/夹角过小/参数非法/
+# 距离越界/角度越界/非直线等边界；验证 lineA/lineB/corner 三段齐备且类型正确。
+add_executable(ChamferFilletTest
+    tests/chamfer_fillet_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(ChamferFilletTest PRIVATE Qt6::Widgets)
+target_include_directories(ChamferFilletTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(ChamferFilletTest PRIVATE -Wall -Wextra)
+
+# ---- 多段线 PEDIT 式交互编辑（Fit/Spline/Width/Close/Join/Reverse）----
+# 复用 CORE_SOURCES（含 PolylineOps.cpp / Geometry.cpp），不依赖 UI 头文件，
+# 在构建环境以 exit code 为权威判定（stdout 在沙箱中可能丢失）。
+add_executable(PolylineEditOpsTest
+    tests/polyline_edit_ops_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(PolylineEditOpsTest PRIVATE Qt6::Widgets)
+target_include_directories(PolylineEditOpsTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(PolylineEditOpsTest PRIVATE -Wall -Wextra)
+
+# ---- 查询测量核心层测试（Inquiry：dist/area/massprop/id + list 命令层）----
+add_executable(InquiryTest
+    tests/inquiry_test.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(InquiryTest PRIVATE Qt6::Widgets)
+target_include_directories(InquiryTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(InquiryTest PRIVATE -Wall -Wextra)
 
 # ---- 一次性预览：渲染「当前图层」HUD 徽标（非回归测试，人工核对用）----
 add_executable(LayerHudPreview

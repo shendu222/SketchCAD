@@ -1,6 +1,7 @@
 #include "Commands.h"
 #include "SketchModel.h"
 #include "Geometry.h"
+#include "Inquiry.h"
 #include "Trim.h"
 #include "LineModes.h"
 #include "CircleModes.h"
@@ -10,6 +11,7 @@
 #include "EllipseModes.h"
 #include "ElementFactory.h"
 #include "Modify.h"
+#include "ChamferFillet.h"
 #include "Xref.h"
 #include "AircraftViews.h"
 #include <QRegularExpression>
@@ -1037,9 +1039,205 @@ bool TrimCommand::execute(const CommandContext& ctx) {
 
 bool ListCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    m->log("图元总数: " + QString::number(m->elementCount()));
-    for (const auto& e : m->elements())
-        m->log(QString("#%1 %2  %3").arg(e.id).arg(e.typeName(), e.sizeDesc()));
+
+    // 目标集：无参 → 全部图元；带 id 参数 → 指定图元（无效 id 明确报错）
+    std::vector<Element> targets;
+    if (ctx.toks.size() >= 2) {
+        for (int i = 1; i < ctx.toks.size(); ++i) {
+            bool ok = false;
+            const int id = ctx.toks[i].toInt(&ok);
+            const Element* e = ok ? m->element(id) : nullptr;
+            if (!e) { m->log("list: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            targets.push_back(*e);
+        }
+    } else {
+        targets = m->elements();
+    }
+
+    if (targets.empty()) { m->log("模型为空：无图元可列出", "warn"); return true; }
+    m->log(QString("---- 对象列表（共 %1 个）----").arg(targets.size()));
+    for (const auto& e : targets) {
+        // 首行：id + 类型 + 图层 + 主尺寸描述
+        m->log(QString("#%1 %2  [图层 %3]  %4")
+                   .arg(e.id).arg(e.typeName(), e.layer, e.sizeDesc()));
+        // 次行（封闭图元）：面积 / 周长 / 形心 —— 与 AREA/MASSPROP 命令同源
+        const auto ar = inquiry::areaOfElement(e);
+        if (ar.ok) {
+            m->log(QString("     面积 %1 mm² / 周长 %2 mm / 形心 (%3, %4)")
+                       .arg(ar.area, 0, 'f', 2).arg(ar.perimeter, 0, 'f', 2)
+                       .arg(ar.centroid.x, 0, 'f', 2).arg(ar.centroid.y, 0, 'f', 2));
+        }
+    }
+    return true;
+}
+
+// ============================================================
+// 查询测量（Inquiry）：dist / area / massprop / id
+// ------------------------------------------------------------
+//   dist     x1,y1 x2,y2                       两点距离 + 增量 + 方向角
+//   area     <封闭图元id>                      对象面积/周长
+//   area     x1,y1 x2,y2 [x3,y3 ...]           点列围成多边形
+//   area     （无参）                           当前选区逐个统计
+//   massprop [id ...]                          质量特性（无参用选区）
+//   id       x,y                               点坐标 + 最近图元
+// 几何计算全部委托 Inquiry 核心层；本层只做参数解析 / 分派 / 日志格式。
+// ============================================================
+bool DistCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (ctx.toks.size() < 3) {
+        m->log("用法: dist x1,y1 x2,y2", "warn");
+        return false;
+    }
+    Vec3 a, b;
+    if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) {
+        m->log("dist: 点解析失败（格式 x,y）", "warn");
+        return false;
+    }
+    const auto r = inquiry::distTwoPoints(a, b);
+    m->log(QString("距离 = %1 mm    ΔX = %2    ΔY = %3    XY平面角 = %4°")
+               .arg(r.distance, 0, 'f', 4).arg(r.dx, 0, 'f', 2)
+               .arg(r.dy, 0, 'f', 2).arg(r.angleDeg, 0, 'f', 2));
+    return true;
+}
+
+bool AreaCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+
+    // ---- 点列模式：任一参数含 "," 即视为点列 ----
+    bool pointMode = ctx.toks.size() >= 2 && ctx.toks[1].contains(',');
+    if (pointMode) {
+        std::vector<Vec3> ring;
+        for (int i = 1; i < ctx.toks.size(); ++i) {
+            Vec3 p;
+            if (!ctx.parsePoint(i, p)) {
+                m->log("area: 第 " + QString::number(i) + " 个点解析失败（" + ctx.toks[i] + "）", "warn");
+                return false;
+            }
+            ring.push_back(p);
+        }
+        const auto r = inquiry::areaOfPolygon(ring);
+        if (!r.ok) { m->log("area: " + r.error, "warn"); return false; }
+        m->log(QString("点列模式（%1 个顶点）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")
+                   .arg(ring.size()).arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
+                   .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
+        return true;
+    }
+
+    // ---- 对象模式：id 参数 / 无参用选区 ----
+    std::vector<Element> targets;
+    if (ctx.toks.size() >= 2) {
+        for (int i = 1; i < ctx.toks.size(); ++i) {
+            bool ok = false;
+            const int id = ctx.toks[i].toInt(&ok);
+            const Element* e = ok ? m->element(id) : nullptr;
+            if (!e) { m->log("area: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            targets.push_back(*e);
+        }
+    } else {
+        for (int id : m->selection()) {
+            if (const Element* e = m->element(id)) targets.push_back(*e);
+        }
+        if (targets.empty()) {
+            m->log("用法: area <封闭图元id> | area x1,y1 x2,y2 [x3,y3 ...]（或先选中图元/一组首尾相接的直线）", "warn");
+            return false;
+        }
+    }
+
+    // ---- 直线链模式：目标全为直线 → 尝试按"首尾相接"围成封闭多边形求面积 ----
+    // 典型场景：在画布上按参考图逐边描线（离散 Line 围成多边形），选中后 area 直接出面积。
+    const bool allLines = targets.size() >= 3 && std::all_of(
+        targets.begin(), targets.end(),
+        [](const Element& e) { return e.type == ElementType::Line; });
+    if (allLines) {
+        const auto r = inquiry::areaOfClosedLineChain(targets);
+        if (!r.ok) { m->log("area: " + r.error, "warn"); return false; }
+        m->log(QString("直线链模式（%1 条边围成多边形）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")
+                   .arg(targets.size()).arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
+                   .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
+        return true;
+    }
+
+    double total = 0;
+    int counted = 0;
+    for (const auto& e : targets) {
+        const auto r = inquiry::areaOfElement(e);
+        if (!r.ok) {
+            m->log(QString("area: #%1 %2 —— %3").arg(e.id).arg(e.typeName(), r.error), "warn");
+            continue;
+        }
+        ++counted;
+        total += r.area;
+        m->log(QString("#%1 %2：面积 = %3 mm²    周长 = %4 mm    形心 = (%5, %6)")
+                   .arg(e.id).arg(e.typeName())
+                   .arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
+                   .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
+    }
+    if (counted >= 2)
+        m->log(QString("合计 %1 个封闭区域：总面积 = %2 mm²").arg(counted).arg(total, 0, 'f', 4));
+    return counted > 0;
+}
+
+bool MassPropCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+
+    std::vector<Element> targets;
+    if (ctx.toks.size() >= 2) {
+        for (int i = 1; i < ctx.toks.size(); ++i) {
+            bool ok = false;
+            const int id = ctx.toks[i].toInt(&ok);
+            const Element* e = ok ? m->element(id) : nullptr;
+            if (!e) { m->log("massprop: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            targets.push_back(*e);
+        }
+    } else {
+        for (int id : m->selection()) {
+            if (const Element* e = m->element(id)) targets.push_back(*e);
+        }
+        if (targets.empty()) {
+            m->log("用法: massprop <封闭图元id> ...（或先选中图元）", "warn");
+            return false;
+        }
+    }
+
+    for (const auto& e : targets) {
+        const auto r = inquiry::massPropOfElement(e);
+        if (!r.ok) {
+            m->log(QString("massprop: #%1 %2 —— %3").arg(e.id).arg(e.typeName(), r.error), "warn");
+            continue;
+        }
+        m->log(QString("---- #%1 %2 质量特性 ----").arg(e.id).arg(e.typeName()));
+        m->log(QString("  面积        %1 mm²").arg(r.area, 0, 'f', 4));
+        m->log(QString("  周长        %1 mm").arg(r.perimeter, 0, 'f', 4));
+        m->log(QString("  包围盒      (%1, %2) ~ (%3, %4)    %5 × %6")
+                   .arg(r.bbox.left(), 0, 'f', 2).arg(r.bbox.bottom(), 0, 'f', 2)
+                   .arg(r.bbox.right(), 0, 'f', 2).arg(r.bbox.top(), 0, 'f', 2)
+                   .arg(r.bbox.width(), 0, 'f', 2).arg(r.bbox.height(), 0, 'f', 2));
+        m->log(QString("  形心        (%1, %2)")
+                   .arg(r.centroid.x, 0, 'f', 3).arg(r.centroid.y, 0, 'f', 3));
+        m->log(QString("  惯性矩(形心) Ix = %1    Iy = %2    Ixy = %3 mm⁴")
+                   .arg(r.ixBar, 0, 'f', 2).arg(r.iyBar, 0, 'f', 2).arg(r.ixyBar, 0, 'f', 2));
+    }
+    return true;
+}
+
+bool IdCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (ctx.toks.size() < 2) {
+        m->log("用法: id x,y", "warn");
+        return false;
+    }
+    Vec3 p;
+    if (!ctx.parsePoint(1, p)) {
+        m->log("id: 点解析失败（格式 x,y）", "warn");
+        return false;
+    }
+    const auto r = inquiry::idPoint(p, m->elements());
+    m->log(QString("坐标: X = %1    Y = %2    Z = %3")
+               .arg(p.x, 0, 'f', 4).arg(p.y, 0, 'f', 4).arg(p.z, 0, 'f', 4));
+    if (r.nearest)
+        m->log(QString("最近图元: #%1 %2（距离 %3 mm）")
+                   .arg(r.nearest->id).arg(r.nearest->typeName())
+                   .arg(r.nearestDist, 0, 'f', 4));
     return true;
 }
 
@@ -1281,6 +1479,38 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         m->log(QString("已对 #%1 与 #%2 做%3（r=%4），新增 %5：%6")
                    .arg(id1).arg(id2).arg(r > 0 ? "圆角" : "倒角")
                    .arg(r, 0, 'f', 2).arg(added.size()).arg(ids.join(", ")));
+        return true;
+    }
+    if (cmd == "chamfer") {
+        // 倒角：chamfer <id1> <id2> <d1> <d2> [angleDeg]
+        //   * 仅给 d1,d2  → 距离-距离倒角（沿两线各回退 d1/d2，补直线连接）
+        //   * 额外给 angleDeg → 距离-角度倒角（沿 a 回退 d1，倒角线与 a 成 angleDeg，自动求 b 退距）
+        // 几何全部走 corner 核心层，model 仅按 Change 落盘，可独立调用、易于扩展。
+        if (ctx.toks.size() < 5) {
+            m->log(QStringLiteral("用法: chamfer <id1> <id2> <d1> <d2> [angleDeg]"), "warn");
+            return false;
+        }
+        bool ok1, ok2; int id1 = ctx.toks[1].toInt(&ok1), id2 = ctx.toks[2].toInt(&ok2);
+        if (!ok1 || !ok2) { m->log(QStringLiteral("id 解析失败"), "warn"); return false; }
+        double d1 = ctx.toks[3].toDouble(), d2 = ctx.toks[4].toDouble();
+        const Element* ea = m->element(id1);
+        const Element* eb = m->element(id2);
+        if (!ea || !eb) { m->log(QStringLiteral("图元不存在"), "warn"); return false; }
+        corner::CornerResult res;
+        if (ctx.toks.size() >= 6) {
+            double ang = ctx.toks[5].toDouble();
+            res = corner::chamferPairDistAngle(*ea, *eb, d1, ang);
+        } else {
+            res = corner::chamferPair(*ea, *eb, d1, d2);
+        }
+        if (!res.ok) { m->log(QStringLiteral("倒角失败：") + res.msg, "warn"); return false; }
+        auto changes = modify::makeCornerChanges(id1, id2, res);
+        m->beginEdit(QStringLiteral("修改-倒角"));
+        auto added = modify::applyChanges(m, changes, QString());
+        QStringList ids; for (int id : added) ids << ("#" + QString::number(id));
+        m->log(QString("已对 #%1 与 #%2 做倒角（d1=%3, d2=%4），新增 %5：%6")
+                   .arg(id1).arg(id2).arg(d1, 0, 'f', 2).arg(d2, 0, 'f', 2)
+                   .arg(added.size()).arg(ids.join(", ")));
         return true;
     }
     if (cmd == "explode") {
@@ -2096,7 +2326,7 @@ bool HelpCommand::execute(const CommandContext& ctx) {
     m->log("样条编辑: spline_from_polyline <id> / spline_append_pt <id> x,y / spline_insert_pts <id> x,y");
     m->log("            spline_remove_pts <id> <idx> / spline_remove_between <id> <i> <j> / spline_explode <id>");
     m->log("样式: width 1|2|3|5   color #RRGGBB|red   chain [on|off]");
-    m->log("编辑: delete <id> / trim <id> <x,y> [边界id..] / undo / redo / clear / list");
+    m->log("编辑: delete <id> / trim <id> <x,y> [边界id..] / undo / redo / clear");
     m->log("视图: plane xy|yz|xz / grid [on|off] / zoom <倍率>");
     m->log("标注: dim linear|aligned|h|v x1,y1 x2,y2 [px,py]（GB/T 4458.4-2003）");
     m->log("      dim baseline|continue|arc|leader|ordinate（新增 5 种）");
@@ -2123,6 +2353,8 @@ bool HelpCommand::execute(const CommandContext& ctx) {
     m->log("      block delete <块名> / block rename <旧名> <新名>");
     m->log("属性块: attdef <块名> <标签> [提示] [x,y] [字高] / attedit <引用id> <标签> <值> / attlist [引用id]");
     m->log("动态块: dynset <引用id> <参数名> <值|状态名> / dynlist <块名>");
+    m->log("查询: list [id..] / dist x1,y1 x2,y2 / area <封闭图元id> | x1,y1 x2,y2 [x3,y3..]");
+    m->log("      massprop <封闭图元id> ... / id x,y（封闭区域含圆/椭圆/矩形/多边形/闭合折线/剖面区域）");
     m->log("点格式: x,y 或 x y 或 x,y,z（单位 mm，Y 轴向上为正）");
     return true;
 }
@@ -2194,6 +2426,12 @@ void CommandRegistry::registerBuiltins() {
     registerExact("trim",   std::make_shared<TrimCommand>());
     registerExact("list",   std::make_shared<ListCommand>());
 
+    // ---- 查询测量（Inquiry）----
+    registerExact("dist",     std::make_shared<DistCommand>());
+    registerExact("area",     std::make_shared<AreaCommand>());
+    registerExact("massprop", std::make_shared<MassPropCommand>());
+    registerExact("id",       std::make_shared<IdCommand>());
+
     // ---- 修改菜单：所有 modify_* 子命令 + 顶层 modify_ 系别名 ----
     // 与 Edit 菜单 + LibreCAD Modify 菜单语义对齐：
     //   move, copy, duplicate, rotate, scale, mirror, revert, lengthen,
@@ -2214,6 +2452,7 @@ void CommandRegistry::registerBuiltins() {
         registerExact("break_at",          mod);
         registerExact("divide",            mod);
         registerExact("fillet",            mod);
+        registerExact("chamfer",           mod);   // 倒角：距离-距离 / 距离-角度（参数化，走 corner 核心层）
         registerExact("explode",           mod);
         registerExact("align",             mod);
         registerExact("stretch",           mod);

@@ -265,6 +265,25 @@ QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
         case ElementType::Polyline: {
             // 折线：直线段 lineTo，弧段走 arcThrough 算出的圆心+起止角后 addEllipse 子路径
             if (e.pts.size() < 2) break;
+            // 拟合 / 样条化：smooth 曲线（顶点为节点或控制点），与 PEDIT Fit/Spline 一致
+            if (e.splineSubType == 1 && e.pts.size() >= 2) {
+                const std::vector<Vec3> curve = geo::samplePolylineFit(e.pts, e.closed, 16);
+                if (!curve.empty()) {
+                    path.moveTo(qpt(curve[0]));
+                    for (size_t i = 1; i < curve.size(); ++i) path.lineTo(qpt(curve[i]));
+                    if (e.closed) path.closeSubpath();
+                }
+                break;
+            }
+            if (e.splineSubType == 2 && e.pts.size() >= 3) {
+                const std::vector<Vec3> curve = geo::samplePolylineSpline(e.pts, e.closed, 16);
+                if (!curve.empty()) {
+                    path.moveTo(qpt(curve[0]));
+                    for (size_t i = 1; i < curve.size(); ++i) path.lineTo(qpt(curve[i]));
+                    if (e.closed) path.closeSubpath();
+                }
+                break;
+            }
             const int n = (int)e.pts.size();
             const int nSegs = e.closed ? n : n - 1;
             for (int i = 0; i < nSegs; ++i) {
@@ -280,8 +299,7 @@ QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
                                        2 * ar.radius, 2 * ar.radius);
                         path.arcMoveTo(r, -ar.startDeg);
                         path.arcTo(r, -ar.startDeg, -ar.sweepDeg);
-                        // 弧段结束会停留在 b 点；下一段 moveTo/b 已由首段/顺序处理
-                        if (i + 1 < nSegs) path.moveTo(qpt(b));
+                        // arcThrough 端点保持：弧终点恒为 b，后续 lineTo/closeSubpath 自然衔接
                     } else {
                         path.lineTo(qpt(b));
                     }
@@ -2132,8 +2150,11 @@ void GraphicsView::handleConstraint(int hitId) {
                     .arg(id).arg(el.refA).arg(el.refB));
 }
 
-void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool extend) {
-    const QString op = extend ? QStringLiteral("延伸") : QStringLiteral("修剪");
+void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool /*extend*/) {
+    // 对称「修剪 / 延伸」：首点点选第 1 条直线，次点点选第 2 条直线，
+    // 计算两线所在直线交点后自动判定——线段已相交则修剪多余部分，
+    // 线段不相交则分别延长到交点；每条只移动离点选端最远的端点（保留端不变）。
+    const QString op = QStringLiteral("修剪/延伸");
     if (hitId < 0) { model_->log(op + QStringLiteral("：请点选直线"), "warn"); return; }
     const Element* e = model_->element(hitId);
     if (!e || e->type != ElementType::Line) {
@@ -2143,46 +2164,34 @@ void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool extend) {
     if (pickedIds_.empty()) {
         pickedIds_.push_back(hitId);
         pendingPts_.push_back(w);
-        model_->log(op + QString("：已选目标直线 #%1，请拾取作为边界的直线").arg(hitId));
+        model_->log(op + QStringLiteral("：已选第 1 条 #%1，请拾取第 2 条直线（点中选中的那一端会被保留）").arg(hitId));
         return;
     }
     if (pickedIds_[0] == hitId) {
-        model_->log(op + QStringLiteral("：边界不能是目标直线本身"), "warn");
+        model_->log(op + QStringLiteral("：第 2 条不能是同一条直线"), "warn");
+        resetPending();
         return;
     }
-    const Element* tgt = model_->element(pickedIds_[0]);
-    if (!tgt || tgt->pts.size() < 2) { resetPending(); return; }
+    const Element* a = model_->element(pickedIds_[0]);
+    if (!a || a->pts.size() < 2) { resetPending(); return; }
 
-    Vec3 ip;
-    if (!math::lineLineIntersect(tgt->pts[0], tgt->pts[1], e->pts[0], e->pts[1], ip)) {
-        model_->log(op + QStringLiteral("：两直线平行，无交点"), "warn");
-        resetPending();
-        return;
-    }
-    const Vec3 p0 = tgt->pts[0], p1 = tgt->pts[1];
-    const double len2 = (p1.x - p0.x) * (p1.x - p0.x) + (p1.y - p0.y) * (p1.y - p0.y);
-    const double s = len2 < 1e-12 ? 0.0
-                   : ((ip.x - p0.x) * (p1.x - p0.x) + (ip.y - p0.y) * (p1.y - p0.y)) / len2;
-    const bool inside = (s > 1e-6 && s < 1.0 - 1e-6);
-    if (!extend && !inside) {
-        model_->log(op + QStringLiteral("：交点不在目标线段内，无需修剪（可改用「延伸」）"), "warn");
-        resetPending();
-        return;
-    }
-    if (extend && inside) {
-        model_->log(op + QStringLiteral("：交点已在目标线段内，无需延伸（可改用「修剪」）"), "warn");
+    Element oa, ob; bool ca = false, cb = false; QString msg;
+    if (!trim::extendTrimPair(*a, pendingPts_[0], *e, w, oa, ca, ob, cb, msg)) {
+        model_->log(op + QStringLiteral("：") + msg, "warn");
         resetPending();
         return;
     }
 
-    const Vec3 click = pendingPts_.empty() ? w : pendingPts_[0];
-    const int movedIdx = (click.distTo(p0) <= click.distTo(p1)) ? 0 : 1;
-    const int tid = pickedIds_[0];
-    model_->updateElement(tid, [&](Element& el) { el.pts[movedIdx] = ip; });
-    model_->setSelected(tid);
-    model_->log(QString("已%1直线 #%2：端点 %3 移至交点 (%4, %5)")
-                    .arg(op).arg(tid).arg(movedIdx + 1)
-                    .arg(ip.x, 0, 'f', 2).arg(ip.y, 0, 'f', 2));
+    // 两次改动合并为一次撤销（Ctrl+Z 整体回退）
+    model_->beginEdit(QStringLiteral("修改-修剪/延伸"));
+    if (ca) model_->updateElementQuiet(a->id, [&](Element& el) { el.pts = oa.pts; });
+    if (cb) model_->updateElementQuiet(e->id,  [&](Element& el) { el.pts = ob.pts; });
+
+    Vec3 P; math::lineLineIntersect(a->pts[0], a->pts[1], e->pts[0], e->pts[1], P);
+    const int n = (ca ? 1 : 0) + (cb ? 1 : 0);
+    model_->setSelected(e->id);
+    model_->log(QString("已%1 %2 条直线，交于 (%3, %4)")
+                    .arg(op).arg(n).arg(P.x, 0, 'f', 2).arg(P.y, 0, 'f', 2));
     resetPending();
 }
 

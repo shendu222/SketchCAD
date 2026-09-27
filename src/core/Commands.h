@@ -128,6 +128,12 @@ class DeleteCommand : public ICommand { public: bool execute(const CommandContex
 class TrimCommand   : public ICommand { public: bool execute(const CommandContext&) override; };
 class ListCommand   : public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 查询测量（Inquiry；几何实现在 Inquiry.{h,cpp}）----
+class DistCommand    : public ICommand { public: bool execute(const CommandContext&) override; };  // dist x1,y1 x2,y2
+class AreaCommand    : public ICommand { public: bool execute(const CommandContext&) override; };  // area <id>|x,y...
+class MassPropCommand: public ICommand { public: bool execute(const CommandContext&) override; };  // massprop [id...]
+class IdCommand      : public ICommand { public: bool execute(const CommandContext&) override; };  // id x,y
+
 // ---- 修改菜单（Modify）-- 单一 ModifyCommand 按 ctx.cmd 分派所有 modify_* 子命令
 //  覆盖：move, copy, duplicate, rotate, scale, mirror, revert, lengthen,
 //        offset, break_at, divide, fillet, bevel, explode, align, stretch,
