@@ -194,6 +194,10 @@ void transformElement(Element& e, const X2D& xf) {
             e.radius *= s;      // 剖面线间距
             e.rotation = xf.applyAngleDeg(e.rotation);
             break;
+        case ElementType::Boundary:
+            e.radius *= s;      // 剖面线间距（与 Hatch 同字段）
+            e.rotation = xf.applyAngleDeg(e.rotation);
+            break;
         case ElementType::Text:
             e.radius *= s;      // 字高
             break;

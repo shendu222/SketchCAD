@@ -6,6 +6,7 @@
 #include "ui/tools/FreehandLineTool.h"
 #include "ui/tools/SplineEditTool.h"
 #include "ui/tools/PolylineTool.h"
+#include "ui/tools/BoundaryTool.h"
 #include "ui/tools/PolylineEditTool.h"
 #include "ui/GraphicsView.h"
 #include "core/SketchModel.h"
@@ -145,6 +146,10 @@ void ToolManager::registerBuiltins() {
 
     // ---- 折线绘制与编辑（10 个）----
     registerTool("polyline",                       std::make_unique<PolylineTool>());
+    // 边界（BOUNDARY / BPOLY）：用户交互定义的填充边界（可含内孔），解除对自动边界追踪的依赖。
+    // "bpoly" 与 "boundary" 共用同一 BoundaryTool 实例——两者语义相同，仅命令/菜单别名不同。
+    registerTool("boundary",                       std::make_unique<BoundaryTool>());
+    registerTool("bpoly",                          std::make_unique<BoundaryTool>());
     registerTool("polyline_add_node",              std::make_unique<PolylineEditTool>("polyline_add_node"));
     registerTool("polyline_append_node",           std::make_unique<PolylineEditTool>("polyline_append_node"));
     registerTool("polyline_delete_node",           std::make_unique<PolylineEditTool>("polyline_delete_node"));

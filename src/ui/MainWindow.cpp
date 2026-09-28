@@ -32,7 +32,11 @@
 #include "ui/ArrayDialog.h"
 #include "ui/BlockDialogs.h"
 #include "ui/SectionDialog.h"
+#include "ui/RegionManagerDialog.h"
 #include "ui/InquiryDialog.h"
+#include "ui/PrintSettingsDialog.h"
+#include "ui/PrintPreviewDialog.h"
+#include "ui/PrintEngine.h"
 #include "core/Section.h"
 #include "core/SheetSpec.h"
 #include "core/Modify.h"
@@ -58,6 +62,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
+#include <QPrinter>
+#include <QPrintDialog>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QJsonDocument>
@@ -272,6 +278,15 @@ void MainWindow::buildMenu() {
     mk(f, QStringLiteral("退出"),        QKeySequence::Quit, [this] { close(); });
     bar->addMenu(f);
 
+    // ---- 顶级菜单：打印（页面设置 + 简化 CTB 样式 + 视口/布局 MVP + 预览/PDF/物理打印）----
+    QMenu* pr = new QMenu(QStringLiteral("打印(&P)"), this);
+    mk(pr, QStringLiteral("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
+    mk(pr, QStringLiteral("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
+    mk(pr, QStringLiteral("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
+    pr->addSeparator();
+    mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); });
+    bar->addMenu(pr);
+
     // 顶级菜单整合后，【修改】【选择】不再各占一个顶级入口，而是作为【编辑】的子菜单
     // （下方构建完成后用 e->addMenu(...) 挂进来）。显示顺序 = 添加顺序：
     //   撤销 / 重做 | 复制 / 粘贴 / 删除 | 修改 | 选择
@@ -340,6 +355,16 @@ void MainWindow::buildMenu() {
     // 让用户随时把「通用金属」改成「砖墙」「石材」「木材」等工程图案。
     mk(mod, QStringLiteral("剖面填充参数(&P)..."), QKeySequence(), [this] { sectionFillParams(); })
         ->setIcon(icons::make("hatch"));
+
+    // ---- 用选中边界填充（BOUNDARY/BPOLY 直接复用，跳过自动追踪）----
+    // 与「点选区域填充」互补：先选中若干边界图元，一次性把它们生成剖面区域，
+    // 复杂腔体无需人工逐段描边、也无需依赖剖面引擎的自动边界追踪。
+    mk(mod, QStringLiteral("用选中边界填充(&B)..."), QKeySequence(), [this] { sectionFillSelected(); })
+        ->setIcon(icons::make("boundary"));
+
+    // ---- 边界区域管理（REGION：命名分组 + 批量填充/选择/重命名/删除）----
+    mk(mod, QStringLiteral("边界区域管理(&R)..."), QKeySequence(), [this] { openRegionManager(); })
+        ->setIcon(icons::make("boundary"));
 
     auto* alignMenu = mod->addMenu(icons::make("align"), QStringLiteral("对齐(&A)"));
     mk(alignMenu, QStringLiteral("对齐..."), QKeySequence(), [this] {
@@ -856,6 +881,41 @@ void MainWindow::buildMenu() {
 void MainWindow::openInquiry() {
     InquiryDialog dlg(model_, this);
     dlg.exec();
+}
+
+// ============================================================================
+// 打印 / 出图模块入口
+// ============================================================================
+void MainWindow::openPrintSettings() {
+    PrintSettingsDialog dlg(model_, currentPrintSettings_, this);
+    if (dlg.exec() == QDialog::Accepted)
+        currentPrintSettings_ = dlg.settings();
+}
+
+void MainWindow::openPrintPreview() {
+    PrintPreviewDialog dlg(model_, currentPrintSettings_, this);
+    dlg.exec();
+}
+
+void MainWindow::exportPdfDirect() {
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF"),
+                                                     QStringLiteral("SketchCAD.pdf"),
+                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+    if (path.isEmpty()) return;
+    if (PrintEngine::exportPdf(model_, currentPrintSettings_, path))
+        model_->log(QStringLiteral("已导出 PDF：%1").arg(path), "info");
+    else
+        model_->log(QStringLiteral("导出 PDF 失败"), "warn");
+}
+
+void MainWindow::printDirect() {
+    QPrinter printer(QPrinter::HighResolution);
+    QPrintDialog dlg(&printer, this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    if (!PrintEngine::print(model_, currentPrintSettings_, &printer))
+        model_->log(QStringLiteral("打印失败"), "warn");
+    else
+        model_->log(QStringLiteral("已发送至打印机"), "info");
 }
 
 // ============================================================================
@@ -1765,6 +1825,13 @@ void MainWindow::buildToolbar() {
                        "P", QStringLiteral("折线绘制与编辑"), polylineSubModes());
     flush();
 
+    // 边界（BOUNDARY / BPOLY）：交互定义填充边界（外环 + 可选内孔），作为剖面填充的直接输入，
+    // 解除剖面填充对内置「边界自动追踪算法」的单一依赖。BPOLY 为同义命令别名。
+    createDropdownTool(curTb, group, bucket, "boundary", QStringLiteral("边界"),
+                       "boundary", QStringLiteral("边界 (BOUNDARY)：依次点击节点定义封闭填充边界（可含内孔），生成边界图元供剖面填充直接复用，无需逐段描边"),
+                       "", QStringLiteral("边界 (BOUNDARY/BPOLY)"), QVector<ToolSubMode>());
+    flush();
+
     beginGroup(QStringLiteral("曲线"));
     // 样条：主按钮 = 自由样条(右键结束)，下拉菜单包含抛物线/双曲线/4点抛物线/焦点准线/过点/自由手绘等绘制方式
     createDropdownTool(curTb, group, bucket, "spline", QStringLiteral("样条"),
@@ -2048,6 +2115,9 @@ void MainWindow::buildToolbar() {
     // 测量查询：只读几何查询面板入口（与【测量查询】菜单共用 openInquiry()）
     act(QStringLiteral("测量查询"), QStringLiteral("测量查询 (Inquiry)：距离 / 面积 / 质量特性 / 点坐标"), "", "query",
         [this] { openInquiry(); });
+    // 打印预览：页面设置 / 简化 CTB 样式 / 视口布局 / PDF 入口（与【打印】菜单共用 openPrintPreview()）
+    act(QStringLiteral("打印"), QStringLiteral("打印预览 (Print)：页面设置 / CTB 样式 / 视口 / PDF"), "", "print",
+        [this] { openPrintPreview(); });
     eflush();
 
     etitle = QStringLiteral("工作平面");
@@ -3018,6 +3088,42 @@ void MainWindow::sectionFillParams() {
                     .arg(QString::fromUtf8(sectionMaterialLabel(st.material)))
                     .arg(st.angleDeg, 0, 'f', 1)
                     .arg(st.spacingMm, 0, 'f', 2));
+}
+
+// 【修改>用选中边界填充】：与「点选区域填充」互补的「先选后填」路径。
+// 选中若干图元（边界/闭合形状）后一次性生成剖面区域：
+//   * 边界(BOUNDARY/BPOLY) 经 makeSectionChangesEx 的专用分支**直接复用**
+//     其外环/内孔/样式，跳过剖面引擎的自动边界追踪——这正是解除「单一依赖自动追踪」的关键；
+//   * 其余闭合图元（圆/矩形/多边形/闭合折线/样条）走原有自动追踪路径。
+void MainWindow::sectionFillSelected() {
+    std::vector<Element> src;
+    for (int id : model_->selection())
+        if (const Element* e = model_->element(id)) src.push_back(*e);
+    if (src.empty()) {
+        model_->log(QStringLiteral("请先选中要填充的图元（边界/闭合形状），再执行「用选中边界填充」"), "warn");
+        return;
+    }
+    const auto res = makeSectionChangesEx(src, sectionStyle_, true);
+    if (res.changes.empty()) {
+        model_->log(QStringLiteral("选中图元中无可填充的闭合区域（边界需 ≥3 点外环，或选中圆/矩形/多边形/闭合折线）"), "warn");
+        return;
+    }
+    model_->beginEdit(QStringLiteral("剖面填充（选中）"));
+    const std::vector<int> newIds = modify::applyChanges(model_, res.changes, QString());
+    int picked = -1;
+    for (const auto& c : res.changes)
+        if (!c.remove) { picked = (c.id > 0 ? c.id : -1); break; }
+    if (picked > 0)          model_->setSelection({ picked });
+    else if (!newIds.empty()) model_->setSelection({ newIds.front() });
+    model_->log(QStringLiteral("已填充 %1 个区域（跨 %2 个选中的闭合图元）")
+                    .arg(res.filledRegions).arg((int)src.size()));
+}
+
+// 【修改>边界区域管理】：打开 REGION 管理对话框。REGION = 共享同一 name 的若干 Boundary，
+// 提供命名分组、批量填充、整体选择、重命名、删除，使复杂腔体一次填充即可、无需逐段描边。
+void MainWindow::openRegionManager() {
+    RegionManagerDialog dlg(model_, this);
+    dlg.exec();
 }
 
 void MainWindow::exportDxf() {

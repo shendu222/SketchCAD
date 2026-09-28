@@ -10,6 +10,7 @@
 #include "ui/LayerPanel.h"   // LayerPanel 定义（位于 namespace SketchCAD），供 layerPanel_ 成员使用
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
 #include "core/Section.h"    // SectionStyle / SectionLoopSet（剖面填充点选模式的样式与缓存）
+#include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
 
 class QDockWidget;
 class QToolBar;
@@ -81,6 +82,8 @@ private:
     SketchModel* model_;
     CommandInterpreter* interp_;
     GraphicsView* view_;
+
+    PrintSettings currentPrintSettings_;   // 当前打印/出图设置（可由「打印设置」对话框修改并持久化）
 
     // 参数输入条控件
     QWidget*      paramBar_   = nullptr;
@@ -200,7 +203,15 @@ private:
     // 剖面填充参数：对**已填充的剖面区域（选中的 Hatch 图元）**就地重设材料类别/角度/间距，
     // 随时把「通用金属」换成「砖墙/石材/木材」等工程图案；无选中时仅更新默认样式。
     void sectionFillParams();
+    void sectionFillSelected();                            // 用选中的边界/闭合图元填充（跳过自动追踪）
+    void openRegionManager();                             // 边界区域(REGION)管理对话框
     void openInquiry();                                 // 测量查询面板入口（菜单 + 工具条共用）
+
+    // ---- 打印 / 出图模块 ----
+    void openPrintSettings();                            // 打印设置（页面 + CTB 样式 + 视口）
+    void openPrintPreview();                             // 打印预览（QPrintPreviewWidget）
+    void printDirect();                                 // 直接打印到打印机（模型空间）
+    void exportPdfDirect();                             // 直接导出 PDF（QPdfWriter）
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"

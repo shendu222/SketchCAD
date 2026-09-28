@@ -393,6 +393,14 @@ double distanceToElement(const Element& e, const Vec3& p) {
             return best;
         }
 
+        case ElementType::Boundary: {
+            // 交互式自定义边界：几何与 Hatch 同构（外环 + 内孔），命中取其轮廓距离。
+            if (e.pts.size() < 3) return kBig;
+            double best = distPolyline(e.pts, p, true);
+            for (const auto& h : e.holes) best = std::min(best, distPolyline(h, p, true));
+            return best;
+        }
+
         case ElementType::BlockRef:
             // 块引用的精确命中需要块表（本函数是纯几何、无模型依赖），故由调用方
             // （GraphicsView::hitTest）展开后走 distanceToElements；这里返回到插入点的

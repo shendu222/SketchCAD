@@ -726,6 +726,19 @@ inline void paintGlyph(QPainter& g, const QString& id)
         g.restore();
         return;
     }
+    if (id == "boundary" || id == "bpoly") {    // 边界/边界多边形：虚线方框（自定义填充边界）
+        const QRectF box(4.5, 4.5, 15, 15);
+        g.save();
+        QPen dp(ink, 1.6, Qt::DashLine, Qt::SquareCap);   // 虚线：与屏幕渲染的边界轮廓一致
+        dp.setDashPattern({3.0, 2.0});
+        g.setPen(dp);
+        g.setBrush(Qt::NoBrush);
+        g.drawRect(box);
+        // 一个内孔（小虚线框），暗示边界可带内孔
+        g.drawRect(QRectF(10.5, 10.5, 5, 5));
+        g.restore();
+        return;
+    }
 
     if (id == "block") {                        // 块：外框方块 + 内部小方块（定义 + 实例）
         g.drawRect(QRectF(3.5, 3.5, 17, 17));
@@ -743,6 +756,20 @@ inline void paintGlyph(QPainter& g, const QString& id)
         arrow(13.5, 11.0, 0.0, mark, 3.0);          // 右向箭头
         arrow(5.5, 11.0, 3.14159265, mark, 3.0);     // 左向箭头
         g.restore();
+        return;
+    }
+
+    if (id == "print") {                        // 打印：打印机机身 + 纸张 + 出纸口
+        // 机身
+        g.setPen(QPen(ink, 1.6, Qt::SolidLine, Qt::SquareCap));
+        g.drawRect(QRectF(4.5, 9.0, 15.0, 9.0));
+        // 出纸托盘（底部两条横线）
+        g.drawLine(QPointF(7.5, 19.5), QPointF(16.5, 19.5));
+        g.drawLine(QPointF(9.0, 21.5), QPointF(15.0, 21.5));
+        // 进纸（顶部纸张）
+        g.drawRect(QRectF(8.0, 3.5, 8.0, 6.0));
+        // 状态指示灯
+        dot(17.0, 11.5, mark, 1.3);
         return;
     }
 

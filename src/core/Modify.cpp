@@ -211,8 +211,8 @@ std::vector<Change> makeMirror(const std::vector<Element>& src,
             for (auto& p : e.pts)
                 p = mirrorPtAcrossLine(p, base1, base2);
         }
-        // ---- 剖面区域：内孔点列同步反射 ----
-        if (e.type == ElementType::Hatch) {
+        // ---- 剖面区域 / 自定义边界：内孔点列同步反射 ----
+        if (e.type == ElementType::Hatch || e.type == ElementType::Boundary) {
             for (auto& hole : e.holes) {
                 for (auto& p : hole) {
                     p = isPointMirror
@@ -231,7 +231,7 @@ std::vector<Change> makeMirror(const std::vector<Element>& src,
             e.rotation = isPointMirror ? (e.rotation + 180.0)
                                        : (2.0 * beta - e.rotation);
         }
-        if (e.type == ElementType::Hatch) {
+        if (e.type == ElementType::Hatch || e.type == ElementType::Boundary) {
             e.rotation = isPointMirror ? (e.rotation + 180.0)
                                        : (2.0 * beta - e.rotation);
         }

@@ -73,6 +73,7 @@ private:
     void   paintDimension(QPainter* p, const Element& e) const;  // GB/T 4458.4-2003
     void   paintText(QPainter* p, const Element& e) const;       // 文本图元（标题栏栏目等）
     void   paintHatch(QPainter* p, const Element& e) const;      // 剖面区域（GB/T 4457.5-2013）
+    void   paintBoundary(QPainter* p, const Element& e) const;   // 交互式自定义边界（虚线轮廓）
     // 块引用：把引用按块表展开为世界坐标子图元（无模型/未定义块 → 空）
     std::vector<Element> expandedBlock() const;
     void   paintBlockRef(QPainter* p, const Element& e) const;

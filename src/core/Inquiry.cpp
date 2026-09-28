@@ -138,6 +138,7 @@ std::vector<Vec3> discretizeRing(const Element& e) {
         }
         case ElementType::Polygon:
         case ElementType::Hatch:
+        case ElementType::Boundary:
             if (!e.closed && e.type == ElementType::Polygon) break;
             if (e.pts.size() < 3) break;
             ring = e.pts;
@@ -302,8 +303,36 @@ AreaResult areaOfElement(const Element& e) {
             r.centroid = Vec3(mx / A, my / A, 0);
             return r;
         }
+        case ElementType::Boundary: {
+            // 交互式自定义边界：几何与 Hatch 同构，按外环 + 内孔计面积/周长/形心
+            if (e.pts.size() < 3) { r.error = "边界外环顶点不足"; return r; }
+            std::vector<Vec3> outer = e.pts;
+            if (polygonArea(outer) < 0) std::reverse(outer.begin(), outer.end());
+            double A = polygonArea(outer);
+            if (std::fabs(A) < 1e-9) { r.error = "边界退化（零面积）"; return r; }
+            double P = polygonPerimeter(outer);
+            const Vec3 cOut = polygonCentroid(outer);
+            double mx = A * cOut.x, my = A * cOut.y;   // 一阶矩
+            for (const auto& h : e.holes) {
+                if (h.size() < 3) continue;
+                std::vector<Vec3> hole = h;
+                if (polygonArea(hole) > 0) std::reverse(hole.begin(), hole.end()); // CW
+                const double Ah = polygonArea(hole);
+                A += Ah;                              // 扣孔
+                P += polygonPerimeter(hole);          // 周长含内孔
+                const Vec3 ch = polygonCentroid(hole);
+                mx += Ah * ch.x;
+                my += Ah * ch.y;
+            }
+            if (std::fabs(A) < 1e-9) { r.error = "边界退化（扣孔后零面积）"; return r; }
+            r.ok = true;
+            r.area = std::fabs(A);
+            r.perimeter = P;
+            r.centroid = Vec3(mx / A, my / A, 0);
+            return r;
+        }
         default:
-            r.error = QString("%1 不是封闭区域（支持：圆/椭圆/矩形/多边形/闭合折线/剖面区域）")
+            r.error = QString("%1 不是封闭区域（支持：圆/椭圆/矩形/多边形/闭合折线/剖面区域/边界）")
                           .arg(e.typeName());
             return r;
     }
@@ -387,7 +416,7 @@ MassPropResult massPropOfElement(const Element& e) {
             const auto ring = discretizeRing(e);
             if (ring.size() < 3) { r.ok = false; r.error = "无法离散封闭轮廓"; return r; }
             r.bbox = bboxOfRing(ring);
-            if (e.type == ElementType::Hatch) {
+            if (e.type == ElementType::Hatch || e.type == ElementType::Boundary) {
                 // 复合区域：外环 CCW 正贡献 + 内孔 CW 负贡献（绕原点叠加后平行轴移轴）
                 std::vector<Vec3> outer = ring;
                 if (polygonArea(outer) < 0) std::reverse(outer.begin(), outer.end());

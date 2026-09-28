@@ -394,6 +394,26 @@ QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
             path.setFillRule(Qt::OddEvenFill);
             break;
         }
+
+        case ElementType::Boundary: {
+            // 交互式自定义边界（BOUNDARY/BPOLY）：几何结构与 Hatch 完全一致
+            // （pts=外环、holes=内孔），仅语义为"待填充/已指定边界"，故复用同一几何路径；
+            // 渲染则只描边（虚线边界）而不画剖面线，见 paintOne。
+            if (e.pts.size() < 3) break;
+            QPolygonF outer;
+            for (const auto& v : e.pts) outer << qpt(v);
+            path.addPolygon(outer);
+            path.closeSubpath();
+            for (const auto& h : e.holes) {
+                if (h.size() < 3) continue;
+                QPolygonF ring;
+                for (const auto& v : h) ring << qpt(v);
+                path.addPolygon(ring);
+                path.closeSubpath();
+            }
+            path.setFillRule(Qt::OddEvenFill);
+            break;
+        }
     }
     return path;
 }
@@ -617,6 +637,7 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
     if (e.type == ElementType::Dimension) { paintDimension(p, e); return; }
     if (e.type == ElementType::Text)      { paintText(p, e); return; }
     if (e.type == ElementType::Hatch)     { paintHatch(p, e); return; }
+    if (e.type == ElementType::Boundary)  { paintBoundary(p, e); return; }
     if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e); return; }
 
     QPainterPath path;
@@ -686,6 +707,22 @@ void ElementItem::paintHatch(QPainter* p, const Element& e) const {
             p->drawEllipse(qpt(d), r, r);
         p->restore();
     }
+}
+
+// 交互式自定义边界（BOUNDARY/BPOLY）：以虚线轮廓表示"用户指定的填充边界"，
+// 不绘制剖面线（它只是边界定义，真正的剖面线由其后触发的剖面填充生成）。
+// 虚线用以与已填充的实线 Hatch 在视觉上区分；高亮态加粗、改高亮色。
+void ElementItem::paintBoundary(QPainter* p, const Element& e) const {
+    const QPainterPath path = buildPath(e);   // 外边界 + 内孔，OddEvenFill
+    if (path.isEmpty()) return;
+    QPen pen(highlight ? HL : e.color);
+    pen.setCosmetic(true);
+    pen.setStyle(Qt::DashLine);
+    const double effW = std::max(0.6, mmToScreenPx(e.effectiveLineWidth()));
+    pen.setWidthF(highlight ? effW + 1.0 : effW);
+    p->setPen(pen);
+    p->setBrush(Qt::NoBrush);
+    p->drawPath(path);
 }
 
 // GB/T 4458.4-2003 / ISO 129-1:2018：尺寸界线与尺寸线用细实线，

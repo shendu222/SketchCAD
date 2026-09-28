@@ -36,6 +36,13 @@ public:
     static Element createPolygon(const std::vector<Vec3>& pts, const SketchModel* model);
     static Element createSpline(const std::vector<Vec3>& pts, const SketchModel* model);
     static Element createPolyline(const std::vector<Vec3>& pts, const std::vector<bool>& arcFlags, bool closed, const SketchModel* model);
+    // 边界（BOUNDARY / BPOLY）：用户交互定义的填充边界闭合环（可含内孔）。
+    // pts=外环，holes=内孔（每个自动闭合、布尔减）；closed 恒 true；
+    // rotation=剖面线方向角(默认45)，radius=剖面线间距(默认3)，
+    // sectionMaterial/sectionExempt 走与 Hatch 一致的字段。REGION 由 name 分组，不在此构造。
+    static Element createBoundary(const std::vector<Vec3>& pts,
+                                 const std::vector<std::vector<Vec3>>& holes,
+                                 const SketchModel* model);
     static Element createDimension(DimensionType dt, const SketchModel* model);
     // 文本图元（标题栏栏目、说明文字等）。文字高度(mm) 存于 radius 字段；
     // 颜色/线型/线宽走默认样式，调用方可再按需覆盖。

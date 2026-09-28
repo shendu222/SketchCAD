@@ -142,4 +142,24 @@ Element ElementFactory::createXline(const Vec3& through, double angleDeg, const 
     return createXline(through, angleDeg, QStringLiteral("构造线"), model);
 }
 
+// 边界（BOUNDARY / BPOLY）：把用户交互定义的闭合环（外环 + 可选内孔）封装成独立图元。
+// 几何直接落在 pts / holes（与 Hatch 同字段），样式落在 rotation / radius / 专用字段，
+// 因此既能被 hatchRegionFromElement 直接消费生成剖面区域，又能在属性面板里继续编辑。
+// 注意：create() 已套用模型默认样式（颜色/线宽/线型）。边界轮廓默认用实线；剖面线角度/间距
+// 用与 Hatch 工厂一致的默认（rotation=45、radius=3），后续可在属性面板或区域管理器覆盖。
+Element ElementFactory::createBoundary(const std::vector<Vec3>& pts,
+                                     const std::vector<std::vector<Vec3>>& holes,
+                                     const SketchModel* model) {
+    Element e = create(ElementType::Boundary, QStringLiteral("边界"), model);
+    e.pts = pts;
+    e.holes = holes;
+    e.closed = true;
+    e.rotation = 45.0;     // 剖面线方向角（与 Hatch 默认一致）
+    e.radius  = 3.0;       // 剖面线间距(mm)（与 Hatch 默认一致）
+    e.sectionExempt = 0;
+    e.sectionMaterial = 0;
+    e.lineStyle = LineStyle::Solid;
+    return e;
+}
+
 } // namespace SketchCAD

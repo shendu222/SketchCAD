@@ -57,6 +57,9 @@ QString Element::sizeDesc() const {
         case ElementType::Hatch:
             return QString("剖面区域 角度 %1° / 间距 %2 mm / 内孔 %3")
                    .arg(rotation, 0, 'f', 1).arg(radius, 0, 'f', 2).arg(holes.size());
+        case ElementType::Boundary:
+            return QString("边界 角度 %1° / 间距 %2 mm / 内孔 %3")
+                   .arg(rotation, 0, 'f', 1).arg(radius, 0, 'f', 2).arg(holes.size());
         case ElementType::BlockRef:
             // 块引用：块名 + 插入点 + 缩放 + 属性数（几何无副本，展开见 expandBlockRef）
             return QString("块 %1 @(%2,%3) 缩放 %4×%5%6")

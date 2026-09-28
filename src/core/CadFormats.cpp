@@ -537,6 +537,13 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
                     dwgAddLineR(R,a,b,layer,color);
                 }
             } break;
+            case ElementType::Hatch:
+            case ElementType::Boundary:
+                // 剖面区域/自定义边界：以闭合折线导出外环，内孔作为独立闭合折线（不导出剖面线）。
+                if (e.pts.size() >= 3) dwgEmitPolyline(R, e.pts, true, layer, color);
+                for (const auto& h : e.holes)
+                    if (h.size() >= 3) dwgEmitPolyline(R, h, true, layer, color);
+                break;
             default: break;
         }
     }
@@ -884,6 +891,12 @@ QString toStep(const std::vector<Element>& elems, StepStats* stats, QString* err
                 }
                 break;
             }
+            case ElementType::Hatch:
+            case ElementType::Boundary:
+                // 剖面区域/自定义边界：以闭合折线导出外环，内孔作为独立闭合折线（不导出剖面线）。
+                if (e.pts.size() >= 3) addPoly(e.pts, true);
+                for (const auto& h : e.holes) if (h.size() >= 3) addPoly(h, true);
+                break;
             case ElementType::Text:
                 if (stats) ++stats->skippedText;           // STEP 曲线集不含文字注记
                 break;

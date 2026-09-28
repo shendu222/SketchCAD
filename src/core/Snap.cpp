@@ -36,6 +36,7 @@ std::vector<Vec3> snapHandles(const Element& e) {
         }
         case ElementType::Polygon:
         case ElementType::Spline:
+        case ElementType::Boundary:
             out = e.pts;
             break;
         case ElementType::Xline:

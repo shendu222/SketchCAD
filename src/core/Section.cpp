@@ -370,6 +370,13 @@ bool sectionSelfClosedOutline(const Element& e, std::vector<Vec3>& out,
             out = e.pts;                  // 已是剖面区域，沿用其外边界
             return true;
         }
+        case ElementType::Boundary: {
+            // 交互式自定义边界：pts=外环、holes=内孔，已是填充区域外环定义，
+            // 直接沿用即可，无需再经自动边界追踪。
+            if (e.pts.size() < 3) return false;
+            out = e.pts;
+            return true;
+        }
         default:
             return false;
     }
@@ -1414,8 +1421,36 @@ SectionResult makeSectionChangesEx(const std::vector<Element>& srcs,
                                    double closureTol) {
     SectionResult res;
 
+    // 先把"交互式自定义边界"（BOUNDARY/BPOLY）挑出来单独处理：它们已是完整的填充区域
+    // 定义（外环 pts + 内孔 holes + 角度/间距/材料/豁免），应被剖面填充模块**直接复用**，
+    // 跳过自动边界追踪；其内孔经 hatchRegionFromElement 一并带入，不会像普通图元那样在
+    // 成环阶段被丢弃。复用该边界自身的 id 原地替换为 Hatch（单次撤销、选中态不跳；
+    // REGION 按 id 分组仍有效）。
+    std::vector<const Element*> boundaries;
+    std::vector<Element> others;
+    boundaries.reserve(srcs.size());
+    others.reserve(srcs.size());
+    for (const auto& s : srcs) {
+        if (s.type == ElementType::Boundary) boundaries.push_back(&s);
+        else others.push_back(s);
+    }
+
+    for (const Element* b : boundaries) {
+        SectionRegion r = hatchRegionFromElement(*b);   // 直接复用：外环/内孔/角度/间距/材料/豁免
+        Element h = makeHatchForRegion(r, b->id, b);    // 复用边界 id 原地替换
+        modify::Change ch;
+        ch.id = b->id;
+        ch.replacement = h;
+        ch.note = QStringLiteral("剖面填充（自定义边界）");
+        res.changes.push_back(ch);
+        ++res.filledRegions;
+    }
+
+    // 其余图元：走原有「自动边界追踪」逻辑（仅作用于 others）。
+    if (others.empty()) return res;
+
     // 1) 真实判定闭合：只有真正闭合的边界才进入填充。
-    LoopBuildResult built = buildLoopsInternal(srcs, closureTol);
+    LoopBuildResult built = buildLoopsInternal(others, closureTol);
     res.skippedOpenChains   = built.stats.openChains;
     res.skippedOpenElements = built.stats.openElements;
     res.skippedDegenerate   = built.stats.degenerate;
@@ -1437,7 +1472,7 @@ SectionResult makeSectionChangesEx(const std::vector<Element>& srcs,
 
     // 4) 生成 Hatch 替换动作：复用源 ID；链式成环时合并其余源图元（remove）。
     auto findSrc = [&](int id) -> const Element* {
-        for (const auto& s : srcs) if (s.id == id) return &s;
+        for (const auto& s : others) if (s.id == id) return &s;
         return nullptr;
     };
     for (size_t i = 0; i < regions.size(); ++i) {
@@ -1485,10 +1520,12 @@ SectionLoopSet buildSectionLoopSet(const std::vector<Element>& elems, double tol
     // 非法大环，导致"已填充区域重新进入时被重新划分"。现改为：Hatch 单独作为一条
     // 单源闭环注册(loopHatchId 标出其元素 id)，既保留原始填充边界不变，又让重入拾取
     // 直接命中 loopHatchId 返回 AlreadyFilled。
+    // 交互式自定义边界(BOUNDARY/BPOLY) 同理排除出自动细分图——其外环与内孔由下方分支
+    // 直接登记，避免自动追踪把"用户手绘的精确边界"重新拆环/漏掉内孔。
     std::vector<Element> rest;
     rest.reserve(elems.size());
     for (const auto& e : elems)
-        if (e.type != ElementType::Hatch) rest.push_back(e);
+        if (e.type != ElementType::Hatch && e.type != ElementType::Boundary) rest.push_back(e);
 
     LoopBuildResult built = buildLoopsSubdivided(rest, tol, /*subdivide=*/true);
     set.stats = built.stats;
@@ -1510,6 +1547,26 @@ SectionLoopSet buildSectionLoopSet(const std::vector<Element>& elems, double tol
         set.loopSrcIds.push_back({ h.id });
         set.loopArea.push_back(std::fabs(polygonArea2(h.pts)) * 0.5);
         set.loopHatchId.push_back(h.id);
+    }
+
+    // 交互式自定义边界（BOUNDARY/BPOLY）：直接登记其外环与内孔，跳过自动追踪。
+    // 外环 loopHatchId 置 0（尚未填充 → 可点选填充；填充后该 id 变为 Hatch，由上方
+    // Hatch 分支接管为 AlreadyFilled）。内孔作为嵌套环登记，使点选时自动掏空，
+    // 不会因"内孔不是独立图元"而在自动成环阶段被丢弃。
+    for (const auto& b : elems) {
+        if (b.type != ElementType::Boundary) continue;
+        if (b.pts.size() < 3) continue;
+        set.loops.push_back(b.pts);                 // 外环
+        set.loopSrcIds.push_back({ b.id });
+        set.loopArea.push_back(std::fabs(polygonArea2(b.pts)) * 0.5);
+        set.loopHatchId.push_back(0);               // 可填充（非已填充标记）
+        for (const auto& hole : b.holes) {
+            if (hole.size() < 3) continue;
+            set.loops.push_back(hole);              // 内孔（嵌套环）
+            set.loopSrcIds.push_back({ b.id });
+            set.loopArea.push_back(std::fabs(polygonArea2(hole)) * 0.5);
+            set.loopHatchId.push_back(0);           // 作为内孔被掏空
+        }
     }
     return set;
 }

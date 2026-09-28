@@ -280,6 +280,16 @@ ToolRegistry::ToolRegistry() {
     registerTool({"polyline",                      QStringLiteral("折线"),
                   ToolCategory::Polyline, ParamBarMode::None, DimensionType::Distance,
                   QStringLiteral("折线（Polyline）：依次点击节点生成多段线，右键结束，点击首点附近可闭合")});
+
+    // ==================== 边界（BOUNDARY / BPOLY）====================
+    // 用户交互定义填充边界（外环 + 可选内孔），作为剖面填充的直接输入，
+    // 解除剖面填充对内置「边界自动追踪算法」的单一依赖。BPOLY 为同义命令别名。
+    registerTool({"boundary", QStringLiteral("边界"),
+                  ToolCategory::Polyline, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("边界(BOUNDARY)：依次点击节点定义封闭填充边界（可含内孔），生成边界图元供剖面填充直接复用，无需逐段描边")});
+    registerTool({"bpoly",    QStringLiteral("边界多边形"),
+                  ToolCategory::Polyline, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("边界多边形(BPOLY)：与边界同义，依次点击节点定义封闭填充多边形（可含内孔）")});
     registerTool({"polyline_add_node",             QStringLiteral("折线·添加节点"),
                   ToolCategory::PolylineEdit, ParamBarMode::None, DimensionType::Distance,
                   QStringLiteral("在折线段上插入节点")});
