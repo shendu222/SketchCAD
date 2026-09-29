@@ -57,6 +57,23 @@ public:
         std::vector<Element>& afterElems,
         int changedId,
         double tol = 0.5);
+
+    // ---- 几何关系的「自动计算 + 生成」（供绘制命令/宏调用）----
+    // 返回的新图元已绑定 ctype/refA/refB，使其进入本求解器的维护范围：
+    // 后续移动端点时，Perpendicular/Tangent 约束会被自动维持（见 detect/restore）。
+
+    // 绘制垂线：过 P 作一条垂直于 refLine 的直线（P 落在直线上，方向 ⟂ refLine）。
+    // refLine 需为直线/线段类；返回生成的 Line 图元（ctype=Perpendicular, refA=refLine.id）。
+    static Element drawPerpendicularTo(const Element& refLine, const Vec3& P);
+
+    // 公切线：求圆/圆弧 cA 与 cB 的全部公切线（外切线 2 条 + 内切线 2 条，按存在性返回 0..4）。
+    // 每条切线为一条 Line 图元（ctype=Tangent, refA=cA.id, refB=cB.id），便于后续约束维持。
+    // 半径相近时仅外切线，相离时外加内切线；同心或不相交/包含时返回 0。
+    static int commonTangents(const Element& cA, const Element& cB, std::vector<Element>& out);
+
+    // 象限连接：从 from 点作一条直线连到 target 圆/弧「最近的象限点」（0/90/180/270° 方位）。
+    // 返回生成的 Line 图元（refA=target.id，供后续维持）。
+    static Element quadrantConnector(const Element& target, const Vec3& from);
 };
 
 } // namespace SketchCAD

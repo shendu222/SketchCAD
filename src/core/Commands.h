@@ -156,6 +156,15 @@ class DimCommand       : public ICommand { public: bool execute(const CommandCon
 class DimSmartCommand  : public ICommand { public: bool execute(const CommandContext&) override; };
 class ConstraintCommand: public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 约束自动生成（几何关系「自动计算 + 生成」）----
+// 与 ConstraintSolver::drawPerpendicularTo / commonTangents / quadrantConnector 对接：
+//   perp <lineId> <x,y>               过 (x,y) 作直线垂直于指定直线
+//   tangent2 <circleIdA> <circleIdB>  求两圆/弧的全部公切线（外+内，0..4 条）
+//   qconnect <targetId> <x,y>         从 (x,y) 连到目标圆/弧最近的象限点
+class PerpCommand      : public ICommand { public: bool execute(const CommandContext&) override; };
+class Tangent2Command  : public ICommand { public: bool execute(const CommandContext&) override; };
+class QConnectCommand  : public ICommand { public: bool execute(const CommandContext&) override; };
+
 // ---- 选择（对应选择菜单 / FreeCAD Sketcher 选择命令）----
 // 同一类按 ctx.cmd 分派：select_all / select_none / invert /
 // select_entity <id> / deselect_entity <id> / select_contour <id> /

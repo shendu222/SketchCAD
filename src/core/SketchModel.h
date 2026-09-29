@@ -11,6 +11,10 @@
 #include "Layer.h"
 #include "Block.h"
 #include "Xref.h"
+#include "TextStyle.h"
+#include "QSelect.h"
+#include "Units.h"
+#include "Snap.h"
 
 namespace SketchCAD {
 
@@ -196,6 +200,80 @@ public:
     QJsonArray blocksToJson() const;
     void setBlocksFromJson(const QJsonArray& arr);
 
+    // ---- 文字样式（STYLE）管理 ----
+    // 与图层/块表同级，由模型持有唯一数据源；图元经 Element::styleName 引用样式名，
+    // 渲染/导出时按样式表解析字体/字高/宽度因子，实现「改样式 → 引用文字同步更新」。
+    int  textStyleCount() const { return (int)textStyles_.size(); }
+    const TextStyle& textStyleAt(int i) const;                 // 越界回落默认 "Standard"
+    const TextStyle* findTextStyle(const QString& name) const; // 空名返回 nullptr
+    bool hasTextStyle(const QString& name) const { return findTextStyle(name) != nullptr; }
+    bool addTextStyle(const TextStyle& s);                     // 空名/重名 → false
+    bool renameTextStyle(const QString& oldName, const QString& newName); // 同步更新图元引用
+    bool updateTextStyle(const TextStyle& s);                 // 按 name 原地更新字段（含重命名）
+    bool removeTextStyle(const QString& name);                 // 删除并解除图元引用
+    // 把指定样式应用到给定图元（仅对 Text/MText 生效），返回受影响图元数；
+    // styleName 为空串表示「清除样式关联、回退默认」。走一次 beginEdit 可整组 Ctrl+Z。
+    int  applyStyleToElements(const QString& styleName, const std::vector<int>& ids);
+    // 序列化：文字样式表 <-> JSON 数组（旧文件无此字段则回落单一默认 "Standard"）
+    QJsonArray textStylesToJson() const;
+    void setTextStylesFromJson(const QJsonArray& arr);
+
+    // ---- 编组（GROUP）管理 ----
+    // 编组 = 「groupName 相同的图元集合」，无独立编组表（REGION/STYLE 同款引用式范式）：
+    // 创建/解散只改写图元的 groupName 字段，走 beginEdit 一次 Ctrl+Z 整组撤销；
+    // 图元删除/复制后编组关系自动跟随（无 id 悬空问题）。
+    QStringList groupNames() const;                        // 现有编组名（去重升序）
+    int  elementCountInGroup(const QString& name) const;   // 编组成员数（含隐藏图元）
+    std::vector<int> elementsInGroup(const QString& name) const;
+    // 用给定 id 集创建编组（空名/重名/空集 → false）
+    bool createGroup(const QString& name, const std::vector<int>& ids);
+    // 把选中图元加入编组（图元已属其他编组则改属本组）
+    int  addToGroup(const QString& name, const std::vector<int>& ids);
+    // 从其所属编组移除（groupName 置空）；返回受影响图元数
+    int  removeFromGroup(const std::vector<int>& ids);
+    // 解散编组：全部成员 groupName 置空（编组随之消失，图元保留）
+    int  ungroup(const QString& name);
+    // 编组重命名：同步更新全部成员的 groupName
+    bool renameGroup(const QString& oldName, const QString& newName);
+    // 整体选中编组全部成员（一次 selectionChanged），返回成员数
+    int  selectGroup(const QString& name);
+
+    // ---- 快速选择 / 过滤器（QSELECT / FILTER）与选择集的统一落地口 ----
+    // 替换/追加/排除一次完成，全程只发一次 selectionChanged（大图 O(n) 次刷新禁绝）。
+    void applySelectionDelta(const std::vector<int>& hits, QSelectAction action);
+
+    // ---- 命名过滤器（FILTER 保存/复用）----
+    // 仅持久化（顶层图纸 JSON "savedFilters"），**不入撤销栈**——过滤器是检索配置
+    // 而非图纸内容，与打印设置同级的"应用级配置"语义。
+    const std::vector<FilterDef>& savedFilters() const { return savedFilters_; }
+    bool saveFilter(const FilterDef& f);                   // 按名保存（重名覆盖；空名/无条件 → false）
+    bool deleteFilter(const QString& name);
+    QJsonArray savedFiltersToJson() const;
+    void setSavedFiltersFromJson(const QJsonArray& arr);
+
+    // ---- 单位（UNITS）与图纸界限（LIMITS）----
+    // 单位不变式：内部几何一律 mm；单位设置只定义「显示与输入的换算口径」。
+    // 变更发 unitsChanged/limitsChanged 信号（状态栏坐标、参数输入条实时跟随），
+    // 不入撤销栈（与打印设置同级的"应用级配置"），随图 JSON 持久化（缺键回落 mm/A3）。
+    const UnitsMeta& units() const { return units_; }
+    void setUnits(const UnitsMeta& u);                 // 与现值相同则不发信号
+    const LimitsMeta& limits() const { return limits_; }
+    void setLimits(const LimitsMeta& l);
+    // 格式化便捷口（状态栏 / 属性面板 / 查询结果统一走此，杜绝两处口径漂移）
+    QString formatLength(double mm) const { return formatLengthMm(mm, units_); }
+    // 注意：同名自由函数被类内成员遮蔽，须 SketchCAD:: 限定才能命中双参版本
+    QString formatLengthWithUnit(double mm) const { return SketchCAD::formatLengthWithUnit(mm, units_); }
+    QString formatAngle(double deg) const { return formatAngleDeg(deg, units_); }
+    // 新图元越界检查（LIMITS checkOn 开启时告警；坐标为模型 mm）
+    void checkElementLimits(const Element& e);
+
+    // ---- 捕捉全局配置（OSNAP 持久化）----
+    // 全局持久配置：用户在各处设定的「默认开启哪些捕捉」随图存档（顶层 JSON "snapConfig"），
+    // 不入撤销栈（属应用级配置，与单位/界限同级）。绘制命令进入时取此值作为活动配置，
+    // 离开时复原；其上的「临时覆盖」与「命令默认」只作用于命令期内的活动快照（见 GraphicsView）。
+    const snap::SnapConfig& snapConfig() const { return snapConfig_; }
+    void setSnapConfig(const snap::SnapConfig& c);     // 与现值相同则不发信号
+
     // ---- 外部参照（Xref）管理 ----
     // 附加：读入外部图形文件，登记为一条 Xref 块记录，并在 insertPt 放置一个参照实例。
     //   pathType 决定 xrefPath 的**存盘形态**（完整路径 / 相对宿主图目录 / 仅文件名），
@@ -346,9 +424,13 @@ signals:
     void layersChanged();                    // 图层表增删/改名/样式/可见性变化
     void currentLayerChanged(const QString& name);   // 活动图层切换（用于 HUD 实时显示 / 面板高亮）
     void blocksChanged();                    // 块表增删/改名/重定义变化（引用需重绘）
+    void textStylesChanged();                // 文字样式表变化（管理器需刷新）
+    void unitsChanged();                     // 单位设置变化（状态栏/参数输入条实时跟随）
+    void limitsChanged();                    // 图纸界限变化
+    void snapConfigChanged();                // 捕捉全局配置变化（设置面板/菜单改动后即时生效）
 
 private:
-    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; };
+    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; };
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
@@ -369,6 +451,11 @@ private:
     std::vector<Layer> layers_;   // 图层表（默认含一层 "0"）
     QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"
     std::vector<BlockDef> blocks_;   // 块表（唯一一份定义，所有 BlockRef 共享）
+    std::vector<TextStyle> textStyles_;   // 文字样式表（唯一数据源，图元经 styleName 引用）
+    std::vector<FilterDef> savedFilters_; // 命名过滤器（FILTER 保存/复用；仅持久化不入撤销栈）
+    UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
+    LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
+    snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档，不入撤销栈）
     Element clipboard_;
     bool hasClip_ = false;
     std::vector<Memento> undoStack_, redoStack_;

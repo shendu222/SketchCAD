@@ -1,6 +1,12 @@
 #include "MainWindow.h"
 #include <QSet>
 #include "core/SketchModel.h"
+#include "ui/TableDialog.h"         // 表格编辑器（双击 Table / 表格创建共用）
+#include "ui/GroupManagerDialog.h"  // 编组管理器（GROUP）
+#include "ui/QSelectDialog.h"       // 快速选择（QSELECT）
+#include "ui/FilterDialog.h"        // 过滤器（FILTER）
+#include "ui/UnitsLimitsDialog.h"   // 单位与图纸界限（UNITS / LIMITS）
+#include "ui/SnapSettingsDialog.h"   // 捕捉设置（OSNAP）
 #include "core/CommandInterpreter.h"
 #include "core/Element.h"
 #include "core/Geometry.h"
@@ -33,6 +39,7 @@
 #include "ui/BlockDialogs.h"
 #include "ui/SectionDialog.h"
 #include "ui/RegionManagerDialog.h"
+#include "ui/CleanupDialog.h"
 #include "ui/InquiryDialog.h"
 #include "ui/PrintSettingsDialog.h"
 #include "ui/PrintPreviewDialog.h"
@@ -267,6 +274,14 @@ void MainWindow::buildMenu() {
     mk(f, QStringLiteral("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
             changeDrawingScale();
         });
+    // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档
+    mk(f, QStringLiteral("单位与图纸界限..."), QKeySequence(), [this] {
+            openUnitsLimits();
+        });
+    // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档
+    mk(f, QStringLiteral("捕捉设置..."), QKeySequence(), [this] {
+            openSnapSettings();
+        });
     mk(f, QStringLiteral("打开..."),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
     mk(f, QStringLiteral("保存..."),      QKeySequence::Save, [this] { saveFile(); })
@@ -302,6 +317,16 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("paste"));
     mk(e, QStringLiteral("删除"), QKeySequence::Delete,[this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
+    e->addSeparator();
+    // ---- 选择工具：编组 / 快速选择 / 过滤器（QSELECT / FILTER）----
+    // 三者共用 SketchModel 选择集状态，与点击选择/框选/图层选择完全一致。
+    QMenu* selMenu = e->addMenu(icons::make("qselect"), QStringLiteral("选择工具(&S)"));
+    mk(selMenu, QStringLiteral("编组管理(&G)..."), QKeySequence(), [this] { openGroupManager(); })
+        ->setIcon(icons::make("group"));
+    mk(selMenu, QStringLiteral("快速选择(&Q)..."), QKeySequence(), [this] { openQSelect(); })
+        ->setIcon(icons::make("qselect"));
+    mk(selMenu, QStringLiteral("过滤器(&F)..."), QKeySequence(), [this] { openFilterDialog(); })
+        ->setIcon(icons::make("filter"));
     e->addSeparator();
     bar->addMenu(e);
 
@@ -365,6 +390,10 @@ void MainWindow::buildMenu() {
     // ---- 边界区域管理（REGION：命名分组 + 批量填充/选择/重命名/删除）----
     mk(mod, QStringLiteral("边界区域管理(&R)..."), QKeySequence(), [this] { openRegionManager(); })
         ->setIcon(icons::make("boundary"));
+
+    // ---- 图形清理（PURGE + OVERKILL：清垃圾/冗余、重合删除、共线重叠合并）----
+    mk(mod, QStringLiteral("图形清理(&C)..."), QKeySequence(), [this] { openCleanup(); })
+        ->setIcon(icons::make("cleanup"));
 
     auto* alignMenu = mod->addMenu(icons::make("align"), QStringLiteral("对齐(&A)"));
     mk(alignMenu, QStringLiteral("对齐..."), QKeySequence(), [this] {
@@ -883,6 +912,96 @@ void MainWindow::openInquiry() {
     dlg.exec();
 }
 
+// MTEXT 多行文字：激活 mtext 工具，用户在画布点击插入点后弹出编辑框
+// （MTextTool::onPress 负责 MTextDialog + addElement，与工具条按钮同一链路）。
+void MainWindow::openMTextDialog() {
+    model_->setActiveTool(QStringLiteral("mtext"));
+}
+
+// STYLE 文字样式管理器：创建/修改/删除样式并批量应用到已有文字对象。
+// 样式表存于 SketchModel（随图 JSON 存档），图元经 styleName 引用——
+// 修改样式后所有引用它的文字在下次重绘时自动更新。
+void MainWindow::openStyleManager() {
+    StyleManagerDialog dlg(model_, this);
+    dlg.exec();
+}
+
+// 双击 Text/MText 图元 → 弹出多行文字编辑框；双击 Table → 弹出表格编辑器。
+// 就地更新数据字段（不重建图元、不动 id/图层/颜色/线型），
+// 单行 Text 编辑后仍保持 Text 类型（lineSpacing/mtextWidth 对 Text 无害且不序列化）。
+void MainWindow::editElementText(int id) {
+    const Element* e = model_->element(id);
+    if (!e) return;
+
+    // ---- 表格（Table）：表格编辑器，更新表格数据字段 ----
+    if (e->type == ElementType::Table) {
+        TableDialog dlg(model_, this, e);
+        if (dlg.exec() != QDialog::Accepted) return;
+        const Element upd = dlg.buildElement(e->pts.empty() ? Vec3() : e->pts[0]);
+        model_->beginEdit(QStringLiteral("编辑表格"));
+        model_->updateElementQuiet(id, [&upd](Element& x) {
+            x.tableRows  = upd.tableRows;
+            x.tableCols  = upd.tableCols;
+            x.rowHeight  = upd.rowHeight;
+            x.colWidths  = upd.colWidths;
+            x.tableCells = upd.tableCells;
+            x.radius     = upd.radius;     // 字高
+            x.textAlign  = upd.textAlign;  // 单元格文字对齐
+        });
+        model_->log(QStringLiteral("已更新表格 #%1（%2×%3）")
+                        .arg(id).arg(upd.tableRows).arg(upd.tableCols));
+        return;
+    }
+
+    if (e->type != ElementType::Text && e->type != ElementType::MText) return;
+
+    MTextDialog dlg(model_, this, e);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    const Element upd = dlg.buildElement(e->pts.empty() ? Vec3() : e->pts[0]);
+    model_->beginEdit(QStringLiteral("编辑文字"));
+    model_->updateElementQuiet(id, [&upd](Element& x) {
+        x.text        = upd.text;         // 内容（支持 \n 与 %<字段>% 占位）
+        x.radius      = upd.radius;       // 字高(mm)，复用 radius
+        x.widthFactor = upd.widthFactor;
+        x.textAlign   = upd.textAlign;
+        x.styleName   = upd.styleName;
+        x.lineSpacing = upd.lineSpacing;
+        x.mtextWidth  = upd.mtextWidth;
+    });
+    model_->log(QStringLiteral("已更新文字 #%1（样式 %2）")
+                    .arg(id)
+                    .arg(upd.styleName.isEmpty() ? QStringLiteral("默认") : upd.styleName));
+}
+
+// ============================================================================
+// 选择工具：编组（GROUP）/ 快速选择（QSELECT）/ 过滤器（FILTER）
+// ============================================================================
+void MainWindow::openGroupManager() {
+    GroupManagerDialog dlg(model_, this);
+    dlg.exec();
+}
+
+void MainWindow::openUnitsLimits() {
+    UnitsLimitsDialog dlg(model_, this);
+    dlg.exec();   // 确定后经 setUnits/setLimits 发信号，状态栏/参数条实时跟随
+}
+
+void MainWindow::openSnapSettings() {
+    SnapSettingsDialog dlg(model_, this);
+    dlg.exec();   // 确定后经 setSnapConfig 落地为全局持久配置（随图存档、不入撤销栈）
+}
+
+void MainWindow::openQSelect() {
+    QSelectDialog dlg(model_, this);
+    dlg.exec();
+}
+
+void MainWindow::openFilterDialog() {
+    FilterDialog dlg(model_, this);
+    dlg.exec();
+}
+
 // ============================================================================
 // 打印 / 出图模块入口
 // ============================================================================
@@ -1153,6 +1272,13 @@ void MainWindow::buildSketchMenu(QMenu* m) {
         buildBlockMenu(blk);
     }
 
+    // 文字样式管理器（STYLE）：统一治理字体/字高/宽度因子并批量应用。
+    // MTEXT 多行文字工具经上方「文字」分组（drawGroups_）进入，此处不重复挂载。
+    QAction* styleAct = m->addAction(icons::make("style"), QStringLiteral("文字样式管理器..."));
+    styleAct->setToolTip(QStringLiteral("文字样式管理器 (STYLE)：创建/修改/删除样式，统一字体、字高、宽度因子并批量应用到已有文字"));
+    styleAct->setStatusTip(styleAct->toolTip());
+    connect(styleAct, &QAction::triggered, this, [this] { openStyleManager(); });
+
     m->addSeparator();
     // 不给它绑 Esc：Esc 已经绑在「选择」工具上，两处都注册会触发 Qt 的
     // ambiguous shortcut（按键被吞掉、谁也不响应）。画布内的 Esc 由
@@ -1335,7 +1461,9 @@ void MainWindow::buildParamBar() {
     sbLength_->setSuffix(QStringLiteral(" mm"));
     sbLength_->setFixedWidth(90);
     connect(sbLength_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double v) { model_->setLineParamLength(v); });
+            this, [this](double v) {   // 输入按当前单位口径，回写模型 mm
+                model_->setLineParamLength(v * lengthFactorToMm(model_->units().length));
+            });
     hl->addWidget(sbLength_);
 
     lblSpacing_ = new QLabel(QStringLiteral("间隔"));
@@ -1346,7 +1474,9 @@ void MainWindow::buildParamBar() {
     sbSpacing_->setSuffix(QStringLiteral(" mm"));
     sbSpacing_->setFixedWidth(90);
     connect(sbSpacing_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double v) { model_->setLineParamSpacing(v); });
+            this, [this](double v) {   // 输入按当前单位口径，回写模型 mm
+                model_->setLineParamSpacing(v * lengthFactorToMm(model_->units().length));
+            });
     hl->addWidget(sbSpacing_);
 
     lblCount_ = new QLabel(QStringLiteral("条数"));
@@ -1386,6 +1516,26 @@ void MainWindow::buildParamBar() {
     hl->addWidget(paramHint_, 1);
 
     updateParamBarForTool(model_->activeTool());
+}
+
+// 把单位设置的「显示/输入口径」应用到参数输入条：换后缀、把模型 mm 换算为当前
+// 单位显示；编辑时由 buildParamBar 的 lambda 换算回 mm 落模。刷新期间 blockSignals，
+// 避免 valueChanged 回环把刚换算的显示值又写回模型造成双重换算。
+void MainWindow::applyUnitsToParamBar() {
+    const LengthUnit u = model_->units().length;
+    const double   f   = lengthFactorToMm(u);
+    const QString suf  = QStringLiteral(" ") + lengthUnitShort(u);
+    const auto sync = [f, &suf](QDoubleSpinBox* sb, double mm, double minMm) {
+        if (!sb) return;
+        sb->blockSignals(true);
+        sb->setSuffix(suf);
+        sb->setRange(minMm / f, 1.0e6 / f);
+        sb->setValue(mm / f);
+        sb->blockSignals(false);
+    };
+    const auto& lp = model_->lineParams();
+    sync(sbLength_,  lp.length,  0.0);
+    sync(sbSpacing_, lp.spacing, 0.1);
 }
 
 // 按当前命令启停参数输入条字段并给出操作提示：
@@ -1849,6 +1999,17 @@ void MainWindow::buildToolbar() {
     add(QStringLiteral("约束"), "constraint", QStringLiteral("几何约束 (Constraint)"), "N", "constraint");
     flush();
 
+    // 文字与表格组：MTEXT 多行文字 + TABLE 明细表。不上工具条（第一行横向空间已满，
+    // 见修改组注释），经【绘图>文字与表格】分组进入；点击画布后弹出对应编辑对话框。
+    beginGroup(QStringLiteral("文字与表格"));
+    addEx(QStringLiteral("多行文字"), "mtext",
+          QStringLiteral("多行文字 (MTEXT)：点击插入点后编辑多行内容、对齐、样式、字段与自动换行"),
+          "", "mtext", /*onBar=*/false, /*inBucket=*/true);
+    addEx(QStringLiteral("表格"), "table",
+          QStringLiteral("表格 (TABLE)：点击放置表格左上角后编辑行列、列宽、行高、字高与单元格内容（明细表）"),
+          "", "table", /*onBar=*/false, /*inBucket=*/true);
+    flush(/*sep=*/false, /*toMenu=*/true);
+
     // 其余标注类型不上工具条（横向空间有限），集中放进「草图绘制 > 尺寸标注」子菜单。
     // 它们与工具条上的「标注」同属一个互斥组，切换时高亮状态自动互斥。
     dimActs_.clear();
@@ -2286,6 +2447,15 @@ void MainWindow::connectSignals() {
     });
     mediator->wire();
 
+    // ---- 单位（UNITS）：状态栏坐标口径与参数条后缀/显示值实时跟随 ----
+    // limitsChanged 无需 UI 联动（越界检查直接读模型状态），故只接 unitsChanged。
+    statusBar_->setUnitsMeta(model_->units());
+    applyUnitsToParamBar();
+    connect(model_, &SketchModel::unitsChanged, this, [this] {
+        statusBar_->setUnitsMeta(model_->units());
+        applyUnitsToParamBar();
+    });
+
     // ---- 剖面填充：区域拾取模式接线（视图 → 主窗口）----
     connect(view_, &GraphicsView::regionPickRequested, this, &MainWindow::onRegionPickRequested);
     connect(view_, &GraphicsView::regionHoverMoved, this, &MainWindow::onRegionHover);
@@ -2296,6 +2466,9 @@ void MainWindow::connectSignals() {
     connect(view_, &GraphicsView::canvasPointPicked, this,
             [this](double x, double y) { onCanvasPointPicked(Vec3(x, y, 0)); });
     connect(view_, &GraphicsView::pointPickCancelled, this, &MainWindow::onPointPickCancelled);
+
+    // 双击文字图元 → 弹出多行文字编辑框（MTEXT/Text 通用）
+    connect(view_, &GraphicsView::editTextRequested, this, &MainWindow::editElementText);
 
     // Ctrl+回车：把焦点交给命令行，便于纯键盘连续作业
     auto* focusCmd = new QAction(this);
@@ -2401,6 +2574,11 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     root["elements"] = arr;
     root["layers"] = model_->layersToJson();   // 图层表随图存档（旧文件无此字段则读回时回退单层"0"）
     root["blocks"] = model_->blocksToJson();   // 块表随图存档（旧文件无此字段则读回时无块定义）
+    root["textStyles"] = model_->textStylesToJson();   // 文字样式表随图存档（旧文件无此字段则回落单一默认 "Standard"）
+    root["savedFilters"] = model_->savedFiltersToJson(); // 命名过滤器随图存档（检索配置，不入撤销栈）
+    root["units"]  = model_->units().toJson();   // 单位口径随图存档（旧文件无此键 → 回落 mm/度/2 位）
+    root["limits"] = model_->limits().toJson();  // 图纸界限随图存档（旧文件无此键 → 回落 A3/不检查）
+    root["snapConfig"] = model_->snapConfig().toJson();  // 捕捉全局配置随图存档（旧文件无此键 → 回落默认）
 
     // 导出用图元：DXF/DWG/STEP 都不认识 BlockRef，导出前把块引用展开为其真实子图元，
     // 保证"导出物即所见"（几何不丢；块引用实例的层级关系仅在本程序 JSON 中保留）。
@@ -2420,7 +2598,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     const double ds = model_->scaleRatio();
     switch (fmt) {
     case cadfmt::CadFormat::Dxf:
-        out = cadfmt::toDxf(exp, &e, ds);
+        // $INSUNITS 携带当前单位口径（AutoCAD 标准码），跨单位交换的语义锚点
+        out = cadfmt::toDxf(exp, &e, ds, insunitsCode(model_->units().length));
         break;
     case cadfmt::CadFormat::Dwg:
         out = cadfmt::toDwg(exp, &e, ds);
@@ -2494,11 +2673,20 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
             model_->log(QStringLiteral("DXF 解析失败：") + e, "error");
             return false;
         }
+        // 跨单位交换：DXF 头声明的 $INSUNITS ≠ mm 时，按元数据把几何整体换算到 mm
+        // （原点锚定，见 Units.h；0=无单位/缺头按 mm 解释，不缩放）。线宽与角度不动。
+        const LengthUnit srcUnit = lengthUnitFromInsunits(st.insunits);
+        const bool rescaled = lengthFactorToMm(srcUnit) != 1.0;
+        if (rescaled)
+            scaleElementsToUnit(imported, srcUnit);
         model_->clear();
         model_->beginEdit(QStringLiteral("导入 DXF"));
         model_->addElementsQuiet(imported);
         QString note = QStringLiteral("已打开 DXF：%1（导入 %2 个图元；标注/样条已按几何炸开）")
                            .arg(path).arg(imported.size());
+        if (rescaled)
+            note += QStringLiteral("；按文件头 $INSUNITS 自 %1 换算到 mm")
+                        .arg(lengthUnitName(srcUnit));
         // 圆弧段表示法不同导致的降级必须如实告知，不能静默改形状（宁可少画，绝不画错）
         if (st.arcsDropped > 0) {
             note += QStringLiteral("；其中 %1 段圆弧因表示法差异按直线导入（另有 %2 段已还原）")
@@ -2574,6 +2762,15 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     // 读回块表（若有）。块引用图元（type=BlockRef）在渲染/命中时按此表展开，
     // 因此必须与图元一并读回，否则引用会退化为"未定义块"而不绘制。旧文件无此字段 → 无块定义。
     model_->setBlocksFromJson(root["blocks"].toArray());
+    // 读回文字样式表（若有）。图元经 styleName 引用样式，必须与图元一并读回；
+    // 旧文件无此字段 → 回落为单一默认 "Standard"（渲染解析非 null）。
+    model_->setTextStylesFromJson(root["textStyles"].toArray());
+    model_->setSavedFiltersFromJson(root["savedFilters"].toArray());   // 旧文件无此字段 → 空过滤器列表（容缺）
+    // 读回单位与图纸界限（若有）。二者为应用级配置：不发 modelChanged，只发各自的
+    // 专用信号驱动状态栏/参数条刷新；旧文件无此字段 → 回落 mm/十进制度/2 位 + A3。
+    model_->setUnits(UnitsMeta::fromJson(root["units"].toObject()));
+    model_->setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
+    model_->setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));  // 捕捉配置（缺键回落默认）
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
@@ -3123,6 +3320,13 @@ void MainWindow::sectionFillSelected() {
 // 提供命名分组、批量填充、整体选择、重命名、删除，使复杂腔体一次填充即可、无需逐段描边。
 void MainWindow::openRegionManager() {
     RegionManagerDialog dlg(model_, this);
+    dlg.exec();
+}
+
+// 【修改>图形清理】：PURGE（垃圾/冗余数据）+ OVERKILL（重合删除 / 共线重叠合并）。
+// 执行前后输出图元数量对比统计；图元增删一次撤销，块/图层清除各自独立撤销。
+void MainWindow::openCleanup() {
+    CleanupDialog dlg(model_, this);
     dlg.exec();
 }
 

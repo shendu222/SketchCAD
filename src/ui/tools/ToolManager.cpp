@@ -7,6 +7,8 @@
 #include "ui/tools/SplineEditTool.h"
 #include "ui/tools/PolylineTool.h"
 #include "ui/tools/BoundaryTool.h"
+#include "ui/tools/MTextTool.h"
+#include "ui/tools/TableTool.h"
 #include "ui/tools/PolylineEditTool.h"
 #include "ui/GraphicsView.h"
 #include "core/SketchModel.h"
@@ -184,6 +186,12 @@ void ToolManager::registerBuiltins() {
     registerTool("trim",       std::make_unique<TrimTool>());
     registerTool("extend",     std::make_unique<ExtendTool>());
     registerTool("constraint", std::make_unique<ConstraintTool>());
+
+    // ---- 多行文字（MTEXT）：点击插入点 → 弹出编辑对话框 ----
+    registerTool("mtext",      std::make_unique<MTextTool>());
+
+    // ---- 表格（TABLE）：点击放置左上角 → 弹出表格编辑器 ----
+    registerTool("table",      std::make_unique<TableTool>());
 }
 
 } // namespace SketchCAD

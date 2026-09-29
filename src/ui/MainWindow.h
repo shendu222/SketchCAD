@@ -11,6 +11,8 @@
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
 #include "core/Section.h"    // SectionStyle / SectionLoopSet（剖面填充点选模式的样式与缓存）
 #include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
+#include "ui/MTextDialog.h"       // MTEXT 多行文字对话框（双击编辑/菜单入口共用）
+#include "ui/StyleManagerDialog.h" // STYLE 文字样式管理器对话框
 
 class QDockWidget;
 class QToolBar;
@@ -39,6 +41,9 @@ class ArrayDialog;
 class InsertBlockDialog;
 class CreateBlockDialog;
 class BlockManagerDialog;
+class GroupManagerDialog;   // 编组管理器（GROUP）
+class QSelectDialog;        // 快速选择（QSELECT）
+class FilterDialog;         // 过滤器（FILTER）
 struct SheetSpec;
 
 // 主窗口：菜单栏、工具条、三栏 dock 布局、面板联动、文件 IO
@@ -137,6 +142,7 @@ private:
     static void uniformButtonWidth(QToolBar* tb);
     void buildParamBar();                     // 工具条下方的参数输入条（角度/长度、平行间隔/条数）
     void updateParamBarForTool(const QString& t);  // 按当前命令启停参数输入条字段并给提示
+    void applyUnitsToParamBar();              // 单位口径 → 参数条后缀与显示值（unitsChanged 时刷新）
 
     // ---- UI 工厂方法（Factory Pattern）----
     // 子模式定义：中文名、工具 ID、提示文本。直线/圆形子模式的唯一数据源。
@@ -205,7 +211,16 @@ private:
     void sectionFillParams();
     void sectionFillSelected();                            // 用选中的边界/闭合图元填充（跳过自动追踪）
     void openRegionManager();                             // 边界区域(REGION)管理对话框
+    void openCleanup();                                   // 图形清理（PURGE+OVERKILL）对话框
     void openInquiry();                                 // 测量查询面板入口（菜单 + 工具条共用）
+    void openMTextDialog();                             // MTEXT 多行文字：新建/编辑入口
+    void openStyleManager();                            // STYLE 文字样式管理器：创建/修改/删除/批量应用
+    void editElementText(int id);                       // 双击 Text/MText/Table 进入编辑
+    void openGroupManager();                            // GROUP 编组管理器（创建/加入/移除/整体选中）
+    void openQSelect();                                 // QSELECT 快速选择（按类型/属性筛选落地选择集）
+    void openFilterDialog();                            // FILTER 过滤器（多条件组合 + 保存复用）
+    void openUnitsLimits();                             // UNITS/LIMITS 单位与图纸界限设置面板
+    void openSnapSettings();                            // OSNAP 捕捉设置面板（全局持久配置）
 
     // ---- 打印 / 出图模块 ----
     void openPrintSettings();                            // 打印设置（页面 + CTB 样式 + 视口）

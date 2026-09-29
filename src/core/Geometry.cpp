@@ -381,9 +381,21 @@ double distanceToElement(const Element& e, const Vec3& p) {
                                      : (e.pts.empty() ? kBig : p.distTo(e.pts[0]));
 
         case ElementType::Text:
+        case ElementType::MText:
             // 文本拾取主路径走 ElementItem::shape()（包围盒矩形，精确到整段文字）；
             // 此距离函数仅用于「最近实体」检索，返回到锚点的距离即可。
             return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
+
+        case ElementType::Table: {
+            // 表格：矩形内距离 0（可点内部选中），矩形外取到矩形的最短距离。
+            // （精确拾取同样走 shape() 的包围盒矩形；此处仅服务「最近实体」检索。）
+            if (e.pts.empty()) return kBig;
+            const double W = e.tableWidthMm();
+            const double H = std::max(1, e.tableRows) * std::max(0.5, e.rowHeight);
+            const double dx = std::max({ 0.0, e.pts[0].x - p.x, p.x - (e.pts[0].x + W) });
+            const double dy = std::max({ 0.0, (e.pts[0].y - H) - p.y, p.y - e.pts[0].y });
+            return std::sqrt(dx * dx + dy * dy);
+        }
 
         case ElementType::Hatch: {
             // 剖面区域：取到外边界与各内孔轮廓的最短距离（精确拾取走 shape() 的填充区域）
@@ -405,6 +417,9 @@ double distanceToElement(const Element& e, const Vec3& p) {
             // 块引用的精确命中需要块表（本函数是纯几何、无模型依赖），故由调用方
             // （GraphicsView::hitTest）展开后走 distanceToElements；这里返回到插入点的
             // 距离作为兜底，保证"未定义块"仍可被近距选中。
+            return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
+
+        case ElementType::Point:
             return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
 
         case ElementType::Xline: {

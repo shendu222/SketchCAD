@@ -16,11 +16,22 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
 
 void StatusBar::setCommand(const QString& s) { lCmd->setText(s); }
 void StatusBar::setCoord(double x, double y, double z) {
-    lCoord->setText(QString("X:%1  Y:%2  Z:%3").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2).arg(z, 0, 'f', 2));
+    // 按当前单位口径格式化（存储为 mm，显示换算 + 精度 + 短后缀）
+    lCoord->setText(QString("X:%1  Y:%2  Z:%3")
+                        .arg(formatLengthMm(x, units_), formatLengthMm(y, units_))
+                        .arg(formatLengthMm(z, units_)));
 }
 void StatusBar::setPlaneInfo(const QString& s) { lPlane->setText("平面:" + s); }
 void StatusBar::setCount(int n) { lCount->setText("图元:" + QString::number(n)); }
 void StatusBar::setScale(double s) { lScale->setText("比例:" + QString::number(s, 'f', 2)); }
 void StatusBar::setDrawScale(const QString& label) { lScale->setText("比例:" + label); }
+
+void StatusBar::setUnitsMeta(const UnitsMeta& u) {
+    units_ = u;
+    lCoord->setMinimumWidth(u.length == LengthUnit::Mm ? 170 : 210);   // 带后缀更宽
+    // 立即以新口径重刷一次（下个鼠标事件前不至于残留旧格式）
+    // 坐标值不在本类持有，仅下次 cursorMoved 时生效；单位面板确定后
+    // MainWindow 会同步触发一次 fitView/刷新，视觉无跳变。
+}
 
 } // namespace SketchCAD

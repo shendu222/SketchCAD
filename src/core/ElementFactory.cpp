@@ -1,5 +1,6 @@
 #include "ElementFactory.h"
 #include "SketchModel.h"
+#include <algorithm>
 
 namespace SketchCAD {
 
@@ -98,6 +99,44 @@ Element ElementFactory::createText(const Vec3& pos, const QString& text, double 
     e.lineWidth = 1.0;
     e.lineWidthAuto = true;
     e.lineStyle = LineStyle::Solid;
+    return e;
+}
+
+Element ElementFactory::createMText(const Vec3& pos, const QString& text, double heightMm,
+                                  const QColor& color, int textAlign, double widthFactor,
+                                  const QString& styleName, double lineSpacing, double mtextWidth) {
+    Element e;
+    e.type = ElementType::MText;
+    e.name = QStringLiteral("多行文字");
+    e.id = 0;
+    e.pts = {pos};
+    e.text = text;
+    e.radius = heightMm;            // 字高(mm) 复用 radius 字段
+    e.color = color;
+    e.lineWidth = 1.0;
+    e.lineWidthAuto = true;
+    e.lineStyle = LineStyle::Solid;
+    // 多行文字专属字段（其余走 Element 默认值）
+    e.textAlign    = (textAlign >= 0 && textAlign <= 8) ? textAlign : 1;
+    e.widthFactor  = widthFactor > 0 ? widthFactor : 1.0;
+    e.styleName    = styleName;
+    e.lineSpacing  = lineSpacing > 0 ? lineSpacing : 1.3;
+    e.mtextWidth   = mtextWidth > 0 ? mtextWidth : 0.0;
+    return e;
+}
+
+// 表格（Table）：topLeft=左上角锚点(世界坐标，行向下增长)。
+// 列宽均分 30mm、单元格全空；字高/对齐/网格样式走 Element 默认（radius=3.5、textAlign=1 居中）。
+// 单元格内容由 TableDialog 填充（预填 initial 时也由对话框回读）。
+Element ElementFactory::createTable(const Vec3& topLeft, int rows, int cols, const SketchModel* model) {
+    Element e = create(ElementType::Table, QStringLiteral("表格"), model);
+    e.pts = {topLeft};
+    e.tableRows = std::clamp(rows, 1, 200);
+    e.tableCols = std::clamp(cols, 1, 200);
+    e.radius = 3.5;                                  // 单元格文字字高(mm)
+    e.textAlign = 1;                                 // 单元格文字水平居中
+    e.colWidths.assign(e.tableCols, 30.0);
+    e.tableCells.assign(size_t(e.tableRows) * size_t(e.tableCols), QString());
     return e;
 }
 

@@ -740,6 +740,21 @@ inline void paintGlyph(QPainter& g, const QString& id)
         return;
     }
 
+    if (id == "cleanup") {                      // 图形清理：扫帚（清扫垃圾/冗余图元）
+        // 扫帚柄
+        g.drawLine(QPointF(6, 6), QPointF(13, 13));
+        // 扫帚刷毛（自柄端向右下扇形展开）
+        g.drawLine(QPointF(13, 13), QPointF(19.5, 14));
+        g.drawLine(QPointF(13, 13), QPointF(20, 16));
+        g.drawLine(QPointF(13, 13), QPointF(19, 18));
+        // 地面虚线（被清扫的基准，暗示"扫除"动作）
+        QPen gp(guide, 1.2); gp.setStyle(Qt::DashLine); gp.setDashPattern({3, 2});
+        g.save(); g.setPen(gp);
+        g.drawLine(QPointF(12, 19), QPointF(21, 19));
+        g.restore();
+        return;
+    }
+
     if (id == "block") {                        // 块：外框方块 + 内部小方块（定义 + 实例）
         g.drawRect(QRectF(3.5, 3.5, 17, 17));
         g.drawRect(QRectF(10.0, 10.0, 7, 7));
@@ -770,6 +785,91 @@ inline void paintGlyph(QPainter& g, const QString& id)
         g.drawRect(QRectF(8.0, 3.5, 8.0, 6.0));
         // 状态指示灯
         dot(17.0, 11.5, mark, 1.3);
+        return;
+    }
+
+    if (id == "mtext") {                       // 多行文字：文字框 + 多行横线 + 大"A"
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        g.drawRect(QRectF(3.5, 4.0, 17, 16));          // 文本框
+        g.setPen(QPen(guide, 1.2, Qt::SolidLine, Qt::SquareCap));
+        g.drawLine(QPointF(6, 9),  QPointF(18, 9));    // 第 1 行
+        g.drawLine(QPointF(6, 13), QPointF(15, 13));   // 第 2 行
+        g.drawLine(QPointF(6, 17), QPointF(13, 17));   // 第 3 行
+        g.setPen(QPen(mark, 1.6, Qt::SolidLine, Qt::SquareCap));
+        QFont fa = g.font(); fa.setPixelSize(9); fa.setBold(true); g.setFont(fa);
+        g.drawText(QRectF(3.5, 4.0, 17, 16), Qt::AlignCenter, QStringLiteral("A"));
+        return;
+    }
+    if (id == "style") {                        // 文字样式：大"A" + 下划横线（字体图标）
+        QFont fa = g.font(); fa.setPixelSize(15); fa.setBold(true); g.setFont(fa);
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.drawText(QRectF(3, 2, 18, 16), Qt::AlignCenter, QStringLiteral("A"));
+        g.setPen(QPen(mark, 1.6));
+        g.drawLine(QPointF(6, 19), QPointF(18, 19));    // 样式基线
+        return;
+    }
+    if (id == "field") {                        // 字段：带百分号的标签牌
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        g.drawRoundedRect(QRectF(4, 7, 16, 10), 2.5, 2.5);   // 标签牌
+        g.drawLine(QPointF(4, 12), QPointF(20, 12));         // 牌中线
+        g.setPen(QPen(mark, 1.6, Qt::SolidLine, Qt::SquareCap));
+        QFont ff = g.font(); ff.setPixelSize(10); ff.setBold(true); g.setFont(ff);
+        g.drawText(QRectF(4, 7, 16, 10), Qt::AlignCenter, QStringLiteral("%"));
+        return;
+    }
+    if (id == "table") {                        // 表格：外框 + 内部网格线 + 高亮首行
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        g.drawRect(QRectF(3.5, 5.0, 17, 14));                // 表格外框
+        g.setPen(QPen(guide, 1.1, Qt::SolidLine, Qt::SquareCap));
+        g.drawLine(QPointF(3.5, 10),  QPointF(20.5, 10));    // 行线 1
+        g.drawLine(QPointF(3.5, 14),  QPointF(20.5, 14));    // 行线 2
+        g.drawLine(QPointF(9.0, 5.0), QPointF(9.0, 19));     // 列线 1
+        g.drawLine(QPointF(15.0, 5.0), QPointF(15.0, 19));   // 列线 2
+        g.setPen(QPen(mark, 1.6, Qt::SolidLine, Qt::SquareCap));
+        g.drawLine(QPointF(5, 7.5),  QPointF(19, 7.5));      // 首行强调线（表头）
+        return;
+    }
+    if (id == "group") {                        // 编组：虚线框圈住三个小方块
+        g.setPen(QPen(ink, 1.3, Qt::DashLine));  // 虚线 = 编组边界
+        g.setBrush(Qt::NoBrush);
+        g.drawRect(QRectF(3.5, 4.5, 17, 15));
+        g.setPen(QPen(mark, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        g.drawRect(QRectF(7, 8, 4, 4));          // 成员对象 1
+        g.drawRect(QRectF(13, 8, 4, 4));         // 成员对象 2
+        g.drawRect(QRectF(10, 13, 4, 4));        // 成员对象 3
+        return;
+    }
+    if (id == "qselect") {                      // 快速选择：漏斗 + 闪电（快速）
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        // 漏斗形
+        QPainterPath funnel;
+        funnel.moveTo(3.5, 4.5);  funnel.lineTo(20.5, 4.5);
+        funnel.lineTo(14.0, 12.0); funnel.lineTo(14.0, 19.5);
+        funnel.lineTo(10.0, 17.0); funnel.lineTo(10.0, 12.0);
+        funnel.closeSubpath();
+        g.drawPath(funnel);
+        g.setPen(QPen(mark, 1.6, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(17, 14), QPointF(19.5, 16.5));   // 强调斜线
+        g.drawLine(QPointF(19.5, 14), QPointF(17, 16.5));
+        return;
+    }
+    if (id == "filter") {                       // 过滤器：漏斗 + 内部条件行
+        g.setPen(QPen(ink, 1.4, Qt::SolidLine, Qt::SquareCap));
+        g.setBrush(Qt::NoBrush);
+        QPainterPath f2;
+        f2.moveTo(3.5, 4.5);  f2.lineTo(20.5, 4.5);
+        f2.lineTo(13.5, 12.5); f2.lineTo(13.5, 19.5);
+        f2.lineTo(9.5, 16.5);  f2.lineTo(9.5, 12.5);
+        f2.closeSubpath();
+        g.drawPath(f2);
+        g.setPen(QPen(guide, 1.1, Qt::SolidLine, Qt::SquareCap));
+        g.drawLine(QPointF(6.5, 7.0),  QPointF(17.5, 7.0));  // 条件行 1
+        g.drawLine(QPointF(8.5, 9.5),  QPointF(14.5, 9.5));  // 条件行 2
         return;
     }
 

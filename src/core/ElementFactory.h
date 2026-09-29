@@ -49,6 +49,19 @@ public:
     static Element createText(const Vec3& pos, const QString& text, double heightMm,
                               const QColor& color = QColor(26, 29, 40));
 
+    // 多行文字（MText）：pos=插入锚点(世界坐标)；其余多行属性（对齐/样式/宽度因子/行距/自动换行）
+    // 经可选参数传入，未给时取 Element 默认（左中/无样式/宽因子1/行距1.3/不自动换行）。
+    static Element createMText(const Vec3& pos, const QString& text, double heightMm,
+                              const QColor& color = QColor(26, 29, 40),
+                              int textAlign = 1, double widthFactor = 1.0,
+                              const QString& styleName = QString(),
+                              double lineSpacing = 1.3, double mtextWidth = 0.0);
+
+    // 表格（Table/明细表）：topLeft=左上角锚点(世界坐标，行向下增长)。
+    // rows/cols 钳到 [1,200]；列宽均分 30mm、单元格全空；字高 3.5、文字水平居中。
+    // 单元格内容由 TableDialog 填充；网格线颜色/线型走模型默认样式。
+    static Element createTable(const Vec3& topLeft, int rows, int cols, const SketchModel* model);
+
     // 块引用（BlockRef）：只创建"引用骨架"（块名 + 插入点/旋转/缩放）。
     // 属性默认值与动态参数默认值需由调用方从块定义补全 —— 常规路径请用
     // SketchModel::insertBlock()（它会调 block::makeRef 一并填好），本方法供

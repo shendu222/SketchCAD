@@ -9,8 +9,8 @@
 
 namespace SketchCAD {
 
-enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef, Xline, Boundary };
-// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12，Xline=13，Boundary=14）。
+enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef, Xline, Boundary, MText, Table, Point };
+// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12，Xline=13，Boundary=14，MText=15，Table=16）。
 // 已存盘 .json 文件里存的是整数序号，改顺序会让老文件读出错误类型。
 // Xline（构造线）：向两端无限延伸的辅助线。复用 pts[0]=通过点 + rotation=方向角(度)，无需新增字段。
 // Boundary（边界/BOUNDARY/BPOLY）：用户交互定义的填充边界闭合环（可含内孔），作为剖面填充的直接输入，
@@ -18,6 +18,14 @@ enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constrai
 //   样式复用 rotation(剖面线角) + radius(间距) + sectionMaterial/sectionExempt —— 与 Hatch 同字段、零新增字段。
 //   REGION（区域）不另设图元类型，而是「边界的命名分组」：多个 Boundary 共享同一 name 即构成一个区域，
 //   由区域管理对话框统一选择/填充/编辑（见 RegionManagerDialog）。
+// MText（多行文字）：改善技术要求等多行注释排版。复用 Text 的核心字段（text 内容/radius 字高/rotation 角度/pts[0] 锚点），
+//   并新增 widthFactor(宽度因子)/textAlign(9 点对齐)/styleName(文字样式名)/lineSpacing(行距因子)/mtextWidth(自动换行宽度mm)。
+//   旧存档缺这些键时回落默认值（见 Element.cpp::elementFromJson），完全向后兼容。
+// Table（表格/明细表）：可独立存在、可选中/移动/编辑的实体对象，完整参与打印与导出。
+//   pts[0]=表格左上角锚点（世界坐标；世界 Y 向上，行向下增长——行 r 顶边 y = pts[0].y - r*rowHeight）。
+//   复用 radius=单元格文字字高(mm)、textAlign=单元格文字水平对齐(0=左 1=中 2=右)、
+//        color/layer/lineStyle/lineWidth 等通用样式字段（网格线用）。
+//   专用字段见 struct Element 末尾 tableRows/tableCols/rowHeight/colWidths/tableCells。
 
 // 线型（GB/T 4457.4-2002 技术制图 图线 → GB/T 14665-2012 4.1 九种线型）
 // 枚举值顺序只增不改：已存盘 .sketch 文件里存的是整数，改顺序会让老文件读出错误线型。
@@ -149,8 +157,19 @@ inline const char* elementTypeName(ElementType t) {
     case ElementType::BlockRef:  return "块引用";
     case ElementType::Xline:     return "构造线";
     case ElementType::Boundary:  return "边界";
+    case ElementType::MText:     return "多行文字";
+    case ElementType::Table:     return "表格";
+    case ElementType::Point:     return "点";
     }
     return "未知";
+}
+
+// 多行文字（MText）9 点对齐方式名称（索引 0..8 与 textAlign 字段对应）
+//   0=左上 1=中上 2=右上 3=左中 4=中心 5=右中 6=左下 7=中下 8=右下
+inline const char* mtextAlignName(int a) {
+    static const char* k[] = {"左上","中上","右上","左中","中心","右中","左下","中下","右下"};
+    if (a < 0 || a > 8) return "未知";
+    return k[a];
 }
 
 inline const char* constraintTypeName(ConstraintType t) {
@@ -239,6 +258,60 @@ struct Element {
     QString symbolLibrary;               // 符号库引用
     int refA = -1, refB = -1;            // 约束/标注引用的图元 id
     bool visible = true;
+
+    // ---- 多行文字（ElementType::MText）专用字段 ----
+    // 复用 Text 的 text(内容，可含 \n 与字段占位 %<...>%)、radius(字高mm)、rotation(角度)、pts[0](锚点)。
+    //   widthFactor    = 宽度因子（1.0 = 不变形；2.0 = 拉宽一倍），与 STYLE 宽度因子相乘生效
+    //   textAlign      = 9 点对齐方式索引（0=左上 1=中上 2=右上 3=左中 4=中心 5=右中 6=左下 7=中下 8=右下）
+    //   styleName      = 引用的文字样式名（"" = 继承默认；解析时按 STYLE 表取字体/字高/宽度因子等）
+    //   lineSpacing    = 行距因子（1.0 = 单倍；默认约 1.3 ≈ 国标行距），作用于行高
+    //   mtextWidth     = 自动换行宽度(mm)；>0 时按此宽度折行，0 = 仅按显式 \n 换行
+    // 旧存档无这些键时回落默认（见 Element.cpp::elementFromJson），向后兼容。
+    double widthFactor = 1.0;
+    int    textAlign   = 1;            // 默认「中上」
+    QString styleName;                 // 引用 STYLE 名，空串表示不关联样式
+    double lineSpacing = 1.3;
+    double mtextWidth  = 0.0;         // 0 = 不自动换行
+
+    // ---- 编组（GROUP）归属 ----
+    // 图元经 groupName **按名引用**编组（同 REGION 命名分组/STYLE 引用式范式）：
+    // 同名即同组，无独立编组表——创建/解散编组只改写各图元的 groupName 字段。
+    // 优点：图元删除/复制后编组关系自动跟随，无 id 悬空问题；
+    // 序列化随图元 JSON 走（空串不写盘），旧档案缺键回落"未编组"。
+    QString groupName;
+
+    // ---- 表格（ElementType::Table，明细表/标题栏式表格）专用字段 ----
+    //   pts[0]       = 表格左上角锚点（世界坐标；行向下增长）
+    //   radius       = 单元格文字字高(mm)（复用；默认 3.5）
+    //   textAlign    = 单元格文字水平对齐（复用；0=左 1=中 2=右，默认居中——明细表惯例）
+    //   tableRows    = 行数（≥1）
+    //   tableCols    = 列数（≥1）
+    //   rowHeight    = 行高(mm)（统一行高，默认 8）
+    //   colWidths    = 各列宽(mm)，size()==tableCols；缺项/非正按 30mm 兜底
+    //   tableCells   = 单元格文本，行主序，size()==rows*cols；支持 %<字段>% 占位（渲染时求值）
+    // 网格线颜色/线型/线宽复用通用样式字段。旧存档无这些键时回落默认，向后兼容。
+    int    tableRows = 3;
+    int    tableCols = 4;
+    double rowHeight = 8.0;
+    std::vector<double>  colWidths;
+    std::vector<QString> tableCells;
+
+    // 单列宽（越界/非正回落 30mm）
+    double tableColWidth(int c) const {
+        return (c >= 0 && c < (int)colWidths.size() && colWidths[c] > 0.5) ? colWidths[c] : 30.0;
+    }
+    // 表格总宽(mm)
+    double tableWidthMm() const {
+        double w = 0;
+        for (int c = 0; c < tableCols; ++c) w += tableColWidth(c);
+        return w;
+    }
+    // 单元格文本（越界返回空串）
+    QString tableCell(int r, int c) const {
+        const int idx = r * tableCols + c;
+        return (idx >= 0 && idx < (int)tableCells.size()) ? tableCells[idx] : QString();
+    }
+
     // 折线段类型标记（仅对 ElementType::Polyline 有效）：
     //   size() == 段数 == pts.size() - 1（开放）或 pts.size()（闭合）。
     //   false = 直线段，true = 圆弧段（圆弧由 3 个相邻节点 + 该段两端的相邻节点共同定心/半径）。

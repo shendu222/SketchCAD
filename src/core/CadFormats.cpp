@@ -1,6 +1,7 @@
 #include "CadFormats.h"
 #include "Geometry.h"
 #include "DimStyle.h"
+#include "TextStyle.h"   // resolveFields：导出前把 %<字段>% 占位解析为求值快照
 #include <QFileInfo>
 #include <QStringList>
 #include <QDateTime>
@@ -158,7 +159,7 @@ static QString dxfLayer(const Element& e) {
     return ly.isEmpty() ? QStringLiteral("0") : ly;
 }
 
-QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawingScale) {
+QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawingScale, int insunits) {
     if (err) err->clear();
 
     // 标注数字要还原成实物尺寸：把绘图比例交给 dim::build
@@ -189,6 +190,9 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
     L << "0" << "SECTION" << "2" << "HEADER"
       << "9" << "$ACADVER" << "1" << "AC1009"
       << "9" << "$DWGCODEPAGE" << "3" << "@@CP@@"
+      // $INSUNITS：度量口径元数据（AutoCAD 标准码）。内部几何恒为 mm，此码只声明
+      // 「文件里数值的口径」，导入方据此换算——是跨单位交换的语义锚点（见 Units.h）。
+      << "9" << "$INSUNITS" << "70" << QString::number(insunits)
       << "9" << "$INSBASE" << "10" << "0.0" << "20" << "0.0" << "30" << "0.0"
       << "9" << "$EXTMIN"  << "10" << num(ext.left())  << "20" << ymin << "30" << "0.0"
       << "9" << "$EXTMAX"  << "10" << num(ext.right()) << "20" << ymax << "30" << "0.0"
@@ -247,7 +251,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
     // 绝不能把含 \n 的字符串整段写进组码 1 —— 那会把值行劈成两行，后续组码全部错位，
     // 整份 DXF 直接不可解析（标注数字就是 "xx m\n(xx ft)" 这种双行文本）。
     const auto textLines = [&](const Element& e, const QString& raw, const Vec3& pos,
-                               double h, double rot, bool centered) {
+                               double h, double rot, bool centered, double wf = 1.0) {
         QString t = raw;
         t.replace("\r\n", "\n");
         t.replace('\r', '\n');
@@ -259,6 +263,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             const double y = pos.y - i * lineH;
             ent(QStringLiteral("TEXT"), e);
             L << "10" << num(pos.x) << "20" << num(y) << "40" << num(h);
+            if (std::fabs(wf - 1.0) > 1e-9) L << "41" << num(wf);   // 宽度因子（MTEXT）
             if (std::fabs(rot) > 1e-9) L << "50" << num(rot);
             if (centered) L << "72" << "1" << "73" << "2" << "11" << num(pos.x) << "21" << num(y);
             L << "1" << line;
@@ -326,9 +331,56 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             // 下游看到的形状就不是设计者画的那条曲线了。
             polyline(e, geo::sampleSpline(e.pts, 16), false);
             ++splineSampled;
-        } else if (e.type == ElementType::Text && !e.pts.empty() && !e.text.isEmpty()) {
-            // 标题栏栏目等文本：字高用 radius 字段的 mm 值
-            textLines(e, e.text, e.pts[0], e.radius > 0.1 ? e.radius : 3.5, 0.0, false);
+        } else if ((e.type == ElementType::Text || e.type == ElementType::MText)
+                   && !e.pts.empty() && !e.text.isEmpty()) {
+            // 文本：单行 Text 与多行 MText 统一按行拆成多个 TEXT 实体（R12 无 MTEXT 原生实体，
+            // 多行 = 首锚点向下按 1.3 倍行距逐行展开，与画布渲染一致）。
+            // 导出前解析 %<字段>% 占位（导出为求值后的静态快照）；MText 带出宽度因子、
+            // 旋转角与对齐列（对齐列为中心列时用中间对齐 72/73，与 9 点对齐的列语义对应）。
+            const bool isMT = (e.type == ElementType::MText);
+            textLines(e, resolveFields(e.text, nullptr), e.pts[0],
+                      e.radius > 0.1 ? e.radius : 3.5,
+                      isMT ? e.rotation : 0.0,
+                      isMT && (e.textAlign % 3 == 1),
+                      isMT && e.widthFactor > 0 ? e.widthFactor : 1.0);
+        } else if (e.type == ElementType::Table && !e.pts.empty()) {
+            // 表格（明细表）：R12 无 TABLE 语义 → 炸开为 LINE 网格 + TEXT 单元格文字，
+            // 网格几何与画布渲染同源（列宽累加、行高统一、行向下增长）；
+            // 单元格 %<字段>% 先求值为静态快照，居中对齐用 72/73=1/2（与明细表惯例一致）。
+            const double rh = std::max(0.5, e.rowHeight);
+            const int R = std::max(1, e.tableRows), C = std::max(1, e.tableCols);
+            const double th = e.radius > 0.1 ? e.radius : 3.5;
+            std::vector<double> xs;
+            xs.reserve(size_t(C) + 1);
+            xs.push_back(e.pts[0].x);
+            for (int c = 0; c < C; ++c) xs.push_back(xs.back() + e.tableColWidth(c));
+            // 横线（R+1 条）
+            for (int r = 0; r <= R; ++r) {
+                const double y = e.pts[0].y - r * rh;
+                ent(QStringLiteral("LINE"), e);
+                L << "10" << num(xs.front()) << "20" << num(y) << "30" << "0.0"
+                  << "11" << num(xs.back())  << "21" << num(y) << "31" << "0.0";
+            }
+            // 竖线（C+1 条）
+            for (int c = 0; c <= C; ++c) {
+                ent(QStringLiteral("LINE"), e);
+                L << "10" << num(xs[c]) << "20" << num(e.pts[0].y) << "30" << "0.0"
+                  << "11" << num(xs[c]) << "21" << num(e.pts[0].y - R * rh) << "31" << "0.0";
+            }
+            // 单元格文字（居中：72/73=1/2 + 第二插入点 11/21）
+            for (int r = 0; r < R; ++r) {
+                for (int c = 0; c < C; ++c) {
+                    const QString t = resolveFields(e.tableCell(r, c), nullptr);
+                    if (t.trimmed().isEmpty()) continue;
+                    const double cx = (xs[c] + xs[c + 1]) / 2.0;
+                    const double cy = e.pts[0].y - (r + 0.5) * rh;
+                    ent(QStringLiteral("TEXT"), e);
+                    L << "10" << num(cx) << "20" << num(cy) << "40" << num(th)
+                      << "72" << "1" << "73" << "2"
+                      << "11" << num(cx) << "21" << num(cy)
+                      << "1" << dxfSafe(t);
+                }
+            }
         } else if (e.type == ElementType::Xline && !e.pts.empty()) {
             // R12 DXF 无 XLINE 原生实体：降级为通过点沿方向 ±10m 的长线段
             const double rad = e.rotation * M_PI / 180.0;
@@ -527,6 +579,48 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
                 if(!g.label.isEmpty()) dwgAddTextR(R, g.textPos, st.textHeight, g.textRotDeg, g.label, layer,color);
             } break;
             case ElementType::Text: if(!e.pts.empty()&&!e.text.isEmpty()) dwgAddTextR(R, e.pts[0], e.radius>0.1?e.radius:3.5, 0.0, e.text, layer,color); break;
+            case ElementType::MText: {
+                // R12 无 MTEXT：多行 = 首锚点向下按 1.3 倍行距逐行展开为多条 TEXT；
+                // %<字段>% 占位先解析为求值快照（与 DXF 导出一致）。
+                if(!e.pts.empty() && !e.text.isEmpty()){
+                    const double h = e.radius>0.1?e.radius:3.5;
+                    const double lineH = h*1.3;
+                    QString t = resolveFields(e.text,nullptr);
+                    t.replace("\r\n","\n"); t.replace('\r','\n');
+                    const QStringList lines = t.split('\n');
+                    for(int i=0;i<lines.size();++i){
+                        if(lines.at(i).trimmed().isEmpty()) continue;
+                        Vec3 p(e.pts[0].x, e.pts[0].y - i*lineH, 0);
+                        dwgAddTextR(R, p, h, e.rotation, lines.at(i), layer,color);
+                    }
+                }
+            } break;
+            case ElementType::Table: {
+                // R12 无 TABLE：炸开为 LINE 网格 + TEXT 单元格文字（几何与画布/DXF 导出同源）。
+                if(!e.pts.empty()){
+                    const double rh = std::max(0.5, e.rowHeight);
+                    const int nR = std::max(1, e.tableRows), nC = std::max(1, e.tableCols);
+                    const double h = e.radius>0.1?e.radius:3.5;
+                    std::vector<double> xs;
+                    xs.reserve(size_t(nC)+1);
+                    xs.push_back(e.pts[0].x);
+                    for(int c=0;c<nC;++c) xs.push_back(xs.back()+e.tableColWidth(c));
+                    for(int r=0;r<=nR;++r)
+                        dwgAddLineR(R, Vec3(xs.front(), e.pts[0].y-r*rh,0),
+                                       Vec3(xs.back(),  e.pts[0].y-r*rh,0), layer,color);
+                    for(int c=0;c<=nC;++c)
+                        dwgAddLineR(R, Vec3(xs[c], e.pts[0].y,0),
+                                       Vec3(xs[c], e.pts[0].y-nR*rh,0), layer,color);
+                    for(int r=0;r<nR;++r)
+                        for(int c=0;c<nC;++c){
+                            QString t = resolveFields(e.tableCell(r,c), nullptr);
+                            if(t.trimmed().isEmpty()) continue;
+                            // R12 TEXT 无对齐组码：文字置于单元格左侧 + 1mm 内边距（近似居中观感）
+                            Vec3 p(xs[c]+1.0, e.pts[0].y-(r+0.5)*rh, 0);
+                            dwgAddTextR(R, p, h, 0.0, t, layer,color);
+                        }
+                }
+            } break;
             case ElementType::Xline: {
                 // R12 无 XLINE 原生实体：降级为通过点沿方向 ±10m 的长线段
                 if(!e.pts.empty()){
@@ -898,7 +992,9 @@ QString toStep(const std::vector<Element>& elems, StepStats* stats, QString* err
                 for (const auto& h : e.holes) if (h.size() >= 3) addPoly(h, true);
                 break;
             case ElementType::Text:
-                if (stats) ++stats->skippedText;           // STEP 曲线集不含文字注记
+            case ElementType::MText:
+            case ElementType::Table:
+                if (stats) ++stats->skippedText;           // STEP 曲线集不含文字注记/表格
                 break;
             case ElementType::Constraint:
             default:
@@ -981,6 +1077,26 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
     // 英文/纯 ASCII 用 ANSI_1252，别家 CAD 也可能给 UTF-8。
     const std::vector<DxfPair> tok = tokenizeDxf(decodeDxfBytes(data));
     if (tok.empty()) { if (err) *err = QStringLiteral("文件为空或不是 DXF 文本"); return false; }
+
+    // HEADER $INSUNITS：文件数值的度量口径（AutoCAD 标准码）。缺头/0=无单位按 mm
+    // 解释（不缩放）；其余码由调用方经 Units.h::scaleElementsToUnit 整体换算到 mm。
+    int insunits = 4;
+    for (size_t i = 0; i + 1 < tok.size(); ++i) {
+        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$INSUNITS", Qt::CaseInsensitive) == 0) {
+            // 紧随其后的组码 70 为整数码值；容错：找不到 70 就取下一个可解析数值
+            if (tok[i + 1].code == 70) {
+                insunits = tok[i + 1].value.trimmed().toInt();
+            } else {
+                for (size_t j = i + 1; j < std::min(tok.size(), i + 4); ++j)
+                    if (tok[j].code >= 0 && tok[j].value.trimmed().toInt()) {
+                        insunits = tok[j].value.trimmed().toInt();
+                        break;
+                    }
+            }
+            break;
+        }
+    }
+    if (stats) stats->insunits = insunits;
 
     // 定位 ENTITIES 段
     size_t start = tok.size();

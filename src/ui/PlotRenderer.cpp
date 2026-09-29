@@ -7,6 +7,7 @@
 #include "core/DimensionStandard.h"// DimensionStandardConfig / ArrowForm
 #include "core/SheetSpec.h"        // standardTextHeightMm / currentSheetFormat
 #include <QPainterPath>
+#include "core/TextStyle.h"         // resolveTextStyle / resolveFields / wrapText
 #include <QPen>
 #include <QFont>
 #include <QFontMetricsF>
@@ -102,11 +103,13 @@ void paintBoundary(QPainter* p, const Element& e, Ctx& c);
 void paintDimension(QPainter* p, const Element& e, Ctx& c);
 void paintText(QPainter* p, const Element& e, Ctx& c);
 void paintBlockRef(QPainter* p, const Element& e, Ctx& c);
+void paintTable(QPainter* p, const Element& e, Ctx& c);
 
 void paintOne(QPainter* p, const Element& e, Ctx& c) {
     if (e.type == ElementType::Constraint) return;   // 求解约束标记不打印
     if (e.type == ElementType::Dimension) { paintDimension(p, e, c); return; }
     if (e.type == ElementType::Text)      { paintText(p, e, c);      return; }
+    if (e.type == ElementType::Table)     { paintTable(p, e, c);     return; }
     if (e.type == ElementType::Hatch)     { paintHatch(p, e, c);     return; }
     if (e.type == ElementType::Boundary)  { paintBoundary(p, e, c);  return; }
     if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e, c);  return; }
@@ -299,18 +302,116 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const ResolvedPlotStyle rs = c.style->resolve(e);
     const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)
+    const bool isM = (e.type == ElementType::MText);
+
+    // 样式驱动字体参数（STYLE 表 + 图元字段 合并）
+    const ResolvedTextStyle ts = resolveTextStyle(e, c.model);
+
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);        // 抵消世界→设备变换的 Y 翻转
     QFont f = p->font();
     f.setPixelSize(std::max(6, (int)std::lround(th * c.scaleDev)));
+    if (!ts.fontFamily.isEmpty()) f.setFamily(ts.fontFamily);
+    f.setBold(ts.bold);
+    f.setItalic(ts.italic);
+    f.setStretch((int)std::lround(ts.widthFactor * 100));
+    if (std::fabs(ts.obliquingAngle) > 1e-6)
+        p->shear(std::tan(ts.obliquingAngle * M_PI / 180.0), 0.0);
     p->setFont(f);
     const QFontMetricsF fm(f);
-    const double tw = fm.horizontalAdvance(e.text), hh = fm.height();
-    const QRectF box(0, -hh / 2, tw, hh);
+
+    // 字段（FIELD）占位解析 + 折行
+    const QString display = resolveFields(e.text, c.model);
+    QStringList lines;
+    if (isM && e.mtextWidth > 0.1)
+        lines = wrapText(display, e.mtextWidth, f);
+    else
+        lines = display.split('\n');
+
+    const double lineHpx = th * c.scaleDev * (isM ? e.lineSpacing : 1.0);
+    const int    align   = isM ? e.textAlign : 1;
+    const int    hA = align % 3, vA = align / 3;
+    double maxW = 0;
+    QVector<double> widths(lines.size());
+    for (int i = 0; i < lines.size(); ++i) {
+        widths[i] = fm.horizontalAdvance(lines[i]);
+        if (widths[i] > maxW) maxW = widths[i];
+    }
+    const double totalH = lines.size() * lineHpx;
+    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalH / 2.0 : totalH;
+    const double hh = fm.height();
     p->setPen(rs.color);
     p->setBrush(Qt::NoBrush);
-    p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, e.text);
+    for (int i = 0; i < lines.size(); ++i) {
+        const double yc = startYv - (i + 0.5) * lineHpx;
+        double x0;
+        if (hA == 0)      x0 = 0;
+        else if (hA == 1) x0 = -(maxW - widths[i]) / 2;
+        else              x0 = -(maxW - widths[i]);
+        const QRectF box(x0, yc - hh / 2, widths[i], hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lines[i]);
+    }
+    p->restore();
+}
+
+// 表格图元（明细表）打印版：与画布 paintTable 同一几何（网格线 + 单元格文字），
+// 但线宽走打印样式表（CTB）+ lineWidthScale，文字像素按 scaleDev 换算纸面 mm。
+void paintTable(QPainter* p, const Element& e, Ctx& c) {
+    if (e.pts.empty()) return;
+    const ResolvedPlotStyle rs = c.style->resolve(e);
+    const int    R  = std::max(1, e.tableRows);
+    const int    C  = std::max(1, e.tableCols);
+    const double rh = std::max(0.5, e.rowHeight);
+    const double th = e.radius > 0.1 ? e.radius : 3.5;
+
+    p->save();
+    p->translate(e.pts[0].x, e.pts[0].y);
+    p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);       // 抵消世界→设备变换的 Y 翻转
+
+    QVector<double> xs(static_cast<int>(C) + 1);
+    xs[0] = 0.0;
+    for (int i = 0; i < C; ++i) xs[i + 1] = xs[i] + e.tableColWidth(i);
+    const double totalW = xs[C];
+    const double totalH = R * rh;
+
+    QPen pen(rs.color);
+    pen.setCosmetic(false);                              // 打印线宽 = 纸面 mm，不随视图缩放
+    pen.setStyle(toPenStyle(e.lineStyle));
+    const double rawW = rs.widthMm * c.lineWidthScale;
+    pen.setWidthF(std::max(0.15, std::clamp(rawW, kMinPrintMm, kMaxPrintMm)));
+    p->setPen(pen);
+    p->setBrush(Qt::NoBrush);
+    for (int r = 0; r <= R; ++r)
+        p->drawLine(QPointF(xs[0], r * rh), QPointF(totalW, r * rh));
+    for (int i = 0; i <= C; ++i)
+        p->drawLine(QPointF(xs[i], 0.0), QPointF(xs[i], totalH));
+
+    // 单元格文字（字段占位打印时求值为快照）
+    QFont f = p->font();
+    f.setPixelSize(std::max(6, (int)std::lround(th * c.scaleDev)));
+    p->setFont(f);
+    const QFontMetricsF fm(f);
+    const double pad = 1.0;                              // 内边距 1mm（逻辑坐标）
+    const double hh = fm.height();
+    const int hA = std::clamp(e.textAlign, 0, 2);
+    p->setPen(rs.color);
+    for (int r = 0; r < R; ++r) {
+        for (int i = 0; i < C; ++i) {
+            const QString raw = e.tableCell(r, i);
+            if (raw.trimmed().isEmpty()) continue;
+            const QString display = resolveFields(raw, c.model);
+            const double tw = fm.horizontalAdvance(display);
+            const double cellL = xs[i] + pad, cellR = xs[i + 1] - pad;
+            double x0;
+            if (hA == 0)      x0 = cellL;
+            else if (hA == 1) x0 = (cellL + cellR - tw) / 2.0;
+            else              x0 = std::max(cellL, cellR - tw);
+            const double yc = (r + 0.5) * rh;
+            p->drawText(QRectF(x0, yc - hh / 2, tw, hh),
+                        Qt::AlignLeft | Qt::AlignVCenter, display);
+        }
+    }
     p->restore();
 }
 

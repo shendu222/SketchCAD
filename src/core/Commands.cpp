@@ -13,6 +13,7 @@
 #include "Modify.h"
 #include "ChamferFillet.h"
 #include "Xref.h"
+#include "ConstraintSolver.h"
 #include "AircraftViews.h"
 #include <QRegularExpression>
 #include <algorithm>
@@ -2396,6 +2397,56 @@ QStringList CommandRegistry::exactNames() const {
     return exact_.keys();
 }
 
+// ---- 约束自动生成命令（对接 ConstraintSolver 的几何关系「自动计算 + 生成」）----
+// 生成的新图元已绑定 ctype/refA/refB，进入求解器维护范围，后续移动端点时约束被自动维持。
+bool PerpCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：perp <直线Id> <x,y>"), QStringLiteral("error")); return false; }
+    bool ok; int idA = ctx.toks[1].toInt(&ok);
+    if (!ok) { m->log(QStringLiteral("perp：直线Id 无效"), QStringLiteral("error")); return false; }
+    Vec3 P; if (!ctx.parsePoint(2, P)) { m->log(QStringLiteral("perp：点坐标无效"), QStringLiteral("error")); return false; }
+    const Element* ref = nullptr;
+    for (const auto& e : m->elements()) if (e.id == idA) { ref = &e; break; }
+    if (!ref || ref->type != ElementType::Line) { m->log(QStringLiteral("perp：未找到指定直线"), QStringLiteral("error")); return false; }
+    Element el = ConstraintSolver::drawPerpendicularTo(*ref, P);
+    const int nid = m->addElement(el);
+    m->log(QString("perp：已生成垂线 #%1（过 %2,%3 垂直于 #%4）").arg(nid).arg(P.x).arg(P.y).arg(idA), QStringLiteral("info"));
+    return true;
+}
+
+bool Tangent2Command::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：tangent2 <圆IdA> <圆IdB>"), QStringLiteral("error")); return false; }
+    bool ok1, ok2; int idA = ctx.toks[1].toInt(&ok1), idB = ctx.toks[2].toInt(&ok2);
+    if (!ok1 || !ok2) { m->log(QStringLiteral("tangent2：圆Id 无效"), QStringLiteral("error")); return false; }
+    const Element* A = nullptr; const Element* B = nullptr;
+    for (const auto& e : m->elements()) { if (e.id == idA) A = &e; if (e.id == idB) B = &e; }
+    if (!A || !B || (A->type != ElementType::Circle && A->type != ElementType::Arc) ||
+        (B->type != ElementType::Circle && B->type != ElementType::Arc)) {
+        m->log(QStringLiteral("tangent2：需两个圆/圆弧"), QStringLiteral("error")); return false;
+    }
+    std::vector<Element> outs;
+    const int n = ConstraintSolver::commonTangents(*A, *B, outs);
+    for (auto& el : outs) m->addElement(el);
+    m->log(QString("tangent2：生成 %1 条公切线（#%2 ↔ #%3）").arg(n).arg(idA).arg(idB), QStringLiteral("info"));
+    return true;
+}
+
+bool QConnectCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：qconnect <目标圆Id> <x,y>"), QStringLiteral("error")); return false; }
+    bool ok; int idT = ctx.toks[1].toInt(&ok);
+    if (!ok) { m->log(QStringLiteral("qconnect：目标Id 无效"), QStringLiteral("error")); return false; }
+    Vec3 from; if (!ctx.parsePoint(2, from)) { m->log(QStringLiteral("qconnect：点坐标无效"), QStringLiteral("error")); return false; }
+    const Element* tgt = nullptr;
+    for (const auto& e : m->elements()) if (e.id == idT) { tgt = &e; break; }
+    if (!tgt) { m->log(QStringLiteral("qconnect：未找到目标图元"), QStringLiteral("error")); return false; }
+    Element el = ConstraintSolver::quadrantConnector(*tgt, from);
+    const int nid = m->addElement(el);
+    m->log(QString("qconnect：已生成象限连接 #%1（从 %2,%3 连到 #%4 最近象限点）").arg(nid).arg(from.x).arg(from.y).arg(idT), QStringLiteral("info"));
+    return true;
+}
+
 void CommandRegistry::registerBuiltins() {
     // ---- 基础绘图 ----
     registerExact("line",     std::make_shared<LineCommand>());
@@ -2405,6 +2456,22 @@ void CommandRegistry::registerBuiltins() {
     registerExact("rect",     std::make_shared<RectCommand>());
     registerExact("poly",     std::make_shared<PolySplineCommand>(ElementType::Polygon, "多边形"));
     registerExact("spline",   std::make_shared<PolySplineCommand>(ElementType::Spline, "样条曲线"));
+
+    // ---- 点实体（供 Node 节点捕捉：绘制离散点，可被 Node 捕捉吸附）----
+    registerExact("point", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            int n = 0;
+            for (int i = 1; i < ctx.toks.size(); ++i) {
+                Vec3 p; if (!ctx.parsePoint(i, p)) continue;
+                Element e; e.type = ElementType::Point; e.pts = {p};
+                e.name = QStringLiteral("点"); e.color = QColor(0, 0, 0);
+                m->addElement(e); ++n;
+            }
+            if (n == 0) { m->log(QStringLiteral("用法：point <x,y> [x,y ...]"), QStringLiteral("error")); return false; }
+            m->log(QString("point：已创建 %1 个点实体（可被 Node 节点捕捉）").arg(n), QStringLiteral("info"));
+            return true;
+        }));
 
     // ---- 直线子模式（前缀分派，所有 line_* 共用一个 LineModeCommand） ----
     registerPrefix("line_", std::make_shared<LineModeCommand>());
@@ -2479,6 +2546,10 @@ void CommandRegistry::registerBuiltins() {
     registerExact("dims",       std::make_shared<DimSmartCommand>());
     registerExact("dim_smart",  std::make_shared<DimSmartCommand>());
     registerExact("constraint", std::make_shared<ConstraintCommand>());
+    // ---- 约束自动生成（几何关系自动计算 + 生成）----
+    registerExact("perp",     std::make_shared<PerpCommand>());       // 过指定点作垂线
+    registerExact("tangent2", std::make_shared<Tangent2Command>());   // 两圆公切线
+    registerExact("qconnect", std::make_shared<QConnectCommand>());   // 象限连接
 
     // ---- 选择（对应选择菜单 / FreeCAD Sketcher 选择命令）----
     {

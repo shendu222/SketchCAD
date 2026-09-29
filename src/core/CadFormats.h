@@ -47,8 +47,10 @@ bool canImport(CadFormat f);
 // drawingScale = 绘图比例因子（图形:实物）。图元的 pts 是「图纸坐标」，而标注数字
 // 必须等于**实物尺寸**（GB/T 14690），故导出时要把比例因子传进来，否则 1:2 图纸上
 // 100mm 的尺寸会被导出成 50。默认 1.0（1:1 图纸无需传）。
+// insunits = DXF $INSUNITS 标准码（AutoCAD 约定，见 Units.h 的 insunitsCode）：
+// 写进 HEADER 供导入方识别度量口径，实现跨单位交换（本程序内部几何恒为 mm）。
 QByteArray toDxf (const std::vector<Element>& elems, QString* err = nullptr,
-                  double drawingScale = 1.0);
+                  double drawingScale = 1.0, int insunits = 4);
 QByteArray toDwg (const std::vector<Element>& elems, QString* err = nullptr,
                   double drawingScale = 1.0);
 // 说明：toDwg 输出**原生 R12 (AC1009) 二进制**格式（手写实现，零第三方依赖）：
@@ -80,7 +82,8 @@ struct DxfImportStats {
     int entities    = 0;   // 成功导入的图元数
     int arcsKept    = 0;   // 由 bulge 成功还原的弧段数
     int arcsDropped = 0;   // bulge 无法用「三相邻点定圆」表达、已退回直线段的段数
-};
+    int insunits    = 4;   // HEADER $INSUNITS 单位码（默认 4=mm；0=无单位/缺头也按 mm）
+};                         //   调用方按 Units.h::lengthUnitFromInsunits 换算到 mm
 bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);
 

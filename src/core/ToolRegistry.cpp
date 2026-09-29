@@ -20,6 +20,10 @@ ToolRegistry::ToolRegistry() {
     registerTool({"arc",       QStringLiteral("圆弧"),     ToolCategory::DrawBasic});
     registerTool({"poly",      QStringLiteral("多边形"),   ToolCategory::DrawBasic});
     registerTool({"spline",    QStringLiteral("样条曲线"), ToolCategory::DrawBasic});
+    registerTool({"mtext",     QStringLiteral("多行文字"),   ToolCategory::DrawBasic, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("多行文字(MTEXT)：点击插入点后编辑多行内容、对齐、字高、宽度因子、样式与自动换行")});
+    registerTool({"table",     QStringLiteral("表格"),       ToolCategory::DrawBasic, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("表格(TABLE)：点击放置表格左上角后编辑行列、列宽、行高、字高与单元格内容（明细表）")});
 
     // ==================== 选择 / 编辑 ====================
     registerTool({"select",    QStringLiteral("选择"),     ToolCategory::Select});

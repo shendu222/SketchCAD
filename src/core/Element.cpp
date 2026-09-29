@@ -1,6 +1,7 @@
 #include "Element.h"
 #include "Geometry.h"
 #include <cmath>
+#include <algorithm>
 
 namespace SketchCAD {
 
@@ -54,9 +55,26 @@ QString Element::sizeDesc() const {
             return text.isEmpty() ? QStringLiteral("标注") : text;
         case ElementType::Text:
             return QString("文本 高度 %1 mm").arg(radius, 0, 'f', 2);
+        case ElementType::MText: {
+            const int nLines = (text.isEmpty() ? 0 : text.split('\n').size());
+            return QString("多行文字 高度 %1 mm / %2 行 / 对齐 %3 / 样式 %4")
+                   .arg(radius, 0, 'f', 2).arg(nLines)
+                   .arg(QString::fromUtf8(mtextAlignName(textAlign)))
+                   .arg(styleName.isEmpty() ? QStringLiteral("默认") : styleName);
+        }
         case ElementType::Hatch:
             return QString("剖面区域 角度 %1° / 间距 %2 mm / 内孔 %3")
                    .arg(rotation, 0, 'f', 1).arg(radius, 0, 'f', 2).arg(holes.size());
+        case ElementType::Table: {
+            // 表格：行列规模 + 总宽×总高 + 非空单元格数
+            int filled = 0;
+            for (const QString& s : tableCells) if (!s.trimmed().isEmpty()) ++filled;
+            return QString("表格 %1×%2（%3 × %4 mm）/ 已填 %5 格")
+                   .arg(tableRows).arg(tableCols)
+                   .arg(tableWidthMm(), 0, 'f', 1)
+                   .arg(tableRows * rowHeight, 0, 'f', 1)
+                   .arg(filled);
+        }
         case ElementType::Boundary:
             return QString("边界 角度 %1° / 间距 %2 mm / 内孔 %3")
                    .arg(rotation, 0, 'f', 1).arg(radius, 0, 'f', 2).arg(holes.size());
@@ -76,6 +94,9 @@ QString Element::sizeDesc() const {
                    .arg(pts.empty() ? 0.0 : pts[0].x, 0, 'f', 1)
                    .arg(pts.empty() ? 0.0 : pts[0].y, 0, 'f', 1)
                    .arg(rotation, 0, 'f', 1);
+        case ElementType::Point:
+            return QString("点 @(%1,%2)").arg(pts.empty() ? 0.0 : pts[0].x, 0, 'f', 1)
+                                          .arg(pts.empty() ? 0.0 : pts[0].y, 0, 'f', 1);
     }
     return QString();
 }
@@ -95,6 +116,7 @@ QJsonObject elementToJson(const Element& e) {
     o["splineSubType"] = e.splineSubType;   // 样条子类型（0=Catmull-Rom, 1=抛物线, 2=双曲线）
     o["text"] = e.text; o["refA"] = e.refA; o["refB"] = e.refB;
     o["standard"] = (int)e.standard; o["tolUpper"] = e.tolUpper; o["tolLower"] = e.tolLower; o["fitCode"] = e.fitCode;
+    if (!e.groupName.isEmpty()) o["groupName"] = e.groupName;   // 编组归属（空串不写盘，旧档缺键回落未编组）
     QJsonArray pts;
     for (const auto& p : e.pts) pts.append(QJsonArray{p.x, p.y, p.z});
     o["pts"] = pts;
@@ -113,6 +135,26 @@ QJsonObject elementToJson(const Element& e) {
     o["holes"] = holesArr;
     o["sectionExempt"] = e.sectionExempt;
     o["sectionMaterial"] = e.sectionMaterial;
+    // ---- 多行文字（MText）专用字段（旧存档无这些键 → 读端回落默认，无副作用）----
+    if (e.type == ElementType::MText) {
+        o["widthFactor"] = e.widthFactor;
+        o["textAlign"]   = e.textAlign;
+        o["styleName"]   = e.styleName;
+        o["lineSpacing"] = e.lineSpacing;
+        o["mtextWidth"]  = e.mtextWidth;
+    }
+    // ---- 表格（Table）专用字段（旧存档无这些键 → 读端回落默认，无副作用）----
+    if (e.type == ElementType::Table) {
+        o["tableRows"] = e.tableRows;
+        o["tableCols"] = e.tableCols;
+        o["rowHeight"] = e.rowHeight;
+        QJsonArray cw;
+        for (double w : e.colWidths) cw.append(w);
+        o["colWidths"] = cw;
+        QJsonArray cells;
+        for (const QString& s : e.tableCells) cells.append(s);
+        o["tableCells"] = cells;
+    }
     // ---- 块引用（BlockRef）专用字段（旧存档无这些键 → 读端回落默认，无副作用）----
     if (e.type == ElementType::BlockRef) {
         o["blockName"] = e.blockName;
@@ -165,6 +207,7 @@ Element elementFromJson(const QJsonObject& o) {
     e.tolUpper = o["tolUpper"].toDouble();
     e.tolLower = o["tolLower"].toDouble();
     e.fitCode  = o["fitCode"].toString();
+    e.groupName = o.contains("groupName") ? o["groupName"].toString() : QString();
     for (const auto& v : o["pts"].toArray()) {
         QJsonArray a = v.toArray();
         e.pts.push_back(Vec3(a[0].toDouble(), a[1].toDouble(), a[2].toDouble()));
@@ -182,6 +225,20 @@ Element elementFromJson(const QJsonObject& o) {
     }
     e.sectionExempt   = o.contains("sectionExempt")   ? o["sectionExempt"].toInt(0)   : 0;
     e.sectionMaterial = o.contains("sectionMaterial") ? o["sectionMaterial"].toInt(0) : 0;
+    // ---- 多行文字（MText）专用字段（旧存档缺键 → 回落默认，向后兼容）----
+    e.widthFactor = o.contains("widthFactor") ? o["widthFactor"].toDouble(1.0) : 1.0;
+    e.textAlign   = o.contains("textAlign")   ? o["textAlign"].toInt(1) : 1;
+    e.styleName   = o.contains("styleName")   ? o["styleName"].toString() : QString();
+    e.lineSpacing = o.contains("lineSpacing") ? o["lineSpacing"].toDouble(1.3) : 1.3;
+    e.mtextWidth  = o.contains("mtextWidth")  ? o["mtextWidth"].toDouble(0.0) : 0.0;
+    // ---- 表格（Table）专用字段（旧存档缺键 → 回落默认，向后兼容）----
+    // 行列数钳到 [1,200]：防损坏数据把渲染/导出撑爆
+    e.tableRows = std::clamp(o.contains("tableRows") ? o["tableRows"].toInt(3) : 3, 1, 200);
+    e.tableCols = std::clamp(o.contains("tableCols") ? o["tableCols"].toInt(4) : 4, 1, 200);
+    e.rowHeight = o.contains("rowHeight") ? o["rowHeight"].toDouble(8.0) : 8.0;
+    if (e.rowHeight < 0.5) e.rowHeight = 8.0;
+    for (const auto& v : o["colWidths"].toArray()) e.colWidths.push_back(v.toDouble(30.0));
+    for (const auto& v : o["tableCells"].toArray()) e.tableCells.push_back(v.toString());
     // ---- 块引用（BlockRef）专用字段（旧存档无这些键 → 保持默认）----
     e.blockName = o["blockName"].toString();
     e.scaleX = o.contains("scaleX") ? o["scaleX"].toDouble(1.0) : 1.0;

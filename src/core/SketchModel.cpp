@@ -8,13 +8,18 @@
 #include <cmath>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QSet>
 #include <QDir>
 #include <QFileInfo>
+#include <QDebug>
 
 namespace SketchCAD {
 
 SketchModel::SketchModel(QObject* p) : QObject(p) {
     layers_.push_back(Layer(QStringLiteral("0")));   // 默认层始终存在
+    // 文字样式表默认含一条 "Standard"（与 AutoCAD 一致）：空字体族 = 走系统默认，
+    // 字高 0 = 用图元自身 radius，宽度因子 1，无倾斜，非粗/斜体。
+    textStyles_.push_back(TextStyle{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false});
 }
 
 std::vector<Element>::iterator SketchModel::find(int id) {
@@ -28,7 +33,7 @@ void SketchModel::pushMemento(const QString& label) {
     // 也记录图层表：撤销"隐藏图层/改图层样式"等操作时，图层定义与图元需一起回退。
     Memento m;
     m.label = label; m.elems = elems_; m.nextId = nextId_;
-    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_;
+    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_;
     undoStack_.push_back(std::move(m));
     if (undoStack_.size() > 200) undoStack_.erase(undoStack_.begin());
     redoStack_.clear();
@@ -38,6 +43,7 @@ int SketchModel::addElement(const Element& e) {
     pushMemento(QStringLiteral("添加") + e.name);
     Element ne = e;
     ne.id = nextId_++;
+    checkElementLimits(ne);   // LIMITS checkOn 开启时对新增图元做越界告警（不拦截，仅提示）
     elems_.push_back(ne);
     emit modelChanged();
     return ne.id;
@@ -1276,6 +1282,358 @@ void SketchModel::setBlocksFromJson(const QJsonArray& arr) {
     emit blocksChanged();
 }
 
+// ============================================================
+// 文字样式（STYLE）
+// ============================================================
+const TextStyle& SketchModel::textStyleAt(int i) const {
+    static const TextStyle kDefault{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false};
+    if (i < 0 || i >= (int)textStyles_.size()) return kDefault;
+    return textStyles_[i];
+}
+
+const TextStyle* SketchModel::findTextStyle(const QString& name) const {
+    if (name.isEmpty()) return nullptr;
+    for (const auto& s : textStyles_)
+        if (s.name == name) return &s;
+    return nullptr;
+}
+
+bool SketchModel::addTextStyle(const TextStyle& s) {
+    if (s.name.trimmed().isEmpty()) { log(QStringLiteral("文字样式：名称为空，已忽略"), "warn"); return false; }
+    if (hasTextStyle(s.name)) { log(QStringLiteral("文字样式已存在：%1").arg(s.name), "warn"); return false; }
+    pushMemento(QStringLiteral("新建文字样式 ") + s.name);
+    textStyles_.push_back(s);
+    emit textStylesChanged(); emit modelChanged();
+    log(QStringLiteral("已新建文字样式：%1").arg(s.name));
+    return true;
+}
+
+bool SketchModel::renameTextStyle(const QString& oldName, const QString& newName) {
+    if (oldName == newName) return true;
+    if (newName.trimmed().isEmpty()) { log(QStringLiteral("文字样式：新名称为空，已忽略"), "warn"); return false; }
+    if (hasTextStyle(newName)) { log(QStringLiteral("文字样式已存在：%1").arg(newName), "warn"); return false; }
+    auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
+                           [&](const TextStyle& s) { return s.name == oldName; });
+    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(oldName), "warn"); return false; }
+    pushMemento(QStringLiteral("重命名文字样式 ") + oldName);
+    // 同步更新所有引用该样式的图元（Text/MText 的 styleName 字段）
+    for (auto& e : elems_) if (e.styleName == oldName) e.styleName = newName;
+    it->name = newName;
+    emit textStylesChanged(); emit modelChanged();
+    log(QStringLiteral("已重命名文字样式：%1 → %2").arg(oldName).arg(newName));
+    return true;
+}
+
+bool SketchModel::updateTextStyle(const TextStyle& s) {
+    if (s.name.trimmed().isEmpty()) { log(QStringLiteral("文字样式：名称为空，已忽略"), "warn"); return false; }
+    auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
+                          [&](const TextStyle& x) { return x.name == s.name; });
+    // 改名：目标名与现有某条不同样式冲突则拒绝
+    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(s.name), "warn"); return false; }
+    pushMemento(QStringLiteral("修改文字样式 ") + s.name);
+    *it = s;
+    emit textStylesChanged(); emit modelChanged();
+    log(QStringLiteral("已更新文字样式：%1").arg(s.name));
+    return true;
+}
+
+bool SketchModel::removeTextStyle(const QString& name) {
+    auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
+                           [&](const TextStyle& s) { return s.name == name; });
+    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(name), "warn"); return false; }
+    if (textStyles_.size() <= 1) { log(QStringLiteral("至少需保留一个文字样式，已忽略删除"), "warn"); return false; }
+    pushMemento(QStringLiteral("删除文字样式 ") + name);
+    // 解除所有图元对该样式的引用（回退默认样式）
+    for (auto& e : elems_) if (e.styleName == name) e.styleName.clear();
+    textStyles_.erase(it);
+    emit textStylesChanged(); emit modelChanged();
+    log(QStringLiteral("已删除文字样式：%1（引用该样式的文字回退默认）").arg(name));
+    return true;
+}
+
+int SketchModel::applyStyleToElements(const QString& styleName, const std::vector<int>& ids) {
+    if (!styleName.isEmpty() && !hasTextStyle(styleName)) {
+        log(QStringLiteral("文字样式不存在：%1").arg(styleName), "warn"); return 0;
+    }
+    beginEdit(styleName.isEmpty() ? QStringLiteral("清除文字样式关联")
+                                  : QStringLiteral("应用文字样式 ") + styleName);
+    int n = 0;
+    for (int id : ids) {
+        Element* e = const_cast<Element*>(element(id));
+        if (!e) continue;
+        if (e->type != ElementType::Text && e->type != ElementType::MText) continue;
+        e->styleName = styleName;
+        ++n;
+    }
+    emit textStylesChanged(); emit modelChanged();
+    log(QStringLiteral("已将文字样式「%1」应用到 %2 个文字对象").arg(styleName.isEmpty() ? QStringLiteral("(默认)") : styleName).arg(n));
+    return n;
+}
+
+QJsonArray SketchModel::textStylesToJson() const {
+    QJsonArray arr;
+    for (const auto& s : textStyles_) {
+        QJsonObject o;
+        o["name"]           = s.name;
+        o["fontFamily"]     = s.fontFamily;
+        o["textHeight"]     = s.textHeight;
+        o["widthFactor"]    = s.widthFactor;
+        o["obliquingAngle"] = s.obliquingAngle;
+        o["bold"]           = s.bold;
+        o["italic"]         = s.italic;
+        arr.append(o);
+    }
+    return arr;
+}
+
+void SketchModel::setTextStylesFromJson(const QJsonArray& arr) {
+    textStyles_.clear();
+    for (const auto& v : arr) {
+        const QJsonObject o = v.toObject();
+        const QString nm = o["name"].toString().trimmed();
+        if (nm.isEmpty()) continue;
+        TextStyle s;
+        s.name           = nm;
+        s.fontFamily     = o["fontFamily"].toString();
+        s.textHeight     = o.contains("textHeight")     ? o["textHeight"].toDouble(0.0)     : 0.0;
+        s.widthFactor    = o.contains("widthFactor")    ? o["widthFactor"].toDouble(1.0)    : 1.0;
+        s.obliquingAngle = o.contains("obliquingAngle") ? o["obliquingAngle"].toDouble(0.0) : 0.0;
+        s.bold           = o.contains("bold")    ? o["bold"].toBool(false)    : false;
+        s.italic         = o.contains("italic")  ? o["italic"].toBool(false)  : false;
+        textStyles_.push_back(s);
+    }
+    // 兜底：任何情况都至少保留一条 "Standard"，保证渲染/解析非 null
+    if (textStyles_.empty())
+        textStyles_.push_back(TextStyle{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false});
+    emit textStylesChanged();
+}
+
+// ============================================================================
+// 编组（GROUP）：groupName 相同的图元集合（引用式，无独立编组表）
+// ----------------------------------------------------------------------------
+// 全部变更走 beginEdit + updateElementQuiet：Memento 快照的是整个图元向量，
+// groupName 改动随之入栈 —— 一次 Ctrl+Z 整组撤销，与其它编辑完全一致。
+// ============================================================================
+
+QStringList SketchModel::groupNames() const {
+    QSet<QString> seen;
+    for (const auto& e : elems_)
+        if (!e.groupName.isEmpty()) seen.insert(e.groupName);
+    QStringList out;
+    for (const QString& s : seen) out << s;
+    out.sort(Qt::CaseInsensitive);
+    return out;
+}
+
+int SketchModel::elementCountInGroup(const QString& name) const {
+    if (name.isEmpty()) return 0;
+    int n = 0;
+    for (const auto& e : elems_) if (e.groupName == name) ++n;
+    return n;
+}
+
+std::vector<int> SketchModel::elementsInGroup(const QString& name) const {
+    std::vector<int> ids;
+    if (name.isEmpty()) return ids;
+    for (const auto& e : elems_) if (e.groupName == name) ids.push_back(e.id);
+    return ids;
+}
+
+bool SketchModel::createGroup(const QString& name, const std::vector<int>& ids) {
+    const QString nm = name.trimmed();
+    if (nm.isEmpty() || ids.empty()) {
+        log(QStringLiteral("创建编组失败：编组名或对象为空"), "warn");
+        return false;
+    }
+    // 允许重名 = 向既有编组添加成员（与「添加到编组」语义统一），无需拒绝
+    beginEdit(QStringLiteral("创建编组 %1").arg(nm));
+    QSet<int> want;
+    for (int id : ids) want.insert(id);
+    for (auto& e : elems_) {
+        if (!want.contains(e.id)) continue;
+        e.groupName = nm;
+        want.remove(e.id);
+    }
+    log(QStringLiteral("已创建编组「%1」（%2 个对象）").arg(nm).arg(ids.size()));
+    return true;
+}
+
+int SketchModel::addToGroup(const QString& name, const std::vector<int>& ids) {
+    const QString nm = name.trimmed();
+    if (nm.isEmpty() || ids.empty()) return 0;
+    beginEdit(QStringLiteral("添加到编组 %1").arg(nm));
+    QSet<int> want;
+    for (int id : ids) want.insert(id);
+    int n = 0;
+    for (auto& e : elems_) {
+        if (!want.contains(e.id) || e.groupName == nm) continue;
+        e.groupName = nm;
+        ++n;
+    }
+    if (n > 0) log(QStringLiteral("已将 %1 个对象加入编组「%2」").arg(n).arg(nm));
+    return n;
+}
+
+int SketchModel::removeFromGroup(const std::vector<int>& ids) {
+    if (ids.empty()) return 0;
+    beginEdit(QStringLiteral("从编组移除"));
+    QSet<int> want;
+    for (int id : ids) want.insert(id);
+    int n = 0;
+    for (auto& e : elems_) {
+        if (!want.contains(e.id) || e.groupName.isEmpty()) continue;
+        e.groupName.clear();
+        ++n;
+    }
+    if (n > 0) log(QStringLiteral("已将 %1 个对象移出编组").arg(n));
+    return n;
+}
+
+int SketchModel::ungroup(const QString& name) {
+    if (name.isEmpty()) return 0;
+    beginEdit(QStringLiteral("解散编组 %1").arg(name));
+    int n = 0;
+    for (auto& e : elems_) {
+        if (e.groupName != name) continue;
+        e.groupName.clear();
+        ++n;
+    }
+    log(n > 0 ? QStringLiteral("已解散编组「%1」（%2 个对象保留）").arg(name).arg(n)
+              : QStringLiteral("编组「%1」不存在").arg(name), n > 0 ? "info" : "warn");
+    return n;
+}
+
+bool SketchModel::renameGroup(const QString& oldName, const QString& newName) {
+    const QString nm = newName.trimmed();
+    if (oldName.isEmpty() || nm.isEmpty() || nm == oldName) return false;
+    beginEdit(QStringLiteral("重命名编组 %1 → %2").arg(oldName, nm));
+    int n = 0;
+    for (auto& e : elems_) {
+        if (e.groupName != oldName) continue;
+        e.groupName = nm;
+        ++n;
+    }
+    log(QStringLiteral("已重命名编组：%1 → %2（%3 个对象）").arg(oldName, nm).arg(n));
+    return true;
+}
+
+int SketchModel::selectGroup(const QString& name) {
+    const std::vector<int> ids = elementsInGroup(name);
+    setSelection(ids);
+    return int(ids.size());
+}
+
+// ============================================================================
+// 快速选择 / 过滤器：与选择集的统一落地口
+// ============================================================================
+
+void SketchModel::applySelectionDelta(const std::vector<int>& hits, QSelectAction action) {
+    switch (action) {
+        case QSelectAction::Replace:
+            setSelection(hits);                       // 内部一次 selectionChanged
+            break;
+        case QSelectAction::Append:
+            addToSelection(hits);                     // 批量追加已去重，一次信号
+            break;
+        case QSelectAction::Exclude: {
+            QSet<int> hit;
+            for (int id : hits) hit.insert(id);
+            std::vector<int> kept;
+            kept.reserve(selectedIds_.size());
+            for (int id : selectedIds_)
+                if (!hit.contains(id)) kept.push_back(id);
+            setSelection(kept);
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// 命名过滤器（FILTER 保存/复用）：仅持久化，不入撤销栈
+// ============================================================================
+
+bool SketchModel::saveFilter(const FilterDef& f) {
+    const QString nm = f.name.trimmed();
+    if (nm.isEmpty() || f.conds.empty()) return false;
+    for (auto& sf : savedFilters_) {
+        if (sf.name == nm) { sf = f; sf.name = nm; return true; }   // 重名覆盖
+    }
+    savedFilters_.push_back(f);
+    savedFilters_.back().name = nm;
+    return true;
+}
+
+bool SketchModel::deleteFilter(const QString& name) {
+    for (auto it = savedFilters_.begin(); it != savedFilters_.end(); ++it) {
+        if (it->name == name) { savedFilters_.erase(it); return true; }
+    }
+    return false;
+}
+
+QJsonArray SketchModel::savedFiltersToJson() const {
+    QJsonArray arr;
+    for (const auto& f : savedFilters_) arr.append(f.toJson());
+    return arr;
+}
+
+void SketchModel::setSavedFiltersFromJson(const QJsonArray& arr) {
+    savedFilters_.clear();
+    for (const auto& v : arr) {
+        FilterDef f = FilterDef::fromJson(v.toObject());
+        if (!f.name.trimmed().isEmpty() && f.isValid())
+            savedFilters_.push_back(std::move(f));
+    }
+}
+
+// ============================================================================
+// 单位（UNITS）与图纸界限（LIMITS）
+// ----------------------------------------------------------------------------
+// 应用级配置（与打印设置同级）：**不入撤销栈** —— 单位切换改变的是「显示口径」
+// 而非几何内容，允许 Ctrl+Z 撤销反而会让"数值没变、显示变了"的中间态难以理解。
+// 信号仅在设置真变化时发出（unitsChanged/limitsChanged），下游（状态栏坐标、
+// 参数输入条后缀、单位面板）各自连接刷新，避免无效重绘。
+// ============================================================================
+
+void SketchModel::setUnits(const UnitsMeta& u) {
+    if (u == units_) return;                       // 相同不发信号（幂等）
+    units_ = u;
+    emit unitsChanged();
+}
+
+void SketchModel::setLimits(const LimitsMeta& l) {
+    const LimitsMeta v = l.isValid() ? l : LimitsMeta();   // 非法范围回落默认 A3
+    if (v == limits_) return;
+    limits_ = v;
+    emit limitsChanged();
+}
+
+void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
+    if (c == snapConfig_) return;                 // 相同不发信号（幂等）
+    snapConfig_ = c;
+    emit snapConfigChanged();
+}
+
+void SketchModel::checkElementLimits(const Element& e) {
+    // 告警而非拦截：越界图元仍正常入模（与 AutoCAD LIMITS 语义一致——
+    // 越界只是提示，用户可能刻意画到图框外）；检查只看「锚点/特征点」，
+    // 用 geo::elementBounds 的整框判定会出现"图幅外大圆心在界内"漏报，
+    // 折中：界外但与界限盒相交也算过（取 bounds 中心 + 矩形相交双条件从宽）。
+    if (!limits_.checkOn || !limits_.isValid()) return;
+    const QRectF b = geo::elementBounds(e);
+    const bool anchorOut =
+        (b.width() <= 0 && b.height() <= 0)        // 退化（无几何）→ 查首个锚点
+        ? !limits_.contains(e.pts.empty() ? 0.0 : e.pts.front().x,
+                            e.pts.empty() ? 0.0 : e.pts.front().y)
+        : !limits_.contains(b.center().x(), b.center().y()) &&
+          (b.right() < limits_.x1 || b.left() > limits_.x2 ||
+           b.bottom() < limits_.y1 || b.top() > limits_.y2);
+    if (anchorOut)
+        qWarning() << QStringLiteral("[LIMITS] 图元 %1(id=%2) 超出图纸界限 (%3,%4)-(%5,%6)")
+                          .arg(e.name, QString::number(e.id),
+                               QString::number(limits_.x1), QString::number(limits_.y1),
+                               QString::number(limits_.x2), QString::number(limits_.y2));
+}
+
 // ============================================================================
 // 外部参照（Xref）
 // ----------------------------------------------------------------------------
@@ -1522,27 +1880,27 @@ void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged
 
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_;
     redoStack_.push_back(std::move(rb));
     auto m = undoStack_.back(); undoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已撤销: ") + m.label);
 }
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_;
     undoStack_.push_back(std::move(rb));
     auto m = redoStack_.back(); redoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已重做: ") + m.label);
 }

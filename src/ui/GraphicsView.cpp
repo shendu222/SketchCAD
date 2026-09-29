@@ -13,6 +13,7 @@
 #include <QMouseEvent>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QMenu>
 #include <QStringList>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -28,6 +29,7 @@
 #include <cmath>
 #include <algorithm>
 #include "core/ElementFactory.h"
+#include "core/TextStyle.h"
 
 // ============================ 平移排查调试日志 ============================
 // 右键拖不动时，把每一步鼠标/右键事件的现场写入 %TEMP%/sketchcad_pan.log，
@@ -246,6 +248,9 @@ QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
                 path.addRect(QRectF(qpt(e.pts[0]), qpt(e.pts[1])).normalized());
             break;
 
+        case ElementType::Point:
+            break;          // 点实体：无连续几何路径；渲染与拾取由 paintOne / distanceToElement 处理
+
         case ElementType::Dimension:
             // 标注的可见几何完全由 dim::build 生成（尺寸线/界线/箭头/数字），
             // 这里只给出「测量线」用于包围盒与命中，实际绘制见 paintOne。
@@ -370,7 +375,10 @@ QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
             break;   // 约束标记按屏幕像素画，见 paintOne
 
         case ElementType::Text:
-            break;   // 文本本身由 paintText 绘制，几何包围盒在 rawBounds 里按文字尺寸展开
+        case ElementType::MText:
+            break;   // 文本由 paintText 绘制，几何包围盒在 rawBounds 里按文字尺寸展开
+        case ElementType::Table:
+            break;   // 表格由 paintTable 绘制（网格线+单元格文字），包围盒见 rawBounds
 
         case ElementType::BlockRef:
             // 块引用自身没有几何：展开后的子路径由 blockPath()（shape）与 paintBlockRef 处理
@@ -449,17 +457,50 @@ QRectF ElementItem::rawBounds(const Element& e) const {
             grow(g.textPos);
         }
     }
-    // 文本：按文字尺寸展开包围盒（世界 mm，与视图缩放无关），保证选中/拾取命中整段文字而非仅锚点。
+    // 文本 / 多行文字：按文字尺寸展开包围盒（世界 mm，与视图缩放无关），保证选中/拾取命中整段文字而非仅锚点。
     // 在固定参考像素尺寸(1000)下度量字宽/字高，再按 (文字高度mm / 1000) 换算回世界 mm。
-    if (e.type == ElementType::Text && !e.pts.empty() && !e.text.isEmpty()) {
+    if ((e.type == ElementType::Text || e.type == ElementType::MText)
+        && !e.pts.empty() && !e.text.isEmpty()) {
         const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)，存于 radius 字段
         QFont tf;
         tf.setPixelSize(1000);
-        QFontMetricsF fm(tf);
-        const double tw  = fm.horizontalAdvance(e.text) / 1000.0 * th;  // mm
-        const double thh = fm.height() / 1000.0 * th;                   // mm
-        grow(Vec3(e.pts[0].x,           e.pts[0].y - thh * 0.5, 0));
-        grow(Vec3(e.pts[0].x + tw,      e.pts[0].y + thh * 0.5, 0));
+        const QFontMetricsF fm(tf);
+        const double lineHmm = th * (e.type == ElementType::MText ? e.lineSpacing : 1.0);
+        // 宽度因子：图元 widthFactor × 样式 widthFactor
+        double wf = e.widthFactor > 0 ? e.widthFactor : 1.0;
+        if (model && !e.styleName.isEmpty()) {
+            if (const TextStyle* ts = model->findTextStyle(e.styleName)) wf *= ts->widthFactor;
+        }
+        // 自动换行（仅 MText 且指定了 mtextWidth）或仅按显式换行折行
+        QStringList lines;
+        if (e.type == ElementType::MText && e.mtextWidth > 0.1)
+            lines = wrapText(e.text, e.mtextWidth, tf);
+        else
+            lines = e.text.split('\n');
+        double maxWmm = 0;
+        for (const auto& ln : lines) {
+            const double w = fm.horizontalAdvance(ln) / 1000.0 * th * wf;
+            if (w > maxWmm) maxWmm = w;
+        }
+        const double totalHmm = lines.size() * lineHmm;
+        // 9 点对齐 → 区块相对锚点的偏移（局部 y 向上）
+        const int align = (e.type == ElementType::MText) ? e.textAlign : 1; // Text 维持原「中上」锚定
+        const int hA = align % 3, vA = align / 3;
+        const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHmm / 2.0 : totalHmm;
+        const double yTop = startYv, yBot = startYv - totalHmm;
+        double xL, xR;
+        if (hA == 0)      { xL = 0;          xR = maxWmm; }
+        else if (hA == 1) { xL = -maxWmm/2;  xR = maxWmm/2; }
+        else              { xL = -maxWmm;    xR = 0; }
+        grow(Vec3(e.pts[0].x + xL, e.pts[0].y + yBot, 0));
+        grow(Vec3(e.pts[0].x + xR, e.pts[0].y + yTop, 0));
+    }
+    // 表格：包围盒 = 左上锚点 + (总宽, rows×rowHeight)，行向下增长（世界 Y 向上 → y 减小方向）
+    if (e.type == ElementType::Table && !e.pts.empty()) {
+        const double W = e.tableWidthMm();
+        const double H = std::max(1, e.tableRows) * std::max(0.5, e.rowHeight);
+        grow(Vec3(e.pts[0].x,      e.pts[0].y - H, 0));
+        grow(Vec3(e.pts[0].x + W,  e.pts[0].y,     0));
     }
     // 块引用：几何范围来自"展开后的子图元并集"（而非插入点）。
     // 展开结果一定是基础图元（嵌套块已在 block::expandRef 内递归展开），不会自我递归。
@@ -501,8 +542,9 @@ QRectF ElementItem::boundingRect() const {
 
 QPainterPath ElementItem::shape() const {
     const double z = viewZoom();
-    // 文本：包围盒是一个矩形，直接返回矩形路径作为命中区域（比仅锚点更好点）
-    if (el.type == ElementType::Text) {
+    // 文本 / 多行文字 / 表格：包围盒是矩形，直接返回矩形路径作为命中区域（比仅锚点更好点）
+    if (el.type == ElementType::Text || el.type == ElementType::MText ||
+        el.type == ElementType::Table) {
         QPainterPath d;
         QRectF r = rawBounds(el);
         d.addRect(r);
@@ -635,10 +677,22 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
     }
 
     if (e.type == ElementType::Dimension) { paintDimension(p, e); return; }
-    if (e.type == ElementType::Text)      { paintText(p, e); return; }
+    if (e.type == ElementType::Text || e.type == ElementType::MText) { paintText(p, e); return; }
+    if (e.type == ElementType::Table)     { paintTable(p, e); return; }
     if (e.type == ElementType::Hatch)     { paintHatch(p, e); return; }
     if (e.type == ElementType::Boundary)  { paintBoundary(p, e); return; }
     if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e); return; }
+    if (e.type == ElementType::Point) {
+        if (e.pts.empty()) return;
+        const double r = 3.5 / z;                 // 屏幕恒定 3.5px，任何缩放下清晰可见
+        const QPointF c = qpt(e.pts[0]);
+        p->setBrush(Qt::NoBrush);
+        p->setPen(QPen(e.color, 1.2 / z, Qt::SolidLine, Qt::RoundCap));
+        p->drawEllipse(c, r, r);                  // 点：小圆 + 十字准星，强调「节点」语义
+        p->drawLine(QPointF(c.x() - 2 * r, c.y()), QPointF(c.x() + 2 * r, c.y()));
+        p->drawLine(QPointF(c.x(), c.y() - 2 * r), QPointF(c.x(), c.y() + 2 * r));
+        return;
+    }
 
     QPainterPath path;
     if (e.type == ElementType::Xline)
@@ -855,19 +909,126 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const double z = viewZoom();
     const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)
+    const bool isM = (e.type == ElementType::MText);
+
+    // 样式驱动字体参数（STYLE 表 + 图元字段 合并）
+    const ResolvedTextStyle rs = resolveTextStyle(e, model);
+
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / z, -1.0 / z);                          // 抵消视图 Y 轴翻转（与 Dimension 一致）
     QFont f = p->font();
     f.setPixelSize(std::max(8, (int)std::lround(th * z)));
+    if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+    f.setBold(rs.bold);
+    f.setItalic(rs.italic);
+    f.setStretch((int)std::lround(rs.widthFactor * 100)); // 宽度因子（样式×图元）
     p->setFont(f);
+    // 倾斜（obliquingAngle）：用水平错切近似（Qt 无直接倾斜角 API）
+    if (std::fabs(rs.obliquingAngle) > 1e-6)
+        p->shear(std::tan(rs.obliquingAngle * M_PI / 180.0), 0.0);
+
     const QFontMetricsF fm(f);
-    const double tw = fm.horizontalAdvance(e.text), hh = fm.height();
-    // 锚点在左、垂直居中：文字占据 x∈[0,tw], y∈[-h/2, h/2]（局部系，已含 Y 翻转）
-    const QRectF box(0, -hh / 2, tw, hh);
+
+    // 字段（FIELD）占位解析：%<CODE>% → 当前值（纯文本无占位则原样返回）
+    const QString display = resolveFields(e.text, model);
+
+    // 折行：MText 且指定了 mtextWidth 时按宽度自动折行，否则仅按显式 '\n' 分段
+    QStringList lines;
+    if (isM && e.mtextWidth > 0.1)
+        lines = wrapText(display, e.mtextWidth, f);
+    else
+        lines = display.split('\n');
+
+    const double lineHpx = th * z * (isM ? e.lineSpacing : 1.0);
+    const int    align   = isM ? e.textAlign : 1;          // Text 维持原「中上」锚定
+    const int    hA = align % 3, vA = align / 3;           // 0左/1中/右 ; 0上/1中/2下
+    double maxW = 0;
+    QVector<double> widths(lines.size());
+    for (int i = 0; i < lines.size(); ++i) {
+        widths[i] = fm.horizontalAdvance(lines[i]);
+        if (widths[i] > maxW) maxW = widths[i];
+    }
+    const double totalH = lines.size() * lineHpx;
+    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalH / 2.0 : totalH;  // 区块上沿(局部 y 向上)
+
     p->setPen(e.color);
     p->setBrush(Qt::NoBrush);
-    p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, e.text);
+    const double hh = fm.height();
+    for (int i = 0; i < lines.size(); ++i) {
+        const double yc = startYv - (i + 0.5) * lineHpx;    // 行中心（局部 y 向上）
+        double x0;
+        if (hA == 0)      x0 = 0;
+        else if (hA == 1) x0 = -(maxW - widths[i]) / 2;
+        else              x0 = -(maxW - widths[i]);
+        const QRectF box(x0, yc - hh / 2, widths[i], hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lines[i]);
+    }
+    p->restore();
+}
+
+// 表格图元（明细表）：网格线（颜色/线型/线宽走图元通用样式）+ 单元格文字（radius 字高、
+// textAlign 水平对齐 0=左/1=中/2=右，垂直一律居中，左右各留 1mm 内边距）。
+// 坐标系：translate 到左上锚点后 scale(1/z, -1/z) 抵消视图 Y 翻转 —— 局部坐标 y 向下为正，
+// 行 r 的顶边 y = r*rowHeight，与模型「行向下增长」的约定一致（打印版见 PlotRenderer::paintTable）。
+void ElementItem::paintTable(QPainter* p, const Element& e) const {
+    if (e.pts.empty()) return;
+    const double z = viewZoom();
+    const int    R  = std::max(1, e.tableRows);
+    const int    C  = std::max(1, e.tableCols);
+    const double rh = std::max(0.5, e.rowHeight);
+    const double th = e.radius > 0.1 ? e.radius : 3.5;   // 单元格文字字高(mm)
+
+    p->save();
+    p->translate(e.pts[0].x, e.pts[0].y);
+    p->scale(1.0 / z, -1.0 / z);                          // 抵消视图 Y 轴翻转 → 局部 y 向下为正
+
+    // ---- 网格线：列边界累加 colWidths（缺项/非正回落 30mm）----
+    QVector<double> xs(static_cast<int>(C) + 1);
+    xs[0] = 0.0;
+    for (int c = 0; c < C; ++c) xs[c + 1] = xs[c] + e.tableColWidth(c);
+    const double totalW = xs[C];
+    const double totalH = R * rh;
+
+    QPen pen(preview ? PREVIEW : (highlight ? HL : e.color));
+    pen.setCosmetic(true);                                // 网格线宽随屏幕像素，缩放不变粗细
+    const double effW = std::max(0.6, mmToScreenPx(e.effectiveLineWidth()));
+    pen.setWidthF(highlight ? effW + 1.0 : effW);
+    pen.setStyle(toPenStyle(e.lineStyle));
+    p->setPen(pen);
+    p->setBrush(Qt::NoBrush);
+    // 横线（行边界 R+1 条）
+    for (int r = 0; r <= R; ++r)
+        p->drawLine(QPointF(xs[0], r * rh), QPointF(totalW, r * rh));
+    // 竖线（列边界 C+1 条）
+    for (int c = 0; c <= C; ++c)
+        p->drawLine(QPointF(xs[c], 0.0), QPointF(xs[c], totalH));
+
+    // ---- 单元格文字：字段占位渲染期求值（与 Text/MText 同一 resolveFields 通路）----
+    QFont f = p->font();
+    f.setPixelSize(std::max(6, (int)std::lround(th * z)));
+    p->setFont(f);
+    const QFontMetricsF fm(f);
+    const double pad = 1.0 * z;                           // 单元格内边距 1mm
+    const double hh = fm.height();
+    const int hA = std::clamp(e.textAlign, 0, 2);         // 0=左 1=中 2=右
+    p->setPen(e.color);
+    for (int r = 0; r < R; ++r) {
+        for (int c = 0; c < C; ++c) {
+            const QString raw = e.tableCell(r, c);
+            if (raw.trimmed().isEmpty()) continue;
+            const QString display = resolveFields(raw, model);
+            const double tw = fm.horizontalAdvance(display);
+            const double cellL = xs[c] + pad, cellR = xs[c + 1] - pad;
+            double x0;
+            if (hA == 0)      x0 = cellL;                                  // 左对齐
+            else if (hA == 1) x0 = (cellL + cellR - tw) / 2.0;             // 居中（明细表惯例）
+            else              x0 = std::max(cellL, cellR - tw);            // 右对齐
+            const double yc = (r + 0.5) * rh;                              // 行中心（局部 y 向下）
+            p->drawText(QRectF(x0, yc - hh / 2, tw, hh),
+                        Qt::AlignLeft | Qt::AlignVCenter, display);
+        }
+    }
     p->restore();
 }
 
@@ -919,18 +1080,13 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     // 创建 E/T/M/C/X 五个「捕捉切换」快捷键（默认禁用，仅绘制命令期间启用）。
     // 采用正规 QShortcut 重映射，而非事件过滤器拦截：进入绘制命令时临时禁用与之冲突的
     // 全局快捷键（如 C=圆），从根本上消除「按 C 被误判为切圆命令」的冲突（要求 4）。
-    static const struct { int key; QString name; bool snap::SnapConfig::* field; } defs[5] = {
-        { Qt::Key_E, QStringLiteral("端点(E)"), &snap::SnapConfig::endpoint },
-        { Qt::Key_T, QStringLiteral("切线(T)"), &snap::SnapConfig::tangent },
-        { Qt::Key_M, QStringLiteral("中点(M)"), &snap::SnapConfig::midpoint },
-        { Qt::Key_C, QStringLiteral("圆心(C)"), &snap::SnapConfig::center },
-        { Qt::Key_X, QStringLiteral("交点(X)"), &snap::SnapConfig::intersection },
-    };
-    for (const auto& d : defs) {
+    // 切换键表直接复用 snap::snapFieldDefs()（与 Shift+右键覆盖菜单、捕捉设置面板同一数据源），
+    // 避免三处各自硬编码导致漂移。
+    for (const auto& d : snap::snapFieldDefs()) {
         QShortcut* sc = new QShortcut(QKeySequence(d.key), this);
         sc->setContext(Qt::ApplicationShortcut);   // 应用级：无论焦点在何处都生效
         sc->setEnabled(false);                     // 默认禁用，进入绘制命令才启用
-        connect(sc, &QShortcut::activated, this, [this, d]() { toggleSnap(d.field, d.name); });
+        connect(sc, &QShortcut::activated, this, [this, d]() { toggleSnap(d.field, d.label); });
         snapShortcuts_.append(sc);
     }
 
@@ -1170,7 +1326,15 @@ Vec3 GraphicsView::snapWorld(const Vec3& w) {
     const Vec3* other = nullptr;
     Vec3 otherBuf;
     if (!pendingPts_.empty()) { otherBuf = pendingPts_.back(); other = &otherBuf; }
-    snapNow_ = snap::snap(model_->elements(), w, other, worldTol(), snapCfg_);
+    // 两点间中点：以最近放置的两个点作为参考点 a、b
+    const Vec3* refA = nullptr, * refB = nullptr;
+    Vec3 refABuf, refBBuf;
+    if (snapCfg_.midBetween && pendingPts_.size() >= 2) {
+        refABuf = pendingPts_[pendingPts_.size() - 2];
+        refBBuf = pendingPts_.back();
+        refA = &refABuf; refB = &refBBuf;
+    }
+    snapNow_ = snap::snap(model_->elements(), w, other, worldTol(), snapCfg_, refA, refB);
     return snapNow_.snapped ? snapNow_.point : w;
 }
 
@@ -1228,17 +1392,24 @@ void GraphicsView::onActiveToolChanged() {
         // 进入绘制命令：①保存并临时禁用冲突的全局快捷键 ②启用本组切换键（要求 1、2）
         saveConflictingShortcuts();
         enableSnapShortcuts(true);
-        snapCfgBackup_ = snapCfg_;        // 备份进入前的捕捉设置
-        snapCfg_ = snapDefaultFor(t);     // 载入该命令默认开关
+        // 活动捕捉配置以「全局持久配置」为基线（用户面板设定优先），而非命令内置默认；
+        // 这样捕捉行为可由用户按场景精细控制。snapCfgBackup_ 记录该基线，退出/清除覆盖后恢复至此。
+        const snap::SnapConfig base = model_->snapConfig();
+        snapCfgBackup_ = base;
+        snapCfg_ = base;
+        snapOverrideActive_ = false;
     } else if (newDraw && prevDraw) {
-        // 绘制命令之间互切：保持重映射状态，仅按新命令重置捕捉开关
-        snapCfgBackup_ = snapCfg_;
-        snapCfg_ = snapDefaultFor(t);
+        // 绘制命令之间互切：保持重映射状态，仅按全局配置重置捕捉开关
+        const snap::SnapConfig base = model_->snapConfig();
+        snapCfgBackup_ = base;
+        snapCfg_ = base;
+        snapOverrideActive_ = false;
     } else if (!newDraw && prevDraw) {
         // 退出绘制命令：禁用本组切换键并还原全局快捷键（要求 3）
         enableSnapShortcuts(false);
         restoreConflictingShortcuts();
-        snapCfg_ = snapCfgBackup_;
+        snapCfg_ = model_->snapConfig();   // 回到全局持久配置
+        snapOverrideActive_ = false;
     }
     drawToolActive_ = newDraw;
     resetPending();                       // 保持原 activeToolChanged 的复位行为
@@ -1249,7 +1420,14 @@ void GraphicsView::refreshSnapAtCursor() {
     const Vec3* other = nullptr;
     Vec3 buf;
     if (!pendingPts_.empty()) { buf = pendingPts_.back(); other = &buf; }
-    snapNow_ = snap::snap(model_->elements(), lastMouseWorld_, other, worldTol(), snapCfg_);
+    const Vec3* refA = nullptr, * refB = nullptr;
+    Vec3 refABuf, refBBuf;
+    if (snapCfg_.midBetween && pendingPts_.size() >= 2) {
+        refABuf = pendingPts_[pendingPts_.size() - 2];
+        refBBuf = pendingPts_.back();
+        refA = &refABuf; refB = &refBBuf;
+    }
+    snapNow_ = snap::snap(model_->elements(), lastMouseWorld_, other, worldTol(), snapCfg_, refA, refB);
     if (!pendingPts_.empty())
         updatePreview(snapNow_.snapped ? snapNow_.point : lastMouseWorld_);
     viewport()->update();
@@ -1262,6 +1440,41 @@ void GraphicsView::toggleSnap(bool snap::SnapConfig::* field, const QString& nam
     refreshSnapAtCursor();
 }
 
+// 临时捕捉覆盖（Shift+右键）：仅本次放置一个点采用指定的单一捕捉类型，
+// 记录覆盖前的活动配置（snapRestore_），放置后由 clearSnapOverride 恢复，做到「操作结束自动还原」。
+void GraphicsView::applySnapOverride(bool snap::SnapConfig::* field, const QString& name) {
+    if (!drawToolActive_) return;
+    snapRestore_ = snapCfg_;          // 记住覆盖前的活动配置，作为恢复目标（"原有配置"）
+    snap::SnapConfig c;               // 全关
+    c.*field = true;                  // 仅该类型生效
+    snapCfg_ = c;
+    snapOverrideActive_ = true;
+    model_->log(QStringLiteral("临时捕捉覆盖：仅 %1（Shift+右键），放置一点后自动恢复").arg(name));
+    refreshSnapAtCursor();
+}
+
+void GraphicsView::clearSnapOverride() {
+    if (!snapOverrideActive_) return;
+    snapCfg_ = snapRestore_;          // 恢复覆盖前的活动配置
+    snapOverrideActive_ = false;
+    model_->log(QStringLiteral("已清除临时捕捉覆盖，恢复原有捕捉配置"));
+    refreshSnapAtCursor();
+}
+
+// 弹出「临时捕捉覆盖」菜单：列出全部捕捉类型，选中即 applySnapOverride（单次有效）。
+void GraphicsView::showSnapOverrideMenu(const QPoint& globalPos) {
+    QMenu menu(this);
+    menu.setTitle(QStringLiteral("临时捕捉覆盖（仅本次生效）"));
+    for (const auto& d : snap::snapFieldDefs()) {
+        QAction* a = menu.addAction(d.label);
+        connect(a, &QAction::triggered, this, [this, d]() { applySnapOverride(d.field, d.label); });
+    }
+    menu.addSeparator();
+    QAction* off = menu.addAction(QStringLiteral("清除覆盖（恢复原有配置）"));
+    connect(off, &QAction::triggered, this, [this]() { clearSnapOverride(); });
+    menu.exec(globalPos);
+}
+
 // 统一启用/禁用本组 E/T/M/C/X 切换快捷键。
 void GraphicsView::enableSnapShortcuts(bool on) {
     for (QShortcut* sc : snapShortcuts_) sc->setEnabled(on);
@@ -1271,7 +1484,11 @@ void GraphicsView::enableSnapShortcuts(bool on) {
 // 凡主键为 E/T/M/C/X（无修饰键）者，记录其原始映射后临时清空，避免与切换键冲突（要求 4）。
 void GraphicsView::saveConflictingShortcuts() {
     savedShortcuts_.clear();
-    const QList<Qt::Key> keys = { Qt::Key_E, Qt::Key_T, Qt::Key_M, Qt::Key_C, Qt::Key_X };
+    const QList<Qt::Key> keys = {
+        Qt::Key_E, Qt::Key_T, Qt::Key_M, Qt::Key_C, Qt::Key_X,   // 原有 5 种
+        Qt::Key_Q, Qt::Key_P, Qt::Key_I, Qt::Key_N, Qt::Key_A,   // 新增：象限/垂足/插入/节点/最近
+        Qt::Key_O, Qt::Key_L, Qt::Key_W, Qt::Key_B              // 新增：外观/平行/延伸/两点中点
+    };
     for (QWidget* w : qApp->topLevelWidgets()) {
         for (QAction* a : w->findChildren<QAction*>()) {
             const QKeySequence s = a->shortcut();
@@ -1370,20 +1587,58 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         const double cx = snapNow_.point.x, cy = snapNow_.point.y;
         QColor col;
         switch (snapNow_.type) {
-            case snap::SnapType::Center:       col = QColor(200, 60, 200); break;
-            case snap::SnapType::Intersection: col = QColor(40, 170, 70);  break;
-            case snap::SnapType::Tangent:      col = QColor(240, 150, 30); break;
-            default:                           col = QColor(60, 130, 240); break;  // Endpoint
+            case snap::SnapType::Center:        col = QColor(200, 60, 200); break;
+            case snap::SnapType::Intersection:  col = QColor(40, 170, 70);  break;
+            case snap::SnapType::Tangent:       col = QColor(240, 150, 30); break;
+            case snap::SnapType::Quadrant:      col = QColor(240, 90, 160); break;
+            case snap::SnapType::Perpendicular: col = QColor(0, 160, 200);  break;
+            case snap::SnapType::Insertion:     col = QColor(180, 120, 0);   break;
+            case snap::SnapType::Node:          col = QColor(120, 0, 200);  break;
+            case snap::SnapType::Nearest:       col = QColor(150, 150, 150);break;
+            case snap::SnapType::Apparent:      col = QColor(120, 200, 0);   break;
+            case snap::SnapType::Parallel:      col = QColor(0, 120, 180);  break;
+            case snap::SnapType::Extension:     col = QColor(180, 90, 0);    break;
+            case snap::SnapType::Midpoint:      col = QColor(80, 120, 220);  break;
+            case snap::SnapType::MidBetween:    col = QColor(120, 60, 160);  break;
+            default:                            col = QColor(60, 130, 240); break;  // Endpoint
         }
         QPen sp(col); sp.setWidthF(1.4 / zoom_); sp.setCosmetic(true);
         p->setPen(sp);
-        if (snapNow_.type == snap::SnapType::Intersection) {
-            p->drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s));
-            p->drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s));
-        } else if (snapNow_.type == snap::SnapType::Tangent) {
-            p->drawEllipse(QPointF(cx, cy), s, s);
-        } else {
-            p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));          // 端点/圆心：方框
+        switch (snapNow_.type) {
+            case snap::SnapType::Intersection:
+                p->drawLine(QPointF(cx - s, cy - s), QPointF(cx + s, cy + s));
+                p->drawLine(QPointF(cx - s, cy + s), QPointF(cx + s, cy - s));
+                break;
+            case snap::SnapType::Tangent:
+                p->drawEllipse(QPointF(cx, cy), s, s);
+                break;
+            case snap::SnapType::Node: {
+                p->setBrush(col); p->setPen(Qt::NoPen);
+                p->drawEllipse(QPointF(cx, cy), s * 0.6, s * 0.6);
+                p->setPen(sp); p->setBrush(Qt::NoBrush);
+                break;
+            }
+            case snap::SnapType::Quadrant: {
+                QPolygonF dia; dia << QPointF(cx, cy - s) << QPointF(cx + s, cy)
+                                   << QPointF(cx, cy + s) << QPointF(cx - s, cy);
+                p->drawPolygon(dia);
+                break;
+            }
+            case snap::SnapType::Parallel: {
+                // 沿 dir 画一条短指示线，直观表达被吸附的平行方位（dir 为世界坐标系单位向量）
+                const Vec3 d = snapNow_.dir;
+                const double L = 3.0 * s;
+                p->drawLine(QPointF(cx, cy), QPointF(cx + d.x * L, cy - d.y * L));
+                p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));
+                break;
+            }
+            case snap::SnapType::MidBetween:
+                p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));
+                p->drawPoint(QPointF(cx, cy));
+                break;
+            default:
+                p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));   // Endpoint/Center/...：方框
+                break;
         }
         p->restore();
     }
@@ -1407,6 +1662,10 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                                 .arg(mk(snapCfg_.midpoint))
                                 .arg(mk(snapCfg_.center))
                                 .arg(mk(snapCfg_.intersection)));
+        p->drawText(10, 54, QString("捕捉开关② [Q]象限%1 [P]垂足%2 [I]插入%3 [N]节点%4 [A]最近%5 [O]外观%6 [L]平行%7 [W]延伸%8 [B]两点中点%9")
+                                .arg(mk(snapCfg_.quadrant)).arg(mk(snapCfg_.perpendicular)).arg(mk(snapCfg_.insertion))
+                                .arg(mk(snapCfg_.node)).arg(mk(snapCfg_.nearest)).arg(mk(snapCfg_.apparent))
+                                .arg(mk(snapCfg_.parallel)).arg(mk(snapCfg_.extension)).arg(mk(snapCfg_.midBetween)));
     }
 
     // ---- 当前活动图层（醒目显示）：右上角彩色徽标，实时跟随切换 ----
@@ -2395,7 +2654,11 @@ void GraphicsView::handlePress(const Vec3& w, QMouseEvent* e) {
 
     // Strategy Pattern：左键按下事件由活动工具的 onPress() 方法处理，
     // 取代原先 80 行的 if-else 分派链
+    const size_t snapN0 = pendingPts_.size();
     toolMgr_->dispatchPress(w, e);
+    // 临时捕捉覆盖「单次有效」：若本次点击放置了新点，则立即清除覆盖并恢复原配置。
+    if (snapOverrideActive_ && pendingPts_.size() > snapN0)
+        clearSnapOverride();
 }
 
 void GraphicsView::handleRightButton() {
@@ -2430,6 +2693,7 @@ void GraphicsView::handleRightButton() {
     if (drawing_ || !pendingPts_.empty() || !pickedIds_.empty() || !trimBounds_.empty()) {
         const QString t = model_->activeTool();
         const bool chain = (t == "line" && chainHinted_);
+        clearSnapOverride();          // 结束绘制手势同样终止临时覆盖
         resetPending();
         model_->log(chain ? QStringLiteral("已结束连续直线绘制")
                           : QStringLiteral("已结束当前绘制"));
@@ -3240,6 +3504,13 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
             e->accept();
             return;
         }
+        // Shift+右键：弹出「临时捕捉覆盖」菜单（仅绘制命令期间有意义），选中的类型仅对下一次
+        // 放置的点生效，放置后立即恢复原有配置；不触发平移、不结束命令。
+        if ((e->modifiers() & Qt::ShiftModifier) && drawToolActive_) {
+            showSnapOverrideMenu(mapToGlobal(e->position().toPoint()));
+            e->accept();
+            return;
+        }
         // 右键按下：先进入平移预备态，移动则平移视图，未移动（单击）则保留原「结束/取消」语义
         panning_ = true;
         panRight_ = true;
@@ -3489,6 +3760,19 @@ void GraphicsView::mouseDoubleClickEvent(QMouseEvent* e) {
         finalizePoly(t == "spline");
         e->accept();
         return;
+    }
+    // 双击文字图元（Text/MText）→ 打开多行文字编辑框；双击表格（Table）→ 打开表格编辑器
+    if (e->button() == Qt::LeftButton) {
+        const int id = hitTest(e->position().toPoint());
+        if (id >= 0) {
+            const Element* el = model_->element(id);
+            if (el && (el->type == ElementType::Text || el->type == ElementType::MText ||
+                       el->type == ElementType::Table)) {
+                emit editTextRequested(id);
+                e->accept();
+                return;
+            }
+        }
     }
     QGraphicsView::mouseDoubleClickEvent(e);
 }

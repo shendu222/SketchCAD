@@ -72,6 +72,7 @@ private:
     void   paintOne(QPainter* p, const Element& e) const;
     void   paintDimension(QPainter* p, const Element& e) const;  // GB/T 4458.4-2003
     void   paintText(QPainter* p, const Element& e) const;       // 文本图元（标题栏栏目等）
+    void   paintTable(QPainter* p, const Element& e) const;      // 表格图元（明细表：网格线 + 单元格文字）
     void   paintHatch(QPainter* p, const Element& e) const;      // 剖面区域（GB/T 4457.5-2013）
     void   paintBoundary(QPainter* p, const Element& e) const;   // 交互式自定义边界（虚线轮廓）
     // 块引用：把引用按块表展开为世界坐标子图元（无模型/未定义块 → 空）
@@ -133,6 +134,7 @@ signals:
     void regionHoverMoved(double x, double y);      // 点选模式：光标移动（实时预览识别结果）
     void regionPickCancelled();                     // 点选模式被 Esc / 右键取消
     void regionPickParamsRequested();               // 点选模式按 Enter：请求打开参数对话框
+    void editTextRequested(int id);                 // 双击文字图元：请求打开多行文字编辑框
 public slots:
     void onModelChanged();
     void onSelectionChanged(int id);
@@ -220,7 +222,9 @@ private:
     // ---- 直线绘制智能捕捉 ----
     snap::SnapResult snapNow_;       // 当前光标处命中的捕捉点（用于预览标记与拾取替换）
     snap::SnapConfig snapCfg_;       // 当前绘制命令生效的捕捉开关（按 E/T/M/C 切换）
-    snap::SnapConfig snapCfgBackup_; // 进入绘制命令前的快照，退出时自动恢复
+    snap::SnapConfig snapCfgBackup_; // 进入绘制命令前的全局基线快照，退出/清除覆盖后恢复至此
+    bool snapOverrideActive_ = false;// 是否已激活「临时捕捉覆盖」（Shift+右键）
+    snap::SnapConfig snapRestore_;   // 覆盖前的活动配置，清除覆盖时回退至此（"恢复原有配置"）
     bool drawToolActive_ = false;    // 当前是否处于「绘制类命令」（E/T/M/C 切换仅此状态下生效）
     bool keyboardInputActive_ = false; // 命令行键盘输入坐标时为 true，使 snapWorld 跳过捕捉
     Vec3 lastMouseWorld_;            // 最近一次鼠标世界坐标，供快捷键切换后即时刷新标记
@@ -232,6 +236,10 @@ private:
     void refreshSnapAtCursor();           // 切换后按当前光标重算捕捉标记并刷新预览
     void logSnapToggle(const QString& name, bool on);  // 记录捕捉开关切换日志
     void toggleSnap(bool snap::SnapConfig::* field, const QString& name);          // 取反某个捕捉开关
+    // ---- 临时捕捉覆盖（Shift+右键菜单，单次有效）----
+    void applySnapOverride(bool snap::SnapConfig::* field, const QString& name);    // 临时仅启用某一捕捉类型
+    void clearSnapOverride();             // 清除覆盖，恢复覆盖前的活动配置
+    void showSnapOverrideMenu(const QPoint& globalPos);  // 弹出覆盖类型选择菜单
     void enableSnapShortcuts(bool on);    // 统一启用/禁用本组 E/T/M/C/X 切换键
     void saveConflictingShortcuts();      // 进入绘制命令：快照并临时禁用冲突的全局快捷键（要求 1）
     void restoreConflictingShortcuts();   // 退出绘制命令：还原被临时禁用的全局快捷键（要求 3）

@@ -46,6 +46,7 @@ set(CORE_SOURCES
     src/core/ToolRegistry.cpp
     src/core/sheet_frame.cpp
     src/core/Modify.cpp
+    src/core/Cleanup.cpp
     src/core/AircraftViews.cpp
     src/core/FlangeViews.cpp
     src/core/BearingViews.cpp
@@ -59,6 +60,9 @@ set(CORE_SOURCES
     src/core/CadFormats.cpp
     src/core/PlotStyle.cpp
     src/core/Layout.cpp
+    src/core/TextStyle.cpp
+    src/core/QSelect.cpp
+    src/core/Units.cpp
 )
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
@@ -71,6 +75,8 @@ set(UI_SOURCES
     src/ui/tools/PolylineTool.cpp
     src/ui/tools/BoundaryTool.cpp
     src/ui/tools/PolylineEditTool.cpp
+    src/ui/tools/MTextTool.cpp
+    src/ui/tools/TableTool.cpp
     src/ui/RulerWidget.cpp
     src/ui/BomTree.cpp
     src/ui/ElementPanel.cpp
@@ -93,7 +99,16 @@ set(UI_SOURCES
     src/ui/BlockDialogs.cpp
     src/ui/SectionDialog.cpp
     src/ui/RegionManagerDialog.cpp
+    src/ui/CleanupDialog.cpp
     src/ui/InquiryDialog.cpp
+    src/ui/MTextDialog.cpp
+    src/ui/StyleManagerDialog.cpp
+    src/ui/TableDialog.cpp
+    src/ui/GroupManagerDialog.cpp
+    src/ui/QSelectDialog.cpp
+    src/ui/FilterDialog.cpp
+    src/ui/UnitsLimitsDialog.cpp
+    src/ui/SnapSettingsDialog.cpp
     src/ui/PlotRenderer.cpp
     src/ui/PrintEngine.cpp
     src/ui/PrintSettingsDialog.cpp

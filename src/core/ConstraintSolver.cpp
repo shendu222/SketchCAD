@@ -1,5 +1,6 @@
 #include "ConstraintSolver.h"
 #include "Geometry.h"
+#include "Snap.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -110,6 +111,89 @@ ConstraintSolver::solveAfterChange(const std::vector<Element>& beforeElems,
 
     // 修改后恢复约束
     return restoreConstraints(afterElems, constraints, changedId, tol);
+}
+
+// ---------------------------------------------------------------------------
+// 几何关系的「自动计算 + 生成」
+// ---------------------------------------------------------------------------
+namespace {
+// 构造一条 Line 图元（ctype/ref 由调用方填）
+Element makeGenLine(const Vec3& a, const Vec3& b, ConstraintType ct, int refA, int refB) {
+    Element e;
+    e.type = ElementType::Line;
+    e.pts = {a, b};
+    e.name = QStringLiteral("约束生成");
+    e.ctype = ct;
+    e.refA = refA;
+    e.refB = refB;
+    return e;
+}
+// 圆/弧的圆心与半径（非圆类返回 false）
+bool circleLike(const Element& e, Vec3& c, double& r) {
+    if (e.type != ElementType::Circle && e.type != ElementType::Arc) return false;
+    if (e.pts.empty()) return false;
+    c = e.pts[0]; r = e.radius; return true;
+}
+} // namespace
+
+Element ConstraintSolver::drawPerpendicularTo(const Element& refLine, const Vec3& P) {
+    // 参照方向：直线/线段取 (pts[1]-pts[0])；其余类型退化取 X 轴
+    Vec3 dir;
+    if (refLine.pts.size() >= 2) dir = (refLine.pts[1] - refLine.pts[0]).normalized();
+    else dir = Vec3(1, 0, 0);
+    // 垂线方向 = 参照方向逆时针转 90°
+    const Vec3 perp = dir.perp().normalized();
+    const Vec3 a = P - perp * 1.0;   // 以 P 为中点的单位长垂线（长度后续可由用户拉伸）
+    const Vec3 b = P + perp * 1.0;
+    return makeGenLine(a, b, ConstraintType::Perpendicular, refLine.id, -1);
+}
+
+int ConstraintSolver::commonTangents(const Element& cA, const Element& cB, std::vector<Element>& out) {
+    out.clear();
+    Vec3 ca, cb; double ra, rb;
+    if (!circleLike(cA, ca, ra) || !circleLike(cB, cb, rb)) return 0;
+    const Vec3 d = cb - ca;
+    const double D = d.len2D();
+    if (D < 1e-9) return 0;                       // 同心：无公切线
+    const double base = std::atan2(d.y, d.x);     // 中心连线角（弧度）
+
+    // 外切线：两切点半径同向（角为 base ± alpha，cos alpha = (ra - rb)/D）
+    if (D > std::fabs(ra - rb) + 1e-9) {
+        const double alpha = std::acos(std::min(1.0, std::max(-1.0, (ra - rb) / D)));
+        for (double s : {+1.0, -1.0}) {
+            const double ang = base + s * alpha;
+            const Vec3 tA = ca + Vec3(ra * std::cos(ang), ra * std::sin(ang), 0);
+            const Vec3 tB = cb + Vec3(rb * std::cos(ang), rb * std::sin(ang), 0);
+            out.push_back(makeGenLine(tA, tB, ConstraintType::Tangent, cA.id, cB.id));
+        }
+    }
+    // 内切线：两切点半径反向（角相差 180°，cos alpha = (ra + rb)/D）
+    if (D > ra + rb + 1e-9) {
+        const double alpha = std::acos(std::min(1.0, std::max(-1.0, (ra + rb) / D)));
+        for (double s : {+1.0, -1.0}) {
+            const double angA = base + s * alpha;
+            const double angB = angA + 3.141592653589793;       // 内切线在 B 侧取反向点（交叉）
+            const Vec3 tA = ca + Vec3(ra * std::cos(angA), ra * std::sin(angA), 0);
+            const Vec3 tB = cb + Vec3(rb * std::cos(angB), rb * std::sin(angB), 0);
+            out.push_back(makeGenLine(tA, tB, ConstraintType::Tangent, cA.id, cB.id));
+        }
+    }
+    return (int)out.size();
+}
+
+Element ConstraintSolver::quadrantConnector(const Element& target, const Vec3& from) {
+    Vec3 c; double r;
+    if (!circleLike(target, c, r)) {
+        // 非圆类：直接连到其首个锚点
+        const Vec3 p = target.pts.empty() ? from : target.pts[0];
+        return makeGenLine(from, p, ConstraintType::Coincident, target.id, -1);
+    }
+    // 取离 from 最近的象限点
+    const auto qs = snap::quadrantPoints(c, r, 0, 0, false);
+    Vec3 best = qs.empty() ? c : qs.front();
+    double bd = best.distTo(from);
+    for (const auto& q : qs) { const double d = q.distTo(from); if (d < bd) { bd = d; best = q; } }
+    return makeGenLine(from, best, ConstraintType::Coincident, target.id, -1);
 }
 
 } // namespace SketchCAD
