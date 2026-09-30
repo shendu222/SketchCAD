@@ -116,6 +116,11 @@ QJsonObject elementToJson(const Element& e) {
     o["splineSubType"] = e.splineSubType;   // 样条子类型（0=Catmull-Rom, 1=抛物线, 2=双曲线）
     o["text"] = e.text; o["refA"] = e.refA; o["refB"] = e.refB;
     o["standard"] = (int)e.standard; o["tolUpper"] = e.tolUpper; o["tolLower"] = e.tolLower; o["fitCode"] = e.fitCode;
+    // ---- 尺寸驱动 / 参数化建模字段（Request M 新增；旧存档无键 → 读端回落默认，无副作用）----
+    o["dimValue"]  = e.dimValue;
+    o["dimDriven"] = e.dimDriven;
+    o["dimParam"]  = e.dimParam;
+    o["dimLinked"] = e.dimLinked;
     if (!e.groupName.isEmpty()) o["groupName"] = e.groupName;   // 编组归属（空串不写盘，旧档缺键回落未编组）
     QJsonArray pts;
     for (const auto& p : e.pts) pts.append(QJsonArray{p.x, p.y, p.z});
@@ -207,6 +212,11 @@ Element elementFromJson(const QJsonObject& o) {
     e.tolUpper = o["tolUpper"].toDouble();
     e.tolLower = o["tolLower"].toDouble();
     e.fitCode  = o["fitCode"].toString();
+    // ---- 尺寸驱动 / 参数化建模字段（Request M 新增；旧存档缺键 → 回落默认，向后兼容）----
+    e.dimValue  = o.contains("dimValue")  ? o["dimValue"].toDouble(0.0)  : 0.0;
+    e.dimDriven = o.contains("dimDriven") ? o["dimDriven"].toBool(false)  : false;
+    e.dimParam  = o.contains("dimParam")  ? o["dimParam"].toString()     : QString();
+    e.dimLinked = o.contains("dimLinked") ? o["dimLinked"].toBool(false) : false;
     e.groupName = o.contains("groupName") ? o["groupName"].toString() : QString();
     for (const auto& v : o["pts"].toArray()) {
         QJsonArray a = v.toArray();

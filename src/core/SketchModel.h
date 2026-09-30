@@ -15,6 +15,7 @@
 #include "QSelect.h"
 #include "Units.h"
 #include "Snap.h"
+#include "ConstraintSolver.h"   // 显式几何约束表（ConstraintRecord）
 
 namespace SketchCAD {
 
@@ -274,6 +275,33 @@ public:
     const snap::SnapConfig& snapConfig() const { return snapConfig_; }
     void setSnapConfig(const snap::SnapConfig& c);     // 与现值相同则不发信号
 
+    // ---- 追踪全局配置（极轴/对象追踪，随图存档顶层 JSON "trackConfig"，不入撤销栈）----
+    const snap::TrackConfig& trackConfig() const { return trackConfig_; }
+    void setTrackConfig(const snap::TrackConfig& c);   // 与现值相同则不发信号
+    // ---- 临时追踪点（TK，瞬态，不随图存档）----
+    const std::vector<Vec3>& trackPoints() const { return trackPoints_; }
+    void addTrackPoint(const Vec3& p);                 // 放置一个临时追踪点
+    void clearTrackPoints();                           // 清空全部临时追踪点
+
+    // ---- 显式几何约束表 ----
+    const std::vector<ConstraintRecord>& constraints() const { return constraints_; }
+    void addConstraintRecord(const ConstraintRecord& r);  // 追加并发信号
+    void removeConstraint(int index);                     // 按下标删除（删除后 emit constraintsChanged）
+    void clearConstraints();                           // 清空全部显式约束
+    void setConstraints(const std::vector<ConstraintRecord>& v);  // 整体替换（读档用）
+    QJsonArray  constraintsToJson() const;             // 随图存档
+    void setConstraintsFromJson(const QJsonArray& a);  // 读档（旧文件无此键 → 空表）
+
+    // ---- 参数表（尺寸驱动 / 参数化建模，Request M 新增）----
+    // 命名设计变量（如 "L"=120, "ANG"=30）。与约束/标注的关联经
+    // ConstraintSolver::linkDimension / driveParameter 建立。setParam 触发 paramsChanged。
+    const std::map<QString,double>& params() const { return params_; }
+    bool   hasParam(const QString& name) const;
+    double param(const QString& name) const;             // 不存在返回 0.0
+    void   setParam(const QString& name, double val);    // 改值并压一次撤销快照
+    QJsonObject paramsToJson() const;                   // 随图存档顶层 JSON "params"
+    void   setParamsFromJson(const QJsonObject& o);      // 读档（旧文件无此键 → 空表）
+
     // ---- 外部参照（Xref）管理 ----
     // 附加：读入外部图形文件，登记为一条 Xref 块记录，并在 insertPt 放置一个参照实例。
     //   pathType 决定 xrefPath 的**存盘形态**（完整路径 / 相对宿主图目录 / 仅文件名），
@@ -318,6 +346,17 @@ public:
     bool showGrid() const { return showGrid_; }
     void setViewScale(double s);
     double viewScale() const { return viewScale_; }
+
+    // ---- 输入约束：正交（ORTHO）+ 栅格吸附（SNAP）----
+    // 单一状态源：快捷键 F8/F9、状态栏按钮、命令 ortho/snap 三条入口**都**经由这里的
+    // setOrthoMode / setGridSnap 写入，任何一处改动都会发信号广播给其余入口，
+    // 从根上消除「多处各存一份状态导致不一致」的问题。二者均不入撤销栈（属交互模式，非图数据）。
+    bool orthoMode() const { return orthoMode_; }
+    void setOrthoMode(bool on);                 // 幂等；变化发 orthoModeChanged()
+    bool gridSnap() const { return gridSnap_; }
+    void setGridSnap(bool on);                  // 幂等；变化发 gridSnapChanged()
+    double gridSnapStep() const { return gridSnapStep_; }
+    void setGridSnapStep(double mm);            // 吸附步长（mm，>0）；变化发 gridSnapChanged()
 
     // ---- 绘图比例（GB/T 14690 技术制图 比例）----
     // 默认 1:1。修改比例会把已有图元（不含图框/标题栏）按内容包围盒中心等比缩放，
@@ -413,6 +452,8 @@ signals:
     void viewChanged();
     void planeChanged(Plane p);
     void gridToggled(bool show);
+    void orthoModeChanged(bool on);             // 正交模式变化（状态栏/快捷键/命令三入口同步）
+    void gridSnapChanged();                     // 栅格吸附开关或步长变化
     void cursorMoved(double x, double y, double z);
     void defaultStyleChanged(const QColor& color, double width);
     void defaultLineStyleChanged(int style);
@@ -428,9 +469,13 @@ signals:
     void unitsChanged();                     // 单位设置变化（状态栏/参数输入条实时跟随）
     void limitsChanged();                    // 图纸界限变化
     void snapConfigChanged();                // 捕捉全局配置变化（设置面板/菜单改动后即时生效）
+    void trackConfigChanged();               // 追踪全局配置变化（设置面板/菜单改动后即时生效）
+    void trackPointsChanged();               // 临时追踪点集合变化（TK 放置/清空）
+    void constraintsChanged();               // 显式几何约束表变化（添加/求解/清空）
+    void paramsChanged();                    // 参数表变化（添加/修改/删除设计变量）
 
 private:
-    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; };
+    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; std::map<QString,double> params; };
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
@@ -438,6 +483,10 @@ private:
     QString activeTool_ = "select";
     Plane plane_ = Plane::XY;
     bool showGrid_ = true;
+    // ---- 输入约束状态（单一状态源）----
+    bool   orthoMode_    = false;   // 正交：方向锁定到水平/垂直
+    bool   gridSnap_     = false;   // 栅格吸附：坐标量化到步长整数倍
+    double gridSnapStep_ = 1.0;     // 栅格吸附步长（mm）
     double viewScale_ = 4.0;   // 初始 1mm = 4px
     QColor defaultColor_ = QColor(26, 29, 40);
     double defaultWidth_ = 1.0;
@@ -456,6 +505,14 @@ private:
     UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
     LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
     snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档，不入撤销栈）
+    snap::TrackConfig trackConfig_;       // 追踪全局配置（随图存档，不入撤销栈）
+    std::vector<Vec3> trackPoints_;       // 临时追踪点（TK，瞬态，不随图存档）
+
+    // ---- 显式几何约束表 ----
+    // 与「自动检测的隐式约束」互补：这里存用户显式声明的约束（重合/平行/…/尺寸），
+    // 由 ConstraintSolver::solveAll 求解、detectConflicts 查冲突。随图存档顶层 JSON "constraints"。
+    std::vector<ConstraintRecord> constraints_;
+    std::map<QString,double> params_;   // 命名设计变量表（参数化建模，Request M 新增）
     Element clipboard_;
     bool hasClip_ = false;
     std::vector<Memento> undoStack_, redoStack_;

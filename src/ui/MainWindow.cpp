@@ -54,6 +54,7 @@
 #include <QMenu>
 #include <QToolBar>
 #include <QToolButton>
+#include <QShortcut>     // 正交 F8 / 栅格吸附 F9 的全局快捷键
 #include <QComboBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -150,6 +151,43 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     statusBar_->setPlaneInfo(planeName(model_->plane()));
     statusBar_->setDrawScale(model_->scaleLabel());
     model_->log(QStringLiteral("航空CAD 草图模块已启动 (C++17 / Qt6)"));
+
+    // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「状态栏按钮」与「快捷键」----
+    // 单一状态源在 SketchModel：按钮点击、F8/F9 快捷键、命令行 ortho/snap 三者都只调
+    // setOrthoMode / setGridSnap；再由 orthoModeChanged / gridSnapChanged 回写按钮勾选态，
+    // 从机制上保证「三入口状态永远一致」，不存在各存一份导致的漂移。
+    {
+        auto makeToggle = [this](const QString& text, const QString& tip, const QKeySequence& key,
+                                 auto getter, auto setter, auto changedSignal) {
+            auto* btn = new QToolButton(statusBar_);
+            btn->setText(text);
+            btn->setCheckable(true);
+            btn->setToolTip(tip + QStringLiteral("（快捷键 %1）").arg(key.toString()));
+            btn->setChecked((model_->*getter)());
+            connect(btn, &QToolButton::toggled, this, [this, setter, text](bool on) {
+                (model_->*setter)(on);
+                model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
+            });
+            // 状态源 → 按钮（其它入口改动时按钮同步）
+            connect(model_, changedSignal, btn, [this, btn, getter]() { btn->setChecked((model_->*getter)()); });
+            // 全局快捷键（应用级，画布有焦点时同样生效）
+            auto* sc = new QShortcut(key, this);
+            sc->setContext(Qt::ApplicationShortcut);
+            connect(sc, &QShortcut::activated, this, [this, getter, setter, text]() {
+                const bool on = !(model_->*getter)();
+                (model_->*setter)(on);
+                model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
+            });
+            statusBar_->addWidget(btn);
+            return btn;
+        };
+        makeToggle(QStringLiteral("正交"), QStringLiteral("正交模式：把落点方向锁定到水平/垂直"),
+                   QKeySequence("F8"), &SketchModel::orthoMode, &SketchModel::setOrthoMode,
+                   &SketchModel::orthoModeChanged);
+        makeToggle(QStringLiteral("捕捉"), QStringLiteral("栅格吸附：把坐标量化到步长的整数倍"),
+                   QKeySequence("F9"), &SketchModel::gridSnap, &SketchModel::setGridSnap,
+                   &SketchModel::gridSnapChanged);
+    }
 
     // 默认窗口尺寸偏好 1366×720；先给一个合理的初始几何（落在屏幕可用区域内并居中），
     // 真正的"贴合屏幕"校正放到 showEvent 里在真实屏幕上下文中执行，避免被窗口管理器覆盖。
@@ -301,6 +339,40 @@ void MainWindow::buildMenu() {
     pr->addSeparator();
     mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); });
     bar->addMenu(pr);
+
+    // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
+    // 快速开关 + 追踪设置入口；勾选态与 trackConfigChanged 双向同步（命令行/面板改动即时反映）。
+    QMenu* k = new QMenu(QStringLiteral("追踪(&K)"), this);
+    QAction* aPolar = mk(k, QStringLiteral("极轴追踪 (POLAR)"), QKeySequence("F10"), [this] {
+            snap::TrackConfig c = model_->trackConfig();
+            c.polar = !c.polar;
+            model_->setTrackConfig(c);
+            model_->log(QStringLiteral("极轴追踪：%1").arg(c.polar ? QStringLiteral("开") : QStringLiteral("关")));
+        });
+    aPolar->setCheckable(true);
+    aPolar->setChecked(model_->trackConfig().polar);
+    QAction* aOtrack = mk(k, QStringLiteral("对象捕捉追踪 (OTRACK)"), QKeySequence("F11"), [this] {
+            snap::TrackConfig c = model_->trackConfig();
+            c.objectTrack = !c.objectTrack;
+            model_->setTrackConfig(c);
+            model_->log(QStringLiteral("对象捕捉追踪：%1").arg(c.objectTrack ? QStringLiteral("开") : QStringLiteral("关")));
+        });
+    aOtrack->setCheckable(true);
+    aOtrack->setChecked(model_->trackConfig().objectTrack);
+    k->addSeparator();
+    mk(k, QStringLiteral("清除临时追踪点"), QKeySequence(), [this] {
+            model_->clearTrackPoints();
+            model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
+        });
+    mk(k, QStringLiteral("追踪设置..."), QKeySequence(), [this] {
+            openSnapSettings();   // 追踪配置并入捕捉设置面板（同一数据源，随图存档）
+        });
+    // 勾选态随配置变化实时刷新（命令行 polar/otrack、设置面板改动后菜单即时同步）
+    connect(model_, &SketchModel::trackConfigChanged, this, [this, aPolar, aOtrack]() {
+            aPolar->setChecked(model_->trackConfig().polar);
+            aOtrack->setChecked(model_->trackConfig().objectTrack);
+        });
+    bar->addMenu(k);
 
     // 顶级菜单整合后，【修改】【选择】不再各占一个顶级入口，而是作为【编辑】的子菜单
     // （下方构建完成后用 e->addMenu(...) 挂进来）。显示顺序 = 添加顺序：
@@ -2400,25 +2472,32 @@ void MainWindow::buildDocks() {
     layerDock_->setObjectName("dockLayer");
     layerDock_->setWidget(layerPanel_);
 
+    // 约束栏面板（需求③④：展示选中图元的约束与状态；删除/定位约束）
+    constraintBar_ = new ConstraintBar(model_, this);
+    constraintDock_ = new QDockWidget(QStringLiteral("约束栏"), this);
+    constraintDock_->setObjectName("dockConstraint");
+    constraintDock_->setWidget(constraintBar_);
+
     // 左栏：上 BOM 树 / 中 图元面板 / 下 图层
     addDockWidget(Qt::LeftDockWidgetArea, bomDock_);
     splitDockWidget(bomDock_, elemDock_, Qt::Vertical);
     splitDockWidget(elemDock_, layerDock_, Qt::Vertical);
-    // 右栏：上 属性面板 / 下 执行信息
+    // 右栏：上 属性面板 / 中 约束栏 / 下 执行信息
     addDockWidget(Qt::RightDockWidgetArea, propDock_);
-    splitDockWidget(propDock_, logDock_, Qt::Vertical);
+    splitDockWidget(propDock_, constraintDock_, Qt::Vertical);
+    splitDockWidget(constraintDock_, logDock_, Qt::Vertical);
     // 底部：命令行
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
 
     // 初始分栏比例：左 240 / 右 300；左栏上下各分
     resizeDocks({bomDock_, propDock_}, {240, 300}, Qt::Horizontal);
     resizeDocks({bomDock_, elemDock_, layerDock_}, {300, 200, 160}, Qt::Vertical);
-    resizeDocks({propDock_, logDock_}, {380, 300}, Qt::Vertical);
+    resizeDocks({propDock_, constraintDock_, logDock_}, {320, 200, 280}, Qt::Vertical);
 }
 
 void MainWindow::connectSignals() {
@@ -2469,6 +2548,19 @@ void MainWindow::connectSignals() {
 
     // 双击文字图元 → 弹出多行文字编辑框（MTEXT/Text 通用）
     connect(view_, &GraphicsView::editTextRequested, this, &MainWindow::editElementText);
+
+    // ---- 约束可视化联动（需求②③④）----
+    // 约束表变化（添加/删除/修改）→ 刷新约束栏 + 重算过约束/冲突高亮与告警
+    connect(model_, &SketchModel::constraintsChanged, constraintBar_, &ConstraintBar::refresh);
+    connect(model_, &SketchModel::constraintsChanged, view_, &GraphicsView::refreshConstraintDiagnostics);
+    // 选中变化 / 几何变化 → 约束栏随之刷新（展示选中对象的约束、satisfied 状态）
+    connect(model_, &SketchModel::selectionChanged, constraintBar_, &ConstraintBar::refresh);
+    connect(model_, &SketchModel::modelChanged, constraintBar_, &ConstraintBar::refresh);
+    // 约束栏交互 → 视图定位 / 模型删除约束
+    connect(constraintBar_, &ConstraintBar::locateRequested, this,
+            [this](int id) { view_->zoomToElement(id); });
+    connect(constraintBar_, &ConstraintBar::deleteRequested, this,
+            [this](int idx) { model_->removeConstraint(idx); });
 
     // Ctrl+回车：把焦点交给命令行，便于纯键盘连续作业
     auto* focusCmd = new QAction(this);
@@ -2579,6 +2671,9 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     root["units"]  = model_->units().toJson();   // 单位口径随图存档（旧文件无此键 → 回落 mm/度/2 位）
     root["limits"] = model_->limits().toJson();  // 图纸界限随图存档（旧文件无此键 → 回落 A3/不检查）
     root["snapConfig"] = model_->snapConfig().toJson();  // 捕捉全局配置随图存档（旧文件无此键 → 回落默认）
+    root["trackConfig"] = model_->trackConfig().toJson(); // 追踪全局配置随图存档（旧文件无此键 → 回落默认）
+    root["constraints"] = model_->constraintsToJson();    // 显式几何约束随图存档（旧文件无此键 → 空表）
+    root["params"] = model_->paramsToJson();              // 命名设计变量表随图存档（旧文件无此键 → 空表，Request M 新增）
 
     // 导出用图元：DXF/DWG/STEP 都不认识 BlockRef，导出前把块引用展开为其真实子图元，
     // 保证"导出物即所见"（几何不丢；块引用实例的层级关系仅在本程序 JSON 中保留）。
@@ -2771,6 +2866,9 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     model_->setUnits(UnitsMeta::fromJson(root["units"].toObject()));
     model_->setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
     model_->setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));  // 捕捉配置（缺键回落默认）
+    model_->setTrackConfig(snap::TrackConfig::fromJson(root["trackConfig"].toObject())); // 追踪配置（缺键回落默认）
+    model_->setConstraintsFromJson(root["constraints"].toArray());  // 显式几何约束（缺键 → 空表）
+    model_->setParamsFromJson(root["params"].toObject());           // 命名设计变量表（缺键 → 空表，Request M 新增）
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));

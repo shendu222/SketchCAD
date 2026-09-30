@@ -109,6 +109,7 @@ set(UI_SOURCES
     src/ui/FilterDialog.cpp
     src/ui/UnitsLimitsDialog.cpp
     src/ui/SnapSettingsDialog.cpp
+    src/ui/ConstraintBar.cpp
     src/ui/PlotRenderer.cpp
     src/ui/PrintEngine.cpp
     src/ui/PrintSettingsDialog.cpp
@@ -125,3 +126,15 @@ add_executable(SketchCAD
 target_link_libraries(SketchCAD PRIVATE Qt6::Widgets Qt6::PrintSupport)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
+
+# ---- 无界面自测（约束求解 / 捕捉 单元测试）----
+# 复用 CORE_SOURCES，不链接 UI；覆盖 21 种约束每类 ≥1 用例 + 8 类捕捉命中 + 冲突检测。
+add_executable(SketchSelfTest
+    tests/SketchSelfTest.cpp
+    ${CORE_SOURCES}
+)
+target_link_libraries(SketchSelfTest PRIVATE Qt6::Widgets Qt6::PrintSupport)
+target_include_directories(SketchSelfTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
+target_compile_options(SketchSelfTest PRIVATE -Wall -Wextra)

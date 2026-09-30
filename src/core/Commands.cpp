@@ -1790,9 +1790,19 @@ bool DimSmartCommand::execute(const CommandContext& ctx) {
     return true;
 }
 
+// 约束命令：显式几何约束的添加 / 求解 / 列表 / 冲突检测 / 诊断 / 清空。
+//   constraint add <类型> <idA> <idB> [值|对称轴id]   添加（并立即求解一次）
+//   constraint solve                                   求解全部显式约束
+//   constraint list                                    列出全部约束及满足状态
+//   constraint check                                   冲突 / 过约束检测
+//   constraint diagnose                                逐实体自由度与欠/过约束诊断（只读）
+//   constraint clear                                   清空全部
+//   兼容旧用法：constraint <类型> <id1> [id2]（等价于 add）
+// 类型：coincident 重合 / parallel 平行 / perpendicular 垂直 / tangent 相切 /
+//       concentric 同心 / symmetric 对称 / dimensional 尺寸 / equal 相等 /
+//       horizontal 水平 / vertical 竖直 / fixed 固定
 bool ConstraintCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 2) { m->log("用法: constraint <type> <id1> [id2]", "warn"); return false; }
     static const QMap<QString, ConstraintType> cmap = {
         {"coincident", ConstraintType::Coincident},
         {"parallel", ConstraintType::Parallel},
@@ -1801,15 +1811,237 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
         {"tangent", ConstraintType::Tangent},
         {"horizontal", ConstraintType::Horizontal},
         {"vertical", ConstraintType::Vertical},
-        {"fixed", ConstraintType::Fixed}};
-    QString t = ctx.toks[1].toLower();
-    if (!cmap.contains(t)) { m->log("未知约束类型: " + t, "warn"); return false; }
-    Element e = ElementFactory::create(ElementType::Constraint, QString("约束-") + constraintTypeName(cmap[t]), m);
-    e.ctype = cmap[t];
-    if (ctx.toks.size() >= 3) e.refA = ctx.toks[2].toInt();
-    if (ctx.toks.size() >= 4) e.refB = ctx.toks[3].toInt();
-    int id = m->addElement(e);
-    m->log("已添加约束 #" + QString::number(id) + "（求解器后续接入）");
+        {"fixed", ConstraintType::Fixed},
+        {"concentric", ConstraintType::Concentric},
+        {"symmetric", ConstraintType::Symmetric},
+        {"dimensional", ConstraintType::Dimensional},
+        {"collinear", ConstraintType::Collinear},
+        {"equallength", ConstraintType::EqualLength},
+        {"equalradius", ConstraintType::EqualRadius},
+        {"pointonline", ConstraintType::PointOnLine},
+        {"pointoncircle", ConstraintType::PointOnCircle},
+        {"fixedpoint", ConstraintType::FixedPoint},
+        {"midpoint", ConstraintType::Midpoint},
+        {"distance", ConstraintType::Distance},
+        {"angle", ConstraintType::Angle},
+        {"symmetricpoint", ConstraintType::SymmetricPoint}};
+    const auto cname = [](ConstraintType t) { return QString::fromUtf8(constraintTypeName(t)); };
+
+    if (ctx.toks.size() < 2) {
+        m->log(QStringLiteral("用法：constraint add <类型> <idA> <idB> [值|轴id] | solve | list | check | diagnose | clear"), "warn");
+        return false;
+    }
+    const QString sub = ctx.toks[1].toLower();
+
+    // ---- help：列出全部支持的约束类型（来自统一注册表）----
+    if (sub == "help") {
+        const auto descs = ConstraintSolver::constraintDescriptors();
+        m->log(QStringLiteral("共 %1 种几何约束：").arg(descs.size()), "info");
+        for (const auto& d : descs)
+            m->log(QStringLiteral("  %1  %2 | 适用：%3 | 参数：%4")
+                       .arg(QString::fromUtf8(d.id), -14).arg(QString::fromUtf8(d.name))
+                       .arg(QString::fromUtf8(d.applicable)).arg(QString::fromUtf8(d.params)),
+                   "info");
+        return true;
+    }
+    // ---- list：列出全部显式约束 ----
+    if (sub == "list") {
+        const auto& cs = m->constraints();
+        if (cs.empty()) { m->log(QStringLiteral("当前无显式几何约束"), "info"); return true; }
+        m->log(QStringLiteral("显式几何约束 %1 条：").arg(cs.size()), "info");
+        for (size_t i = 0; i < cs.size(); ++i) {
+            const auto& r = cs[i];
+            QString extra;
+            if (r.axisId >= 0) extra += QStringLiteral(" 轴=#%1").arg(r.axisId);
+            if (r.value > 0)   extra += QStringLiteral(" 值=%1").arg(r.value, 0, 'f', 2);
+            if (r.idxA >= 0)   extra += QStringLiteral(" idxA=%1").arg(r.idxA);
+            if (r.idxB >= 0)   extra += QStringLiteral(" idxB=%1").arg(r.idxB);
+            m->log(QStringLiteral("  %1. 「%2」 主动#%3 → 被动#%4%5  %6")
+                       .arg(i + 1).arg(cname(r.type)).arg(r.idA).arg(r.idB).arg(extra)
+                       .arg(r.satisfied ? QStringLiteral("✓已满足") : QStringLiteral("✗未满足")),
+                   r.satisfied ? "info" : "warn");
+        }
+        return true;
+    }
+    // ---- check：冲突 / 过约束检测 ----
+    if (sub == "check") {
+        const auto conf = ConstraintSolver::detectConflicts(*m);
+        if (conf.empty()) { m->log(QStringLiteral("冲突检测：未发现冲突或过约束"), "info"); return true; }
+        m->log(QStringLiteral("冲突检测：发现 %1 处问题").arg(conf.size()), "warn");
+        for (const auto& s : conf) m->log(QStringLiteral("  ⚠ %1").arg(s), "warn");
+        return false;
+    }
+    // ---- diagnose：逐实体自由度与欠/过约束诊断（只读）----
+    if (sub == "diagnose" || sub == "dof") {
+        const auto d = ConstraintSolver::diagnose(*m);
+        m->log(QStringLiteral("约束诊断：%1（总自由度=%2，被约束图元剩余=%3，冲突/冗余=%4 条）")
+                   .arg(d.stateText()).arg(d.totalDof).arg(d.freeDof).arg(d.overDof),
+               d.state == ConstraintDiagnosis::WellConstrained ? "info" : "warn");
+        for (const auto& ei : d.elementInfo)
+            m->log(QStringLiteral("  #%1(%2)  固有=%3 可控=%4 已约束=%5 剩余=%6%7")
+                       .arg(ei.id).arg(QString::fromUtf8(elementTypeName(ei.type)))
+                       .arg(ei.naturalDof).arg(ei.activeVars).arg(ei.appliedRank).arg(ei.remainingDof)
+                       .arg(ei.overconstrained ? QStringLiteral("  ⚠过约束") : QString()),
+                   "info");
+        for (const auto& s : d.messages)
+            m->log(QStringLiteral("  → %1").arg(s),
+                   d.state == ConstraintDiagnosis::WellConstrained ? "info" : "warn");
+        return d.state == ConstraintDiagnosis::WellConstrained ||
+               d.state == ConstraintDiagnosis::UnderConstrained;
+    }
+    // ---- solve：求解全部 ----
+    if (sub == "solve") {
+        const auto rep = ConstraintSolver::solveAll(*m);
+        m->log(QStringLiteral("约束求解：共 %1 条，已满足 %2 条，失败 %3 条；自由度(DOF)=%4，有效约束秩=%5，残差=%.3e")
+                   .arg(rep.total).arg(rep.solved).arg(rep.failures.size())
+                   .arg(rep.diag.dof).arg(rep.diag.rank).arg(rep.diag.residualNorm),
+               rep.failures.empty() ? "info" : "warn");
+        for (const auto& f : rep.failures) m->log(QStringLiteral("  ✗ %1").arg(f.reason), "error");
+        if (!rep.diag.redundantIdx.empty())
+            m->log(QStringLiteral("  ⓘ 检测到 %1 条冗余约束（下标：%2），可删除以简化系统")
+                       .arg(rep.diag.redundantIdx.size())
+                       .arg([&](){ QString s; for (int v : rep.diag.redundantIdx) s += QString::number(v) + " "; return s; }()),
+                   "info");
+        return rep.failures.empty();
+    }
+    // ---- clear：清空 ----
+    if (sub == "clear") {
+        if (m->constraints().empty()) { m->log(QStringLiteral("当前无显式几何约束"), "info"); return true; }
+        m->clearConstraints();
+        m->log(QStringLiteral("已清空全部显式几何约束"), "info");
+        return true;
+    }
+
+    // ---- dimension：尺寸驱动子命令（Request M 新增）----
+    if (sub == "dimension") {
+        if (ctx.toks.size() < 3) {
+            m->log(QStringLiteral("用法：constraint dimension link <标注id> [参数名] | setvalue <标注id> <值>"), "warn");
+            return false;
+        }
+        const QString dsub = ctx.toks[2].toLower();
+        if (dsub == "link") {
+            if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：constraint dimension link <标注id> [参数名]"), "warn"); return false; }
+            bool ok = false; const int dimId = ctx.toks[3].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
+            const QString param = (ctx.toks.size() > 4) ? ctx.toks[4] : QString();
+            const QString err = ConstraintSolver::linkDimension(*m, dimId, param);
+            if (!err.isEmpty()) { m->log(QStringLiteral("关联尺寸标注失败：%1").arg(err), "error"); return false; }
+            m->log(QStringLiteral("已关联尺寸标注 #%1%2，修改其数值即可驱动几何重构")
+                       .arg(dimId).arg(param.isEmpty() ? QString() : QStringLiteral("（参数 %1）").arg(param)), "info");
+            return true;
+        }
+        if (dsub == "setvalue") {
+            if (ctx.toks.size() < 5) { m->log(QStringLiteral("用法：constraint dimension setvalue <标注id> <值>"), "warn"); return false; }
+            bool ok = false; const int dimId = ctx.toks[3].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
+            bool okv = false; const double val = ctx.toks[4].toDouble(&okv);
+            if (!okv) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
+            const QString err = ConstraintSolver::setDimensionValue(*m, dimId, val);
+            if (!err.isEmpty()) { m->log(QStringLiteral("设置标注值失败：%1").arg(err), "error"); return false; }
+            m->log(QStringLiteral("已将标注 #%1 设为 %2，几何已联动重构").arg(dimId).arg(val, 0, 'f', 3), "info");
+            return true;
+        }
+        m->log(QStringLiteral("未知 dimension 子命令：%1（支持 link / setvalue）").arg(dsub), "warn");
+        return false;
+    }
+
+    // ---- param：参数表子命令（Request M 新增）----
+    if (sub == "param") {
+        if (ctx.toks.size() < 3) {
+            m->log(QStringLiteral("用法：constraint param set <名称> <值> | list"), "warn");
+            return false;
+        }
+        const QString psub = ctx.toks[2].toLower();
+        if (psub == "list") {
+            const auto& ps = m->params();
+            if (ps.empty()) { m->log(QStringLiteral("参数表为空"), "info"); return true; }
+            m->log(QStringLiteral("参数表（%1 项）：").arg(ps.size()), "info");
+            for (const auto& kv : ps)
+                m->log(QStringLiteral("  %1 = %2").arg(kv.first).arg(kv.second, 0, 'f', 3), "info");
+            return true;
+        }
+        if (psub == "set") {
+            if (ctx.toks.size() < 5) { m->log(QStringLiteral("用法：constraint param set <名称> <值>"), "warn"); return false; }
+            const QString name = ctx.toks[3];
+            bool ok = false; const double val = ctx.toks[4].toDouble(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
+            const QString err = ConstraintSolver::driveParameter(*m, name, val);
+            if (!err.isEmpty()) { m->log(QStringLiteral("参数驱动失败：%1").arg(err), "warn"); return false; }
+            m->log(QStringLiteral("已将参数 %1 设为 %2 并联动驱动全部关联标注/几何").arg(name).arg(val, 0, 'f', 3), "info");
+            return true;
+        }
+        m->log(QStringLiteral("未知 param 子命令：%1（支持 set / list）").arg(psub), "warn");
+        return false;
+    }
+
+    // ---- add（或旧用法）：constraint [add] <类型> <idA> <idB> [值|轴id] [idxA] [idxB] ----
+    const bool hasAdd = (sub == "add");
+    const int iType = hasAdd ? 2 : 1;
+    if (ctx.toks.size() <= iType) {
+        m->log(QStringLiteral("用法：constraint add <类型> <idA> <idB> [值|轴id] [idxA] [idxB]（fixed/fixedpoint 可省略 idB）"), "warn");
+        return false;
+    }
+    const QString t = ctx.toks[iType].toLower();
+    if (!cmap.contains(t)) {
+        m->log(QStringLiteral("未知约束类型：%1（输入 constraint help 查看全部 %2 种）").arg(t).arg(kConstraintTypeCount), "warn");
+        return false;
+    }
+    const ConstraintType ct = cmap[t];
+    const bool singleEnd = (ct == ConstraintType::Fixed || ct == ConstraintType::FixedPoint);
+    if (ctx.toks.size() <= iType + 1) {
+        m->log(QStringLiteral("用法：constraint add %1 <idA> [idB] [值|轴id] [idxA] [idxB]").arg(t), "warn");
+        return false;
+    }
+    bool okA = false;
+    const int idA = ctx.toks[iType + 1].toInt(&okA);
+    if (!okA) { m->log(QStringLiteral("无效的图元 id：%1").arg(ctx.toks[iType + 1]), "warn"); return false; }
+    int idB = -1;
+    int argPos = iType + 2;                       // 当前待解析的可选参数位置
+    if (singleEnd) {
+        // fixed/fixedpoint：idB 可省；若紧接着是数字则仍当作 idB（兼容旧式）
+        if (ctx.toks.size() > argPos) {
+            bool ok = false; const int v = ctx.toks[argPos].toInt(&ok);
+            if (ok) { idB = v; ++argPos; }
+        }
+    } else {
+        if (ctx.toks.size() <= argPos) {
+            m->log(QStringLiteral("用法：constraint add %1 <idA> <idB> [值|轴id] [idxA] [idxB]").arg(t), "warn");
+            return false;
+        }
+        bool okB = false; idB = ctx.toks[argPos].toInt(&okB);
+        if (!okB) { m->log(QStringLiteral("无效的图元 id：%1").arg(ctx.toks[argPos]), "warn"); return false; }
+        ++argPos;
+    }
+
+    // 随后的参数：symmetric/symmetricpoint → 轴id；dimensional/distance/angle → 值；其余 → idxA/idxB
+    int axisId = -1; double value = 0.0; int idxA = -1, idxB = -1;
+    if (ctx.toks.size() > argPos) {
+        const QString v = ctx.toks[argPos];
+        if (ct == ConstraintType::Symmetric || ct == ConstraintType::SymmetricPoint) {
+            bool ok = false; const int ax = v.toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的对称轴图元 id：%1").arg(v), "warn"); return false; }
+            axisId = ax;
+        } else if (ct == ConstraintType::Dimensional || ct == ConstraintType::Distance || ct == ConstraintType::Angle) {
+            bool ok = false; const double dv = v.toDouble(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的数值参数：%1").arg(v), "warn"); return false; }
+            value = dv;
+        } else {
+            bool ok = false; const int iv = v.toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("无效的控制点索引：%1").arg(v), "warn"); return false; }
+            idxA = iv;
+        }
+        ++argPos;
+    }
+    if (ctx.toks.size() > argPos) { bool ok=false; idxB = ctx.toks[argPos].toInt(&ok); if (!ok) idxB = -1; ++argPos; }
+
+    const QString err = ConstraintSolver::addConstraint(*m, ct, idA, idB, value, axisId, idxA, idxB);
+    if (!err.isEmpty()) { m->log(QStringLiteral("约束添加失败：%1").arg(err), "error"); return false; }
+    m->log(QStringLiteral("已添加「%1」约束：主动#%2 → 被动#%3%4%5%6，并已求解")
+               .arg(cname(ct)).arg(idA).arg(idB)
+               .arg(axisId >= 0 ? QStringLiteral("（对称轴 #%1）").arg(axisId) : QString())
+               .arg(value > 0 ? QStringLiteral("（目标值 %1）").arg(value, 0, 'f', 2) : QString())
+               .arg(idxA >= 0 ? QStringLiteral("（idxA=%1 idxB=%2）").arg(idxA).arg(idxB) : QString()),
+           "info");
     return true;
 }
 
@@ -2550,6 +2782,117 @@ void CommandRegistry::registerBuiltins() {
     registerExact("perp",     std::make_shared<PerpCommand>());       // 过指定点作垂线
     registerExact("tangent2", std::make_shared<Tangent2Command>());   // 两圆公切线
     registerExact("qconnect", std::make_shared<QConnectCommand>());   // 象限连接
+
+    // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「命令」----
+    // 与 F8/F9 快捷键、状态栏按钮写入同一个 SketchModel 状态源，状态自动同步。
+    // ortho [on|off]：切换/设定正交模式（无参 = 取反）
+    registerExact("ortho", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            bool on = !ctx.model->orthoMode();
+            if (ctx.toks.size() >= 2) {
+                const QString v = ctx.toks[1].toLower();
+                if      (v == "on"  || v == "1" || v == "true")  on = true;
+                else if (v == "off" || v == "0" || v == "false") on = false;
+                else { ctx.model->log(QStringLiteral("用法：ortho [on|off]"), QStringLiteral("error")); return false; }
+            }
+            ctx.model->setOrthoMode(on);
+            ctx.model->log(QStringLiteral("正交模式 (ORTHO)：%1")
+                               .arg(on ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            return true;
+        }));
+    // snap [on|off|<步长>]：切换/设定栅格吸附（数字参数 = 同时设定吸附步长 mm）
+    registerExact("snap", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            bool on = !ctx.model->gridSnap();
+            if (ctx.toks.size() >= 2) {
+                const QString v = ctx.toks[1].toLower();
+                if      (v == "on"  || v == "1" || v == "true")  on = true;
+                else if (v == "off" || v == "0" || v == "false") on = false;
+                else {
+                    bool ok = false;
+                    const double step = v.toDouble(&ok);
+                    if (!ok || step <= 0) {
+                        ctx.model->log(QStringLiteral("用法：snap [on|off|<步长mm>]"), QStringLiteral("error"));
+                        return false;
+                    }
+                    ctx.model->setGridSnapStep(step);
+                    on = true;
+                }
+            }
+            ctx.model->setGridSnap(on);
+            ctx.model->log(QStringLiteral("栅格吸附 (SNAP)：%1（步长 %2 mm）")
+                               .arg(on ? QStringLiteral("开") : QStringLiteral("关"))
+                               .arg(ctx.model->gridSnapStep(), 0, 'f', 2), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- 追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
+    // polar  [on|off|<角度>]：切换/设定极轴追踪（无参 = 取反；数字 = 同时设增量角）
+    registerExact("polar", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            snap::TrackConfig c = ctx.model->trackConfig();
+            if (ctx.toks.size() >= 2) {
+                const QString v = ctx.toks[1].toLower();
+                if (v == "on" || v == "1" || v == "true")        c.polar = true;
+                else if (v == "off" || v == "0" || v == "false") c.polar = false;
+                else {
+                    bool ok = false;
+                    const double inc = v.toDouble(&ok);
+                    if (ok && inc > 0.0 && inc < 360.0) { c.polar = true; c.polarIncrement = inc; }
+                    else { ctx.model->log(QStringLiteral("用法：polar [on|off|<增量角>]"), QStringLiteral("error")); return false; }
+                }
+            } else {
+                c.polar = !c.polar;
+            }
+            ctx.model->setTrackConfig(c);
+            ctx.model->log(QStringLiteral("极轴追踪 (POLAR)：%1（增量 %2°）")
+                               .arg(c.polar ? QStringLiteral("开") : QStringLiteral("关"))
+                               .arg(c.polarIncrement, 0, 'f', 0), QStringLiteral("info"));
+            return true;
+        }));
+    // otrack [on|off]：切换/设定对象捕捉追踪
+    registerExact("otrack", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            snap::TrackConfig c = ctx.model->trackConfig();
+            if (ctx.toks.size() >= 2) {
+                const QString v = ctx.toks[1].toLower();
+                if (v == "on" || v == "1" || v == "true")        c.objectTrack = true;
+                else if (v == "off" || v == "0" || v == "false") c.objectTrack = false;
+                else { ctx.model->log(QStringLiteral("用法：otrack [on|off]"), QStringLiteral("error")); return false; }
+            } else {
+                c.objectTrack = !c.objectTrack;
+            }
+            ctx.model->setTrackConfig(c);
+            ctx.model->log(QStringLiteral("对象捕捉追踪 (OTRACK)：%1")
+                               .arg(c.objectTrack ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            return true;
+        }));
+    // tk <x,y>：放置临时追踪点（瞬态，不随图存档；参与对齐线追踪）
+    registerExact("tk", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            if (ctx.toks.size() < 2) {
+                ctx.model->log(QStringLiteral("用法：tk <x,y>（放置临时追踪点）；tkclear 清除全部"), QStringLiteral("error"));
+                return false;
+            }
+            Vec3 p;
+            if (!ctx.parsePoint(1, p)) return false;
+            ctx.model->addTrackPoint(p);
+            ctx.model->log(QStringLiteral("已放置临时追踪点 (TK)：(%1, %2)，共 %3 个")
+                               .arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2)
+                               .arg(ctx.model->trackPoints().size()), QStringLiteral("info"));
+            return true;
+        }));
+    // tkclear：清空全部临时追踪点
+    registerExact("tkclear", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            if (ctx.model->trackPoints().empty()) {
+                ctx.model->log(QStringLiteral("当前无临时追踪点"), QStringLiteral("info"));
+                return true;
+            }
+            ctx.model->clearTrackPoints();
+            ctx.model->log(QStringLiteral("已清除全部临时追踪点 (TK)"), QStringLiteral("info"));
+            return true;
+        }));
 
     // ---- 选择（对应选择菜单 / FreeCAD Sketcher 选择命令）----
     {

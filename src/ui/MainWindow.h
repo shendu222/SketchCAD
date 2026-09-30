@@ -8,6 +8,7 @@
 #include <QString>
 #include <QColor>
 #include "ui/LayerPanel.h"   // LayerPanel 定义（位于 namespace SketchCAD），供 layerPanel_ 成员使用
+#include "ui/ConstraintBar.h" // ConstraintBar 定义（约束栏面板，需求③④）
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
 #include "core/Section.h"    // SectionStyle / SectionLoopSet（剖面填充点选模式的样式与缓存）
 #include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
@@ -62,8 +63,9 @@ private:
     // 互斥勾选状态天然一致，改一处两处同步，不存在"菜单和工具条不同步"的问题。
     using ActionGroupList = QList<QPair<QString, QList<QAction*>>>;
 
-    QDockWidget *bomDock_, *elemDock_, *propDock_, *logDock_, *cmdDock_, *layerDock_;
+    QDockWidget *bomDock_, *elemDock_, *propDock_, *logDock_, *cmdDock_, *layerDock_, *constraintDock_;
     LayerPanel* layerPanel_;
+    ConstraintBar* constraintBar_;   // 约束栏面板（展示选中图元的约束与状态）
     // 工具条拆成两行，避免单行过长导致按钮被截断/挤压缩水/溢出窗口：
     //   toolbar_  = 第一行「草图工具」：选择 / 图元 / 曲线 / 标注 / 修改
     //   toolbar2_ = 第二行「样式与视图」：编辑 / 样式 / 视图 / 工作平面

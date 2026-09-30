@@ -33,7 +33,7 @@ void SketchModel::pushMemento(const QString& label) {
     // 也记录图层表：撤销"隐藏图层/改图层样式"等操作时，图层定义与图元需一起回退。
     Memento m;
     m.label = label; m.elems = elems_; m.nextId = nextId_;
-    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_;
+    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
     undoStack_.push_back(std::move(m));
     if (undoStack_.size() > 200) undoStack_.erase(undoStack_.begin());
     redoStack_.clear();
@@ -224,9 +224,19 @@ bool SketchModel::updateElementLinked(int id, std::function<void(Element&)> fn) 
         }
     }
 
-    // 约束恢复：检测修改前满足的相切/垂直/平行约束，恢复被破坏的约束（需求：关联图元联动）
+    // 约束恢复：检测修改前满足的相切/垂直/平行/同心约束，恢复被破坏的约束（需求：关联图元联动）
     auto modifiedIds = ConstraintSolver::solveAfterChange(beforeElems, elems_, id);
     for (int mid : modifiedIds) emit elementUpdated(mid);
+
+    // 显式约束闭环：图元被编辑后重解一次用户声明的约束（尺寸锁定/同心/对称/…），
+    // 使"拖一下端点、已声明的关系自动保持"。仅在存在显式约束时才跑，避免常态开销。
+    // 注意走 updateElementQuiet（不会再触发本函数），因此不存在递归求解。
+    if (!constraints_.empty()) {
+        const auto rep = ConstraintSolver::solveAll(*this);
+        if (!rep.failures.empty())
+            log(QStringLiteral("几何约束：%1 条未满足，可用 constraint list / check 定位")
+                    .arg(rep.failures.size()), QStringLiteral("warn"));
+    }
 
     emit modelChanged();
     emit elementUpdated(id);
@@ -718,6 +728,26 @@ void SketchModel::setPlane(Plane p) {
 }
 void SketchModel::setShowGrid(bool b) {
     if (showGrid_ != b) { showGrid_ = b; emit gridToggled(b); emit viewChanged(); }
+}
+
+// ---- 输入约束单一状态源：正交 / 栅格吸附 ----
+// 三入口（F8/F9 快捷键、状态栏按钮、命令 ortho/snap）全部汇聚于此，
+// 由信号广播同步，保证任何时刻只有一个真相。
+void SketchModel::setOrthoMode(bool on) {
+    if (orthoMode_ == on) return;               // 幂等：同值不重复发信号
+    orthoMode_ = on;
+    emit orthoModeChanged(on);
+}
+void SketchModel::setGridSnap(bool on) {
+    if (gridSnap_ == on) return;
+    gridSnap_ = on;
+    emit gridSnapChanged();
+}
+void SketchModel::setGridSnapStep(double mm) {
+    if (mm <= 0) return;                        // 步长必须为正，非法值静默忽略
+    if (std::fabs(gridSnapStep_ - mm) < 1e-9) return;
+    gridSnapStep_ = mm;
+    emit gridSnapChanged();
 }
 void SketchModel::setViewScale(double s) {
     if (viewScale_ != s) { viewScale_ = s; emit viewChanged(); }
@@ -1613,6 +1643,107 @@ void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
     emit snapConfigChanged();
 }
 
+void SketchModel::setTrackConfig(const snap::TrackConfig& c) {
+    if (c == trackConfig_) return;               // 相同不发信号（幂等）
+    trackConfig_ = c;
+    emit trackConfigChanged();
+}
+
+void SketchModel::addTrackPoint(const Vec3& p) {
+    trackPoints_.push_back(p);
+    emit trackPointsChanged();
+}
+
+void SketchModel::clearTrackPoints() {
+    if (trackPoints_.empty()) return;
+    trackPoints_.clear();
+    emit trackPointsChanged();
+}
+
+// ---- 显式几何约束表 ----
+void SketchModel::addConstraintRecord(const ConstraintRecord& r) {
+    constraints_.push_back(r);
+    emit constraintsChanged();
+}
+void SketchModel::removeConstraint(int index) {
+    if (index < 0 || index >= (int)constraints_.size()) return;
+    constraints_.erase(constraints_.begin() + index);
+    emit constraintsChanged();
+}
+void SketchModel::clearConstraints() {
+    if (constraints_.empty()) return;
+    constraints_.clear();
+    emit constraintsChanged();
+}
+void SketchModel::setConstraints(const std::vector<ConstraintRecord>& v) {
+    constraints_ = v;
+    emit constraintsChanged();
+}
+QJsonArray SketchModel::constraintsToJson() const {
+    QJsonArray a;
+    for (const auto& r : constraints_) {
+        QJsonObject o;
+        o["type"]   = (int)r.type;      // 枚举按整数存档（顺序只增不改）
+        o["idA"]    = r.idA;
+        o["idB"]    = r.idB;
+        o["axisId"] = r.axisId;
+        o["value"]  = r.value;
+        o["idxA"]   = r.idxA;
+        o["idxB"]   = r.idxB;
+        // ---- 尺寸驱动 / 参数化建模关联（Request M 新增；旧档缺键回落默认，向后兼容）----
+        o["driverId"] = r.driverId;
+        o["paramRef"]  = r.paramRef;
+        a.append(o);
+    }
+    return a;
+}
+void SketchModel::setConstraintsFromJson(const QJsonArray& a) {
+    std::vector<ConstraintRecord> v;
+    for (const auto& jv : a) {
+        const QJsonObject o = jv.toObject();
+        if (!o.contains("type")) continue;             // 缺关键字段的条目直接跳过
+        ConstraintRecord r;
+        r.type   = (ConstraintType)o["type"].toInt((int)ConstraintType::Fixed);
+        r.idA    = o["idA"].toInt(-1);
+        r.idB    = o["idB"].toInt(-1);
+        r.axisId = o["axisId"].toInt(-1);
+        r.value  = o["value"].toDouble(0.0);
+        r.idxA   = o["idxA"].toInt(-1);   // 旧档缺键回落 -1（默认 0 号控制点）
+        r.idxB   = o["idxB"].toInt(-1);
+        r.driverId = o.contains("driverId") ? o["driverId"].toInt(-1) : -1;  // 旧档缺键回落 -1
+        r.paramRef  = o.contains("paramRef") ? o["paramRef"].toString() : QString();
+        v.push_back(r);
+    }
+    setConstraints(v);
+}
+
+// ---- 参数表（尺寸驱动 / 参数化建模，Request M 新增）----
+bool SketchModel::hasParam(const QString& name) const {
+    return params_.find(name) != params_.end();
+}
+double SketchModel::param(const QString& name) const {
+    auto it = params_.find(name);
+    return it != params_.end() ? it->second : 0.0;
+}
+void SketchModel::setParam(const QString& name, double val) {
+    // 与几何编辑同语义：压一次快照，使整组参数修改可一次 Ctrl+Z 撤回
+    if (params_.find(name) == params_.end() || params_[name] != val) {
+        beginEdit(QStringLiteral("参数 %1").arg(name));
+        params_[name] = val;
+        emit paramsChanged();
+    }
+}
+QJsonObject SketchModel::paramsToJson() const {
+    QJsonObject o;
+    for (const auto& kv : params_) o[kv.first] = kv.second;
+    return o;
+}
+void SketchModel::setParamsFromJson(const QJsonObject& o) {
+    params_.clear();
+    for (auto it = o.begin(); it != o.end(); ++it)
+        params_[it.key()] = it.value().toDouble(0.0);
+}
+
 void SketchModel::checkElementLimits(const Element& e) {
     // 告警而非拦截：越界图元仍正常入模（与 AutoCAD LIMITS 语义一致——
     // 越界只是提示，用户可能刻意画到图框外）；检查只看「锚点/特征点」，
@@ -1880,27 +2011,27 @@ void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged
 
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
     redoStack_.push_back(std::move(rb));
     auto m = undoStack_.back(); undoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已撤销: ") + m.label);
 }
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_;
+    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
     undoStack_.push_back(std::move(rb));
     auto m = redoStack_.back(); redoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles);
+    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged();
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
     if (scaleDiff) emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已重做: ") + m.label);
 }
@@ -1937,6 +2068,7 @@ void SketchModel::reorderElement(int id, int beforeId) {
 }
 void SketchModel::clear() {
     scaleRatio_ = 1.0;          // 清空即回到默认 1:1（新建图纸契约）
+    trackPoints_.clear();       // 临时追踪点属瞬态会话状态，新建/清空图纸时一并丢弃
     if (elems_.empty()) return;
     pushMemento(QStringLiteral("清空"));
     elems_.clear(); selectedIds_.clear(); selectedId_ = -1;

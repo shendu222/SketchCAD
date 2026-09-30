@@ -30,6 +30,7 @@
 #include <algorithm>
 #include "core/ElementFactory.h"
 #include "core/TextStyle.h"
+#include "core/ConstraintSolver.h"   // 过约束/冲突诊断（需求④）：diagnose 重算冲突集合
 
 // ============================ 平移排查调试日志 ============================
 // 右键拖不动时，把每一步鼠标/右键事件的现场写入 %TEMP%/sketchcad_pan.log，
@@ -109,6 +110,7 @@ static const QColor AXIS_Y(40, 150, 80);
 static const QColor HL(31, 95, 139);           // 选中高亮蓝
 static const QColor PREVIEW(31, 95, 139, 215);
 static const QColor GUIDE(120, 140, 170, 170);
+static const QColor WARN(214, 48, 49);     // 过约束/冲突高亮红
 
 // 构造线(Xline)的兜底裁剪范围 —— 与 GraphicsView 构造里的
 // scene_->setSceneRect(QRectF(-1e5,-1e5,2e5,2e5)) 保持一致。
@@ -603,12 +605,12 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
 // 波浪线/双折线由 buildPath 自定义路径绘制，这里用实线笔（避免叠加虚线）。
 // 抽取为独立函数：块引用内的子图元复用同一套笔参数，观感与独立图元完全一致。
 QPen ElementItem::penFor(const Element& e) const {
-    QPen pen(preview ? PREVIEW : (highlight ? HL : e.color));
+    QPen pen(preview ? PREVIEW : (warn ? WARN : (highlight ? HL : e.color)));
     pen.setCosmetic(true);                       // 线宽按屏幕像素固定，缩放不改变视觉粗细
     const double effW = e.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
     const double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
     pen.setWidthF(preview ? std::max(1.0, wpx)
-                          : (highlight ? wpx + 1.2 : wpx));
+                          : (warn ? wpx + 2.0 : (highlight ? wpx + 1.2 : wpx)));
     pen.setCapStyle(Qt::RoundCap);
     pen.setJoinStyle(Qt::RoundJoin);
     if (preview) {
@@ -1230,6 +1232,7 @@ void GraphicsView::rebuild() {
         auto* it = new ElementItem(e);
         it->model = model_;                      // 块引用展开需要块表
         it->highlight = model_->isSelected(e.id);
+        it->warn = conflictIds_.contains(e.id);
         it->dimScale = model_->scaleRatio();     // 标注数字按实物尺寸显示
         // GB/T 14665-2012 4.3：重合图线按优先级叠放（可见轮廓最上，尺寸线最下）
         double z = (double)linePriority(e.lineStyle);
@@ -1238,6 +1241,100 @@ void GraphicsView::rebuild() {
         scene_->addItem(it);
     }
     viewport()->update();
+}
+
+// 约束图标的世界锚点：取两端图元中心的中点；单端约束（Fixed/FixedPoint/...）取被锁定控制点。
+static Vec3 constraintAnchor(const SketchModel* m, const ConstraintRecord& r) {
+    const Element* a = (r.idA >= 0) ? m->element(r.idA) : nullptr;
+    const Element* b = (r.idB >= 0) ? m->element(r.idB) : nullptr;
+    auto centerOf = [](const Element* e) -> Vec3 {
+        if (!e) return Vec3();
+        if (e->type == ElementType::Circle || e->type == ElementType::Arc) return e->pts[0];
+        if (e->pts.empty()) return Vec3();
+        Vec3 s; for (const auto& p : e->pts) s = s + p;
+        return s * (1.0 / e->pts.size());
+    };
+    Vec3 ca = centerOf(a), cb = centerOf(b);
+    if (a && b) return (ca + cb) * 0.5;
+    if (a) {
+        // 单端约束：优先取被显式锁定的控制点（FixedPoint/PointOn*/Midpoint）
+        if (r.type == ConstraintType::FixedPoint || r.type == ConstraintType::PointOnLine ||
+            r.type == ConstraintType::PointOnCircle || r.type == ConstraintType::Midpoint) {
+            int idx = (r.idxA >= 0) ? r.idxA : 0;
+            if (idx >= 0 && idx < (int)a->pts.size()) return a->pts[idx];
+        }
+        return ca;
+    }
+    return Vec3();
+}
+
+void GraphicsView::drawConstraintMarkers(QPainter* p) {
+    const auto& recs = model_->constraints();
+    if (recs.empty()) return;
+    p->save();
+    const double s = 5.0 / zoom_;                       // 图标半边长（场景单位，屏幕恒大小）
+    for (const auto& r : recs) {
+        Vec3 a = constraintAnchor(model_, r);
+        // 仅当两端图元都不存在时才跳过（原点的真实约束仍要画）
+        if (a.x == 0.0 && a.y == 0.0 && a.z == 0.0) {
+            const Element* ea = (r.idA >= 0) ? model_->element(r.idA) : nullptr;
+            const Element* eb = (r.idB >= 0) ? model_->element(r.idB) : nullptr;
+            if (!ea && !eb) continue;
+        }
+        const double cx = a.x, cy = a.y;
+        const QColor col = r.satisfied ? QColor(30, 150, 110) : QColor(220, 120, 30);
+        QPen sp(col); sp.setWidthF(1.4 / zoom_); sp.setCosmetic(true);
+        p->setPen(sp);
+        p->setBrush(col);
+        p->drawEllipse(QPointF(cx, cy), s * 0.55, s * 0.55);   // 统一的约束标识底座
+        p->setBrush(Qt::NoBrush);
+        // 类型标注（像素级正写，不随缩放变形）
+        QString label = QString::fromUtf8(constraintTypeName(r.type));
+        if (r.value > 0 &&
+            (r.type == ConstraintType::Dimensional || r.type == ConstraintType::Distance ||
+             r.type == ConstraintType::Angle)) {
+            const QString unit = (r.type == ConstraintType::Angle) ? QStringLiteral("°") : QString();
+            label += QStringLiteral(" %1%2").arg(r.value, 0, 'f', r.value < 10 ? 2 : 1).arg(unit);
+        }
+        drawPixelText(p, QPointF(cx + 9.0 / zoom_, cy + 7.0 / zoom_), label, col, 11, true);
+    }
+    p->restore();
+}
+
+void GraphicsView::drawConflictOverlay(QPainter* p) {
+    if (conflictIds_.empty()) return;
+    p->save();
+    QStringList s; for (int id : conflictIds_) s << QString::number(id);
+    const QString msg = QStringLiteral("⚠ 检测到过约束 / 冲突：图元 #%1（请移除矛盾或冗余约束）")
+                           .arg(s.join(" #"));
+    const QPointF tl = mapToScene(10, 10);            // 视口左上角，屏幕恒定位置
+    drawPixelText(p, tl, msg, WARN, 13, true);
+    p->restore();
+}
+
+// 约束表变化（添加/删除/修改）后重算冲突集合、刷新高亮与告警（需求④）
+void GraphicsView::refreshConstraintDiagnostics() {
+    const auto diag = ConstraintSolver::diagnose(*model_);
+    conflictIds_.clear();
+    for (int id : diag.overconstrainedIds) conflictIds_.insert(id);
+    if (!conflictIds_.empty()) {
+        QStringList s; for (int id : conflictIds_) s << QString::number(id);
+        model_->log(QStringLiteral("约束诊断：%1（涉及图元 #%2）")
+                       .arg(diag.stateText()).arg(s.join(" #")), "error");
+    }
+    rebuild();
+}
+
+// 把视图缩放适配到指定图元（约束栏「定位」用）
+void GraphicsView::zoomToElement(int id) {
+    const Element* e = model_->element(id);
+    if (!e) return;
+    QRectF b = ElementItem::geometryBounds(*e);
+    if (b.isNull() || b.isEmpty()) {
+        const QPointF c(e->pts.empty() ? QPointF() : QPointF(e->pts[0].x, e->pts[0].y));
+        b = QRectF(c.x() - 1, c.y() - 1, 2, 2);
+    }
+    fitToRect(b.adjusted(-2, -2, 2, 2));
 }
 
 void GraphicsView::onModelChanged() { rebuild(); }
@@ -1335,7 +1432,46 @@ Vec3 GraphicsView::snapWorld(const Vec3& w) {
         refA = &refABuf; refB = &refBBuf;
     }
     snapNow_ = snap::snap(model_->elements(), w, other, worldTol(), snapCfg_, refA, refB);
-    return snapNow_.snapped ? snapNow_.point : w;
+
+    // ---- 对象捕捉追踪（OTRACK）：OSNAP 命中的点「获取」为对齐锚点 ----
+    // 仅绘制命令期累积；对象追踪关闭时清空锚点集（OTRACK 依赖 OSNAP，属其上层能力）。
+    const bool otrOn = model_->trackConfig().objectTrack;
+    if (!drawToolActive_ || !otrOn) clearOtrackAnchors();
+    else if (snapNow_.snapped) addOtrackAnchor(snapNow_.point);
+
+    // ---- 追踪（极轴 / 对象追踪 / 临时追踪点）：仅绘制命令期有效 ----
+    trackNow_ = snap::TrackResult{};
+    const auto& tc = model_->trackConfig();
+    if (drawing_) {
+        const Vec3* polarBase = nullptr;
+        Vec3 pb;
+        Vec3 lastDir; bool hasDir = false;
+        if (!pendingPts_.empty()) {
+            pb = pendingPts_.back(); polarBase = &pb;
+            // 上一段方向：取最近两个已放置点连线（首段无上一段 → 用绝对极轴角）
+            if (pendingPts_.size() >= 2) {
+                lastDir = (pendingPts_.back() - pendingPts_[pendingPts_.size() - 2]).normalized();
+                hasDir = true;
+            }
+        }
+        trackNow_ = snap::track(w, tc, hasDir ? &lastDir : nullptr, polarBase,
+                                model_->trackPoints(), otrackAnchors_, worldTol());
+    }
+
+    // ---- 落点优先级：OSNAP（显式几何特征）> 追踪（对齐引导）> 自由点 ----
+    Vec3 result = w;
+    if      (snapNow_.snapped) result = snapNow_.point;
+    else if (trackNow_.hit)    result = trackNow_.point;
+
+    // ---- 输入约束（正交/栅格吸附）：强制性，优先级**高于** OSNAP ----
+    // 正交开启后即便 OSNAP 命中斜向点也必须投影回水平/垂直（画不出斜线）；
+    // 基准点取最近已放置点，首点无基准时正交不生效（仅栅格吸附生效）。
+    const Vec3* base = nullptr;
+    Vec3 baseBuf;
+    if (!pendingPts_.empty()) { baseBuf = pendingPts_.back(); base = &baseBuf; }
+    inputNow_ = snap::applyInputConstraints(result, base, model_->orthoMode(),
+                                            model_->gridSnap(), model_->gridSnapStep());
+    return inputNow_.point;
 }
 
 // ---------------------------- 捕捉开关（E/T/M/C 快捷键） ----------------------------
@@ -1412,6 +1548,8 @@ void GraphicsView::onActiveToolChanged() {
         snapOverrideActive_ = false;
     }
     drawToolActive_ = newDraw;
+    clearOtrackAnchors();                 // 换工具即丢弃已获取的对象追踪锚点
+    trackNow_ = snap::TrackResult{};      // 追踪结果同步失效
     resetPending();                       // 保持原 activeToolChanged 的复位行为
     updateCommandPrompt();               // 设置新工具的初始分段提示
 }
@@ -1472,7 +1610,42 @@ void GraphicsView::showSnapOverrideMenu(const QPoint& globalPos) {
     menu.addSeparator();
     QAction* off = menu.addAction(QStringLiteral("清除覆盖（恢复原有配置）"));
     connect(off, &QAction::triggered, this, [this]() { clearSnapOverride(); });
+    menu.addSeparator();
+    QAction* tk = menu.addAction(QStringLiteral("临时追踪点 (TK) — 光标处"));
+    connect(tk, &QAction::triggered, this, [this]() { addTrackPointAtCursor(); });
+    QAction* tkc = menu.addAction(QStringLiteral("清除全部临时追踪点"));
+    connect(tkc, &QAction::triggered, this, [this]() { clearTrackPoints(); });
     menu.exec(globalPos);
+}
+
+// ---------------------------- 追踪（极轴 / 对象捕捉追踪 / 临时追踪点） ----------------------------
+
+// 对象追踪锚点：去重并入并封顶（防止长命令期无限累积拖慢 track 计算）
+void GraphicsView::addOtrackAnchor(const Vec3& p) {
+    for (const auto& a : otrackAnchors_)
+        if (a.distTo(p) < 1e-6) return;           // 已存在（同一 OSNAP 点反复命中）
+    if (otrackAnchors_.size() >= 8) otrackAnchors_.erase(otrackAnchors_.begin());
+    otrackAnchors_.push_back(p);
+}
+
+void GraphicsView::clearOtrackAnchors() {
+    otrackAnchors_.clear();
+}
+
+// 临时追踪点（TK）：在当前光标世界坐标处放置一个瞬态对齐锚点，
+// 参与对象追踪对齐线计算；不随图存档，绘制结束/清空图纸时丢弃。
+void GraphicsView::addTrackPointAtCursor() {
+    model_->addTrackPoint(lastMouseWorld_);
+    model_->log(QStringLiteral("已放置临时追踪点 (TK)：(%1, %2)")
+                    .arg(lastMouseWorld_.x, 0, 'f', 2).arg(lastMouseWorld_.y, 0, 'f', 2));
+    refreshSnapAtCursor();
+}
+
+void GraphicsView::clearTrackPoints() {
+    if (model_->trackPoints().empty()) return;
+    model_->clearTrackPoints();
+    model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
+    refreshSnapAtCursor();
 }
 
 // 统一启用/禁用本组 E/T/M/C/X 切换快捷键。
@@ -1636,11 +1809,120 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                 p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));
                 p->drawPoint(QPointF(cx, cy));
                 break;
+            case snap::SnapType::Perpendicular: {
+                // ⊥ 符号：小方框内画直角，清晰表达「垂直 / 垂足」吸附
+                const double w = s * 1.3;
+                p->setPen(sp);
+                p->drawRect(QRectF(cx - w, cy - w, 2 * w, 2 * w));   // 外框
+                p->drawLine(QPointF(cx - w, cy), QPointF(cx, cy));   // 水平臂
+                p->drawLine(QPointF(cx, cy), QPointF(cx, cy - w));   // 垂直臂（⊥）
+                break;
+            }
             default:
                 p->drawRect(QRectF(cx - s, cy - s, 2 * s, 2 * s));   // Endpoint/Center/...：方框
                 break;
         }
+        // 命中提示：在标记右上方标注捕捉类型名（像素级正写文字，不随缩放变形）。
+        // 名称取自 snap::snapTypeLabel()，与快捷键/菜单/设置面板同一数据源。
+        drawPixelText(p, QPointF(cx + 9.0 / zoom_, cy + 7.0 / zoom_),
+                      snap::snapTypeLabel(snapNow_.type), col, 11, true);
         p->restore();
+    }
+
+    // ---- 约束可视化：图标 + 类型标注（需求②）与过约束/冲突告警（需求④）----
+    // 始终绘制（不限绘制命令），让用户在任意时刻都能看到受约束对象的约束状态。
+    drawConstraintMarkers(p);
+    drawConflictOverlay(p);
+
+    // ---- 追踪引导（极轴射线 / 对象追踪对齐线 / 临时追踪点标记 / 追踪落点）----
+    if (drawing_) {
+        const auto& tc = model_->trackConfig();
+        const double R = 1e5;   // 引导线长度：覆盖整个场景范围（sceneRect ±1e5）
+
+        // ① 临时追踪点（TK）：青色小叉
+        if (!model_->trackPoints().empty()) {
+            p->save();
+            QPen tkp(QColor(0, 170, 170));
+            tkp.setWidthF(1.2 / zoom_); tkp.setCosmetic(true);
+            p->setPen(tkp);
+            const double s = 4.0 / zoom_;
+            for (const auto& tp : model_->trackPoints()) {
+                p->drawLine(QPointF(tp.x - s, tp.y - s), QPointF(tp.x + s, tp.y + s));
+                p->drawLine(QPointF(tp.x - s, tp.y + s), QPointF(tp.x + s, tp.y - s));
+            }
+            p->restore();
+        }
+
+        // ② 对象追踪对齐线（已获取的 OSNAP 锚点）：蓝色水平/垂直虚线
+        if (tc.objectTrack && !otrackAnchors_.empty()) {
+            p->save();
+            QPen op(QColor(0, 150, 220, 170));
+            op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
+            p->setPen(op);
+            for (const auto& a : otrackAnchors_) {
+                p->drawLine(QPointF(a.x - R, a.y), QPointF(a.x + R, a.y));
+                p->drawLine(QPointF(a.x, a.y - R), QPointF(a.x, a.y + R));
+            }
+            p->restore();
+        }
+
+        // ③ 极轴射线：从最近已放置点沿各极轴角方向（橙色虚线；含相对上一段方向的偏移）
+        if (tc.polar && !pendingPts_.empty()) {
+            const Vec3 base = pendingPts_.back();
+            const Vec3* ld = nullptr;
+            Vec3 lastDir;
+            if (pendingPts_.size() >= 2) {
+                lastDir = (pendingPts_.back() - pendingPts_[pendingPts_.size() - 2]).normalized();
+                ld = &lastDir;
+            }
+            const auto angs = snap::polarAngles(tc, ld);
+            p->save();
+            QPen pp(QColor(220, 140, 0, 170));
+            pp.setStyle(Qt::DashLine); pp.setWidthF(1.0 / zoom_); pp.setCosmetic(true);
+            p->setPen(pp);
+            for (double deg : angs) {
+                const double a = deg * M_PI / 180.0;
+                p->drawLine(QPointF(base.x, base.y),
+                            QPointF(base.x + R * std::cos(a), base.y + R * std::sin(a)));
+            }
+            p->restore();
+        }
+
+        // ⑤ 正交引导线：从基点出发的水平/垂直双向虚线（正交开启时提示方向已被锁定）
+        if (model_->orthoMode() && !pendingPts_.empty()) {
+            const Vec3 base = pendingPts_.back();
+            p->save();
+            QPen op(QColor(90, 100, 120, 150));
+            op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
+            p->setPen(op);
+            p->drawLine(QPointF(base.x - R, base.y), QPointF(base.x + R, base.y));
+            p->drawLine(QPointF(base.x, base.y - R), QPointF(base.x, base.y + R));
+            p->restore();
+        }
+
+        // ⑥ 追踪落点标记：十字（颜色随模式区分）
+        if (trackNow_.hit) {
+            p->save();
+            const double s = 6.0 / zoom_;
+            const QColor c = (trackNow_.mode == snap::TrackMode::Polar)       ? QColor(230, 150, 0)
+                           : (trackNow_.mode == snap::TrackMode::TempTK)      ? QColor(0, 170, 170)
+                                                                              : QColor(0, 150, 220);
+            QPen tp(c); tp.setWidthF(1.4 / zoom_); tp.setCosmetic(true);
+            p->setPen(tp);
+            p->drawLine(QPointF(trackNow_.point.x - s, trackNow_.point.y),
+                        QPointF(trackNow_.point.x + s, trackNow_.point.y));
+            p->drawLine(QPointF(trackNow_.point.x, trackNow_.point.y - s),
+                        QPointF(trackNow_.point.x, trackNow_.point.y + s));
+            // 追踪命中提示：标注是哪种追踪在起作用（极轴 / 对象追踪 / 临时追踪点）
+            const QString tn = (trackNow_.mode == snap::TrackMode::Polar)
+                                   ? QStringLiteral("极轴")
+                               : (trackNow_.mode == snap::TrackMode::TempTK)
+                                   ? QStringLiteral("临时追踪点")
+                                   : QStringLiteral("对象追踪");
+            drawPixelText(p, QPointF(trackNow_.point.x + 9.0 / zoom_, trackNow_.point.y + 7.0 / zoom_),
+                          tn, c, 11, true);
+            p->restore();
+        }
     }
 
     p->save();
@@ -1666,6 +1948,28 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                                 .arg(mk(snapCfg_.quadrant)).arg(mk(snapCfg_.perpendicular)).arg(mk(snapCfg_.insertion))
                                 .arg(mk(snapCfg_.node)).arg(mk(snapCfg_.nearest)).arg(mk(snapCfg_.apparent))
                                 .arg(mk(snapCfg_.parallel)).arg(mk(snapCfg_.extension)).arg(mk(snapCfg_.midBetween)));
+        // 追踪状态行：极轴（含增量角）/ 对象追踪 / 临时追踪点数量（命令行 polar/otrack/tk 可控制）
+        const auto& tc = model_->trackConfig();
+        p->setPen(QColor(190, 140, 40));
+        p->drawText(10, 72, QString("追踪      极轴%1（增量 %2°%3）  对象追踪%4  临时追踪点 %5 个")
+                                .arg(mk(tc.polar))
+                                .arg(tc.polarIncrement, 0, 'f', 0)
+                                .arg(tc.polarRelative ? QStringLiteral("·相对上一段") : QStringLiteral("·绝对"))
+                                .arg(mk(tc.objectTrack))
+                                .arg(model_->trackPoints().size()));
+    }
+    // ---- 输入约束状态行（正交 / 栅格吸附）：始终显示，与是否在绘制中无关 ----
+    // 单一状态源在 SketchModel，三入口（F8/F9、状态栏按钮、命令 ortho/snap）改的都是它，
+    // 因此这行文字即"当前真相"，任何入口改动都会即时反映到这里。
+    {
+        const auto on = [](bool b) { return b ? QStringLiteral("✓") : QStringLiteral("✗"); };
+        p->setPen(QColor(80, 120, 90));
+        p->drawText(10, drawToolActive_ ? 90 : 36,
+                    QString("输入约束  [F8]正交%1  [F9]栅格吸附%2（步长 %3 mm）  捕捉容差 %4 px")
+                        .arg(on(model_->orthoMode()))
+                        .arg(on(model_->gridSnap()))
+                        .arg(model_->gridSnapStep(), 0, 'f', 2)
+                        .arg((int)PICK_TOL_PX));
     }
 
     // ---- 当前活动图层（醒目显示）：右上角彩色徽标，实时跟随切换 ----
@@ -2694,6 +2998,8 @@ void GraphicsView::handleRightButton() {
         const QString t = model_->activeTool();
         const bool chain = (t == "line" && chainHinted_);
         clearSnapOverride();          // 结束绘制手势同样终止临时覆盖
+        clearOtrackAnchors();         // 结束绘制丢弃对象追踪锚点
+        trackNow_ = snap::TrackResult{};
         resetPending();
         model_->log(chain ? QStringLiteral("已结束连续直线绘制")
                           : QStringLiteral("已结束当前绘制"));

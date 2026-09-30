@@ -7,6 +7,7 @@
 #include <QKeySequence>
 #include <QAction>
 #include <QList>
+#include <QSet>
 #include <memory>
 #include <vector>
 #include "core/Element.h"
@@ -37,6 +38,7 @@ public:
     Element el;
     bool highlight = false;
     bool preview = false;
+    bool warn = false;        // 过约束/冲突高亮：被诊断为冲突的图元描红加粗
     // 当前绘图比例（图形:实物）。标注的数字必须写**实物尺寸**，而 el.pts 是图纸坐标，
     // 故绘制标注时要用它把比例除回去；由 GraphicsView::rebuild() 从模型注入。
     double dimScale = 1.0;
@@ -101,6 +103,10 @@ public:
     bool zoomBoxMode() const { return zoomBoxMode_; }
     void cancelDrawing();                    // 供菜单「取消当前绘制」调用
     void injectPoint(const Vec3& p);         // 供命令行键盘输入坐标注入（分段式命令流程）
+
+    // ---- 约束可视化对外接口（供主窗口接线，需求③④）----
+    void refreshConstraintDiagnostics();      // 约束表变化后重算冲突集合、刷新高亮与告警
+    void zoomToElement(int id);               // 视图缩放适配到指定图元（约束栏「定位」用）
 
     // ---- 中心点拾取模式（环形阵列等需要用户在视图中点击取点）----
     void setPointPickMode(bool on);           // 进入/退出「拾取一个世界坐标点」模式（光标变十字）
@@ -221,10 +227,16 @@ private:
 
     // ---- 直线绘制智能捕捉 ----
     snap::SnapResult snapNow_;       // 当前光标处命中的捕捉点（用于预览标记与拾取替换）
+    QSet<int> conflictIds_;          // 过约束/冲突诊断中被标记的高亮图元集合（需求④）
     snap::SnapConfig snapCfg_;       // 当前绘制命令生效的捕捉开关（按 E/T/M/C 切换）
     snap::SnapConfig snapCfgBackup_; // 进入绘制命令前的全局基线快照，退出/清除覆盖后恢复至此
     bool snapOverrideActive_ = false;// 是否已激活「临时捕捉覆盖」（Shift+右键）
     snap::SnapConfig snapRestore_;   // 覆盖前的活动配置，清除覆盖时回退至此（"恢复原有配置"）
+    // ---- 追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
+    snap::TrackResult trackNow_;       // 当前追踪命中（用于落点替换与引导线绘制）
+    std::vector<Vec3> otrackAnchors_;  // 已获取的对象追踪锚点（命令期瞬态，OSNAP 命中时累积）
+    // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：单一状态源在 SketchModel，此处仅缓存本帧结果 ----
+    snap::InputResult inputNow_;       // 本帧施加了哪些输入约束（供引导线与 HUD 反馈）
     bool drawToolActive_ = false;    // 当前是否处于「绘制类命令」（E/T/M/C 切换仅此状态下生效）
     bool keyboardInputActive_ = false; // 命令行键盘输入坐标时为 true，使 snapWorld 跳过捕捉
     Vec3 lastMouseWorld_;            // 最近一次鼠标世界坐标，供快捷键切换后即时刷新标记
@@ -240,12 +252,20 @@ private:
     void applySnapOverride(bool snap::SnapConfig::* field, const QString& name);    // 临时仅启用某一捕捉类型
     void clearSnapOverride();             // 清除覆盖，恢复覆盖前的活动配置
     void showSnapOverrideMenu(const QPoint& globalPos);  // 弹出覆盖类型选择菜单
+    // ---- 追踪（极轴 / 对象捕捉追踪 / 临时追踪点 TK）----
+    void addOtrackAnchor(const Vec3& p);  // 去重并入对象追踪锚点集（命令期累积，封顶防膨胀）
+    void clearOtrackAnchors();            // 清空对象追踪锚点集
+    void addTrackPointAtCursor();         // 在当前光标处放置临时追踪点（TK）
+    void clearTrackPoints();              // 清空全部临时追踪点（TK）
     void enableSnapShortcuts(bool on);    // 统一启用/禁用本组 E/T/M/C/X 切换键
     void saveConflictingShortcuts();      // 进入绘制命令：快照并临时禁用冲突的全局快捷键（要求 1）
     void restoreConflictingShortcuts();   // 退出绘制命令：还原被临时禁用的全局快捷键（要求 3）
 
     void applyTransform();
     void rebuild();
+    // ---- 约束可视化（需求②：约束图标+类型标注；需求④：过约束/冲突高亮）----
+    void drawConstraintMarkers(QPainter* p);   // 遍历模型约束表，在图形视图上画图标并标注类型
+    void drawConflictOverlay(QPainter* p);      // 顶部红色告警条（过约束/冲突时）
     // ---- 适配窗口 / 窗口缩放 的私有辅助 ----
     QRectF contentBounds() const;          // 所有可见图元的世界包围盒（不含坐标轴/提示文字覆盖层）
     void fitWorldRect(const QRectF& r, double margin);  // 将世界矩形以 margin 系数适配居中到视口

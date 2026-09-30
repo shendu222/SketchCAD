@@ -53,7 +53,7 @@ struct SnapConfig {
 
     // ---- 本次新增 ----
     bool quadrant     = false;  // 象限点（默认关）
-    bool perpendicular= false;  // 垂足（默认关）
+    bool perpendicular= false;  // 垂足（默认关：与中点一致为可切换模式；经 Shift+右键/P 键开启，命中时显示 ⊥ 高亮）
     bool insertion    = false;  // 插入点（默认关）
     bool node         = false;  // 节点（点图元，默认关）
     bool nearest      = false;  // 最近点（默认关，兜底）
@@ -77,21 +77,40 @@ struct SnapConfig {
     bool operator!=(const SnapConfig& o) const { return !(*this == o); }
 };
 
-// 捕捉字段定义表（key=快捷键，label=显示名，field=对应 SnapConfig 开关成员）。
-// 捕捉切换快捷键、Shift+右键临时覆盖菜单、捕捉设置面板三处共用，避免散落重复定义。
+// 捕捉字段定义表（key=快捷键，label=显示名，field=对应 SnapConfig 开关成员，type=对应捕捉类型）。
+// 捕捉切换快捷键、Shift+右键临时覆盖菜单、捕捉设置面板、命中提示标签四处共用，
+// 避免散落重复定义导致「菜单叫端点、提示叫别的名」这类漂移。
 struct SnapFieldDef {
     int key;                   // Qt::Key
     QString label;             // 显示名（含快捷键提示）
     const char* jsonKey;       // JSON 序列化键名（稳定英文，与字段名一致）
     bool SnapConfig::* field;  // 对应 SnapConfig 开关成员
+    SnapType type = SnapType::None;  // 该开关对应的捕捉类型（供命中提示反查显示名）
 };
 std::vector<SnapFieldDef> snapFieldDefs();
+
+// 捕捉类型的显示名（含快捷键提示），供命中提示标签/日志使用。
+// 由 snapFieldDefs() 反查得到，与菜单、面板、快捷键完全同源。
+QString snapTypeLabel(SnapType t);
 
 // 捕捉优先级（数值越大越优先）。当多个类型同时落入容差范围时，先按优先级，
 // 同优先级再比距离。规则：显式「点状」捕捉（端/心/节/插/象）最高；然后是严格
 // 几何交点；其后是「需推导」的垂足/切点；最后是「兜底/推断」的最近/外观/延伸/平行/中点。
 // 这让「光标压在端点上」时优先吸端点而非顺带的最近点，符合 AutoCAD 的语义直觉。
 int snapPriority(SnapType t);
+
+// 捕捉类型统一注册表：每种捕捉具备唯一标识、显示名、适用图元范围、优先级与吸附说明。
+// 与 snapFieldDefs() 互补——此处侧重「类型语义与优先级」的集中登记，供帮助/设置面板/自测查阅。
+struct SnapDescriptor {
+    SnapType     type;
+    const char*  id;          // 机器标识（英文短名）
+    const char*  name;        // 显示名（中文）
+    const char*  applicable;  // 适用图元 / 触发条件
+    int          priority;    // 吸附优先级（来自 snapPriority）
+    const char*  desc;        // 吸附判定说明
+};
+std::vector<SnapDescriptor> snapTypeDescriptors();
+const SnapDescriptor* snapTypeDescriptor(SnapType t);
 
 // 图元上「真实几何意义」的捕捉点（不含圆的半径手柄这类辅助点）。
 // 圆：仅圆心；弧：圆心 + 起/终点；直线：两端点；矩形：四角；多边形/样条：全部顶点。
@@ -118,6 +137,79 @@ SnapResult snap(const std::vector<Element>& elems, const Vec3& w,
                const Vec3* otherEnd = nullptr, double tol = 1.0,
                const SnapConfig& cfg = SnapConfig{},
                const Vec3* refA = nullptr, const Vec3* refB = nullptr);
+
+// ======================== 追踪系统（极轴 / 对象捕捉追踪 / 临时追踪点）========================
+// 三者共用同一纯几何层 track()，由 GraphicsView 在绘制命令期驱动，无 UI 依赖。
+//   Polar       极轴追踪：从「已放置的基点」沿一组极轴角方向发出射线，光标落入某条射线邻域即
+//                被吸附到该射线（保持当前光标到基点的距离）。
+//   ObjectTrack 对象捕捉追踪：把当前 OSNAP 命中的点「获取」为对齐锚点，从其发出水平/垂直对齐线，
+//                光标沿对齐线、或两锚点对齐线交点处被吸附。
+//   TempTK      临时追踪点：用户显式放置的瞬态点，参与对齐线计算（与 ObjectTrack 同机制）。
+enum class TrackMode { None, Polar, ObjectTrack, TempTK };
+
+struct TrackResult {
+    Vec3 point = Vec3(0, 0, 0);   // 命中的追踪落点
+    bool hit = false;             // 是否命中任一种追踪
+    TrackMode mode = TrackMode::None;
+    Vec3 dir = Vec3(0, 0, 0);     // Polar：射线单位方向；ObjectTrack/TempTK：对齐轴方向（单轴为 (1,0)/(0,1)）
+    int  axis = 0;                // ObjectTrack/TempTK：0=水平对齐, 1=垂直对齐（-1 表示 Polar）
+    Vec3 anchorA, anchorB;        // 参与的锚点（ObjectTrack/TempTK 用 anchorA；Polar 用 anchorA=极轴基点）
+};
+
+// 追踪全局配置（随图存档顶层 JSON "trackConfig"）：
+//   polar          极轴追踪开关
+//   objectTrack    对象捕捉追踪开关（依赖 OSNAP 获取锚点）
+//   polarIncrement 极轴增量角（度）：90/45/30/60/15…（用户可设）
+//   polarRelative  极轴角是否相对「上一段方向」偏移（否则用绝对 0/90/180/270）
+struct TrackConfig {
+    bool   polar = true;
+    bool   objectTrack = true;
+    double polarIncrement = 90.0;
+    bool   polarRelative = true;
+
+    QJsonObject toJson() const;
+    static TrackConfig fromJson(const QJsonObject& o);   // 缺键回落默认
+    bool operator==(const TrackConfig& o) const {
+        return polar == o.polar && objectTrack == o.objectTrack &&
+               std::fabs(polarIncrement - o.polarIncrement) < 1e-9 &&
+               polarRelative == o.polarRelative;
+    }
+    bool operator!=(const TrackConfig& o) const { return !(*this == o); }
+};
+
+// 根据配置生成极轴射线方向角（度，[0,360)）。baseDir 非空且 polarRelative 时，以 baseDir 的
+// 世界角为基准叠加 0,inc,2inc…；否则从绝对 0° 起。始终额外补齐正交 0/90/180/270 作为兜底引导。
+std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir);
+
+// 综合追踪：给定光标 w、配置 cfg、上一段方向 lastSegDir（可空）、极轴基点 polarBase（可空）、
+// 临时追踪点 trackPoints、已获取的对象追踪锚点 osnapAnchors、世界容差 tol，返回最佳追踪落点。
+// 命中规则（按到光标距离取最优）：
+//   - Polar：对每个极轴角，若 (w-polarBase) 在该角射线邻域（垂距 ≤ tol）且在前方，吸附到射线上；
+//   - OTRACK/TK：对每个锚点发出水平/垂直对齐线，光标落入邻域即吸附；两锚点正交对齐线交点亦参与。
+TrackResult track(const Vec3& w, const TrackConfig& cfg,
+                  const Vec3* lastSegDir, const Vec3* polarBase,
+                  const std::vector<Vec3>& trackPoints,
+                  const std::vector<Vec3>& osnapAnchors, double tol);
+
+// ======================== 输入约束（正交 ORTHO / 栅格吸附 SNAP）========================
+// 与捕捉/追踪不同：正交与栅格吸附是**强制性输入约束**，优先级高于 OSNAP——
+// 开启正交后即便 OSNAP 命中了斜向点，落点也要被投影回水平/垂直方向（画不出斜线）。
+struct InputResult {
+    Vec3 point = Vec3(0, 0, 0);
+    bool ortho = false;   // 本次是否施加了正交方向锁定
+    bool grid  = false;   // 本次是否施加了栅格量化
+};
+
+// 合成输入约束。base 为「上一段终点/已放置点」（正交基准），可为空（首点无基准 → 正交不生效）。
+// 行为规则（三者互斥关系明确定义，避免「同时开启时行为异常」）：
+//   ① 仅正交：保留 (p-base) 中绝对值较大的分量，另一分量归零 → 锁在过 base 的水平/垂直线上；
+//   ② 仅栅格：x/y 各自量化到 step 的最近整数倍（无 base 要求）；
+//   ③ 两者同时开：**正交定方向、栅格定长度** —— 先按 ① 锁轴，再把「被保留的那个分量」
+//      量化到 step，另一分量保持 base 原值（保证点始终精确落在锁定轴上，不会因量化而偏出轴线）。
+//      这是 AutoCAD 的语义，也消除了「正交把点锁到 x=37.6、栅格又把它拽到 x=38」导致的抖动。
+//   ④ 都不开：原样返回。
+InputResult applyInputConstraints(const Vec3& p, const Vec3* base,
+                                  bool ortho, bool grid, double step);
 
 } // namespace snap
 } // namespace SketchCAD

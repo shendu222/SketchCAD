@@ -539,21 +539,68 @@ SnapResult snap(const std::vector<Element>& elems, const Vec3& w,
 // jsonKey 与 SnapConfig 字段名严格一致，保证 toJson/fromJson 与面板/菜单永远同步。
 std::vector<SnapFieldDef> snapFieldDefs() {
     return {
-        { Qt::Key_E, QStringLiteral("端点(E)"),     "endpoint",     &SnapConfig::endpoint },
-        { Qt::Key_T, QStringLiteral("切点(T)"),     "tangent",      &SnapConfig::tangent },
-        { Qt::Key_M, QStringLiteral("中点(M)"),     "midpoint",     &SnapConfig::midpoint },
-        { Qt::Key_C, QStringLiteral("圆心(C)"),     "center",       &SnapConfig::center },
-        { Qt::Key_X, QStringLiteral("交点(X)"),     "intersection", &SnapConfig::intersection },
-        { Qt::Key_Q, QStringLiteral("象限(Q)"),     "quadrant",     &SnapConfig::quadrant },
-        { Qt::Key_P, QStringLiteral("垂足(P)"),     "perpendicular",&SnapConfig::perpendicular },
-        { Qt::Key_I, QStringLiteral("插入(I)"),     "insertion",    &SnapConfig::insertion },
-        { Qt::Key_N, QStringLiteral("节点(N)"),     "node",         &SnapConfig::node },
-        { Qt::Key_A, QStringLiteral("最近(A)"),     "nearest",      &SnapConfig::nearest },
-        { Qt::Key_O, QStringLiteral("外观(O)"),     "apparent",     &SnapConfig::apparent },
-        { Qt::Key_L, QStringLiteral("平行(L)"),     "parallel",     &SnapConfig::parallel },
-        { Qt::Key_W, QStringLiteral("延伸(W)"),     "extension",    &SnapConfig::extension },
-        { Qt::Key_B, QStringLiteral("两点中点(B)"), "midBetween",   &SnapConfig::midBetween },
+        { Qt::Key_E, QStringLiteral("端点(E)"),     "endpoint",     &SnapConfig::endpoint,      SnapType::Endpoint },
+        { Qt::Key_T, QStringLiteral("切点(T)"),     "tangent",      &SnapConfig::tangent,       SnapType::Tangent },
+        { Qt::Key_M, QStringLiteral("中点(M)"),     "midpoint",     &SnapConfig::midpoint,      SnapType::Midpoint },
+        { Qt::Key_C, QStringLiteral("圆心(C)"),     "center",       &SnapConfig::center,        SnapType::Center },
+        { Qt::Key_X, QStringLiteral("交点(X)"),     "intersection", &SnapConfig::intersection,  SnapType::Intersection },
+        { Qt::Key_Q, QStringLiteral("象限(Q)"),     "quadrant",     &SnapConfig::quadrant,      SnapType::Quadrant },
+        { Qt::Key_P, QStringLiteral("垂足(P)"),     "perpendicular",&SnapConfig::perpendicular, SnapType::Perpendicular },
+        { Qt::Key_I, QStringLiteral("插入(I)"),     "insertion",    &SnapConfig::insertion,     SnapType::Insertion },
+        { Qt::Key_N, QStringLiteral("节点(N)"),     "node",         &SnapConfig::node,          SnapType::Node },
+        { Qt::Key_A, QStringLiteral("最近(A)"),     "nearest",      &SnapConfig::nearest,       SnapType::Nearest },
+        { Qt::Key_O, QStringLiteral("外观(O)"),     "apparent",     &SnapConfig::apparent,      SnapType::Apparent },
+        { Qt::Key_L, QStringLiteral("平行(L)"),     "parallel",     &SnapConfig::parallel,      SnapType::Parallel },
+        { Qt::Key_W, QStringLiteral("延伸(W)"),     "extension",    &SnapConfig::extension,     SnapType::Extension },
+        { Qt::Key_B, QStringLiteral("两点中点(B)"), "midBetween",   &SnapConfig::midBetween,    SnapType::MidBetween },
     };
+}
+
+QString snapTypeLabel(SnapType t) {
+    for (const auto& d : snapFieldDefs())
+        if (d.type == t) return d.label;
+    return QStringLiteral("捕捉");
+}
+
+std::vector<SnapDescriptor> snapTypeDescriptors() {
+    // 优先级沿用 snapPriority()，数值越大越优先；同优先级比距离。
+    // 吸附判定：在容差范围内收集所有启用捕捉命中的候选点，先按优先级、再按到光标距离取最优。
+    return {
+        {SnapType::Endpoint,     "endpoint",     "端点",     "直线/弧/矩形/多边形/样条/折线的端点或顶点",     snapPriority(SnapType::Endpoint),
+         "取图元控制点（端点/顶点）中与光标最近者；点状特征，优先级最高一档"},
+        {SnapType::Center,       "center",       "圆心",     "圆/圆弧",                                       snapPriority(SnapType::Center),
+         "取圆心；与 Endpoint 同档（点状特征）"},
+        {SnapType::Intersection, "intersection", "交点",     "任意两图元真实相交处（线×线/线×圆/圆×圆…）",     snapPriority(SnapType::Intersection),
+         "取两图元几何相交点；严格交点，优先级次之"},
+        {SnapType::Apparent,     "apparent",     "外观交点", "两图元延长线/投影相交处（本体不相交）",           snapPriority(SnapType::Apparent),
+         "取两图元无限延长（投影）的交点；仅当延长后相交时命中，优先级低于真实交点"},
+        {SnapType::Tangent,      "tangent",      "切点",     "由已知另一端点向圆/弧作切线的切点",               snapPriority(SnapType::Tangent),
+         "以 otherEnd 为起点向圆/弧作切线，返回切点；需绘制命令提供另一端点"},
+        {SnapType::Perpendicular,"perpendicular","垂足",     "由光标向图元作垂线的垂足",                       snapPriority(SnapType::Perpendicular),
+         "取光标到图元的最近垂足；落在线段/弧段内才有效"},
+        {SnapType::Quadrant,     "quadrant",     "象限点",   "圆/弧的 0°/90°/180°/270° 方位",                 snapPriority(SnapType::Quadrant),
+         "取圆/弧半径手柄四方位（象限点）"},
+        {SnapType::Insertion,    "insertion",    "插入点",   "块引用/文字/多行文字/标注的插入点",             snapPriority(SnapType::Insertion),
+         "取图元插入锚点（pts[0]）"},
+        {SnapType::Node,         "node",         "节点",     "Point 图元的节点位置",                          snapPriority(SnapType::Node),
+         "取 Point 图元的位置点"},
+        {SnapType::Extension,    "extension",    "延伸点",   "直线/弧端点沿其方向的延长线上点",               snapPriority(SnapType::Extension),
+         "沿图元方向从端点向外延伸的射线上点"},
+        {SnapType::Parallel,     "parallel",     "平行",     "与参照图元平行的方位",                           snapPriority(SnapType::Parallel),
+         "取沿参照图元方向的投影点 + 方向向量，用于绘制平行线"},
+        {SnapType::Midpoint,     "midpoint",     "中点",     "单段线段/折边的中点",                           snapPriority(SnapType::Midpoint),
+         "取线段中点"},
+        {SnapType::MidBetween,   "midbetween",   "两点中点", "两参考点 a、b 的中点",                          snapPriority(SnapType::MidBetween),
+         "取 refA 与 refB 两参考点的中点（需开启且提供两参考点）"},
+        {SnapType::Nearest,      "nearest",      "最近点",   "图元上离光标最近的任意点（兜底）",              snapPriority(SnapType::Nearest),
+         "取图元上离光标最近的点；优先级最低，作为其它捕捉均未命中时的兜底"},
+    };
+}
+
+const SnapDescriptor* snapTypeDescriptor(SnapType t) {
+    static const auto v = snapTypeDescriptors();
+    for (const auto& d : v) if (d.type == t) return &d;
+    return nullptr;
 }
 
 QJsonObject SnapConfig::toJson() const {
@@ -568,6 +615,144 @@ SnapConfig SnapConfig::fromJson(const QJsonObject& o) {
     for (const auto& d : snapFieldDefs())
         if (o.contains(QLatin1String(d.jsonKey)))
             c.*(d.field) = o[QLatin1String(d.jsonKey)].toBool();
+    return c;
+}
+
+// ======================== 追踪系统几何（极轴 / 对象追踪 / 临时追踪点）========================
+
+std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir) {
+    std::vector<double> out;
+    auto add = [&](double a) {
+        a = std::fmod(a, 360.0);
+        if (a < 0) a += 360.0;
+        for (double x : out)
+            if (std::fabs(x - a) < 1e-6 || std::fabs(x - a - 360.0) < 1e-6 ||
+                std::fabs(x - a + 360.0) < 1e-6) return;
+        out.push_back(a);
+    };
+    double base = 0.0;
+    // 相对上一段方向：以该方向的世界角为基准叠加增量角（首段无上一段则用绝对基准）
+    if (cfg.polarRelative && baseDir && baseDir->len2D() > 1e-9)
+        base = baseDir->angleDeg();
+    for (double a = 0.0; a < 360.0 - 1e-6; a += cfg.polarIncrement)
+        add(base + a);
+    // 始终补齐正交 0/90/180/270 作为兜底引导（即便增量角不整除 90°）
+    for (double o : {0.0, 90.0, 180.0, 270.0}) add(base + o);
+    return out;
+}
+
+TrackResult track(const Vec3& w, const TrackConfig& cfg,
+                  const Vec3* lastSegDir, const Vec3* polarBase,
+                  const std::vector<Vec3>& trackPoints,
+                  const std::vector<Vec3>& osnapAnchors, double tol) {
+    TrackResult best;                       // 默认 hit=false
+    double bestD = tol + 1e-9;              // 仅当候选落点在容差内才视为命中
+    const auto consider = [&](const Vec3& p, TrackMode m, const Vec3& dir, int axis,
+                              const Vec3& a, const Vec3& b = Vec3()) {
+        const double d = p.distTo(w);
+        if (d >= bestD) return;
+        bestD = d; best.hit = true; best.point = p; best.mode = m;
+        best.dir = dir; best.axis = axis; best.anchorA = a; best.anchorB = b;
+    };
+
+    // ---- POLAR：从基点沿各极轴角方向发出射线，光标投影到射线邻域即吸附 ----
+    if (cfg.polar && polarBase) {
+        const auto angs = polarAngles(cfg, lastSegDir);
+        for (double deg : angs) {
+            const double a = deg * M_PI / 180.0;
+            const Vec3 dir(std::cos(a), std::sin(a), 0.0);
+            const Vec3 v = w - *polarBase;
+            const double proj = v.x * dir.x + v.y * dir.y;   // 沿射线投影长度
+            if (proj <= 0) continue;                         // 仅取射线前方
+            const Vec3 foot = *polarBase + dir * proj;       // 投影点（保持当前光标距离）
+            const double perp = (v - dir * proj).len2D();    // 到射线的垂距
+            if (perp <= tol) consider(foot, TrackMode::Polar, dir, -1, *polarBase);
+        }
+    }
+
+    // ---- OTRACK + TK：锚点 = 已获取的对象追踪点 ∪ 用户放置的临时追踪点 ----
+    if (cfg.objectTrack || !trackPoints.empty()) {
+        struct Tagged { Vec3 p; TrackMode m; };
+        std::vector<Tagged> anchors;
+        if (cfg.objectTrack)
+            for (const auto& a : osnapAnchors) anchors.push_back({a, TrackMode::ObjectTrack});
+        for (const auto& t : trackPoints) anchors.push_back({t, TrackMode::TempTK});
+
+        for (size_t i = 0; i < anchors.size(); ++i) {
+            const Vec3& A = anchors[i].p;
+            const TrackMode m = anchors[i].m;
+            // 水平对齐线：y = A.y
+            if (std::fabs(w.y - A.y) <= tol)
+                consider(Vec3(w.x, A.y, 0), m, Vec3(1, 0, 0), 0, A);
+            // 垂直对齐线：x = A.x
+            if (std::fabs(w.x - A.x) <= tol)
+                consider(Vec3(A.x, w.y, 0), m, Vec3(0, 1, 0), 1, A);
+            // 与另一锚点的正交对齐线交点（A 水平 × B 垂直 → (B.x, A.y)；A 垂直 × B 水平 → (A.x, B.y)）
+            for (size_t j = 0; j < anchors.size(); ++j) {
+                if (j == i) continue;
+                const Vec3& B = anchors[j].p;
+                consider(Vec3(B.x, A.y, 0), m, Vec3(1, 0, 0), 0, A, B);
+                consider(Vec3(A.x, B.y, 0), m, Vec3(0, 1, 0), 1, A, B);
+            }
+        }
+    }
+    return best;
+}
+
+// ======================== 输入约束几何（正交 / 栅格吸附）========================
+
+InputResult applyInputConstraints(const Vec3& p, const Vec3* base,
+                                  bool ortho, bool grid, double step) {
+    InputResult r;
+    r.point = p;
+    if (step <= 1e-9) grid = false;               // 步长非法 → 栅格吸附退化为不生效
+    const bool canOrtho = ortho && base;          // 正交需要基准点（首点无基准时不生效）
+    if (!canOrtho && !grid) return r;             // ④ 都不开
+
+    if (canOrtho && !grid) {
+        // ① 仅正交：保留绝对值较大的分量，另一分量归零
+        const Vec3 d = p - *base;
+        if (std::fabs(d.x) >= std::fabs(d.y)) r.point = Vec3(p.x, base->y, 0);
+        else                                  r.point = Vec3(base->x, p.y, 0);
+        r.ortho = true;
+        return r;
+    }
+    if (!canOrtho && grid) {
+        // ② 仅栅格：两分量各自量化
+        const double sx = std::round(p.x / step) * step;
+        const double sy = std::round(p.y / step) * step;
+        r.point = Vec3(sx, sy, 0);
+        r.grid = true;
+        return r;
+    }
+    // ③ 两者同时开：正交定方向（锁轴），栅格定长度（量化保留分量）
+    const Vec3 d = p - *base;
+    if (std::fabs(d.x) >= std::fabs(d.y)) {
+        const double sx = std::round(p.x / step) * step;
+        r.point = Vec3(sx, base->y, 0);           // 水平：x 量化、y 保持基准
+    } else {
+        const double sy = std::round(p.y / step) * step;
+        r.point = Vec3(base->x, sy, 0);           // 竖直：y 量化、x 保持基准
+    }
+    r.ortho = true; r.grid = true;
+    return r;
+}
+
+QJsonObject TrackConfig::toJson() const {
+    QJsonObject o;
+    o["polar"]         = polar;
+    o["objectTrack"]   = objectTrack;
+    o["polarIncrement"]= polarIncrement;
+    o["polarRelative"] = polarRelative;
+    return o;
+}
+
+TrackConfig TrackConfig::fromJson(const QJsonObject& o) {
+    TrackConfig c;
+    if (o.contains("polar"))          c.polar         = o["polar"].toBool();
+    if (o.contains("objectTrack"))    c.objectTrack   = o["objectTrack"].toBool();
+    if (o.contains("polarIncrement")) c.polarIncrement= o["polarIncrement"].toDouble(c.polarIncrement);
+    if (o.contains("polarRelative"))  c.polarRelative = o["polarRelative"].toBool();
     return c;
 }
 

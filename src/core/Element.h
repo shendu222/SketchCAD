@@ -101,9 +101,29 @@ inline int linePriority(LineStyle ls) {
 // （实现见 LineStyleConfig.cpp）
 double defaultWidthForStyle(LineStyle ls);
 
+// 枚举值顺序只增不改：已存盘的 .sketch 文件里存的是整数，改顺序会让老文件读出错误类型。
+// 2026-09-29 追加（末尾）：Concentric 同心 / Symmetric 对称 / Dimensional 尺寸。
+// 2026-09-30 追加（末尾，约束总数 11 → 21，满足「超过 20 种」）：
+//   Collinear 共线 / EqualLength 等长 / EqualRadius 等半径 / PointOnLine 点在线上 /
+//   PointOnCircle 点在圆(弧)上 / FixedPoint 固定点 / Midpoint 中点 / Distance 距离 /
+//   Angle 角度 / SymmetricPoint 点对称。
 enum class ConstraintType {
-    Coincident, Parallel, Perpendicular, Equal, Tangent, Horizontal, Vertical, Fixed
+    Coincident, Parallel, Perpendicular, Equal, Tangent, Horizontal, Vertical, Fixed,
+    Concentric,      // 同心：两圆(弧)圆心重合
+    Symmetric,       // 对称：两图元关于指定轴线（第三图元，直线）镜像对称
+    Dimensional,     // 尺寸：图元自身尺寸锁定到给定值（直线=长度，圆/弧=半径）
+    Collinear,       // 共线：两直线落在同一直线上（平行 + 一点共线）
+    EqualLength,     // 等长：两线段长度相等
+    EqualRadius,     // 等半径：两圆(弧)半径相等
+    PointOnLine,     // 点在线上：某图元指定点落在一条直线上
+    PointOnCircle,   // 点在圆/弧上：某图元指定点到圆心距离等于半径
+    FixedPoint,      // 固定点：把某图元的指定控制点锁死在当前位置
+    Midpoint,        // 中点：某点恰为另一条线段的中点
+    Distance,        // 距离：两指定点间距离锁定为给定值
+    Angle,           // 角度：两直线夹角锁定为给定度数
+    SymmetricPoint   // 点对称：两点关于指定轴线互成镜像
 };
+constexpr int kConstraintTypeCount = 21;   // 约束类型总数（新增类型务必同步此值）
 
 // 尺寸标注类型（GB/T 4458.4-2003 / ISO 129-1 尺寸注法）。
 // 枚举值顺序只增不改：已存盘的 .sketch 文件里存的是整数，改顺序会让老文件读出错误类型。
@@ -182,6 +202,19 @@ inline const char* constraintTypeName(ConstraintType t) {
         case ConstraintType::Horizontal:    return "水平";
         case ConstraintType::Vertical:      return "竖直";
         case ConstraintType::Fixed:         return "固定";
+        case ConstraintType::Concentric:    return "同心";
+        case ConstraintType::Symmetric:     return "对称";
+        case ConstraintType::Dimensional:   return "尺寸";
+        case ConstraintType::Collinear:     return "共线";
+        case ConstraintType::EqualLength:   return "等长";
+        case ConstraintType::EqualRadius:   return "等半径";
+        case ConstraintType::PointOnLine:   return "点在线上";
+        case ConstraintType::PointOnCircle: return "点在圆/弧上";
+        case ConstraintType::FixedPoint:     return "固定点";
+        case ConstraintType::Midpoint:       return "中点";
+        case ConstraintType::Distance:       return "距离";
+        case ConstraintType::Angle:          return "角度";
+        case ConstraintType::SymmetricPoint: return "点对称";
     }
     return "固定";
 }
@@ -258,6 +291,15 @@ struct Element {
     QString symbolLibrary;               // 符号库引用
     int refA = -1, refB = -1;            // 约束/标注引用的图元 id
     bool visible = true;
+
+    // ---- 尺寸驱动 / 参数化建模字段（Request M 新增）----
+    // 这些字段使"标注(Dimension) ↔ 几何约束(尺寸类) ↔ 参数表"形成双向关联：
+    //   修改 dimValue / 参数表 → 重解尺寸约束 → 驱动几何重构；
+    //   几何被其它约束改变后 → syncDimensionValues 回写 dimValue → 标注文本实时更新。
+    double dimValue   = 0.0;   // 标注驱动值（mm 或 °）：dimDriven 时作为尺寸约束目标值
+    bool   dimDriven  = false; // 是否由参数/标注驱动其几何（与 Dimensional/Distance/Angle 约束关联的标注为 true）
+    QString dimParam;          // 关联的参数表变量名（如 "L"）；空串表示不关联参数
+    bool   dimLinked  = false; // 是否已通过 linkDimension 与几何约束建立双向关联
 
     // ---- 多行文字（ElementType::MText）专用字段 ----
     // 复用 Text 的 text(内容，可含 \n 与字段占位 %<...>%)、radius(字高mm)、rotation(角度)、pts[0](锚点)。

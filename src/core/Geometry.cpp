@@ -1153,8 +1153,15 @@ bool checkConstraint(const Element& a, const Element& b, ConstraintType ct, doub
             return isPerpendicularLines(a, b, tol);
         case ConstraintType::Parallel:
             return isParallelLines(a, b, tol);
+        case ConstraintType::Concentric: {
+            // 同心：双方均为圆/弧，且圆心重合（半径不必相等）
+            const bool aC = (a.type == ElementType::Circle || a.type == ElementType::Arc);
+            const bool bC = (b.type == ElementType::Circle || b.type == ElementType::Arc);
+            if (!aC || !bC || a.pts.empty() || b.pts.empty()) return false;
+            return a.pts[0].distTo(b.pts[0]) <= tol;
+        }
         default:
-            return false;
+            return false;   // Symmetric/Dimensional 需额外参数（轴/目标值），由 ConstraintSolver 单独处理
     }
 }
 
@@ -1244,6 +1251,15 @@ bool restoreConstraint(const Element& a, Element& b, ConstraintType ct, double t
         if (std::fabs(delta) > 90.0) delta = wrapDeg180(delta + 180.0);
         const Vec3 mid((b.pts[0].x + b.pts[1].x) * 0.5, (b.pts[0].y + b.pts[1].y) * 0.5);
         b.pts = rotateAroundCentroid(b.pts, mid, delta);
+        return true;
+    }
+
+    if (ct == ConstraintType::Concentric) {
+        // 同心：把 b 的圆心移到 a 的圆心（半径保持不变，故同心≠等半径）
+        const bool aC = (a.type == ElementType::Circle || a.type == ElementType::Arc);
+        const bool bC = (b.type == ElementType::Circle || b.type == ElementType::Arc);
+        if (!aC || !bC || a.pts.empty() || b.pts.empty()) return false;
+        b.pts[0] = a.pts[0];
         return true;
     }
 
