@@ -432,6 +432,22 @@ public:
     QString commandPrompt() const { return commandPrompt_; }
     void setCommandPrompt(const QString& p);
 
+    // ---- 分段命令选项提示 ----
+    // 当前绘制命令的可选项关键字列表（如 ["C/闭合", "U/放弃"]），
+    // 由 GraphicsView 在分段状态变化时设置；CommandLine / StatusBar 监听信号显示 [C/闭合]。
+    const QStringList& commandOptions() const { return commandOptions_; }
+    void setCommandOptions(const QStringList& opts);
+
+    // ---- 线宽显示开关 ----
+    // 控制是否按图元实际线宽渲染（对应 AutoCAD LWDISPLAY）。默认关：一律细线。
+    bool showLineWeight() const { return showLineWeight_; }
+    void setShowLineWeight(bool on);          // 幂等；变化发 showLineWeightChanged()
+
+    // ---- 动态输入 DYN ----
+    // 绘制命令期间在光标旁显示「距离/角度」输入框（对应 AutoCAD DYN）。默认开。
+    bool dynMode() const { return dynMode_; }
+    void setDynMode(bool on);                 // 幂等；变化发 dynModeChanged()
+
     // ---- 撤销/重做/复制粘贴 ----
     void undo();
     void redo();
@@ -461,6 +477,9 @@ signals:
     void lineParamsChanged();
     void dimensionStandardChanged(DimensionStandard s);
     void commandPromptChanged(const QString& prompt);
+    void commandOptionsChanged(const QStringList& opts);   // 分段命令可选项变化（状态栏/命令行提示）
+    void showLineWeightChanged(bool on);                    // 线宽显示开关变化（状态栏/渲染联动）
+    void dynModeChanged(bool on);                            // 动态输入 DYN 开关变化
     void scaleChanged(double ratio);
     void layersChanged();                    // 图层表增删/改名/样式/可见性变化
     void currentLayerChanged(const QString& name);   // 活动图层切换（用于 HUD 实时显示 / 面板高亮）
@@ -496,6 +515,9 @@ private:
     LineDrawParams lp_;        // 直线绘制参数输入条（角度/长度、平行间隔/条数）
     double scaleRatio_ = 1.0;  // 绘图比例（图形:实际），1.0 = 1:1
     QString commandPrompt_;    // 当前分段命令提示文本
+    QStringList commandOptions_;   // 当前分段命令可选项关键字（如 ["C/闭合","U/放弃"]）
+    bool showLineWeight_ = false;  // 线宽显示开关（状态栏可点击，默认关）
+    bool dynMode_ = true;          // 动态输入 DYN（光标跟随的距离/角度输入框，默认开）
     QString drawingPath_;      // 当前图纸文件路径（Xref 相对路径的解析基准；未存盘为空）
     std::vector<Layer> layers_;   // 图层表（默认含一层 "0"）
     QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"

@@ -13,6 +13,7 @@
 #include "core/Element.h"
 #include "core/SketchModel.h"
 #include "core/Vec.h"
+#include "core/GripOps.h"
 #include "core/Snap.h"
 #include "core/LineModes.h"
 #include "core/CircleModes.h"
@@ -22,6 +23,10 @@
 #include "core/EllipseModes.h"
 #include "core/ElementFactory.h"
 #include "core/ToolRegistry.h"
+
+// 全局类前向声明（⚠ 必须在 namespace 之外：放在 SketchCAD 内会声明出
+// SketchCAD::QLineEdit 遮蔽 ::QLineEdit，导致 DYN 成员指针指向错误类型）。
+class QLineEdit;
 
 namespace SketchCAD {
 
@@ -39,6 +44,7 @@ public:
     bool highlight = false;
     bool preview = false;
     bool warn = false;        // 过约束/冲突高亮：被诊断为冲突的图元描红加粗
+    bool showLineWeight = false;  // 线宽显示开关（对应 LWDISPLAY）：false 时一律细线
     // 当前绘图比例（图形:实物）。标注的数字必须写**实物尺寸**，而 el.pts 是图纸坐标，
     // 故绘制标注时要用它把比例除回去；由 GraphicsView::rebuild() 从模型注入。
     double dimScale = 1.0;
@@ -103,6 +109,8 @@ public:
     bool zoomBoxMode() const { return zoomBoxMode_; }
     void cancelDrawing();                    // 供菜单「取消当前绘制」调用
     void injectPoint(const Vec3& p);         // 供命令行键盘输入坐标注入（分段式命令流程）
+    void applyCommandOption(const QString& key);  // 绘制命令期命令行输入选项关键字（如 C/闭合、U/放弃）
+    void showContextMenu(const QPoint& globalPos); // 选择/空闲态右键：按上下文弹出菜单
 
     // ---- 约束可视化对外接口（供主窗口接线，需求③④）----
     void refreshConstraintDiagnostics();      // 约束表变化后重算冲突集合、刷新高亮与告警
@@ -141,6 +149,7 @@ signals:
     void regionPickCancelled();                     // 点选模式被 Esc / 右键取消
     void regionPickParamsRequested();               // 点选模式按 Enter：请求打开参数对话框
     void editTextRequested(int id);                 // 双击文字图元：请求打开多行文字编辑框
+    void requestShowProperties();                   // 右键「特性」：请求主窗口弹出属性面板
 public slots:
     void onModelChanged();
     void onSelectionChanged(int id);
@@ -174,6 +183,16 @@ private:
     QGraphicsScene* scene_;
     std::unique_ptr<ToolManager> toolMgr_;   // 策略模式工具管理器
     double zoom_ = 4.0;
+    bool showLineWeight_ = false;   // 线宽显示开关（从模型同步，决定 penFor 是否按实际线宽）
+
+    // ---- 动态输入 DYN（光标跟随的距离/角度输入框，viewport 覆盖层）----
+    QWidget*   dynBox_ = nullptr;
+    QLineEdit* dynLen_ = nullptr;   // 距离输入（mm）
+    QLineEdit* dynAng_ = nullptr;   // 角度输入（度，世界角，逆时针为正）
+    void ensureDynBox();                    // 惰性创建覆盖层
+    void updateDynBox(const QPoint& vp);    // 按最近采集点+光标刷新位置与预填值
+    void hideDynBox();                      // 隐藏（提交/取消/会话结束时）
+    void commitDynInput();                  // Enter：上一点 + 极坐标(距离,角度) 注入为拾取点
     double panX_ = 0, panY_ = 0;
     bool panning_ = false, drawing_ = false, spaceDown_ = false;
     bool panRight_ = false;   // 本次平移由右键发起
@@ -199,12 +218,17 @@ private:
     double arcSweep_ = 0.0;
     bool   chainHinted_ = false;    // 连续直线提示只打一次，避免刷屏
 
-    // ---- 端点捕捉与联动拖拽 ----
-    // dragRefs_ 在按下的那一刻锁定：那时哪些控制点重合在一起，整段拖拽就一直带着谁走。
-    // 若改成每帧现算，第一帧移动后它们就不再重合，联动会立刻断掉。
-    bool draggingHandle_ = false;
-    std::vector<SketchModel::HandleRef> dragRefs_;
-    Vec3 dragOrigin_;
+    // ---- 夹点热态（单击夹点 → 5 种热操作：拉伸/移动/旋转/缩放/镜像）----
+    // 单击夹点进入热态（默认拉伸），移动光标即动态预览（不落盘）；
+    // Ctrl 循环切换模式（重置零参考光标）；按住拖拽释放 / 热态中再次单击 /
+    // Enter = 确认落盘（beginEdit + applyChanges 一次撤销）；Esc = 取消。
+    //Stretch 的重合联动引用在进入热态瞬间锁定（与原端点拖拽同语义）。
+    bool gripHot_ = false;          // 热态中
+    bool gripArmed_ = false;        // 首次单击（未拖拽）完成，等待确认单击
+    bool gripDragMoved_ = false;    // 本次按住发生过拖拽位移
+    grip::Mode gripMode_ = grip::Mode::Stretch;
+    grip::Grips gripData_;          // 热态几何上下文（基准点/作用集/联动引用/零参考）
+    QGraphicsPathItem* gripPreviewItem_ = nullptr;   // 变换预览（虚线，不进模型）
     bool hoverHandle_ = false;      // 当前光标下是否有可抓的控制点
     Vec3 hoverPos_;
     int  hoverLinked_ = 0;          // 该控制点上重合了几个图元
@@ -269,6 +293,7 @@ private:
     // ---- 适配窗口 / 窗口缩放 的私有辅助 ----
     QRectF contentBounds() const;          // 所有可见图元的世界包围盒（不含坐标轴/提示文字覆盖层）
     void fitWorldRect(const QRectF& r, double margin);  // 将世界矩形以 margin 系数适配居中到视口
+    void applyLineWeightToItems();    // 线宽显示开关变化时，刷新全部图元的线宽呈现并触发重绘
     void updatePreview(const Vec3& cur);
     void showPreview(const Element& tmp, std::vector<Element> guides = {});
     void clearPreview();
@@ -283,6 +308,8 @@ private:
     void handleLineSubTool(const Vec3& w, QMouseEvent* e);
     void addLineSegment(const Vec3& a, const Vec3& b);
     void finalizeSnake();
+    // 栏选/圈围/圈交结算：按 activeTool 定模式，命中图元追加进当前选区
+    void finalizeShapePick();
     int pickRefElement(const QPoint& vp, const std::vector<ElementType>& allowed) const;
 
     // ---- 构造线子模式（Xline：水平/竖直/角度/两点/角平分线/平行 共6种）----
@@ -361,12 +388,27 @@ private:
     // ---- 控制点 ----
     double worldTol() const { return PICK_TOL_PX / std::max(1e-6, zoom_); }
     void   refreshHover(const Vec3& w);
-    bool   beginHandleDrag(const Vec3& w);
+    // 夹点热态状态机（替代原「按下即拖拽端点」）
+    bool   beginGripHot(const Vec3& w);       // 单击夹点进入热态；返回是否命中
+    void   updateGripPreview(const Vec3& w);  // 按当前模式计算变更集并画虚线预览
+    void   clearGripPreview();
+    void   commitGrip();                      // 确认落盘（一次撤销）
+    void   cancelGrip();                      // 取消（未落盘，直接清态）
     void   drawHandles(QPainter* p) const;
 
     // 基于真实几何距离的命中检测（替代包围盒命中）：
     // 在容差范围内返回距离点击点最近的图元 id，未命中为 -1。
     int  hitTest(const QPoint& viewPos) const;
+    // 选择循环：返回容差内全部命中图元 id（按距离升序，最上层在前），
+    // 供 Ctrl+点击在位置重叠的多个对象间切换选取目标。
+    std::vector<int> hitTestAll(const QPoint& viewPos) const;
+    // 选择循环状态：同锚点连续 Ctrl+点击 → 依次切换；其它点击/集合变化 → 重建
+    void cycleSelection(const QPoint& vp, const std::vector<int>& ids);
+    void breakCycle();
+    bool cycleActive_ = false;
+    QPoint cycleAnchor_;
+    std::vector<int> cycleList_;
+    int  cycleIdx_ = 0;
     // 图元在世界坐标系下的几何包围盒（用于框选命中判断）
     QRectF elementSceneBounds(const Element& e) const;
 

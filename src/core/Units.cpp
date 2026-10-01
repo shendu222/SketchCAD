@@ -32,8 +32,8 @@ UnitsMeta UnitsMeta::fromJson(const QJsonObject& o) {
     if (lit != L.constEnd()) u.length = lit.value();
     const auto ait = A.constFind(o["angle"].toString());
     if (ait != A.constEnd()) u.angle = ait.value();
-    u.lengthPrec = std::clamp(o.contains("lengthPrec") ? o["lengthPrec"].toInt(2) : 2, 0, 6);
-    u.anglePrec  = std::clamp(o.contains("anglePrec")  ? o["anglePrec"].toInt(2)  : 2, 0, 6);
+    u.lengthPrec = std::clamp(json::getInt(o, "lengthPrec", 2), 0, 6);
+    u.anglePrec  = std::clamp(json::getInt(o, "anglePrec", 2), 0, 6);
     return u;
 }
 
@@ -47,11 +47,11 @@ QJsonObject LimitsMeta::toJson() const {
 LimitsMeta LimitsMeta::fromJson(const QJsonObject& o) {
     LimitsMeta l;   // 默认 A3 + 不检查
     if (o.isEmpty()) return l;
-    l.checkOn = o.contains("checkOn") ? o["checkOn"].toBool(false) : false;
-    l.x1 = o.contains("x1") ? o["x1"].toDouble(0.0)   : 0.0;
-    l.y1 = o.contains("y1") ? o["y1"].toDouble(0.0)   : 0.0;
-    l.x2 = o.contains("x2") ? o["x2"].toDouble(420.0) : 420.0;
-    l.y2 = o.contains("y2") ? o["y2"].toDouble(297.0) : 297.0;
+    l.checkOn = json::getBool(o, "checkOn", false);
+    l.x1 = json::getDouble(o, "x1", 0.0);
+    l.y1 = json::getDouble(o, "y1", 0.0);
+    l.x2 = json::getDouble(o, "x2", 420.0);
+    l.y2 = json::getDouble(o, "y2", 297.0);
     if (!l.isValid()) l = LimitsMeta();
     return l;
 }

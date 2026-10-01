@@ -10,6 +10,7 @@
 #include "ui/tools/MTextTool.h"
 #include "ui/tools/TableTool.h"
 #include "ui/tools/PolylineEditTool.h"
+#include "ui/tools/ShapeSelectTool.h"
 #include "ui/GraphicsView.h"
 #include "core/SketchModel.h"
 #include "core/ToolRegistry.h"
@@ -85,6 +86,10 @@ void ToolManager::registerBuiltins() {
     registerTool("deselect_intersected", std::make_unique<PickSelectTool>(PickSelectTool::Action::DeselectIntersected));
     registerTool("select_layer",         std::make_unique<PickSelectTool>(PickSelectTool::Action::SelectLayer));
     registerTool("toggle_layer",         std::make_unique<PickSelectTool>(PickSelectTool::Action::ToggleLayer));
+    // 不规则范围选择：栏选 / 圈围 / 圈交（AutoCAD FENCE / WP / CP 对齐）
+    registerTool("fence", std::make_unique<ShapeSelectTool>(shape::Mode::Fence));
+    registerTool("wp",    std::make_unique<ShapeSelectTool>(shape::Mode::Window));
+    registerTool("cp",    std::make_unique<ShapeSelectTool>(shape::Mode::Crossing));
 
     // ---- 基本绘制（PointCollectTool：收集 N 个点后终结）----
     registerTool("line",      std::make_unique<PointCollectTool>("line",      QStringLiteral("直线"), 2));

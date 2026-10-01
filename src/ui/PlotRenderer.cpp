@@ -1,5 +1,5 @@
 #include "PlotRenderer.h"
-#include "GraphicsView.h"          // ElementItem::buildPath / geometryBounds（静态、视图无关）
+#include "ElementPath.h"           // ElementPath::buildPath / rawBounds（静态、视图无关、无头复用）
 #include "core/LinePattern.h"      // dashSpecFor / shouldFallbackToSolid / dashPhaseOffset
 #include "core/Section.h"          // hatchRegionFromElement / hatchDrawMode / generateHatchLines / generateHatchDots
 #include "core/Geometry.h"         // geo::Seg
@@ -117,9 +117,9 @@ void paintOne(QPainter* p, const Element& e, Ctx& c) {
     const ResolvedPlotStyle rs = c.style->resolve(e);
     QPainterPath path;
     if (e.type == ElementType::Xline)
-        path = ElementItem::buildPath(e, c.clip);     // 无限线：按页面裁剪
+        path = ElementPath::buildPath(e, c.clip);     // 无限线：按页面裁剪
     else
-        path = ElementItem::buildPath(e);
+        path = ElementPath::buildPath(e);
     if (!path.isEmpty()) {
         p->setPen(makePen(e, c.scaleDev, rs, c.lineWidthScale));
         p->setBrush(Qt::NoBrush);
@@ -140,7 +140,7 @@ void paintBlockRef(QPainter* p, const Element& e, Ctx& c) {
 // 交互式自定义边界（BOUNDARY/BPOLY）：打印时以虚线轮廓表示，不绘制剖面线
 // （它只是边界定义，真正的剖面线由后续的剖面填充生成）。
 void paintBoundary(QPainter* p, const Element& e, Ctx& c) {
-    const QPainterPath path = ElementItem::buildPath(e);   // 外边界 + 内孔 (OddEvenFill)
+    const QPainterPath path = ElementPath::buildPath(e);   // 外边界 + 内孔 (OddEvenFill)
     if (path.isEmpty()) return;
     const ResolvedPlotStyle rs = c.style->resolve(e);
     QPen pen(rs.color);
@@ -157,7 +157,7 @@ void paintBoundary(QPainter* p, const Element& e, Ctx& c) {
 void paintHatch(QPainter* p, const Element& e, Ctx& c) {
     const SectionRegion region = hatchRegionFromElement(e);
     const HatchDraw mode = hatchDrawMode(region);
-    const QPainterPath path = ElementItem::buildPath(e);   // 外边界 + 内孔 (OddEvenFill)
+    const QPainterPath path = ElementPath::buildPath(e);   // 外边界 + 内孔 (OddEvenFill)
     const ResolvedPlotStyle rs = c.style->resolve(e);
 
     QPen outlinePen(rs.color);

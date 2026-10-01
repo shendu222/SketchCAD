@@ -25,7 +25,7 @@ QJsonObject FilterDef::toJson() const {
 FilterDef FilterDef::fromJson(const QJsonObject& o) {
     FilterDef f;
     f.name     = o["name"].toString();
-    f.matchAll = o.contains("matchAll") ? o["matchAll"].toBool(true) : true;
+    f.matchAll = json::getBool(o, "matchAll", true);
     for (const auto& v : o["conds"].toArray()) {
         const QJsonObject co = v.toObject();
         QSelectCriteria c;

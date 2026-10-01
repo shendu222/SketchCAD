@@ -723,6 +723,24 @@ void SketchModel::setCommandPrompt(const QString& p) {
         emit commandPromptChanged(p);
     }
 }
+void SketchModel::setCommandOptions(const QStringList& opts) {
+    if (commandOptions_ != opts) {
+        commandOptions_ = opts;
+        emit commandOptionsChanged(opts);
+    }
+}
+void SketchModel::setShowLineWeight(bool on) {
+    if (showLineWeight_ != on) {
+        showLineWeight_ = on;
+        emit showLineWeightChanged(on);
+    }
+}
+void SketchModel::setDynMode(bool on) {
+    if (dynMode_ != on) {
+        dynMode_ = on;
+        emit dynModeChanged(on);
+    }
+}
 void SketchModel::setPlane(Plane p) {
     if (plane_ != p) { plane_ = p; emit planeChanged(p); emit viewChanged(); }
 }
@@ -1000,10 +1018,10 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
         Layer l(o["name"].toString());
         const QString cs = o["color"].toString();
         if (!cs.isEmpty()) l.color = QColor(cs);
-        l.lineWidth = o.contains("lineWidth") ? o["lineWidth"].toDouble(1.0) : 1.0;
-        l.lineStyle  = o.contains("lineStyle") ? (LineStyle)o["lineStyle"].toInt(0) : LineStyle::Solid;
-        l.visible    = o.contains("visible")   ? o["visible"].toBool(true)        : true;
-        l.locked     = o.contains("locked")    ? o["locked"].toBool(false)        : false;
+        l.lineWidth = json::getDouble(o, "lineWidth", 1.0);
+        l.lineStyle  = (LineStyle)json::getInt(o, "lineStyle", (int)LineStyle::Solid);
+        l.visible    = json::getBool(o, "visible", true);
+        l.locked     = json::getBool(o, "locked", false);
         layers_.push_back(l);
     }
     // 保证默认层 "0" 始终存在（旧文件可能未保存该字段）
@@ -1425,11 +1443,11 @@ void SketchModel::setTextStylesFromJson(const QJsonArray& arr) {
         TextStyle s;
         s.name           = nm;
         s.fontFamily     = o["fontFamily"].toString();
-        s.textHeight     = o.contains("textHeight")     ? o["textHeight"].toDouble(0.0)     : 0.0;
-        s.widthFactor    = o.contains("widthFactor")    ? o["widthFactor"].toDouble(1.0)    : 1.0;
-        s.obliquingAngle = o.contains("obliquingAngle") ? o["obliquingAngle"].toDouble(0.0) : 0.0;
-        s.bold           = o.contains("bold")    ? o["bold"].toBool(false)    : false;
-        s.italic         = o.contains("italic")  ? o["italic"].toBool(false)  : false;
+        s.textHeight     = json::getDouble(o, "textHeight", 0.0);
+        s.widthFactor    = json::getDouble(o, "widthFactor", 1.0);
+        s.obliquingAngle = json::getDouble(o, "obliquingAngle", 0.0);
+        s.bold           = json::getBool(o, "bold", false);
+        s.italic         = json::getBool(o, "italic", false);
         textStyles_.push_back(s);
     }
     // 兜底：任何情况都至少保留一条 "Standard"，保证渲染/解析非 null
@@ -1710,8 +1728,8 @@ void SketchModel::setConstraintsFromJson(const QJsonArray& a) {
         r.value  = o["value"].toDouble(0.0);
         r.idxA   = o["idxA"].toInt(-1);   // 旧档缺键回落 -1（默认 0 号控制点）
         r.idxB   = o["idxB"].toInt(-1);
-        r.driverId = o.contains("driverId") ? o["driverId"].toInt(-1) : -1;  // 旧档缺键回落 -1
-        r.paramRef  = o.contains("paramRef") ? o["paramRef"].toString() : QString();
+        r.driverId = json::getInt(o, "driverId", -1);  // 旧档缺键回落 -1
+        r.paramRef  = json::getString(o, "paramRef", QString());
         v.push_back(r);
     }
     setConstraints(v);

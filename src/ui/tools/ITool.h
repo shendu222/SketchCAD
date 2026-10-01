@@ -50,6 +50,8 @@ struct ToolContext {
     // ---- 坐标与拾取 ----
     Vec3 snapWorld(const Vec3& w);
     int  hitTest(const QPoint& vp);
+    // 容差内全部命中（按距离升序）：选择循环用
+    std::vector<int> hitTestAll(const QPoint& vp);
 
     // ---- 预览 ----
     void showPreview(const Element& tmp, std::vector<Element> guides = {});
@@ -62,6 +64,7 @@ struct ToolContext {
     void finalizeRect();
     void finalizePoly(bool spline);
     void finalizeSnake();
+    void finalizeShapePick();   // 栏选/圈围/圈交结算（fence/wp/cp 工具 Enter/双击调用）
 
     // ---- 子模式分派（委托 GraphicsView 已有方法）----
     void handleLineSubTool(const Vec3& w, QMouseEvent* e);
@@ -77,7 +80,9 @@ struct ToolContext {
     void handleTrimExtend(int hitId, const Vec3& w, bool extend);
 
     // ---- 选择/拖拽 ----
-    bool beginHandleDrag(const Vec3& w);
+    bool beginGripHot(const Vec3& w);   // 单击夹点进入热态（拉伸/移动/旋转/缩放/镜像）
+    void cycleSelection(const QPoint& vp, const std::vector<int>& ids);  // Ctrl+点击循环
+    void breakCycle();                  // 退出选择循环（普通选择路径调用）
     void setDragMovePending(bool on, const Vec3& w);
     void setMarquee(const QPointF& start);
     void setMarqueeMode(bool deselect);   // 框选结算语义：false=加选, true=取消

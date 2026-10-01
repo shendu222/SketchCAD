@@ -160,16 +160,16 @@ QWidget* LayerPanel::makeRowWidget(const Layer& l) {
     auto* vis = new QCheckBox(this);
     vis->setChecked(l.visible);
     vis->setToolTip(QStringLiteral("显示/隐藏整层"));
-    connect(vis, &QCheckBox::stateChanged, this,
-            [this, name = l.name](int s) { onVisibleToggled(name, s); });
+    connect(vis, &QCheckBox::checkStateChanged, this,
+            [this, name = l.name](Qt::CheckState s) { onVisibleToggled(name, int(s)); });
     h->addWidget(vis);
 
     auto* lock = new QCheckBox(this);
     lock->setText(QStringLiteral("🔒"));
     lock->setChecked(l.locked);
     lock->setToolTip(QStringLiteral("锁定图层（禁止编辑本层图元）"));
-    connect(lock, &QCheckBox::stateChanged, this,
-            [this, name = l.name](int s) { onLockToggled(name, s); });
+    connect(lock, &QCheckBox::checkStateChanged, this,
+            [this, name = l.name](Qt::CheckState s) { onLockToggled(name, int(s)); });
     h->addWidget(lock);
 
     auto* sw = new QLabel(this);

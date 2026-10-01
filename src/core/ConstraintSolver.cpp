@@ -459,7 +459,9 @@ bool checkOne(const Element& a, const Element& b, const ConstraintRecord& r,
 }
 
 // 施加单条约束：把被动方 b 解到满足为止。返回是否发生了修改。
-bool applyOne(const Element& a, Element& b, const ConstraintRecord& r, const Element* axis) {
+// （当前求解主路径走 ConstraintSolver::solveAll 的整体解算；本单条施加器暂未接线，
+//   保留为逐约束求解的后备实现，[[maybe_unused]] 抑制全量重编译时的 -Wunused-function。）
+[[maybe_unused]] bool applyOne(const Element& a, Element& b, const ConstraintRecord& r, const Element* axis) {
     switch (r.type) {
         case ConstraintType::Fixed:
             return false;                                   // 固定：不做任何移动（由冲突检测保证不被要求移动）

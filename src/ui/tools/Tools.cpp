@@ -27,23 +27,30 @@ QString SelectTool::prompt(const ToolContext& ctx) const {
 
 bool SelectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     const QPoint vp = e->position().toPoint();
-    // 优先抓端点：捕捉到就进入联动拖拽
-    if (ctx.beginHandleDrag(w)) return true;
+    // 优先抓夹点：命中即进入热态（拉伸/移动/旋转/缩放/镜像，Ctrl 循环 + 动态预览）
+    if (ctx.beginGripHot(w)) return true;
     const int hit = ctx.hitTest(vp);
     if (hit >= 0) {
         // Ctrl / Shift 点击：加选或减选（多选的两种标准修饰键，语义一致 = 切换）
         if (e->modifiers().testFlag(Qt::ControlModifier) ||
             e->modifiers().testFlag(Qt::ShiftModifier)) {
+            // Ctrl+点击重叠区（命中 > 1）→ 选择循环：在重叠对象间依次切换选取目标
+            if (e->modifiers().testFlag(Qt::ControlModifier)) {
+                const auto ids = ctx.hitTestAll(vp);
+                if (ids.size() > 1) { ctx.cycleSelection(vp, ids); return true; }
+            }
             ctx.model->toggleSelection(hit);
         } else if (ctx.model->isSelected(hit)) {
             // 点击已选中图元 → 进入平移预备态
             ctx.setDragMovePending(true, w);
         } else {
             ctx.model->setSelected(hit);
+            ctx.breakCycle();   // 普通选择退出选择循环
         }
         return true;
     }
     // 空白处 → 框选
+    ctx.breakCycle();
     ctx.setMarquee(QPointF(w.x, w.y));
     return true;
 }
@@ -104,6 +111,7 @@ QString PickSelectTool::prompt(const ToolContext& ctx) const {
 
 bool PickSelectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     (void)e;
+    (void)w;   // 命中判定经 ctx.hitTest(屏幕坐标)，世界坐标入参在本动作中不消费
     const int hit = ctx.hitTest(e->position().toPoint());
     if (hit < 0) {
         ctx.model->log(QStringLiteral("未命中任何图元"), "warn");

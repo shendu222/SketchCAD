@@ -1,4 +1,5 @@
 #include "Commands.h"
+#include "MacroScript.h"
 #include "SketchModel.h"
 #include "Geometry.h"
 #include "Inquiry.h"
@@ -2826,6 +2827,22 @@ void CommandRegistry::registerBuiltins() {
             return true;
         }));
 
+    // dyn [on|off]：切换/设定动态输入 DYN（绘制命令期光标跟随的距离/角度输入框）
+    registerExact("dyn", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            bool on = !ctx.model->dynMode();
+            if (ctx.toks.size() >= 2) {
+                const QString v = ctx.toks[1].toLower();
+                if      (v == "on"  || v == "1" || v == "true")  on = true;
+                else if (v == "off" || v == "0" || v == "false") on = false;
+                else { ctx.model->log(QStringLiteral("用法：dyn [on|off]"), QStringLiteral("error")); return false; }
+            }
+            ctx.model->setDynMode(on);
+            ctx.model->log(QStringLiteral("动态输入 (DYN)：%1")
+                               .arg(on ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            return true;
+        }));
+
     // ---- 追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     // polar  [on|off|<角度>]：切换/设定极轴追踪（无参 = 取反；数字 = 同时设增量角）
     registerExact("polar", std::make_shared<LambdaCommand>(
@@ -2949,6 +2966,14 @@ void CommandRegistry::registerBuiltins() {
 
     // ---- 帮助 ----
     registerExact("help", std::make_shared<HelpCommand>());
+
+    // ---- 动作宏 / SCR 脚本（macrorec/macrostop/macrosave/macroshow/macroplay/scr）----
+    // 传入 *this：registerBuiltins 运行在 instance() 静态初始化器内，不可再入。
+    registerMacroCommands(*this);
+
+    // ---- 命令别名（acad.pgp 兼容）与界面定制（CUIx）----
+    registerAliasCommands(*this);
+    registerCuiCommands(*this);
 }
 
 } // namespace SketchCAD

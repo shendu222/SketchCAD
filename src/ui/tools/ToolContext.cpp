@@ -71,6 +71,9 @@ Vec3 ToolContext::snapWorld(const Vec3& w) {
 int ToolContext::hitTest(const QPoint& vp) {
     return view->hitTest(vp);
 }
+std::vector<int> ToolContext::hitTestAll(const QPoint& vp) {
+    return view->hitTestAll(vp);
+}
 
 // ---- 预览 ----
 void ToolContext::showPreview(const Element& tmp, std::vector<Element> guides) {
@@ -85,6 +88,7 @@ void ToolContext::finalizeArc()      { view->finalizeArc(); }
 void ToolContext::finalizeRect()     { view->finalizeRect(); }
 void ToolContext::finalizePoly(bool spline) { view->finalizePoly(spline); }
 void ToolContext::finalizeSnake()    { view->finalizeSnake(); }
+void ToolContext::finalizeShapePick(){ view->finalizeShapePick(); }
 
 // ---- 子模式分派 ----
 void ToolContext::handleLineSubTool(const Vec3& w, QMouseEvent* e)   { view->handleLineSubTool(w, e); }
@@ -100,8 +104,14 @@ void ToolContext::handleTrimAny(int hitId, const Vec3& w, bool shift){ view->han
 void ToolContext::handleTrimExtend(int hitId, const Vec3& w, bool extend) { view->handleTrimExtend(hitId, w, extend); }
 
 // ---- 选择/拖拽 ----
-bool ToolContext::beginHandleDrag(const Vec3& w) {
-    return view->beginHandleDrag(w);
+bool ToolContext::beginGripHot(const Vec3& w) {
+    return view->beginGripHot(w);
+}
+void ToolContext::cycleSelection(const QPoint& vp, const std::vector<int>& ids) {
+    view->cycleSelection(vp, ids);
+}
+void ToolContext::breakCycle() {
+    view->breakCycle();
 }
 void ToolContext::setDragMovePending(bool on, const Vec3& w) {
     view->dragMovePending_ = on;

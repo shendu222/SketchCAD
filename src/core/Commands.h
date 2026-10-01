@@ -14,6 +14,7 @@
 namespace SketchCAD {
 
 class SketchModel;
+class CommandInterpreter;   // 前向声明（须在命名空间内，否则签名退化为全局类型）
 
 // ============================================================
 // 命令模式基础设施：ICommand 接口 + CommandContext + CommandRegistry
@@ -25,6 +26,7 @@ struct CommandContext {
     SketchModel* model;          ///< 数据模型（addElement / log / element …）
     const QStringList& toks;     ///< 已分词的命令行输入
     const QString& cmd;          ///< 命令名（toks[0].toLower()）
+    CommandInterpreter* interp = nullptr; ///< 所属解释器（宏/脚本命令回放用）
 
     // ---- 公共解析工具（消除重复 lambda） ----
     bool parsePoint(int idx, Vec3& out) const;             ///< 解析 toks[idx] 为 Vec3
@@ -215,5 +217,11 @@ class AircraftViewsCommand : public ICommand { public: bool execute(const Comman
 
 // ---- 帮助 ----
 class HelpCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
+// ---- 命令别名（acad.pgp 兼容）与界面定制（CUIx）命令注册 ----
+// 同样收注册表引用，避免 registerBuiltins() 静态初始化器内再入 instance()（magic statics）。
+class CommandRegistry;
+void registerAliasCommands(CommandRegistry& reg);
+void registerCuiCommands(CommandRegistry& reg);
 
 } // namespace SketchCAD

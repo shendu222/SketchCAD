@@ -29,6 +29,8 @@ class QSpinBox;
 namespace SketchCAD {
 class SketchModel;
 class CommandInterpreter;
+class ScriptHost;
+class PluginManager;
 class GraphicsView;
 class BomTree;
 class ElementPanel;
@@ -72,6 +74,7 @@ private:
     // 两者共用同一批 QAction，因此图标、提示、启用态、点击事件完全不受拆分影响。
     QToolBar* toolbar_  = nullptr;
     QToolBar* toolbar2_ = nullptr;
+    QList<QToolBar*> customToolbars_;   // 由 CUIx 生成的自定义工具条（applyCui 时整体重建）
     QHash<QString, QAction*> toolActions_;   // 工具 id -> 工具条按钮（用于同步高亮）
     ActionGroupList drawGroups_;             // 绘图类工具（供菜单复用）
     ActionGroupList editGroups_;             // 编辑/视图类即时命令（供菜单复用）
@@ -88,6 +91,9 @@ private:
 
     SketchModel* model_;
     CommandInterpreter* interp_;
+    ScriptHost* scriptHost_ = nullptr;   // 脚本宿主（二次开发：JS/Python/VBA 扩展）
+    PluginManager* pluginManager_ = nullptr;   // 插件管理器（原生 SDK 二次开发）
+    QMenu*       pluginLoadedSub_ = nullptr;   // 「已加载插件」动态子菜单
     GraphicsView* view_;
 
     PrintSettings currentPrintSettings_;   // 当前打印/出图设置（可由「打印设置」对话框修改并持久化）
@@ -177,6 +183,16 @@ private:
     void buildDocks();
     void connectSignals();
 
+    // ---- 界面定制（CUIx + 命令别名，二次开发生态）----
+    void initCui();                          // 注册内置 UI、载入默认别名/CUIx、首次应用
+    void runToken(const QString& cmd);       // 自定义工具条按钮派发：工具→setActiveTool，否则 execute
+    void applyCui();                         // 重建自定义工具条 + 应用当前工作空间可见性
+    void rebuildCustomToolbars();            // 依据 CuiManager 重建自定义工具条（整体替换）
+    void applyWorkspaceVisibility();         // 依据当前工作空间 show/hide 工具条与菜单
+    void openAliasFile();                    // 打开/创建默认 .pgp（系统编辑器）
+    void newToolbarDialog();                 // 新建自定义工具条对话框
+    void saveCurrentAsWorkspaceDialog();     // 以当前可见 UI 保存为工作空间
+
     // 窗口显示时按其所在屏幕的可用区域（排除任务栏/系统栏）校正几何：
     // 宽/高不超过可用区域、整体居中于可用区域，确保任意常见分辨率下完整可见、
     // 左右边缘均不超出屏幕。构造函数里先给一个合理的默认几何，showEvent 中
@@ -223,6 +239,15 @@ private:
     void openFilterDialog();                            // FILTER 过滤器（多条件组合 + 保存复用）
     void openUnitsLimits();                             // UNITS/LIMITS 单位与图纸界限设置面板
     void openSnapSettings();                            // OSNAP 捕捉设置面板（全局持久配置）
+
+    // ---- 脚本宿主（二次开发）----
+    void onRunJavaScript();                             // 弹窗输入 JS 源码并执行
+    void onRunScriptFile();                              // 选择脚本文件按扩展名执行
+
+    // ---- 插件框架（原生 SDK 二次开发）----
+    void onLoadPlugin();                                // 选择插件文件并加载
+    void onReloadPlugins();                             // 重新加载插件目录
+    void refreshPluginMenu();                           // 刷新「已加载插件」子菜单
 
     // ---- 打印 / 出图模块 ----
     void openPrintSettings();                            // 打印设置（页面 + CTB 样式 + 视口）

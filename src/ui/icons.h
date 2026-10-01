@@ -162,6 +162,34 @@ inline void paintGlyph(QPainter& g, const QString& id)
         dot(12, 12, mark, 2.0);
         return;
     }
+    if (id == "fence") {                         // 栏选：折线栏线穿过图元
+        g.save(); g.setPen(QPen(mark, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawPolyline(QPolygonF{{3, 17}, {9, 9}, {14, 15}, {21, 5}});
+        g.restore();
+        dot(3, 17, mark, 1.5); dot(9, 9, mark, 1.5);
+        dot(14, 15, mark, 1.5); dot(21, 5, mark, 1.5);
+        g.save(); g.setPen(QPen(ink, 1.3, Qt::SolidLine, Qt::RoundCap));
+        g.drawRect(QRectF(6.5, 11.5, 4, 4));
+        g.drawRect(QRectF(13.5, 9.5, 4, 4));
+        g.restore();
+        return;
+    }
+    if (id == "wp") {                            // 圈围：实线多边形全包
+        g.save(); g.setPen(QPen(mark, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawPolygon(QPolygonF{{12, 3}, {21, 10}, {17, 20}, {7, 20}, {3, 10}});
+        g.restore();
+        dot(12, 12, mark, 1.8);
+        return;
+    }
+    if (id == "cp") {                            // 圈交：虚线多边形相交
+        g.save(); g.setPen(QPen(mark, 1.7, Qt::DashLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawPolygon(QPolygonF{{12, 3}, {21, 10}, {17, 20}, {7, 20}, {3, 10}});
+        g.restore();
+        g.save(); g.setPen(QPen(ink, 1.3, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(4, 16), QPointF(20, 8));
+        g.restore();
+        return;
+    }
     if (id == "deselect_intersected") {          // 相交线 + 斜杠（取消相交）
         g.drawLine(QPointF(5, 5), QPointF(19, 19));
         g.drawLine(QPointF(5, 19), QPointF(19, 5));

@@ -58,6 +58,16 @@ ToolRegistry::ToolRegistry() {
     registerTool({"toggle_layer",         QStringLiteral("(取消)选择图层"),
                   ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
                   QStringLiteral("(取消)选择图层：点击图元，同层已全选中则整层取消，否则整层选中")});
+    // 不规则范围选择（AutoCAD FENCE / WPolygon / CPolygon 对齐）：点选顶点围出范围
+    registerTool({"fence",                QStringLiteral("栏选"),
+                  ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("栏选(FENCE)：画一条多段栏线，与栏线相交的图元全部加选")});
+    registerTool({"wp",                   QStringLiteral("圈围"),
+                  ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("圈围(WP)：画一个多边形，完全位于多边形内部的图元加选")});
+    registerTool({"cp",                   QStringLiteral("圈交"),
+                  ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("圈交(CP)：画一个多边形，与多边形相交或在其内部的图元加选")});
     registerTool({"delete",    QStringLiteral("删除"),     ToolCategory::Edit});
     registerTool({"trim",      QStringLiteral("剪切"),     ToolCategory::Edit});
     registerTool({"extend",    QStringLiteral("延伸"),     ToolCategory::Edit});

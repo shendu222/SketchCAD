@@ -79,6 +79,8 @@ void ModelMediator::wire() {
 
     // ---- 命令行键盘输入坐标 -> 注入为拾取点（分段式命令流程）----
     connect(c_.cmdLine, &CommandLine::pointEntered, c_.view, &GraphicsView::injectPoint);
+    // ---- 绘制命令期间输入选项关键字（如 C/闭合）-> 应用到当前绘制流程 ----
+    connect(c_.cmdLine, &CommandLine::optionEntered, c_.view, &GraphicsView::applyCommandOption);
 }
 
 } // namespace SketchCAD

@@ -1,5 +1,5 @@
 #include "PrintEngine.h"
-#include "GraphicsView.h"   // ElementItem::geometryBounds（静态、视图无关）
+#include "ElementPath.h"    // ElementPath::rawBounds（静态、视图无关、无头复用）
 #include <QPdfWriter>
 #include <QPrinter>
 #include <QPainter>
@@ -92,11 +92,11 @@ QRectF PrintEngine::modelBounds(SketchModel* model) {
             for (const auto& sub : model->expandBlockRef(e)) {
                 if (sub.type == ElementType::BlockRef) continue;
                 if (sub.type == ElementType::Text) { grow(textBoxOf(sub)); continue; }
-                grow(ElementItem::geometryBounds(sub));
+                grow(ElementPath::rawBounds(sub));
             }
             continue;
         }
-        grow(ElementItem::geometryBounds(e));
+        grow(ElementPath::rawBounds(e));
     }
     return b;
 }

@@ -1,5 +1,9 @@
 #include "MainWindow.h"
 #include <QSet>
+#include <QInputDialog>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QFileInfo>
 #include "core/SketchModel.h"
 #include "ui/TableDialog.h"         // 表格编辑器（双击 Table / 表格创建共用）
 #include "ui/GroupManagerDialog.h"  // 编组管理器（GROUP）
@@ -8,6 +12,11 @@
 #include "ui/UnitsLimitsDialog.h"   // 单位与图纸界限（UNITS / LIMITS）
 #include "ui/SnapSettingsDialog.h"   // 捕捉设置（OSNAP）
 #include "core/CommandInterpreter.h"
+#include "core/ScriptHost.h"          // 脚本宿主（二次开发：JS/Python/VBA）
+#include "core/MacroScript.h"         // 动作宏录制 / SCR 脚本批处理
+#include "core/PluginManager.h"       // 插件管理器（原生 SDK 二次开发）
+#include "core/CuiManager.h"          // 界面定制（CUIx）：工具条 / 工作空间
+#include "core/AliasTable.h"          // 命令别名（acad.pgp 兼容）
 #include "core/Element.h"
 #include "core/Geometry.h"
 #include "core/DimStyle.h"
@@ -80,6 +89,11 @@
 #include <QPointF>
 #include <QSignalBlocker>
 #include <QGuiApplication>
+#include <QCoreApplication>   // applicationDirPath（插件目录定位）
+#include <QDesktopServices>   // 命令别名文件：用系统默认编辑器打开
+#include <QStandardPaths>     // 配置目录定位（别名 / CUIx 默认路径）
+#include <QPlainTextEdit>
+#include <QFormLayout>
 #include <QScreen>
 #include <QShowEvent>
 #include <QTimer>
@@ -100,6 +114,34 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     interp_ = new CommandInterpreter(model_);
     view_ = new GraphicsView(model_, this);
 
+    // 脚本宿主：构建统一交互面与语言引擎策略表，并实时把脚本输出/错误汇入日志面板
+    scriptHost_ = new ScriptHost(model_, interp_, this);
+    connect(scriptHost_, &ScriptHost::scriptOutput, this,
+            [this](const QString& s) { model_->log(s, QStringLiteral("script")); });
+    connect(scriptHost_, &ScriptHost::scriptError, this,
+            [this](const QString& s) { model_->log(s, QStringLiteral("error")); });
+
+    // 插件管理器：构建原生 SDK 插件框架（注册/加载/生命周期），并实时把插件事件汇入日志面板
+    pluginManager_ = new PluginManager(model_, interp_, this);
+    connect(pluginManager_, &PluginManager::pluginLoaded, this,
+            [this](const QString& name, const QString&) {
+                model_->log(QStringLiteral("插件已加载：%1").arg(name), QStringLiteral("plugin"));
+                refreshPluginMenu();
+            });
+    connect(pluginManager_, &PluginManager::pluginUnloaded, this,
+            [this](const QString& name, const QString&) {
+                model_->log(QStringLiteral("插件已卸载：%1").arg(name), QStringLiteral("plugin"));
+                refreshPluginMenu();
+            });
+    connect(pluginManager_, &PluginManager::pluginError, this,
+            [this](const QString& path, const QString& msg) {
+                model_->log(QStringLiteral("插件加载失败 [%1]：%2").arg(path).arg(msg),
+                            QStringLiteral("error"));
+                refreshPluginMenu();
+            });
+    // 启动时自动扫描宿主同目录下的 plugins/ 子目录（如存在示例插件 SamplePlugin.dll）。
+    pluginManager_->loadDirectory(QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
+
     bom_ = new BomTree(model_);
     elemPanel_ = new ElementPanel();
     propPanel_ = new PropertyPanel(model_);
@@ -112,6 +154,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     buildDocks();
     buildToolbar();
     buildMenu();
+    initCui();   // 注册内置 UI 元素、载入默认别名/CUIx、应用界面配置（#360/#361）
 
     // 标尺必须在 connectSignals() 之前创建，否则信号连接时 hRuler_/vRuler_ 为 nullptr
     hRuler_ = new RulerWidget(view_, RulerWidget::Orientation::Horizontal);
@@ -291,6 +334,7 @@ void MainWindow::buildMenu() {
     };
 
     QMenu* f = new QMenu(QStringLiteral("文件(&F)"), this);
+    f->setObjectName("menuFile");
     mk(f, QStringLiteral("新建"),        QKeySequence::New,  [this] {
             NewDrawingDialog dlg(this);
             if (dlg.exec() != QDialog::Accepted) return;
@@ -333,6 +377,7 @@ void MainWindow::buildMenu() {
 
     // ---- 顶级菜单：打印（页面设置 + 简化 CTB 样式 + 视口/布局 MVP + 预览/PDF/物理打印）----
     QMenu* pr = new QMenu(QStringLiteral("打印(&P)"), this);
+    pr->setObjectName("menuPrint");
     mk(pr, QStringLiteral("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
     mk(pr, QStringLiteral("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
     mk(pr, QStringLiteral("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
@@ -343,6 +388,7 @@ void MainWindow::buildMenu() {
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     // 快速开关 + 追踪设置入口；勾选态与 trackConfigChanged 双向同步（命令行/面板改动即时反映）。
     QMenu* k = new QMenu(QStringLiteral("追踪(&K)"), this);
+    k->setObjectName("menuTrack");
     QAction* aPolar = mk(k, QStringLiteral("极轴追踪 (POLAR)"), QKeySequence("F10"), [this] {
             snap::TrackConfig c = model_->trackConfig();
             c.polar = !c.polar;
@@ -378,6 +424,7 @@ void MainWindow::buildMenu() {
     // （下方构建完成后用 e->addMenu(...) 挂进来）。显示顺序 = 添加顺序：
     //   撤销 / 重做 | 复制 / 粘贴 / 删除 | 修改 | 选择
     QMenu* e = new QMenu(QStringLiteral("编辑(&E)"), this);
+    e->setObjectName("menuEdit");
     mk(e, QStringLiteral("撤销"), QKeySequence::Undo,  [this] { model_->undo(); })
         ->setIcon(icons::make("undo"));
     mk(e, QStringLiteral("重做"), QKeySequence::Redo,  [this] { model_->redo(); })
@@ -411,6 +458,7 @@ void MainWindow::buildMenu() {
     //   工具与分解（Properties, Attributes, Explode Text into Letters, Explode, Delete）
     // 已存在的工具型菜单项（trim/extend）复用 toolActions_ 指针，其余走 mk() 即时构造。
     QMenu* mod = new QMenu(QStringLiteral("修改(&M)"), this);
+    mod->setObjectName("menuModify");
 
     // ---- 变换类 ----
     mk(mod, QStringLiteral("移动 / 复制..."), QKeySequence("Ctrl+Shift+M"), [this] {
@@ -849,6 +897,7 @@ void MainWindow::buildMenu() {
     // 注意：工具型菜单项直接复用 toolActions_ 中已注册的 QAction（与工具条下拉
     // 共享高亮/互斥状态），即时命令（全选等）由 mk() 单独构造。
     QMenu* sel = new QMenu(QStringLiteral("选择(&N)"), this);
+    sel->setObjectName("menuSelect");
     mk(sel, QStringLiteral("全部不选"), QKeySequence("Ctrl+K"), [this] { model_->clearSelection(); })
         ->setIcon(icons::make("deselect_all"));
     mk(sel, QStringLiteral("全选"),     QKeySequence("Ctrl+A"), [this] { model_->selectAll(); })
@@ -865,6 +914,10 @@ void MainWindow::buildMenu() {
     sel->addSeparator();
     addSel("select_intersected");         // 选择相交
     addSel("deselect_intersected");       // 取消相交
+    sel->addSeparator();
+    addSel("fence");                      // 栏选（不规则范围）
+    addSel("wp");                         // 圈围
+    addSel("cp");                         // 圈交
     sel->addSeparator();
     addSel("toggle_layer");               // (取消)选择图层
     sel->addSeparator();
@@ -913,16 +966,19 @@ void MainWindow::buildMenu() {
     // ---- 顶级菜单：绘图（原「草图绘制」+ 直线/圆/圆弧/多边形/样条/椭圆/折线 7 个顶级菜单
     //      全部收纳到本菜单，各类图元的绘制方式以子菜单形式挂在下面）----
     QMenu* s = new QMenu(QStringLiteral("绘图(&D)"), this);
+    s->setObjectName("menuDraw");
     buildSketchMenu(s);
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
     QMenu* q = new QMenu(QStringLiteral("测量查询(&I)"), this);
+    q->setObjectName("menuInquiry");
     mk(q, QStringLiteral("打开测量查询面板..."), QKeySequence(), [this] { openInquiry(); })
         ->setIcon(icons::make("query"));
     bar->addMenu(q);
 
     QMenu* v = new QMenu(QStringLiteral("视图(&V)"), this);
+    v->setObjectName("menuView");
     mk(v, QStringLiteral("放大"),     QKeySequence::ZoomIn,  [this] { view_->zoomBy(1.2); })
         ->setIcon(icons::make("zoomin"));
     mk(v, QStringLiteral("缩小"),     QKeySequence::ZoomOut, [this] { view_->zoomBy(1.0 / 1.2); })
@@ -972,7 +1028,127 @@ void MainWindow::buildMenu() {
     v->addMenu(panels);
     bar->addMenu(v);
 
+    // ---- 脚本（二次开发宿主）----
+    QMenu* scr = new QMenu(QStringLiteral("脚本(&S)"), this);
+    scr->setObjectName("menuScript");
+    mk(scr, QStringLiteral("运行 JavaScript..."), QKeySequence(), [this] { onRunJavaScript(); })
+        ->setIcon(icons::make("script"));
+    mk(scr, QStringLiteral("运行脚本文件..."), QKeySequence(), [this] { onRunScriptFile(); })
+        ->setIcon(icons::make("script"));
+    mk(scr, QStringLiteral("可用脚本引擎"), QKeySequence(), [this] {
+        model_->log(QStringLiteral("可用脚本引擎：%1").arg(scriptHost_->availableLanguages().join(", ")));
+    });
+
+    // ---- 动作宏 / SCR 脚本批处理（录制 → 保存 → 回放）----
+    scr->addSeparator();
+    QAction* aRec = mk(scr, QStringLiteral("宏：开始录制"), QKeySequence(), [this] {
+        QAction* act = qobject_cast<QAction*>(sender());
+        const bool wasRecording = MacroRecorder::instance().isRecording();
+        interp_->execute(wasRecording ? "macrostop" : "macrorec");
+        if (act) act->setText(MacroRecorder::instance().isRecording()
+                                  ? QStringLiteral("宏：停止录制")
+                                  : QStringLiteral("宏：开始录制"));
+    });
+    aRec->setIcon(icons::make("script"));
+    // 菜单打开时同步录制状态（命令行 macrorec/macrostop 也能改变状态）
+    connect(scr, &QMenu::aboutToShow, this, [aRec] {
+        aRec->setText(MacroRecorder::instance().isRecording()
+                          ? QStringLiteral("宏：停止录制")
+                          : QStringLiteral("宏：开始录制"));
+    });
+    mk(scr, QStringLiteral("宏：保存录制..."), QKeySequence(), [this] {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("保存动作宏"), QString(),
+            QStringLiteral("脚本文件 (*.scr);;所有文件 (*.*)"));
+        if (path.isEmpty()) return;
+        interp_->execute(QStringLiteral("macrosave \"%1\"").arg(path));
+    })->setIcon(icons::make("script"));
+    scr->addSeparator();
+    mk(scr, QStringLiteral("运行 SCR 脚本..."), QKeySequence(), [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("运行 SCR 脚本（每行一条命令，# 为注释）"), QString(),
+            QStringLiteral("脚本文件 (*.scr);;所有文件 (*.*)"));
+        if (path.isEmpty()) return;
+        interp_->execute(QStringLiteral("scr \"%1\"").arg(path));
+    })->setIcon(icons::make("script"));
+    bar->addMenu(scr);
+
+    // ---- 界面定制（CUIx + 命令别名，二次开发生态）----
+    QMenu* cui = new QMenu(QStringLiteral("界面(&U)"), this);
+    cui->setObjectName("menuCui");
+    mk(cui, QStringLiteral("编辑命令别名文件..."), QKeySequence(), [this] { openAliasFile(); })
+        ->setIcon(icons::make("script"));
+    mk(cui, QStringLiteral("重新加载命令别名"), QKeySequence(), [this] {
+        interp_->execute("aliasreload");
+    })->setIcon(icons::make("script"));
+    mk(cui, QStringLiteral("命令别名列表"), QKeySequence(), [this] {
+        interp_->execute("aliaslist");
+    })->setIcon(icons::make("script"));
+    cui->addSeparator();
+    // 工作空间子菜单：切换项在展开时动态重建（反映当前工作空间列表与勾选态）
+    QMenu* wsMenu = new QMenu(QStringLiteral("工作空间"), this);
+    cui->addMenu(wsMenu);
+    connect(wsMenu, &QMenu::aboutToShow, this, [this, wsMenu] {
+        wsMenu->clear();
+        QAction* def = wsMenu->addAction(QStringLiteral("（默认 / 全部显示）"));
+        def->setCheckable(true);
+        def->setChecked(CuiManager::instance().currentWorkspace().isEmpty());
+        connect(def, &QAction::triggered, this, [this] {
+            CuiManager::instance().setCurrentWorkspace("");
+            applyCui();
+        });
+        for (const QString& id : CuiManager::instance().workspaceIds()) {
+            const CuiWorkspace* w = CuiManager::instance().workspace(id);
+            QAction* a = wsMenu->addAction(w ? w->title : id);
+            a->setCheckable(true);
+            a->setChecked(CuiManager::instance().currentWorkspace() == id);
+            connect(a, &QAction::triggered, this, [this, id] {
+                CuiManager::instance().setCurrentWorkspace(id);
+                applyCui();
+            });
+        }
+        wsMenu->addSeparator();
+        {
+            QAction* a = wsMenu->addAction(QStringLiteral("新建工作空间（保存当前视图）..."));
+            connect(a, &QAction::triggered, this, [this] { saveCurrentAsWorkspaceDialog(); });
+        }
+        {
+            QAction* a = wsMenu->addAction(QStringLiteral("工作空间列表"));
+            connect(a, &QAction::triggered, this, [this] { interp_->execute("wslist"); });
+        }
+    });
+    cui->addSeparator();
+    mk(cui, QStringLiteral("加载界面配置 (CUIx)..."), QKeySequence(), [this] {
+        const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("加载界面配置"),
+            QString(), QStringLiteral("CUIx 文件 (*.cuix);;所有文件 (*.*)"));
+        if (path.isEmpty()) return;
+        interp_->execute(QStringLiteral("cuiload \"%1\"").arg(path));
+    })->setIcon(icons::make("properties"));
+    mk(cui, QStringLiteral("保存界面配置 (CUIx)"), QKeySequence(), [this] {
+        const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存界面配置"),
+            QString(), QStringLiteral("CUIx 文件 (*.cuix);;所有文件 (*.*)"));
+        if (path.isEmpty()) return;
+        interp_->execute(QStringLiteral("cuisave \"%1\"").arg(path));
+    })->setIcon(icons::make("properties"));
+    mk(cui, QStringLiteral("新建自定义工具条..."), QKeySequence(), [this] { newToolbarDialog(); })
+        ->setIcon(icons::make("properties"));
+    bar->addMenu(cui);
+
+    // ---- 插件（原生 SDK 二次开发框架）----
+    QMenu* plug = new QMenu(QStringLiteral("插件(&X)"), this);
+    plug->setObjectName("menuPlugin");
+    mk(plug, QStringLiteral("加载插件文件..."), QKeySequence(), [this] { onLoadPlugin(); })
+        ->setIcon(icons::make("properties"));
+    mk(plug, QStringLiteral("重新加载插件目录"), QKeySequence(), [this] { onReloadPlugins(); })
+        ->setIcon(icons::make("properties"));
+    pluginLoadedSub_ = new QMenu(QStringLiteral("已加载插件"), this);
+    pluginLoadedSub_->setIcon(icons::make("properties"));
+    plug->addMenu(pluginLoadedSub_);
+    refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
+    bar->addMenu(plug);
+
     QMenu* h = new QMenu(QStringLiteral("帮助(&H)"), this);
+    h->setObjectName("menuHelp");
     mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); });
     mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
         model_->log(QStringLiteral("航空CAD 草图模块 v1.0 — C++17 / Qt6 实现")); });
@@ -996,6 +1172,101 @@ void MainWindow::openMTextDialog() {
 void MainWindow::openStyleManager() {
     StyleManagerDialog dlg(model_, this);
     dlg.exec();
+}
+
+// 运行 JavaScript：弹窗输入源码，经脚本宿主执行；输出与错误实时进日志面板，并弹窗提示结果。
+void MainWindow::onRunJavaScript() {
+    bool ok = false;
+    QString code = QInputDialog::getMultiLineText(this, QStringLiteral("运行 JavaScript"),
+        QStringLiteral("输入 JavaScript 脚本。全局对象 app 提供：addLine/addCircle/addArc/addRect/addPoint/addText、"
+                       "elementCount/elementInfo/removeElement、run(命令)/log(消息)；print(...) 输出到日志。"),
+        QStringLiteral("// 示例：画一个十字标记\n"
+                       "app.addLine(-50, 0, 50, 0);\n"
+                       "app.addLine(0, -50, 0, 50);\n"
+                       "print('当前图元数 =', app.elementCount());\n"),
+        &ok);
+    if (!ok || code.trimmed().isEmpty()) return;
+    ScriptResult r = scriptHost_->runCode("javascript", code);
+    if (!r.ok) {
+        QMessageBox::warning(this, QStringLiteral("脚本错误"), r.error);
+    } else {
+        model_->log(QStringLiteral("JavaScript 执行完成，图元数=%1").arg(scriptHost_->api()->elementCount()));
+        if (!r.output.trimmed().isEmpty())
+            model_->log(QStringLiteral("脚本输出：%1").arg(r.output.trimmed()));
+    }
+}
+
+// 运行脚本文件：按扩展名推断语言（.js→javascript/.py→python/.vbs→vba），经脚本宿主执行。
+void MainWindow::onRunScriptFile() {
+    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择脚本文件"),
+        QString(), QStringLiteral("脚本 (*.js *.py *.vbs);;JavaScript (*.js);;Python (*.py);;VBA/VBScript (*.vbs);;所有文件 (*.*)"));
+    if (path.isEmpty()) return;
+    QString ext = QFileInfo(path).suffix().toLower();
+    QString lang;
+    if (ext == "js")       lang = "javascript";
+    else if (ext == "py")  lang = "python";
+    else if (ext == "vbs") lang = "vba";
+    else { model_->log(QStringLiteral("无法根据扩展名判断脚本语言：%1").arg(path)); return; }
+    if (!scriptHost_->isLanguageAvailable(lang)) {
+        QMessageBox::warning(this, QStringLiteral("引擎不可用"),
+            QStringLiteral("%1 引擎不可用（可能未启用构建开关或缺少运行时）").arg(lang));
+        return;
+    }
+    ScriptResult r = scriptHost_->runFile(lang, path);
+    if (!r.ok) QMessageBox::warning(this, QStringLiteral("脚本错误"), r.error);
+    else       model_->log(QStringLiteral("脚本执行完成：%1").arg(path));
+}
+
+// ===================== 插件框架（原生 SDK 二次开发） =====================
+
+// 加载插件文件：文件对话框选 .dll/.so，交由 PluginManager 校验 ABI 并加载。
+void MainWindow::onLoadPlugin() {
+    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("加载插件"),
+        QString(), QStringLiteral("插件 (*.dll *.so *.dylib);;所有文件 (*.*)"));
+    if (path.isEmpty()) return;
+    if (pluginManager_->loadPlugin(path))
+        model_->log(QStringLiteral("插件加载成功：%1").arg(path));
+    else
+        QMessageBox::warning(this, QStringLiteral("插件加载失败"),
+            QStringLiteral("未能加载插件：%1\n详见日志面板（ABI 不兼容 / 符号缺失 / 初始化失败等）。").arg(path));
+}
+
+// 重新加载插件目录：先整体卸载，再扫描宿主同目录 plugins/ 重新加载。
+void MainWindow::onReloadPlugins() {
+    pluginManager_->unloadAll();
+    const int n = pluginManager_->loadDirectory(
+        QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
+    model_->log(QStringLiteral("已重新加载插件目录，当前加载 %1 个插件").arg(n));
+    refreshPluginMenu();
+}
+
+// 刷新「已加载插件」子菜单：列出每个插件的名称/版本/分类，并附「卸载」操作。
+void MainWindow::refreshPluginMenu() {
+    if (!pluginLoadedSub_) return;
+    pluginLoadedSub_->clear();
+    const auto& list = pluginManager_->loadedPlugins();
+    if (list.isEmpty()) {
+        QAction* empty = pluginLoadedSub_->addAction(QStringLiteral("（无已加载插件）"));
+        empty->setEnabled(false);
+        return;
+    }
+    for (const auto& p : list) {
+        const QString name = p.info ? QString::fromUtf8(p.info->name) : QStringLiteral("?");
+        const QString ver  = p.info ? QString::fromUtf8(p.info->version) : QString();
+        const QString cat  = p.info ? QString::fromUtf8(p.info->category) : QString();
+        const QString label = QStringLiteral("%1  v%2  [%3]").arg(name, ver, cat);
+        QAction* a = pluginLoadedSub_->addAction(label);
+        a->setData(p.path);
+        // 点击插件项 → 写日志详情；右键「卸载」单独提供
+        QAction* unload = pluginLoadedSub_->addAction(
+            QStringLiteral("  卸载 %1").arg(name));
+        unload->setData(p.path);
+        connect(unload, &QAction::triggered, this, [this, path = p.path] {
+            if (pluginManager_->unloadPlugin(path))
+                model_->log(QStringLiteral("已卸载插件：%1").arg(path));
+        });
+        Q_UNUSED(a);
+    }
 }
 
 // 双击 Text/MText 图元 → 弹出多行文字编辑框；双击 Table → 弹出表格编辑器。
@@ -1804,6 +2075,9 @@ const QVector<MainWindow::ToolSubMode>& MainWindow::selectSubModes() {
         {QStringLiteral("(取消)选择轮廓"),  "toggle_contour",       QStringLiteral("(取消)选择轮廓 ((De-)Select Contour)：点击一条边，轮廓已全选中则整条取消，否则整条选中"), false, QStringLiteral("toggle_contour")},
         {QStringLiteral("选择相交"),        "select_intersected",   QStringLiteral("选择相交 (Select Intersected Entities)：点击图元，选中所有与之相交的图元"), false, QStringLiteral("select_intersected")},
         {QStringLiteral("取消相交"),        "deselect_intersected", QStringLiteral("取消相交 (Deselect Intersected Entities)：点击图元，取消与之相交者的选中"), false, QStringLiteral("deselect_intersected")},
+        {QStringLiteral("栏选"),            "fence",                QStringLiteral("栏选 (Select Fence)：画一条多段栏线，与栏线相交的图元全部加选"), false, QStringLiteral("fence")},
+        {QStringLiteral("圈围"),            "wp",                   QStringLiteral("圈围 (Select WPolygon)：画一个多边形，完全位于内部的图元加选"), false, QStringLiteral("wp")},
+        {QStringLiteral("圈交"),            "cp",                   QStringLiteral("圈交 (Select CPolygon)：画一个多边形，与多边形相交或在其内部的图元加选"), false, QStringLiteral("cp")},
         {QStringLiteral("(取消)选择图层"),  "toggle_layer",         QStringLiteral("(取消)选择图层 ((De-)Select Layer)：点击图元，同层已全选中则整层取消，否则整层选中"), false, QStringLiteral("toggle_layer")},
         {QStringLiteral("反选"),            "invert_selection",     QStringLiteral("反选 (Invert Selection)：选中所有当前未选中的可见图元"), true, QStringLiteral("invert_selection")},
     };
@@ -2533,6 +2807,60 @@ void MainWindow::connectSignals() {
     connect(model_, &SketchModel::unitsChanged, this, [this] {
         statusBar_->setUnitsMeta(model_->units());
         applyUnitsToParamBar();
+    });
+
+    // ---- 状态栏可点击开关组（正交/极轴/捕捉/追踪/线宽）----
+    // 单一状态源纪律：按钮点击 → 回写模型 setter；模型信号 → 回写按钮勾选态。
+    // 与 F8/F9/F10/F11 快捷键、ortho/snap 命令三入口完全同步。
+    using ST = StatusBar::Toggle;
+    statusBar_->setToggleState(ST::Ortho, model_->orthoMode());
+    statusBar_->setToggleState(ST::Snap,  model_->gridSnap());
+    statusBar_->setToggleState(ST::Polar, model_->trackConfig().polar);
+    statusBar_->setToggleState(ST::Track, model_->trackConfig().objectTrack);
+    statusBar_->setToggleState(ST::Lwt,   model_->showLineWeight());
+    connect(statusBar_, &StatusBar::toggleRequested, this,
+            [this](StatusBar::Toggle key, bool on) {
+        switch (key) {
+        case ST::Ortho: model_->setOrthoMode(on); break;
+        case ST::Snap:  model_->setGridSnap(on); break;
+        case ST::Polar:
+        case ST::Track: {
+            auto cfg = model_->trackConfig();       // 就地改单字段，其余保持
+            if (key == ST::Polar) cfg.polar = on; else cfg.objectTrack = on;
+            model_->setTrackConfig(cfg);
+            break;
+        }
+        case ST::Lwt:   model_->setShowLineWeight(on); break;
+        }
+    });
+    connect(model_, &SketchModel::orthoModeChanged, this,
+            [this](bool on) { statusBar_->setToggleState(ST::Ortho, on); });
+    connect(model_, &SketchModel::gridSnapChanged, this,
+            [this] { statusBar_->setToggleState(ST::Snap, model_->gridSnap()); });
+    connect(model_, &SketchModel::trackConfigChanged, this, [this] {
+        statusBar_->setToggleState(ST::Polar, model_->trackConfig().polar);
+        statusBar_->setToggleState(ST::Track, model_->trackConfig().objectTrack);
+    });
+    connect(model_, &SketchModel::showLineWeightChanged, this,
+            [this](bool on) { statusBar_->setToggleState(ST::Lwt, on); });
+
+    // ---- 选项提示区：分段命令的可选项关键字（如 [C/闭合 U/放弃]）----
+    connect(model_, &SketchModel::commandOptionsChanged, this,
+            [this](const QStringList& opts) { statusBar_->setOptions(opts); });
+    statusBar_->setOptions(model_->commandOptions());
+
+    // ---- 选中对象即弹出属性面板（面板内容由中介者 selectionChanged 路径刷新）----
+    // 门控：仅选择工具态弹出。连续绘制时 commitElement 逐段 setSelected 也会发
+    // selectionChanged，若不门控会绘制中反复抢屏；绘制完成的元素可随时点选查看。
+    connect(model_, &SketchModel::selectionChanged, this, [this](int id) {
+        if (id < 0 || model_->activeTool() != "select") return;
+        propDock_->show();
+        propDock_->raise();
+    });
+    // 右键「特性」：同样弹出到前台
+    connect(view_, &GraphicsView::requestShowProperties, this, [this] {
+        propDock_->show();
+        propDock_->raise();
     });
 
     // ---- 剖面填充：区域拾取模式接线（视图 → 主窗口）----
@@ -3453,6 +3781,179 @@ QJsonObject MainWindow::elementToJson(const Element& e) {
 
 Element MainWindow::elementFromJson(const QJsonObject& o) {
     return ::SketchCAD::elementFromJson(o);
+}
+
+// ===========================================================================
+// 界面定制（CUIx + 命令别名）：工具条 / 工作空间 / 别名文件
+// 设计要点见 docs/cui-alias-design-analysis.md
+// ===========================================================================
+void MainWindow::initCui() {
+    CuiManager& cm = CuiManager::instance();
+    // 注册内置工具条与顶级菜单（供工作空间「默认全显」与「保存当前视图」）
+    cm.registerBuiltinToolbar("mainToolBar");
+    cm.registerBuiltinToolbar("viewToolBar");
+    const QStringList menus = {
+        "menuFile", "menuPrint", "menuTrack", "menuEdit", "menuModify",
+        "menuSelect", "menuDraw", "menuInquiry", "menuView", "menuScript",
+        "menuPlugin", "menuHelp", "menuCui"
+    };
+    for (const QString& m : menus) cm.registerBuiltinMenu(m);
+    // 命令改动界面配置后请求实时刷新（避免 Qt 信号耦合进纯 C++ 核心层）
+    cm.setRefreshCallback([this] { applyCui(); });
+
+    // 命令别名：载入默认 .pgp（不存在则注入默认别名并落盘）
+    QString ap = QCoreApplication::applicationDirPath() + "/alias.pgp";
+    if (QFile::exists(ap)) {
+        QString err; AliasTable::instance().load(ap, &err);
+    } else {
+        auto d = AliasTable::defaultAliases();
+        for (auto it = d.begin(); it != d.end(); ++it)
+            AliasTable::instance().setAlias(it.key(), it.value());
+        AliasTable::instance().save(ap);
+    }
+    AliasTable::instance().setFilePath(ap);
+
+    // 界面配置：存在则载入默认 .cuix（否则保持内置 UI 全显）
+    QString cp = QCoreApplication::applicationDirPath() + "/sketchcad.cuix";
+    if (QFile::exists(cp)) { QString err; CuiManager::instance().load(cp, &err); }
+
+    applyCui();
+}
+
+void MainWindow::runToken(const QString& cmd) {
+    // 工具 id（如 line/circle）→ 进入对应绘制模式；其余按命令执行。
+    if (ToolRegistry::instance().find(cmd)) model_->setActiveTool(cmd);
+    else interp_->execute(cmd);
+}
+
+void MainWindow::applyCui() {
+    rebuildCustomToolbars();
+    applyWorkspaceVisibility();
+}
+
+void MainWindow::rebuildCustomToolbars() {
+    // 先移除旧自定义工具条（整体替换，避免重复累积）
+    for (QToolBar* tb : customToolbars_) { removeToolBar(tb); tb->deleteLater(); }
+    customToolbars_.clear();
+
+    const CuiManager& cm = CuiManager::instance();
+    for (const CuiToolbar& t : cm.toolbars()) {
+        QToolBar* tb = addToolBar(t.title.isEmpty() ? t.id : t.title);
+        tb->setObjectName(t.id);
+        applyToolBarLook(tb);
+        for (const CuiButton& b : t.buttons) {
+            QString label = b.label;
+            if (label.isEmpty()) {
+                const ToolSpec* spec = ToolRegistry::instance().find(b.command);
+                label = spec ? spec->displayName : b.command.toUpper();
+            }
+            // 图标：显式指定 > 工具默认（以命令 id 作图标） > 兜底属性图标
+            QString icon = b.icon.isEmpty()
+                ? (ToolRegistry::instance().find(b.command) ? b.command : QStringLiteral("properties"))
+                : b.icon;
+            QAction* a = new QAction(icons::make(icon), label, this);
+            a->setToolTip(label);
+            a->setStatusTip(label);
+            connect(a, &QAction::triggered, this, [this, cmd = b.command] { runToken(cmd); });
+            tb->addAction(a);
+        }
+        customToolbars_.append(tb);
+    }
+}
+
+void MainWindow::applyWorkspaceVisibility() {
+    const CuiManager& cm = CuiManager::instance();
+    // 工具条可见性（内置 + 自定义，均按 objectName 判定）
+    for (QToolBar* tb : findChildren<QToolBar*>())
+        tb->setVisible(cm.toolbarVisible(tb->objectName()));
+    // 菜单可见性（按顶级菜单 objectName 判定）
+    for (QAction* a : menuBar()->actions())
+        if (QMenu* m = a->menu())
+            m->setVisible(cm.menuVisible(m->objectName()));
+}
+
+void MainWindow::openAliasFile() {
+    QString ap = AliasTable::instance().filePath();
+    if (ap.isEmpty()) ap = QCoreApplication::applicationDirPath() + "/alias.pgp";
+    if (!QFile::exists(ap)) {
+        auto d = AliasTable::defaultAliases();
+        for (auto it = d.begin(); it != d.end(); ++it)
+            AliasTable::instance().setAlias(it.key(), it.value());
+        AliasTable::instance().save(ap);
+    }
+    AliasTable::instance().setFilePath(ap);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(ap));
+    model_->log(QStringLiteral("已用系统编辑器打开别名文件：%1（编辑后点「重新加载命令别名」生效）").arg(ap));
+}
+
+void MainWindow::newToolbarDialog() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("新建自定义工具条"));
+    auto* nameEdit = new QLineEdit(&dlg);
+    nameEdit->setPlaceholderText(QStringLiteral("工具条 id（如 mybar），用作 objectName"));
+    auto* titleEdit = new QLineEdit(&dlg);
+    titleEdit->setPlaceholderText(QStringLiteral("显示标题（留空则用 id）"));
+    auto* body = new QPlainTextEdit(&dlg);
+    body->setPlaceholderText(QStringLiteral("每行一个按钮：命令 [文字] [图标]\n示例：\nline 直线 line\ncircle 圆 circle\nzoom 缩放 zoom"));
+    body->setMinimumSize(440, 240);
+    auto* ok = new QPushButton(QStringLiteral("确定"), &dlg);
+    auto* cancel = new QPushButton(QStringLiteral("取消"), &dlg);
+    auto* form = new QFormLayout();
+    form->addRow(QStringLiteral("工具条 id："), nameEdit);
+    form->addRow(QStringLiteral("标题："), titleEdit);
+    form->addRow(QStringLiteral("按钮："), body);
+    auto* btnRow = new QHBoxLayout();
+    btnRow->addStretch(); btnRow->addWidget(ok); btnRow->addWidget(cancel);
+    auto* v = new QVBoxLayout(&dlg);
+    v->addLayout(form); v->addLayout(btnRow);
+    connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+    connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    QString id = nameEdit->text().trimmed().toLower();
+    if (id.isEmpty()) { model_->log(QStringLiteral("工具条 id 不能为空"), "warn"); return; }
+    QString title = titleEdit->text().trimmed();
+    CuiManager::instance().addToolbar(id, title.isEmpty() ? id : title);
+    int n = 0;
+    for (const QString& raw : body->toPlainText().split('\n', Qt::SkipEmptyParts)) {
+        QString line = raw.trimmed();
+        if (line.isEmpty()) continue;
+        QStringList parts = line.split(' ', Qt::SkipEmptyParts);
+        if (parts.isEmpty()) continue;
+        CuiButton b;
+        b.command = parts[0].toLower();
+        b.label = parts.size() > 1 ? parts[1] : QString();
+        b.icon = parts.size() > 2 ? parts[2] : QString();
+        CuiManager::instance().addButton(id, b);
+        ++n;
+    }
+    CuiManager::instance().requestRefresh();
+    model_->log(QStringLiteral("已新建自定义工具条：%1（%2 个按钮）")
+                    .arg(title.isEmpty() ? id : title).arg(n));
+}
+
+void MainWindow::saveCurrentAsWorkspaceDialog() {
+    bool ok = false;
+    QString id = QInputDialog::getText(this, QStringLiteral("新建工作空间"),
+        QStringLiteral("工作空间 id："), QLineEdit::Normal, QString(), &ok);
+    if (!ok || id.trimmed().isEmpty()) return;
+    id = id.trimmed().toLower();
+
+    // 以当前实际可见的 UI 作为该工作空间的可见集（精确快照）
+    QStringList tbs, menus;
+    for (QToolBar* tb : findChildren<QToolBar*>())
+        if (tb->isVisible()) tbs << tb->objectName();
+    for (QAction* a : menuBar()->actions())
+        if (QMenu* m = a->menu())
+            if (m->isVisible()) menus << m->objectName();
+
+    CuiManager::instance().addWorkspace(id, id, tbs, menus);
+    CuiManager::instance().setCurrentWorkspace(id);
+    QString cp = QCoreApplication::applicationDirPath() + "/sketchcad.cuix";
+    QString err; CuiManager::instance().save(cp, &err);
+    applyCui();
+    model_->log(QStringLiteral("已保存并切换到工作空间：%1（%2 工具条 / %3 菜单）")
+                    .arg(id).arg(tbs.size()).arg(menus.size()));
 }
 
 } // namespace SketchCAD

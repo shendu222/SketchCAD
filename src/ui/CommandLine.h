@@ -15,13 +15,18 @@ public:
 signals:
     // 键盘输入坐标时发出，由 GraphicsView::injectPoint 接收
     void pointEntered(const Vec3& p);
+    // 绘制命令期间输入选项关键字（如 C/闭合）时发出，由 GraphicsView::applyCommandOption 接收
+    void optionEntered(const QString& key);
 protected:
     void keyPressEvent(QKeyEvent* e) override;
 private slots:
     void onReturn();
 private:
+    void updatePlaceholder();   // 组合 commandPrompt + 选项提示 [C/闭合] 到占位文本
     SketchModel* model_;
     CommandInterpreter* interp_;
     int histIdx_ = 0;
+    QString lastPrompt_;        // 最近一次模型下发的分段命令提示
+    QStringList lastOptions_;   // 最近一次模型下发的可选项关键字列表
 };
 } // namespace SketchCAD

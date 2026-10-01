@@ -330,7 +330,6 @@ void PolylineEditTool::deleteBetween(ToolContext& ctx, const Element& e, const V
 void PolylineEditTool::trimSegments(ToolContext& ctx, const Element& e, const Vec3& p) {
     const int n = (int)e.pts.size();
     if (n < 3) { ctx.model->log(QStringLiteral("节点不足，无法修剪"), "warn"); return; }
-    const int nSegs = e.closed ? n : n - 1;
     int seg = nearestSeg(e, p);
     if (seg < 0) return;
     // 删除该段的"终点"节点（=pts[(seg+1)%n]），使段数 -1

@@ -457,7 +457,7 @@ BlockDef blockDefFromJson(const QJsonObject& o) {
         a.defaultValue = ao["default"].toString();
         const QJsonArray pos = ao["pos"].toArray();
         if (pos.size() >= 2) a.pos = Vec3(pos[0].toDouble(), pos[1].toDouble(), pos[2].toDouble());
-        a.height = ao.contains("height") ? ao["height"].toDouble(3.5) : 3.5;
+        a.height = json::getDouble(ao, "height", 3.5);
         a.constant = ao["constant"].toBool(false);
         a.invisible = ao["invisible"].toBool(false);
         d.attdefs.push_back(a);

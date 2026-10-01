@@ -1,4 +1,5 @@
 #include "GraphicsView.h"
+#include "ElementPath.h"   // buildPath/rawBounds 已下沉（无头复用）
 #include "dnd.h"
 #include "tools/ToolManager.h"
 #include "tools/ITool.h"
@@ -26,11 +27,16 @@
 #include <QVector>
 #include <QDebug>
 #include <QHash>
+#include <QLineEdit>
+#include <QLabel>
+#include <QHBoxLayout>
 #include <cmath>
 #include <algorithm>
 #include "core/ElementFactory.h"
 #include "core/TextStyle.h"
+#include "core/CommandPrompt.h"   // 选项关键字匹配（C/闭合、U/放弃）
 #include "core/ConstraintSolver.h"   // 过约束/冲突诊断（需求④）：diagnose 重算冲突集合
+#include "core/ShapeSelect.h"        // 栏选/圈围/圈交判定（fence/wp/cp）
 
 // ============================ 平移排查调试日志 ============================
 // 右键拖不动时，把每一步鼠标/右键事件的现场写入 %TEMP%/sketchcad_pan.log，
@@ -136,390 +142,21 @@ QRectF ElementItem::visibleWorldRect() const {
     return v->mapToScene(v->viewport()->rect()).boundingRect();
 }
 
-// 无限直线与矩形求交（slab 法）：通过点 p0、方向 d(rotation)，参数区间 [t0,t1]。
-// 直线平行于某边且在界外 → 不相交；否则返回交线段端点。
+// 无限直线与矩形求交：算法已下沉到 ElementPath（视图无关，供打印引擎 / COM 自动化无头复用）
 bool ElementItem::xlineClipToRect(const Element& e, const QRectF& r, Vec3& a, Vec3& b) {
-    if (e.type != ElementType::Xline || e.pts.empty() || r.isNull()) return false;
-    const double rad = math::deg2rad(e.rotation);
-    const Vec3 d(std::cos(rad), std::sin(rad), 0);
-    const Vec3& p0 = e.pts[0];
-    double t0 = -1e18, t1 = 1e18;
-    const double p[2]  = { p0.x, p0.y };
-    const double dd[2] = { d.x, d.y };
-    const double lo[2] = { r.left(), r.top() };
-    const double hi[2] = { r.right(), r.bottom() };
-    for (int i = 0; i < 2; ++i) {
-        if (std::fabs(dd[i]) < 1e-12) {
-            if (p[i] < lo[i] || p[i] > hi[i]) return false;   // 平行且在界外
-        } else {
-            double ta = (lo[i] - p[i]) / dd[i];
-            double tb = (hi[i] - p[i]) / dd[i];
-            if (ta > tb) std::swap(ta, tb);
-            t0 = std::max(t0, ta);
-            t1 = std::min(t1, tb);
-            if (t0 > t1) return false;
-        }
-    }
-    a = Vec3(p0.x + d.x * t0, p0.y + d.y * t0, 0);
-    b = Vec3(p0.x + d.x * t1, p0.y + d.y * t1, 0);
-    return true;
+    return ElementPath::xlineClipToRect(e, r, a, b);
 }
 
+// 把一个图元转成绘制路径（样条在这里被展开成三次贝塞尔）。
+// 算法已下沉到 ElementPath（视图无关，供打印引擎 / COM 自动化无头复用）。
 QPainterPath ElementItem::buildPath(const Element& e, const QRectF& xlineClip) {
-    QPainterPath path;
-    switch (e.type) {
-        case ElementType::Xline: {
-            // 构造线：无限直线，按裁剪矩形（优先当前可见区域，空则回落场景级大矩形）
-            // 画出交线段。缩放/平移时 paintOne 每帧传入最新可见区域 → 显示自动同步。
-            const QRectF clip = xlineClip.isNull() ? kXlineBigRect : xlineClip;
-            Vec3 a, b;
-            if (xlineClipToRect(e, clip, a, b)) {
-                path.moveTo(qpt(a));
-                path.lineTo(qpt(b));
-            }
-            break;
-        }
-
-        case ElementType::Line:
-            if (e.pts.size() >= 2) {
-                // GB/T 14665-2012 4.1：波浪线（断裂）与双折线 Qt 无内建画笔，用自定义折线路径绘制。
-                if (e.lineStyle == LineStyle::Wave || e.lineStyle == LineStyle::DoubleBreak) {
-                    const Vec3 a = e.pts[0], b = e.pts[1];
-                    const double dx = b.x - a.x, dy = b.y - a.y;
-                    const double L = std::hypot(dx, dy);
-                    if (L < 1e-9) { path.moveTo(qpt(a)); path.lineTo(qpt(b)); break; }
-                    const double ux = dx / L, uy = dy / L;
-                    const double nx = -uy, ny = ux;                 // 法向单位向量
-                    const double amp = std::max(1.0, L * 0.015);    // 波幅
-                    const int n = std::max(8, (int)std::lround(L / 2.0));
-                    path.moveTo(qpt(a));
-                    if (e.lineStyle == LineStyle::Wave) {
-                        const double k = std::max(1.0, std::round(L / 10.0));  // 波数
-                        for (int i = 1; i <= n; ++i) {
-                            const double t = (double)i / n;
-                            const double s = amp * std::sin(2.0 * 3.14159265358979323846 * k * t);
-                            path.lineTo(qpt(Vec3(a.x + dx * t + nx * s, a.y + dy * t + ny * s, 0)));
-                        }
-                    } else {   // 双折线：两处折角的 Z 形
-                        const double ts[] = { 0.42, 0.50, 0.58 };
-                        const double ss[] = { 0.0, -amp, 0.0 };
-                        for (int i = 0; i < 3; ++i)
-                            path.lineTo(qpt(Vec3(a.x + dx * ts[i] + nx * ss[i],
-                                                 a.y + dy * ts[i] + ny * ss[i], 0)));
-                        path.lineTo(qpt(b));
-                    }
-                } else {
-                    path.moveTo(qpt(e.pts[0])); path.lineTo(qpt(e.pts[1]));
-                }
-            }
-            break;
-
-        case ElementType::Circle:
-            if (!e.pts.empty() && e.radius > 1e-9)
-                path.addEllipse(qpt(e.pts[0]), e.radius, e.radius);
-            break;
-
-        case ElementType::Arc: {
-            if (e.pts.empty() || e.radius <= 1e-9) break;
-            const QRectF r(e.pts[0].x - e.radius, e.pts[0].y - e.radius,
-                           2 * e.radius, 2 * e.radius);
-            // Qt 的圆弧角约定是「在未翻转坐标系中逆时针为正」，即取点公式为 (cx+r·cosθ, cy−r·sinθ)。
-            // 本视图已把 Y 轴翻转成数学正方向，世界角 a 对应的 Qt 角就是 −a，否则圆弧会上下镜像。
-            path.arcMoveTo(r, -e.startAngle);
-            path.arcTo(r, -e.startAngle, -(e.endAngle - e.startAngle));
-            break;
-        }
-
-        case ElementType::Ellipse: {
-            if (e.pts.empty() || e.radius <= 1e-9 || e.radiusY <= 1e-9) break;
-            const QPointF c = qpt(e.pts[0]);
-            // 先在局部系（长轴沿 X）画标准椭圆，再以世界长轴角旋转、平移到圆心。
-            // qpt 直接返回世界坐标，画家变换负责 Y 翻转，故这里用标准数学旋转（逆时针为正）。
-            QPainterPath ep;
-            ep.addEllipse(QPointF(0, 0), e.radius, e.radiusY);
-            QTransform rot;
-            rot.rotate(e.rotation);            // 标准数学旋转：CCW 为正，与 e.rotation 语义一致
-            QTransform tr;
-            tr.translate(c.x(), c.y());
-            path.addPath(ep * rot * tr);
-            break;
-        }
-
-        case ElementType::Rectangle:
-            if (e.pts.size() >= 2)
-                path.addRect(QRectF(qpt(e.pts[0]), qpt(e.pts[1])).normalized());
-            break;
-
-        case ElementType::Point:
-            break;          // 点实体：无连续几何路径；渲染与拾取由 paintOne / distanceToElement 处理
-
-        case ElementType::Dimension:
-            // 标注的可见几何完全由 dim::build 生成（尺寸线/界线/箭头/数字），
-            // 这里只给出「测量线」用于包围盒与命中，实际绘制见 paintOne。
-            if (e.pts.size() >= 2) { path.moveTo(qpt(e.pts[0])); path.lineTo(qpt(e.pts[1])); }
-            break;
-
-        case ElementType::Polygon: {
-            if (e.pts.size() < 2) break;
-            QPolygonF poly;
-            for (const auto& v : e.pts) poly << qpt(v);
-            path.addPolygon(poly);
-            // 被剪切过的多边形是开放折线，强行闭合会凭空补出一条并不存在的边
-            if (e.polyClosed()) path.closeSubpath();
-            break;
-        }
-
-        case ElementType::Polyline: {
-            // 折线：直线段 lineTo，弧段走 arcThrough 算出的圆心+起止角后 addEllipse 子路径
-            if (e.pts.size() < 2) break;
-            // 拟合 / 样条化：smooth 曲线（顶点为节点或控制点），与 PEDIT Fit/Spline 一致
-            if (e.splineSubType == 1 && e.pts.size() >= 2) {
-                const std::vector<Vec3> curve = geo::samplePolylineFit(e.pts, e.closed, 16);
-                if (!curve.empty()) {
-                    path.moveTo(qpt(curve[0]));
-                    for (size_t i = 1; i < curve.size(); ++i) path.lineTo(qpt(curve[i]));
-                    if (e.closed) path.closeSubpath();
-                }
-                break;
-            }
-            if (e.splineSubType == 2 && e.pts.size() >= 3) {
-                const std::vector<Vec3> curve = geo::samplePolylineSpline(e.pts, e.closed, 16);
-                if (!curve.empty()) {
-                    path.moveTo(qpt(curve[0]));
-                    for (size_t i = 1; i < curve.size(); ++i) path.lineTo(qpt(curve[i]));
-                    if (e.closed) path.closeSubpath();
-                }
-                break;
-            }
-            const int n = (int)e.pts.size();
-            const int nSegs = e.closed ? n : n - 1;
-            for (int i = 0; i < nSegs; ++i) {
-                const Vec3& a = e.pts[i];
-                const Vec3& b = e.pts[(i + 1) % n];
-                if (i == 0) path.moveTo(qpt(a));
-                const bool isArc = (i < (int)e.arcFlags.size()) && e.arcFlags[i];
-                if (isArc) {
-                    geo::ArcSeg ar = geo::arcThrough(e.pts, i, e.closed);
-                    if (ar.valid && ar.radius > 1e-6) {
-                        const QRectF r(ar.center.x - ar.radius,
-                                       ar.center.y - ar.radius,
-                                       2 * ar.radius, 2 * ar.radius);
-                        path.arcMoveTo(r, -ar.startDeg);
-                        path.arcTo(r, -ar.startDeg, -ar.sweepDeg);
-                        // arcThrough 端点保持：弧终点恒为 b，后续 lineTo/closeSubpath 自然衔接
-                    } else {
-                        path.lineTo(qpt(b));
-                    }
-                } else {
-                    path.lineTo(qpt(b));
-                }
-            }
-            if (e.closed) path.closeSubpath();
-            break;
-        }
-
-        case ElementType::Spline: {
-            if (e.splineSubType == 1 && e.pts.size() >= 3) {
-                // 抛物线（二次贝塞尔）：P0 → 控制点 P1 → 终点 P2
-                path.moveTo(qpt(e.pts[0]));
-                path.quadTo(qpt(e.pts[1]), qpt(e.pts[2]));
-            } else if (e.splineSubType == 2 && e.pts.size() >= 3) {
-                // 双曲线：采样后绘制折线（F1, F2, P → 离散点序列）
-                const auto samples = spline::sampleHyperbola(e.pts[0], e.pts[1], e.pts[2]);
-                if (!samples.empty()) {
-                    path.moveTo(qpt(samples[0]));
-                    for (size_t i = 1; i < samples.size(); ++i)
-                        path.lineTo(qpt(samples[i]));
-                }
-            } else if (e.splineSubType == 3 && e.pts.size() >= 4) {
-                // 抛物线(4点)：拟合二次贝塞尔后采样
-                const auto samples = spline::sampleParabola4P(e.pts);
-                if (!samples.empty()) {
-                    path.moveTo(qpt(samples[0]));
-                    for (size_t i = 1; i < samples.size(); ++i)
-                        path.lineTo(qpt(samples[i]));
-                }
-            } else if (e.splineSubType == 4 && e.pts.size() >= 3) {
-                // 抛物线(焦点准线)
-                const auto samples = spline::sampleParabolaFD(e.pts[0], e.pts[1], e.pts[2]);
-                if (!samples.empty()) {
-                    path.moveTo(qpt(samples[0]));
-                    for (size_t i = 1; i < samples.size(); ++i)
-                        path.lineTo(qpt(samples[i]));
-                }
-            } else if (e.splineSubType == 5 || e.splineSubType == 6) {
-                // 样条过点 / 自由手绘：Catmull-Rom 插值
-                const std::vector<Vec3> bz = geo::catmullRomToBezier(e.pts);
-                if (bz.size() >= 4) {
-                    path.moveTo(qpt(bz[0]));
-                    for (size_t i = 1; i + 2 < bz.size(); i += 3)
-                        path.cubicTo(qpt(bz[i]), qpt(bz[i + 1]), qpt(bz[i + 2]));
-                } else if (e.pts.size() >= 2) {
-                    path.moveTo(qpt(e.pts[0]));
-                    for (size_t i = 1; i < e.pts.size(); ++i) path.lineTo(qpt(e.pts[i]));
-                }
-            } else {
-                // 默认：控制点 -> Catmull-Rom -> 三次贝塞尔
-                const std::vector<Vec3> bz = geo::catmullRomToBezier(e.pts);
-                if (bz.size() >= 4) {
-                    path.moveTo(qpt(bz[0]));
-                    for (size_t i = 1; i + 2 < bz.size(); i += 3)
-                        path.cubicTo(qpt(bz[i]), qpt(bz[i + 1]), qpt(bz[i + 2]));
-                } else if (e.pts.size() >= 2) {
-                    path.moveTo(qpt(e.pts[0]));
-                    for (size_t i = 1; i < e.pts.size(); ++i) path.lineTo(qpt(e.pts[i]));
-                }
-            }
-            break;
-        }
-
-        case ElementType::Constraint:
-            break;   // 约束标记按屏幕像素画，见 paintOne
-
-        case ElementType::Text:
-        case ElementType::MText:
-            break;   // 文本由 paintText 绘制，几何包围盒在 rawBounds 里按文字尺寸展开
-        case ElementType::Table:
-            break;   // 表格由 paintTable 绘制（网格线+单元格文字），包围盒见 rawBounds
-
-        case ElementType::BlockRef:
-            // 块引用自身没有几何：展开后的子路径由 blockPath()（shape）与 paintBlockRef 处理
-            break;
-
-        case ElementType::Hatch: {
-            // 剖面区域：外边界 + 内孔（子路径）。采用 OddEvenFill，使内孔被掏空
-            // （带孔剖面如法兰螺栓孔即靠此正确留白）。实际剖面线绘制见 paintHatch。
-            if (e.pts.size() < 3) break;
-            QPolygonF outer;
-            for (const auto& v : e.pts) outer << qpt(v);
-            path.addPolygon(outer);
-            path.closeSubpath();
-            for (const auto& h : e.holes) {
-                if (h.size() < 3) continue;
-                QPolygonF ring;
-                for (const auto& v : h) ring << qpt(v);
-                path.addPolygon(ring);
-                path.closeSubpath();
-            }
-            path.setFillRule(Qt::OddEvenFill);
-            break;
-        }
-
-        case ElementType::Boundary: {
-            // 交互式自定义边界（BOUNDARY/BPOLY）：几何结构与 Hatch 完全一致
-            // （pts=外环、holes=内孔），仅语义为"待填充/已指定边界"，故复用同一几何路径；
-            // 渲染则只描边（虚线边界）而不画剖面线，见 paintOne。
-            if (e.pts.size() < 3) break;
-            QPolygonF outer;
-            for (const auto& v : e.pts) outer << qpt(v);
-            path.addPolygon(outer);
-            path.closeSubpath();
-            for (const auto& h : e.holes) {
-                if (h.size() < 3) continue;
-                QPolygonF ring;
-                for (const auto& v : h) ring << qpt(v);
-                path.addPolygon(ring);
-                path.closeSubpath();
-            }
-            path.setFillRule(Qt::OddEvenFill);
-            break;
-        }
-    }
-    return path;
+    return ElementPath::buildPath(e, xlineClip);
 }
 
+// 图元的原始几何包围盒：算法已下沉到 ElementPath。
+// model 语义：null → 无样式宽度因子、块引用不展开（与原临时 item 一致）。
 QRectF ElementItem::rawBounds(const Element& e) const {
-    // 构造线：几何范围只取「空矩形」——「适配窗口」不被 ±1e5 的无限线撑爆（fit 排除），
-    // 命中/拾取走 geo::distanceToElement 的点到无限直线距离；剔除用的包围盒由
-    // boundingRect() 的 Xline 专案（直线 ∩ 场景级大矩形）另行给出。
-    if (e.type == ElementType::Xline) return QRectF();
-    QRectF r;
-    bool has = false;
-    const QPainterPath p = buildPath(e);
-    if (!p.isEmpty()) { r = p.boundingRect(); has = true; }
-    // 用显式 min/max 展开控制点。注意不能用 QRectF::united —— 零尺寸矩形被判为 null，
-    // united 会直接丢弃它，旧实现正是因此让所有直线的包围盒退化成原点附近的固定小方块，
-    // 平移出可视范围后图元会被场景索引剔除而「消失」。
-    auto grow = [&](const Vec3& v) {
-        if (!has) { r = QRectF(v.x, v.y, 0, 0); has = true; return; }
-        if (v.x < r.left())   r.setLeft(v.x);
-        if (v.x > r.right())  r.setRight(v.x);
-        if (v.y < r.top())    r.setTop(v.y);
-        if (v.y > r.bottom()) r.setBottom(v.y);
-    };
-    for (const auto& v : e.pts) grow(v);
-    // 标注的尺寸线/界线/数字常常伸到测量点之外，包围盒必须把它们算进去，
-    // 否则视图平移时标注会被场景索引提前剔除而「半截消失」。
-    if (e.type == ElementType::Dimension) {
-        const dim::Geom g = dim::build(e);
-        if (g.valid) {
-            for (const auto& s : g.ext)  { grow(s.first); grow(s.second); }
-            for (const auto& s : g.line) { grow(s.first); grow(s.second); }
-            for (const auto& v : g.arcPoly) grow(v);
-            grow(g.textPos);
-        }
-    }
-    // 文本 / 多行文字：按文字尺寸展开包围盒（世界 mm，与视图缩放无关），保证选中/拾取命中整段文字而非仅锚点。
-    // 在固定参考像素尺寸(1000)下度量字宽/字高，再按 (文字高度mm / 1000) 换算回世界 mm。
-    if ((e.type == ElementType::Text || e.type == ElementType::MText)
-        && !e.pts.empty() && !e.text.isEmpty()) {
-        const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)，存于 radius 字段
-        QFont tf;
-        tf.setPixelSize(1000);
-        const QFontMetricsF fm(tf);
-        const double lineHmm = th * (e.type == ElementType::MText ? e.lineSpacing : 1.0);
-        // 宽度因子：图元 widthFactor × 样式 widthFactor
-        double wf = e.widthFactor > 0 ? e.widthFactor : 1.0;
-        if (model && !e.styleName.isEmpty()) {
-            if (const TextStyle* ts = model->findTextStyle(e.styleName)) wf *= ts->widthFactor;
-        }
-        // 自动换行（仅 MText 且指定了 mtextWidth）或仅按显式换行折行
-        QStringList lines;
-        if (e.type == ElementType::MText && e.mtextWidth > 0.1)
-            lines = wrapText(e.text, e.mtextWidth, tf);
-        else
-            lines = e.text.split('\n');
-        double maxWmm = 0;
-        for (const auto& ln : lines) {
-            const double w = fm.horizontalAdvance(ln) / 1000.0 * th * wf;
-            if (w > maxWmm) maxWmm = w;
-        }
-        const double totalHmm = lines.size() * lineHmm;
-        // 9 点对齐 → 区块相对锚点的偏移（局部 y 向上）
-        const int align = (e.type == ElementType::MText) ? e.textAlign : 1; // Text 维持原「中上」锚定
-        const int hA = align % 3, vA = align / 3;
-        const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHmm / 2.0 : totalHmm;
-        const double yTop = startYv, yBot = startYv - totalHmm;
-        double xL, xR;
-        if (hA == 0)      { xL = 0;          xR = maxWmm; }
-        else if (hA == 1) { xL = -maxWmm/2;  xR = maxWmm/2; }
-        else              { xL = -maxWmm;    xR = 0; }
-        grow(Vec3(e.pts[0].x + xL, e.pts[0].y + yBot, 0));
-        grow(Vec3(e.pts[0].x + xR, e.pts[0].y + yTop, 0));
-    }
-    // 表格：包围盒 = 左上锚点 + (总宽, rows×rowHeight)，行向下增长（世界 Y 向上 → y 减小方向）
-    if (e.type == ElementType::Table && !e.pts.empty()) {
-        const double W = e.tableWidthMm();
-        const double H = std::max(1, e.tableRows) * std::max(0.5, e.rowHeight);
-        grow(Vec3(e.pts[0].x,      e.pts[0].y - H, 0));
-        grow(Vec3(e.pts[0].x + W,  e.pts[0].y,     0));
-    }
-    // 块引用：几何范围来自"展开后的子图元并集"（而非插入点）。
-    // 展开结果一定是基础图元（嵌套块已在 block::expandRef 内递归展开），不会自我递归。
-    if (e.type == ElementType::BlockRef) {
-        for (const auto& sub : expandedBlock()) {
-            if (sub.type == ElementType::BlockRef) continue;
-            const QRectF sb = rawBounds(sub);
-            if (!has) { r = sb; has = true; }
-            else { r = r.united(sb); }
-        }
-        // 未定义块 / 空块：退化为插入点，保证仍可被选中
-        if (!has && !e.pts.empty()) { r = QRectF(e.pts[0].x, e.pts[0].y, 0, 0); has = true; }
-    }
-    if (!has) r = QRectF(-1, -1, 2, 2);
-    if (r.width()  < 1e-6) r.adjust(-1e-3, 0, 1e-3, 0);
-    if (r.height() < 1e-6) r.adjust(0, -1e-3, 0, 1e-3);
-    return r;
+    return ElementPath::rawBounds(e, model);
 }
 
 QRectF ElementItem::boundingRect() const {
@@ -608,7 +245,8 @@ QPen ElementItem::penFor(const Element& e) const {
     QPen pen(preview ? PREVIEW : (warn ? WARN : (highlight ? HL : e.color)));
     pen.setCosmetic(true);                       // 线宽按屏幕像素固定，缩放不改变视觉粗细
     const double effW = e.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
-    const double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
+    double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
+    if (!showLineWeight) wpx = 1.0;              // 线宽显示关（LWDISPLAY）：一律细线
     pen.setWidthF(preview ? std::max(1.0, wpx)
                           : (warn ? wpx + 2.0 : (highlight ? wpx + 1.2 : wpx)));
     pen.setCapStyle(Qt::RoundCap);
@@ -1079,6 +717,16 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     connect(model_, &SketchModel::planeChanged, this, &GraphicsView::onModelChanged);
     connect(model_, &SketchModel::activeToolChanged, this, &GraphicsView::onActiveToolChanged);
     connect(model_, &SketchModel::currentLayerChanged, this, [this]() { viewport()->update(); });
+    // 线宽显示开关（LWDISPLAY）：同步到渲染态，并刷新全部图元的线宽呈现。
+    connect(model_, &SketchModel::showLineWeightChanged, this, [this](bool on) {
+        showLineWeight_ = on;
+        applyLineWeightToItems();
+    });
+    showLineWeight_ = model_->showLineWeight();
+    // 动态输入 DYN 关闭时隐藏输入框（开着则等下一次 mouseMove 自然显示）
+    connect(model_, &SketchModel::dynModeChanged, this, [this](bool on) {
+        if (!on) hideDynBox();
+    });
     // 创建 E/T/M/C/X 五个「捕捉切换」快捷键（默认禁用，仅绘制命令期间启用）。
     // 采用正规 QShortcut 重映射，而非事件过滤器拦截：进入绘制命令时临时禁用与之冲突的
     // 全局快捷键（如 C=圆），从根本上消除「按 C 被误判为切圆命令」的冲突（要求 4）。
@@ -1227,18 +875,32 @@ void GraphicsView::zoomBy(double f) {
 void GraphicsView::rebuild() {
     scene_->clear();
     previewItem_ = nullptr;                // scene_->clear() 已把预览项一并销毁
+    gripPreviewItem_ = nullptr;            // 夹点变换预览项同理
     for (const auto& e : model_->elements()) {
         if (!e.visible) continue;
         auto* it = new ElementItem(e);
         it->model = model_;                      // 块引用展开需要块表
         it->highlight = model_->isSelected(e.id);
         it->warn = conflictIds_.contains(e.id);
+        it->showLineWeight = showLineWeight_;    // 线宽显示开关（LWDISPLAY）
         it->dimScale = model_->scaleRatio();     // 标注数字按实物尺寸显示
         // GB/T 14665-2012 4.3：重合图线按优先级叠放（可见轮廓最上，尺寸线最下）
         double z = (double)linePriority(e.lineStyle);
         if (e.type == ElementType::Dimension) z -= 10.0;
         it->setZValue(z);
         scene_->addItem(it);
+    }
+    viewport()->update();
+}
+
+void GraphicsView::applyLineWeightToItems() {
+    if (!scene_) return;
+    const auto items = scene_->items();
+    for (QGraphicsItem* gi : items) {
+        if (auto* it = dynamic_cast<ElementItem*>(gi)) {
+            it->showLineWeight = showLineWeight_;
+            it->update();
+        }
     }
     viewport()->update();
 }
@@ -1513,6 +1175,9 @@ void GraphicsView::onActiveToolChanged() {
     const QString t = model_->activeTool();
     const bool newDraw = isDrawTool(t);
     const bool prevDraw = drawToolActive_;
+
+    // 夹点热态与工具切换互斥：切换工具即取消热态（模型未落盘，直接清态）
+    if (gripHot_) cancelGrip();
 
     // 区域拾取模式（剖面填充）与绘制命令互斥：启动绘制命令即退出拾取，
     // 避免左键语义冲突（拾取模式下左键被吞掉、不进入绘制）。
@@ -2032,6 +1697,53 @@ int GraphicsView::hitTest(const QPoint& viewPos) const {
     return best;
 }
 
+std::vector<int> GraphicsView::hitTestAll(const QPoint& viewPos) const {
+    const Vec3 w = toVec3(mapToScene(viewPos));
+    const double tol = PICK_TOL_PX / std::max(1e-6, zoom_);
+    std::vector<std::pair<double, int>> hits;    // (距离, id)：近的优先
+    const auto& es = model_->elements();
+    for (const auto& e : es) {
+        if (!e.visible) continue;
+        double d;
+        if (e.type == ElementType::BlockRef) {
+            const auto subs = model_->expandBlockRef(e);
+            d = subs.empty() ? (e.pts.empty() ? 1e18 : w.distTo(e.pts[0]))
+                             : geo::distanceToElements(subs, w);
+        } else {
+            d = geo::distanceToElement(e, w);
+        }
+        if (d < tol) hits.push_back({d, e.id});
+    }
+    std::sort(hits.begin(), hits.end());
+    std::vector<int> ids;
+    ids.reserve(hits.size());
+    for (const auto& h : hits) ids.push_back(h.second);
+    return ids;
+}
+
+void GraphicsView::cycleSelection(const QPoint& vp, const std::vector<int>& ids) {
+    if (ids.empty()) return;
+    // 同一锚点（8px 内）且命中集合未变 → 继续循环；否则重建循环列表。
+    // 首次跳到第 2 优先（最顶层单击本就能选中，循环的意义在于够到被压住的对象）。
+    if (!cycleActive_ || (vp - cycleAnchor_).manhattanLength() > 8 || ids != cycleList_) {
+        cycleActive_ = true;
+        cycleAnchor_ = vp;
+        cycleList_ = ids;
+        cycleIdx_ = 1 % (int)ids.size();
+    } else {
+        cycleIdx_ = (cycleIdx_ + 1) % (int)ids.size();
+    }
+    model_->setSelected(cycleList_[cycleIdx_]);
+    model_->log(QString("选择循环：第 %1 / %2 个（继续 Ctrl+点击切换，其他点击退出循环）")
+                    .arg(cycleIdx_ + 1).arg(cycleList_.size()));
+}
+
+void GraphicsView::breakCycle() {
+    cycleActive_ = false;
+    cycleList_.clear();
+    cycleIdx_ = 0;
+}
+
 QRectF GraphicsView::elementSceneBounds(const Element& e) const {
     // 复用 ElementItem 的几何包围盒计算（已覆盖标注的尺寸线/界线/引线），
     // 保证「框住即选中」与绘制的几何范围严格一致。
@@ -2043,8 +1755,8 @@ QRectF GraphicsView::elementSceneBounds(const Element& e) const {
 QRectF ElementItem::geometryBounds(const Element& e) {
     // 与 boundingRect() 同源，但**不**做 cosmetic 描边余量膨胀：
     // 「适配窗口/窗口缩放」要的是图形真实几何范围，多出的像素余量会让取景不满。
-    ElementItem t(e);
-    return t.rawBounds(e);
+    // 算法已下沉到 ElementPath；静态语境无 model（与原临时 item 语义一致）。
+    return ElementPath::rawBounds(e);
 }
 
 // angleDeg / lineIntersect 已消除（DRY）：
@@ -2060,6 +1772,7 @@ void GraphicsView::showPreview(const Element& tmp, std::vector<Element> guides) 
     if (!previewItem_) {
         previewItem_ = new ElementItem(tmp);
         previewItem_->preview = true;
+        previewItem_->showLineWeight = showLineWeight_;
         previewItem_->dimScale = model_->scaleRatio();
         previewItem_->setZValue(1000);
         scene_->addItem(previewItem_);
@@ -2088,6 +1801,22 @@ void GraphicsView::trackArcAngle(double curAng) {
 void GraphicsView::updatePreview(const Vec3& cur) {
     const QString t = model_->activeTool();
     const auto& lp = model_->lineParams();
+
+    // 栏选/圈围/圈交：实时预览采集折线（WP/CP 闭合首尾边）
+    if (t == "fence" || t == "wp" || t == "cp") {
+        if (pendingPts_.size() >= 2) {
+            Element first = ElementFactory::createGuideLine(pendingPts_[0], pendingPts_[1]);
+            std::vector<Element> guides;
+            for (size_t i = 1; i + 1 < pendingPts_.size(); ++i)
+                guides.push_back(ElementFactory::createGuideLine(pendingPts_[i], pendingPts_[i + 1]));
+            if (t != "fence")
+                guides.push_back(ElementFactory::createGuideLine(pendingPts_.back(), pendingPts_.front()));
+            showPreview(first, std::move(guides));
+        } else {
+            clearPreview();
+        }
+        return;
+    }
 
     // 角度直线：未拾取起点时，以光标为起点预览「按参数(angle,length)确定的直线」（要求 3）
     if (t == "line_angle" && pendingPts_.empty()) {
@@ -2386,8 +2115,11 @@ void GraphicsView::resetPending() {
     pendingPts_.clear();
     pickedIds_.clear();
     trimBounds_.clear();
-    draggingHandle_ = false;
-    dragRefs_.clear();
+    if (gripHot_) {   // 夹点热态一并复位（静默：日志由具体取消路径输出）
+        gripHot_ = gripArmed_ = gripDragMoved_ = false;
+        gripData_ = grip::Grips{};
+    }
+    clearGripPreview();
     drawing_ = false;
     panning_ = false;
     panRight_ = false;
@@ -2402,6 +2134,7 @@ void GraphicsView::resetPending() {
     dimTargetId_ = -1;
     dimEdgeIdx_ = -1;
     clearPreview();
+    hideDynBox();          // DYN 输入框随绘制会话结束而隐藏
     viewport()->update();
 }
 
@@ -2887,32 +2620,147 @@ void GraphicsView::refreshHover(const Vec3& w) {
         viewport()->update();
 }
 
-bool GraphicsView::beginHandleDrag(const Vec3& w) {
+bool GraphicsView::beginGripHot(const Vec3& w) {
     const auto h = model_->handleAt(w, worldTol());
     if (!h.valid()) return false;
     const Element* e = model_->element(h.elemId);
     if (!e) return false;
     const auto hs = geo::elementHandles(*e);
     if (h.index >= (int)hs.size()) return false;
-    dragOrigin_ = hs[h.index];
 
-    // 先锁定「与该端点重合的所有控制点」，这就是要保持的拓扑连接关系
-    dragRefs_ = model_->collectLinked(dragOrigin_, worldTol());
-    // 圆心/半径手柄不在 collectLinked 里，但用户确实抓的是它，单独补进去
-    if (std::none_of(dragRefs_.begin(), dragRefs_.end(),
+    gripData_ = grip::Grips{};
+    gripData_.base = hs[h.index];
+    gripData_.refCursor = w;
+
+    // Stretch 联动引用在进入热态的瞬间锁定（与原端点拖拽同语义）：
+    // 与该控制点重合的所有控制点一并迁移，保持拓扑连接；
+    // 圆/弧圆心手柄不参与端点联动，但被直接抓取时单独补入。
+    auto refs = model_->collectLinked(gripData_.base, worldTol());
+    if (std::none_of(refs.begin(), refs.end(),
                      [&](const SketchModel::HandleRef& r) {
                          return r.elemId == h.elemId && r.index == h.index;
                      }))
-        dragRefs_.push_back({h.elemId, h.index});
+        refs.push_back({h.elemId, h.index});
+
+    gripData_.stretchRefs.clear();
+    std::vector<int> stretchIds;
+    for (const auto& r : refs) {
+        gripData_.stretchRefs.push_back({r.elemId, r.index});
+        if (std::find(stretchIds.begin(), stretchIds.end(), r.elemId) == stretchIds.end())
+            stretchIds.push_back(r.elemId);
+    }
+
+    // 作用集快照：moveSet = 选中集（剔除 Constraint，变换无意义）；
+    // stretchSet = 联动图元 ∪ 选中集（Stretch 可能带着未选中的相连图元走）。
+    const auto& sel = model_->selection();
+    for (int id : sel) {
+        if (const Element* el = model_->element(id)) {
+            if (el->type != ElementType::Constraint) gripData_.moveSet.push_back(*el);
+            if (std::find(stretchIds.begin(), stretchIds.end(), id) == stretchIds.end())
+                stretchIds.push_back(id);
+        }
+    }
+    for (int id : stretchIds)
+        if (const Element* el = model_->element(id)) gripData_.stretchSet.push_back(*el);
 
     model_->setSelected(h.elemId);
-    model_->beginEdit(QStringLiteral("拖拽端点"));   // 整段拖拽只压一次快照
-    draggingHandle_ = true;
-    const int linked = (int)dragRefs_.size();
-    model_->log(linked > 1
-                    ? QString("端点拖拽：联动 %1 个图元，松开鼠标结束").arg(linked)
-                    : QStringLiteral("端点拖拽：松开鼠标结束"));
+    gripHot_ = true;
+    gripArmed_ = false;
+    gripDragMoved_ = false;
+    gripMode_ = grip::Mode::Stretch;
+    model_->log(QStringLiteral("夹点拉伸：移动光标预览，按住拖拽或再次单击确认，Ctrl 切换模式，Esc 取消"));
+    viewport()->update();
     return true;
+}
+
+void GraphicsView::updateGripPreview(const Vec3& w) {
+    clearGripPreview();
+    const grip::GripResult r = grip::apply(gripData_, gripMode_, w);
+    if (r.reject.isEmpty() && !r.changes.empty()) {
+        QPainterPath path;
+        for (const auto& c : r.changes) {
+            if (c.remove) continue;
+            path.addPath(ElementItem::buildPath(c.replacement));
+        }
+        // 预览画成虚线橙色（区别于正式图元），且不进 scene 索引参与命中
+        gripPreviewItem_ = scene_->addPath(path, QPen(QColor(230, 145, 56), 0, Qt::DashLine));
+        gripPreviewItem_->setZValue(1001);
+    }
+    viewport()->update();
+}
+
+void GraphicsView::clearGripPreview() {
+    if (gripPreviewItem_) {
+        scene_->removeItem(gripPreviewItem_);
+        delete gripPreviewItem_;
+        gripPreviewItem_ = nullptr;
+    }
+}
+
+void GraphicsView::commitGrip() {
+    const Vec3 cursor = lastMouseWorld_;
+    const grip::GripResult r = grip::apply(gripData_, gripMode_, cursor);
+    clearGripPreview();
+    const QString mName = grip::modeName(gripMode_);
+    if (!r.reject.isEmpty()) {
+        model_->log(r.reject, "warn");          // 边界拒绝：比例≤0 / 镜像轴退化
+    } else if (r.changes.empty()) {
+        model_->log(QStringLiteral("夹点%1：没有可作用的图元").arg(mName), "warn");
+    } else {
+        // 落盘三件套（translateSelection 同款）：beginEdit 压一次快照 + 全 Quiet 应用
+        model_->beginEdit(QStringLiteral("夹点%1").arg(mName));
+        modify::applyChanges(model_, r.changes, QString());
+        model_->log(QString("夹点%1完成：%2 项变更，Ctrl+Z 可整组撤销")
+                        .arg(mName).arg(r.changes.size()));
+    }
+    gripHot_ = gripArmed_ = gripDragMoved_ = false;
+    gripData_ = grip::Grips{};
+    refreshHover(lastMouseWorld_);
+    viewport()->update();
+}
+
+void GraphicsView::cancelGrip() {
+    clearGripPreview();
+    gripHot_ = gripArmed_ = gripDragMoved_ = false;
+    gripData_ = grip::Grips{};
+    model_->log(QStringLiteral("已取消夹点编辑"), "warn");
+    refreshHover(lastMouseWorld_);
+    viewport()->update();
+}
+
+// 栏选/圈围/圈交结算：命中判定与画布/命令行共用 shape:: 纯几何层；
+// BlockRef 展开子图元判定，任一命中即整块入选。结算一律**追加**进当前选区。
+void GraphicsView::finalizeShapePick() {
+    const QString t = model_->activeTool();
+    const shape::Mode m = (t == "fence") ? shape::Mode::Fence
+                        : (t == "wp")    ? shape::Mode::Window
+                                         : shape::Mode::Crossing;
+    const double tol = worldTol();
+    std::vector<int> ids;
+    if (pendingPts_.size() >= 2) {
+        for (const auto& e : model_->elements()) {
+            if (!e.visible) continue;
+            bool hitIt = false;
+            if (e.type == ElementType::BlockRef) {
+                const auto subs = model_->expandBlockRef(e);
+                for (const auto& s : subs)
+                    if (shape::hit(s, pendingPts_, m, tol)) { hitIt = true; break; }
+            } else {
+                hitIt = shape::hit(e, pendingPts_, m, tol);
+            }
+            if (hitIt) ids.push_back(e.id);
+        }
+    }
+    if (ids.empty()) {
+        model_->log(QString("%1：没有图元被选中").arg(shape::modeName(m)), "warn");
+    } else {
+        model_->addToSelection(ids);
+        model_->log(QString("%1完成：%2 个图元已并入选区")
+                        .arg(shape::modeName(m)).arg(ids.size()));
+    }
+    clearPreview();
+    resetPending();
+    viewport()->update();
 }
 
 void GraphicsView::drawHandles(QPainter* p) const {
@@ -2930,10 +2778,13 @@ void GraphicsView::drawHandles(QPainter* p) const {
             box(v, QColor(255, 255, 255), HL, 1.0);
     }
     // 光标下的控制点：放大并染色；有联动时用暖色提示「拖它会带走别人」
-    if (hoverHandle_ && !draggingHandle_) {
+    if (hoverHandle_ && !gripHot_) {
         const bool linked = hoverLinked_ > 1;
         box(hoverPos_, linked ? QColor(230, 145, 56) : HL, QColor(31, 95, 139), 1.6);
     }
+    // 热夹点：实心橙块标识当前基准点（热态中恒定显示）
+    if (gripHot_)
+        box(gripData_.base, QColor(230, 145, 56), QColor(31, 95, 139), 1.8);
     // 已指定的剪切边界：描一层醒目的粗线，避免「我到底选了哪几条」全靠记
     if (!trimBounds_.empty()) {
         QPen bp(QColor(214, 69, 65, 200));
@@ -3008,7 +2859,144 @@ void GraphicsView::handleRightButton() {
     if (model_->activeTool() != "select") {
         model_->setActiveTool("select");
         model_->log(QStringLiteral("已退出绘制工具，回到选择状态"));
+        return;
     }
+    // 选择/空闲态：右键弹出上下文菜单（取代此前的无操作）
+    showContextMenu(QCursor::pos());
+}
+
+// 上下文相关右键菜单：按「当前选择集」与「空白处」两种上下文构建。
+// 绘制命令期间的右键语义（结束/取消）不受影响——只在 select 态才会走到这里。
+void GraphicsView::showContextMenu(const QPoint& globalPos) {
+    QMenu menu(this);
+    const auto& sel = model_->selection();
+    if (!sel.empty()) {
+        // ---- 选中上下文 ----
+        menu.addAction(QStringLiteral("特性"), this, [this] { emit requestShowProperties(); });
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("复制"), this, [this] { model_->copySelected(); });
+        menu.addAction(QStringLiteral("删除"), this, [this] { model_->deleteSelected(); });
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("反选"), this, [this] { model_->invertSelection(); });
+        menu.addAction(QStringLiteral("全部不选"), this, [this] { model_->clearSelection(); });
+    } else {
+        // ---- 空白上下文 ----
+        menu.addAction(QStringLiteral("全选"), this, [this] { model_->selectAll(); });
+        menu.addAction(QStringLiteral("粘贴"), this, [this] { model_->paste(); });
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("缩放范围"), this, [this] { fitView(); });
+        menu.addAction(model_->showGrid() ? QStringLiteral("隐藏栅格")
+                                          : QStringLiteral("显示栅格"),
+                       this, [this] { model_->setShowGrid(!model_->showGrid()); });
+    }
+    menu.exec(globalPos);
+}
+
+// 命令行选项关键字应用（绘制命令期间，CommandLine::optionEntered 转发而来）。
+// 仅当当前绘制确实提供了该选项才响应（避免误触）；U=放弃上一点，C=闭合（多段线）。
+void GraphicsView::applyCommandOption(const QString& key) {
+    const QStringList opts = model_->commandOptions();
+    if (CommandPrompt::matchOption(key, opts).isEmpty()) {
+        model_->log(QStringLiteral("当前命令无选项 %1").arg(key), "warn");
+        return;
+    }
+    const QString k = key.toUpper();
+    if (k == QStringLiteral("U")) {
+        if (!pendingPts_.empty()) {
+            pendingPts_.pop_back();
+            updatePreview(lastMouseWorld_);   // 以最近光标位置重绘预览
+            updateCommandPrompt();
+            model_->log(QStringLiteral("已放弃上一点"));
+        } else {
+            model_->log(QStringLiteral("没有可放弃的点"), "info");
+        }
+        return;
+    }
+    if (k == QStringLiteral("C")) {
+        if (model_->activeTool() == QStringLiteral("polyline") && pendingPts_.size() >= 3) {
+            pendingPts_.push_back(pendingPts_.front());   // 回到起点闭合
+            finalizePoly(false);
+            model_->log(QStringLiteral("已闭合多段线"));
+        } else {
+            model_->log(QStringLiteral("当前命令不支持闭合选项"), "warn");
+        }
+        return;
+    }
+    model_->log(QStringLiteral("选项 %1 暂未在该命令中实现").arg(key), "info");
+}
+
+// ======================= 动态输入 DYN =======================
+
+// 惰性创建光标跟随输入框（viewport 子控件，不进场景）。
+void GraphicsView::ensureDynBox() {
+    if (dynBox_) return;
+    dynBox_ = new QWidget(viewport());
+    dynBox_->setAutoFillBackground(true);
+    dynBox_->setStyleSheet(QStringLiteral(
+        "background:#fffbe6; border:1px solid #d9a300; border-radius:2px;"));
+    auto* lay = new QHBoxLayout(dynBox_);
+    lay->setContentsMargins(4, 2, 4, 2);
+    lay->setSpacing(3);
+    dynLen_ = new QLineEdit(dynBox_);
+    dynAng_ = new QLineEdit(dynBox_);
+    dynLen_->setFixedWidth(64);
+    dynAng_->setFixedWidth(64);
+    dynLen_->setPlaceholderText(QStringLiteral("mm"));
+    dynAng_->setPlaceholderText(QStringLiteral("°"));
+    dynLen_->setFrame(false);
+    dynAng_->setFrame(false);
+    lay->addWidget(new QLabel(QStringLiteral("距离"), dynBox_));
+    lay->addWidget(dynLen_);
+    lay->addWidget(new QLabel(QStringLiteral("角度"), dynBox_));
+    lay->addWidget(dynAng_);
+    connect(dynLen_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
+    connect(dynAng_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
+    dynBox_->hide();
+}
+
+// 按最近采集点 → 光标的极坐标刷新预填值，并把输入框放到光标右下方。
+void GraphicsView::updateDynBox(const QPoint& vp) {
+    ensureDynBox();
+    if (pendingPts_.empty()) { dynBox_->hide(); return; }
+    const Vec3& last = pendingPts_.back();
+    const double dx = lastMouseWorld_.x - last.x;
+    const double dy = lastMouseWorld_.y - last.y;
+    const double len = std::hypot(dx, dy);
+    const double ang = qRadiansToDegrees(std::atan2(dy, dx));
+    // 焦点在输入框时暂停预填，避免覆盖用户正在键入的值
+    if (!dynLen_->hasFocus() && !dynAng_->hasFocus()) {
+        dynLen_->setText(QString::number(len, 'f', 2));
+        dynAng_->setText(QString::number(ang, 'f', 1));
+    }
+    dynBox_->move(vp + QPoint(18, 18));
+    dynBox_->adjustSize();
+    if (!dynBox_->isVisible()) dynBox_->show();
+    dynBox_->raise();
+}
+
+void GraphicsView::hideDynBox() {
+    if (!dynBox_) return;
+    dynBox_->hide();
+    dynLen_->clearFocus();
+    dynAng_->clearFocus();
+}
+
+// Enter：以「上一点 + 极坐标(距离, 角度°)」计算世界点，注入为拾取点。
+// 复用 injectPoint 点击管线（追加采集点/更新预览/点数满足自动收尾）。
+void GraphicsView::commitDynInput() {
+    if (pendingPts_.empty()) return;
+    bool okL = false, okA = false;
+    const double len = dynLen_->text().toDouble(&okL);
+    double ang = dynAng_->text().toDouble(&okA);
+    if (!okL || len < 0) return;
+    if (!okA) ang = 0.0;
+    const Vec3& last = pendingPts_.back();
+    const double rad = qDegreesToRadians(ang);
+    const Vec3 pt(last.x + len * std::cos(rad), last.y + len * std::sin(rad), last.z);
+    hideDynBox();
+    model_->log(QString(">> 距离=%1 角度=%2  [DYN 输入]")
+                    .arg(len, 0, 'f', 2).arg(ang, 0, 'f', 1), "cmd");
+    injectPoint(pt);
 }
 
 // 子模式收尾模板（DRY）：各 finalize*Ex 的稳定尾部。
@@ -3828,6 +3816,8 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
         return;
     }
     if (e->button() != Qt::LeftButton)  { QGraphicsView::mousePressEvent(e); return; }
+    // 夹点热态：左键按下被热态状态机消费（确认单击 / 拖拽起点），不派发给工具
+    if (gripHot_) { e->accept(); return; }
     // 中心点拾取模式（环形阵列等）：左键直接取点回抛，不进入绘制/选择逻辑。
     if (pointPickMode_) {
         const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
@@ -3863,6 +3853,11 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
     const Vec3 w = toVec3(mapToScene(vp));
     lastMouseWorld_ = w;            // 记录最近鼠标世界坐标，供捕捉快捷键切换后即时刷新
     emit cursorMoved(w.x, w.y, 0.0);
+    // DYN 动态输入：绘制命令期已有采集点时，光标跟随显示「距离/角度」输入框
+    if (drawToolActive_ && model_->dynMode() && !pendingPts_.empty())
+        updateDynBox(vp);
+    else if (dynBox_ && dynBox_->isVisible())
+        dynBox_->hide();
     // 区域拾取模式（剖面填充）：平移优先；否则只做"将要填充区域"的实时预览，
     // 不进入绘制/捕捉悬停逻辑（避免与点选语义混淆）。
     if (regionPickMode_ && !panning_) {
@@ -3907,9 +3902,11 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
                    .arg(panX_, 0, 'f', 1).arg(panY_, 0, 'f', 1).arg(zoom_, 0, 'f', 2));
         return;
     }
-    if (draggingHandle_) {
-        // 静默更新：整段拖拽只在按下时压过一次撤销快照
-        model_->moveHandles(dragRefs_, w);
+    if (gripHot_) {
+        // 夹点热态：按住左键拖拽 = 持续预览（落盘延迟到确认）；
+        // 未按键移动（armed 态）也刷新预览，跟随光标。
+        if (e->buttons() & Qt::LeftButton) gripDragMoved_ = true;
+        updateGripPreview(w);
         return;
     }
     // 图元平移拖拽：首次移动压撤销快照，后续帧增量平移全部走 Quiet
@@ -4039,16 +4036,15 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
         e->accept();
         return;
     }
-    if (draggingHandle_ && e->button() == Qt::LeftButton) {
-        draggingHandle_ = false;
-        const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
-        const int n = (int)dragRefs_.size();
-        dragRefs_.clear();
-        model_->log(QString("端点已移至 (%1, %2)%3")
-                        .arg(w.x, 0, 'f', 2).arg(w.y, 0, 'f', 2)
-                        .arg(n > 1 ? QString("，%1 个图元保持连接").arg(n) : QString()));
-        refreshHover(w);
-        viewport()->update();
+    if (gripHot_ && e->button() == Qt::LeftButton) {
+        // 按住拖拽过 → 释放即确认（保留旧「拖完就走」手感）；
+        // 单击进入热态（未拖拽）→ armed，等待模式切换/移动/确认单击。
+        if (gripDragMoved_ || gripArmed_) {
+            commitGrip();
+        } else {
+            gripArmed_ = true;
+            updateGripPreview(lastMouseWorld_);
+        }
         e->accept();
         return;
     }
@@ -4064,6 +4060,12 @@ void GraphicsView::mouseDoubleClickEvent(QMouseEvent* e) {
     const QString t = model_->activeTool();
     if ((t == "poly" || t == "spline") && pendingPts_.size() >= 2) {
         finalizePoly(t == "spline");
+        e->accept();
+        return;
+    }
+    // 栏选/圈围/圈交：双击 = 结束采集并结算
+    if ((t == "fence" || t == "wp" || t == "cp") && pendingPts_.size() >= 2) {
+        finalizeShapePick();
         e->accept();
         return;
     }
@@ -4122,6 +4124,29 @@ void GraphicsView::resizeEvent(QResizeEvent* e) {
 
 void GraphicsView::keyPressEvent(QKeyEvent* e) {
     if (e->key() == Qt::Key_Space) { spaceDown_ = true; return; }
+    // 夹点热态：Ctrl 循环模式 / Enter 确认 / Esc 取消（优先级高于其它全局按键）
+    if (gripHot_) {
+        if (e->key() == Qt::Key_Control) {
+            gripMode_ = grip::nextMode(gripMode_);
+            gripData_.refCursor = lastMouseWorld_;   // 模式零参考重置：预览从恒等起步
+            gripDragMoved_ = false;
+            model_->log(QString("夹点模式：%1（Ctrl 继续切换，移动预览，单击/Enter 确认，Esc 取消）")
+                            .arg(grip::modeName(gripMode_)));
+            updateGripPreview(lastMouseWorld_);
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) {
+            commitGrip();
+            e->accept();
+            return;
+        }
+        if (e->key() == Qt::Key_Escape) {
+            cancelGrip();
+            e->accept();
+            return;
+        }
+    }
     if (e->key() == Qt::Key_Escape) {
         if (regionPickMode_) {         // 区域拾取模式（剖面填充）：Esc 退出并通知上层
             setRegionPickMode(false);
@@ -4157,6 +4182,7 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
     }
     if ((e->key() == Qt::Key_Enter || e->key() == Qt::Key_Return) && !pendingPts_.empty()) {
         const QString t = model_->activeTool();
+        if (t == "fence" || t == "wp" || t == "cp") { finalizeShapePick(); e->accept(); return; }
         if (t == "poly" || t == "spline") { finalizePoly(t == "spline"); e->accept(); return; }
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::Snake) { finalizeSnake(); e->accept(); return; }
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::SnakeX) { finalizeSnake(); e->accept(); return; }

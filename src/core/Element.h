@@ -6,6 +6,7 @@
 #include <vector>
 #include "Vec.h"
 #include "DimensionStandard.h"
+#include "JsonUtil.h"   // 序列化读写工具集中层（json:: 命名空间，DRY 提取）
 
 namespace SketchCAD {
 
