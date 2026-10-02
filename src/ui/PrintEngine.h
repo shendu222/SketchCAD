@@ -37,12 +37,21 @@ struct PrintSettings {
     bool   centerH = true;       // 水平居中
     bool   centerV = true;       // 垂直居中
     bool   drawBorder = true;    // 绘制可打印区边框（便于预览对齐）
-    PlotStyleTable plotStyle;    // 简化 CTB 映射
+    // 黑白出图总开关：true 时若无自定义样式表，自动套用 GB 预设（按线型分粗/细线宽 + 纯黑）。
+    // 用于「黑白打印机 / 黑白 PDF」一键出图，确保线宽分组效果符合 GB/T 14665。
+    // 序列化键 "monochrome"（缺省 false → 旧档行为不变）。
+    bool   monochrome = false;
+    PlotStyleTable plotStyle;    // 简化 CTB 映射（灰度/线宽/抖动）
     QList<PlotViewport> viewports; // 空 = 模型空间打印；非空 = 按视口布局
 
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& o);
     static PrintSettings defaults();
+
+    // 渲染前把「黑白开关 + 样式表」解析为最终样式表：
+    //   monochrome=true 且 plotStyle 为空 → 套用 GB 预设（按当前线宽组）；
+    //   否则原样返回 plotStyle（自定义表优先，黑白总开关不覆盖用户表）。
+    PlotStyleTable effectivePlotStyle() const;
 };
 
 class PrintEngine {

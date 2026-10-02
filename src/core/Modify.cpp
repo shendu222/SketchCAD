@@ -792,6 +792,258 @@ std::vector<Change> makePolarArray(const std::vector<Element>& src,
 }
 
 // ============================================================
+// 17. 路径阵列 (Path Array) —— 沿离散路径等距复制，原图元不动
+// ============================================================
+std::vector<Change> makePathArray(const std::vector<Element>& src,
+                                  const std::vector<Vec3>& pathPts,
+                                  double spacing, int count) {
+    std::vector<Change> out;
+    if (src.empty() || pathPts.size() < 2) return out;
+
+    // 累积弧长表（折线近似：相邻采样点直线距离）
+    std::vector<double> cum;
+    cum.reserve(pathPts.size());
+    cum.push_back(0.0);
+    for (size_t i = 1; i < pathPts.size(); ++i)
+        cum.push_back(cum.back() + pathPts[i].distTo(pathPts[i - 1]));
+    const double total = cum.back();
+    if (total < 1e-9) return out;          // 路径退化为一个点
+
+    // 生成放置位置（弧长参数表）：params[0] 恒为 0 = 路径起点（即原图元位置）
+    std::vector<double> params;
+    if (spacing > 1e-9) {
+        // Measure 语义：每 spacing 一个，直到路径走完
+        for (double d = 0.0; d <= total + 1e-9; d += spacing)
+            params.push_back(d);
+        // 末点恰好落在 total 附近时去重（浮点累加可能多出一个 ≈total）
+        if (params.size() >= 2 &&
+            (total - params[params.size() - 2]) < 1e-9)
+            params.pop_back();
+    } else if (count >= 2) {
+        // Divide 语义：count 个项目均分全长
+        for (int k = 0; k < count; ++k)
+            params.push_back(total * double(k) / double(count - 1));
+    } else {
+        return out;                        // 退化：无有效放置参数
+    }
+    if (params.size() < 2) return out;     // 路径长 < spacing：放不下第二个项目
+
+    // 弧长参数 → 路径点（线性插值）
+    auto pointAt = [&](double d) -> Vec3 {
+        if (d <= 0.0) return pathPts.front();
+        if (d >= total) return pathPts.back();
+        // 二分找段
+        size_t lo = 0, hi = cum.size() - 1;
+        while (hi - lo > 1) {
+            const size_t mid = (lo + hi) / 2;
+            (cum[mid] <= d) ? lo = mid : hi = mid;
+        }
+        const double segLen = cum[hi] - cum[lo];
+        const double t = segLen > 1e-12 ? (d - cum[lo]) / segLen : 0.0;
+        return pathPts[lo] + (pathPts[hi] - pathPts[lo]) * t;
+    };
+
+    const Vec3 origin = pointAt(params.front());
+    for (size_t k = 1; k < params.size(); ++k) {      // k=0 即原图元，跳过
+        const Vec3 p = pointAt(params[k]);
+        const Vec3 off = p - origin;
+        for (const auto& s : src) {
+            Element e = s;
+            e.id = -1;
+            e.name = s.name;
+            for (auto& q : e.pts) q = q + off;
+            Change ch; ch.id = -1; ch.replacement = e;
+            ch.note = QStringLiteral("路径阵列 @%1,%2").arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2);
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+// ============================================================
+// 18. 连合 (Join) —— 同层 Line/Arc 端点相接 → 开放 Polyline
+// ============================================================
+// 弧离散采样数：弧长每 ~2mm 一点，夹在 [8, 64]。
+int joinArcSampleCount(double sweepDeg, double radius) {
+    const double arcLen = std::fabs(sweepDeg) * M_PI / 180.0 * std::fabs(radius);
+    int n = int(arcLen / 2.0);
+    if (n < 8) n = 8;
+    if (n > 64) n = 64;
+    return n;
+}
+
+namespace {
+
+// 连合链节点：一个 Line/Arc 参与者的两个端点 + 离散后的中间顶点。
+struct JoinNode {
+    const Element* el = nullptr;
+    Vec3 a, b;                       // 自然端点（a=起点侧, b=终点侧）
+    std::vector<Vec3> midPts;        // 弧离散的中间点（a→b 方向，不含 a/b）；直线为空
+    bool used = false;
+};
+
+// 取图元的自然端点与离散中间点。非 Line/Arc 返回 false。
+bool buildJoinNode(const Element& e, JoinNode& n) {
+    if (e.type == ElementType::Line && e.pts.size() >= 2) {
+        n.el = &e; n.a = e.pts[0]; n.b = e.pts[1];
+        return n.a.distTo(n.b) > 1e-12;          // 零长线段不参与
+    }
+    if (e.type == ElementType::Arc && !e.pts.empty()) {
+        const Vec3 c = e.pts[0];
+        const double r = e.radius;
+        if (r <= 1e-12) return false;
+        const double a0 = e.startAngle, a1 = e.endAngle;
+        double sweep = a1 - a0;
+        // 归一扫掠角到 (0, 360]：起止相接处按方向取整圈（与渲染同语义）
+        while (sweep <= 1e-9)  sweep += 360.0;
+        while (sweep > 360.0 + 1e-9) sweep -= 360.0;
+        const int nSeg = joinArcSampleCount(sweep, r);
+        n.el = &e;
+        n.a = Vec3(c.x + r * std::cos(a0 * M_PI / 180.0),
+                   c.y + r * std::sin(a0 * M_PI / 180.0), 0);
+        n.b = Vec3(c.x + r * std::cos((a0 + sweep) * M_PI / 180.0),
+                   c.y + r * std::sin((a0 + sweep) * M_PI / 180.0), 0);
+        n.midPts.clear();
+        n.midPts.reserve(nSeg - 1);
+        for (int k = 1; k < nSeg; ++k) {
+            const double ang = a0 + sweep * double(k) / double(nSeg);
+            n.midPts.push_back(Vec3(c.x + r * std::cos(ang * M_PI / 180.0),
+                                    c.y + r * std::sin(ang * M_PI / 180.0), 0));
+        }
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+std::vector<Change> makeJoin(const std::vector<Element>& src, double tol) {
+    std::vector<Change> out;
+    if (src.size() < 2 || tol <= 0.0) return out;
+
+    // 只收 Line/Arc，逐节点建档
+    std::vector<JoinNode> nodes;
+    nodes.reserve(src.size());
+    for (const auto& e : src) {
+        JoinNode n;
+        if (buildJoinNode(e, n)) nodes.push_back(std::move(n));
+    }
+    if (nodes.size() < 2) return out;
+
+    // 贪心链式连合：从任一未用节点出发，向两端扩展，直到找不到 tol 内邻居。
+    // 同层约束：只连合 layer 相同的节点。
+    std::vector<bool> chained(nodes.size(), false);
+    bool produced = false;
+    for (size_t start = 0; start < nodes.size(); ++start) {
+        if (chained[start]) continue;
+        // 一条链：沿方向的顶点序列（链首 → 链尾）
+        std::vector<const JoinNode*> order;
+        std::vector<bool> flipped;
+        order.push_back(&nodes[start]);
+        flipped.push_back(false);
+        chained[start] = true;
+
+        // 邻居挑选：与 tip 距离 ≤ tol 的未用同层节点中取最近者。
+        // *bestFlip = 「n.b 落在 tip 上」（true）或「n.a 落在 tip 上」（false）；
+        // 调用方按链首（出口端相接）/链尾（入口端相接）场景自行翻译为节点朝向。
+        auto pickNeighbor = [&](const Vec3& tip, const QString& layer,
+                                int* bestIdx, bool* bestFlip) {
+            *bestIdx = -1;
+            double bestD = tol;
+            for (size_t j = 0; j < nodes.size(); ++j) {
+                if (chained[j]) continue;
+                const JoinNode& n = nodes[j];
+                if (n.el->layer != layer) continue;   // 跨层不连
+                const double dA = n.a.distTo(tip);
+                const double dB = n.b.distTo(tip);
+                if (dA <= bestD) { bestD = dA; *bestIdx = (int)j; *bestFlip = false; }
+                if (dB <= std::min(bestD, tol)) { bestD = dB; *bestIdx = (int)j; *bestFlip = true; }
+            }
+        };
+
+        // 链首侧扩展：新节点 n 接在链首之前——n 的**出口端**须等于链首自由端。
+        //   pickNeighbor 返回 bestFlip = 「n.b 落在 tip 上」；
+        //   n.a == tip → n 出口=a → 输出 b→a（flip=true）；
+        //   n.b == tip → n 出口=b → 输出 a→b（flip=false）。
+        //   故链首侧 flip = !bestFlip（与链尾侧相反，注意不要"统一"掉）。
+        for (;;) {
+            const JoinNode* h = order.front();
+            const Vec3 headTip = flipped.front() ? h->b : h->a;
+            int best; bool bHit;
+            pickNeighbor(headTip, h->el->layer, &best, &bHit);
+            if (best < 0) break;
+            chained[best] = true;
+            order.insert(order.begin(), &nodes[best]);
+            flipped.insert(flipped.begin(), !bHit);
+        }
+        // 链尾侧扩展：新节点 n 的**入口端**须等于链尾出口端。
+        //   n.a == tip → n 入口=a → 输出 a→b（flip=false）；
+        //   n.b == tip → n 入口=b → 输出 b→a（flip=true）。
+        //   故链尾侧 flip = bestFlip。
+        for (;;) {
+            const JoinNode* t = order.back();
+            const Vec3 tailTip = flipped.back() ? t->a : t->b;
+            int best; bool bHit;
+            pickNeighbor(tailTip, t->el->layer, &best, &bHit);
+            if (best < 0) break;
+            chained[best] = true;
+            order.push_back(&nodes[best]);
+            flipped.push_back(bHit);
+        }
+
+        // 链内 ≥2 才产出；孤立节点归还（保留不动）
+        if (order.size() < 2) {
+            chained[start] = false;
+            continue;
+        }
+
+        // 串接顶点：链首节点按其朝向给出 a→b 顶点序列，后续节点把「接缝点」
+        // 统一吸附到链上已有坐标（消除容差内缝隙），然后追加中间点与另一端点。
+        std::vector<Vec3> pts;
+        auto appendNodePts = [&](const JoinNode* n, bool flip) {
+            // 节点自身 a→b 的完整顶点序列
+            std::vector<Vec3> seq;
+            seq.push_back(n->a);
+            for (const auto& m : n->midPts) seq.push_back(m);
+            seq.push_back(n->b);
+            if (flip) std::reverse(seq.begin(), seq.end());
+            if (pts.empty()) {
+                pts.insert(pts.end(), seq.begin(), seq.end());
+            } else {
+                const Vec3 seam = pts.back();
+                // seq[0] 与 seam 在容差内重合 → 吸附（丢弃重复点）
+                if (geo::almostEqual(seq.front(), seam, tol)) seq.erase(seq.begin());
+                pts.insert(pts.end(), seq.begin(), seq.end());
+            }
+        };
+        for (size_t j = 0; j < order.size(); ++j)
+            appendNodePts(order[j], flipped[j]);
+
+        if (pts.size() < 2) continue;
+
+        // 产出：删除链内全部源 + 新增 1 条开放 Polyline（全直线段）
+        for (const JoinNode* n : order) {
+            Change del; del.id = n->el->id; del.remove = true;
+            del.note = QStringLiteral("连合-删除源");
+            out.push_back(del);
+        }
+        Element poly = *order.front()->el;      // 继承链首属性
+        poly.id = -1;
+        poly.type = ElementType::Polyline;
+        poly.pts = std::move(pts);
+        poly.closed = false;                    // JOIN 产出开放折线
+        poly.arcFlags.clear();                  // 全直线段
+        poly.pts.shrink_to_fit();
+        Change add; add.id = -1; add.replacement = poly;
+        add.note = QStringLiteral("连合为折线（%1 段）").arg(order.size());
+        out.push_back(add);
+        produced = true;
+    }
+    if (!produced) out.clear();
+    return out;
+}
+
+// ============================================================
 // applyChanges：把 Change 写入 SketchModel 的统一入口
 //   * 调用方需在调用前自己 beginEdit() 一次（push 一份快照）
 //   * 此处所有修改走 Quiet 系列 API（addElementsQuiet / removeElementQuiet /

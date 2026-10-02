@@ -23,6 +23,8 @@
 #include "core/EllipseModes.h"
 #include "core/ElementFactory.h"
 #include "core/ToolRegistry.h"
+#include "core/SpatialIndex.h"
+#include <unordered_map>
 
 // 全局类前向声明（⚠ 必须在 namespace 之外：放在 SketchCAD 内会声明出
 // SketchCAD::QLineEdit 遮蔽 ::QLineEdit，导致 DYN 成员指针指向错误类型）。
@@ -107,6 +109,15 @@ public:
     // ---- 窗口缩放（框选放大）：进入后左键拖拽框选目标区域，释放后该区域充满整个绘图工作区域 ----
     void setZoomBoxMode(bool on);
     bool zoomBoxMode() const { return zoomBoxMode_; }
+    // 特性开关：空间索引拾取（关闭→全量扫描，双跑对照/异常回落用）
+    void setUseIndex(bool on) { useIndex_ = on; }
+    bool useIndex() const { return useIndex_; }
+    // 基于真实几何距离的命中检测（替代包围盒命中）：
+    // 在容差范围内返回距离点击点最近的图元 id，未命中为 -1。
+    int hitTest(const QPoint& viewPos) const;
+    // 选择循环：返回容差内全部命中图元 id（按距离升序，最上层在前），
+    // 供 Ctrl+点击在位置重叠的多个对象间切换选取目标。
+    std::vector<int> hitTestAll(const QPoint& viewPos) const;
     void cancelDrawing();                    // 供菜单「取消当前绘制」调用
     void injectPoint(const Vec3& p);         // 供命令行键盘输入坐标注入（分段式命令流程）
     void applyCommandOption(const QString& key);  // 绘制命令期命令行输入选项关键字（如 C/闭合、U/放弃）
@@ -119,6 +130,9 @@ public:
     // ---- 中心点拾取模式（环形阵列等需要用户在视图中点击取点）----
     void setPointPickMode(bool on);           // 进入/退出「拾取一个世界坐标点」模式（光标变十字）
     bool pointPickMode() const { return pointPickMode_; }
+    // 世界坐标下的捕捉/命中容差（= 8px / 缩放）：JOIN 连合等需要「真实拾取手感」
+    // 的命令从 GUI 侧取此值；命令行/无头没有缩放概念，用 modify::kJoinDefaultTol。
+    double worldTol() const { return PICK_TOL_PX / std::max(1e-6, zoom_); }
 
     // ---- 区域拾取模式（【修改>剖面填充】：点选封闭区域）----
     // 进入后：左键点击 → 发出 regionPickRequested(世界坐标)，不进入绘制/选择逻辑；
@@ -294,6 +308,22 @@ private:
     QRectF contentBounds() const;          // 所有可见图元的世界包围盒（不含坐标轴/提示文字覆盖层）
     void fitWorldRect(const QRectF& r, double margin);  // 将世界矩形以 margin 系数适配居中到视口
     void applyLineWeightToItems();    // 线宽显示开关变化时，刷新全部图元的线宽呈现并触发重绘
+
+    // ---- 增量场景同步 + 均匀网格空间索引（渲染/拾取 O(N)→增量/对数级）----
+    // id→场景项映射；rebuild 仍保留为全量兜底路径（结构性/批量变更回落）。
+    std::unordered_map<int, ElementItem*> items_;     // 图元 id → 场景项（增量同步真相源）
+    std::unordered_map<int, QRectF>       itemBounds_; // id → 上次登记索引的包围盒（差异扫描用）
+    SpatialIndex spatial_;                             // 均匀网格空间索引（世界坐标，2^k 单元）
+    QSet<int> prevSelected_;                           // 上次选区基线（增量高亮差量用）
+    bool incSyncPending_ = false;                     // 本编辑批次已由增量信号处理（避免 modelChanged 再全量重建）
+    bool useIndex_ = true;                            // 特性开关：索引拾取（关闭→全量扫描，双跑对照用）
+    void syncIncremental();                            // modelChanged 无增量信号时：差异扫描做增/删/改
+    void syncItemAddOrUpdate(const Element& e);        // 创建或更新单个场景项 + 索引
+    void syncItemRemove(int id);                       // 销毁单个场景项 + 索引
+    void onElementUpdated(int id);                     // elementUpdated(id) 信号：O(1) 增量更新项+索引
+    void setItemHighlight(int id, bool on);            // 仅改高亮标记，不重建场景
+    QRectF elementBoundsForIndex(const Element& e) const;  // 索引用包围盒（BlockRef 展开，对齐 model::boundsOf）
+    static double pickDist(const Element& e, const Vec3& w, const SketchModel* m);  // 精确拾取距离（含 BlockRef 展开）
     void updatePreview(const Vec3& cur);
     void showPreview(const Element& tmp, std::vector<Element> guides = {});
     void clearPreview();
@@ -386,7 +416,6 @@ private:
     DimensionType dimPreviewType_ = DimensionType::Distance;
 
     // ---- 控制点 ----
-    double worldTol() const { return PICK_TOL_PX / std::max(1e-6, zoom_); }
     void   refreshHover(const Vec3& w);
     // 夹点热态状态机（替代原「按下即拖拽端点」）
     bool   beginGripHot(const Vec3& w);       // 单击夹点进入热态；返回是否命中
@@ -396,12 +425,6 @@ private:
     void   cancelGrip();                      // 取消（未落盘，直接清态）
     void   drawHandles(QPainter* p) const;
 
-    // 基于真实几何距离的命中检测（替代包围盒命中）：
-    // 在容差范围内返回距离点击点最近的图元 id，未命中为 -1。
-    int  hitTest(const QPoint& viewPos) const;
-    // 选择循环：返回容差内全部命中图元 id（按距离升序，最上层在前），
-    // 供 Ctrl+点击在位置重叠的多个对象间切换选取目标。
-    std::vector<int> hitTestAll(const QPoint& viewPos) const;
     // 选择循环状态：同锚点连续 Ctrl+点击 → 依次切换；其它点击/集合变化 → 重建
     void cycleSelection(const QPoint& vp, const std::vector<int>& ids);
     void breakCycle();

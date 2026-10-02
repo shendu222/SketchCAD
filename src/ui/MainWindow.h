@@ -14,6 +14,7 @@
 #include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
 #include "ui/MTextDialog.h"       // MTEXT 多行文字对话框（双击编辑/菜单入口共用）
 #include "ui/StyleManagerDialog.h" // STYLE 文字样式管理器对话框
+#include "core/Clipboard.h"      // clipboard::Payload（剪贴板粘贴拾取状态成员需要）
 
 class QDockWidget;
 class QToolBar;
@@ -127,6 +128,14 @@ private:
     bool mirrorP1Valid_  = false;  // 线镜像：第一点已拾取
     Vec3 mirrorP1_;                // 线镜像：已拾取的第一点
 
+    // 剪贴板（copybase / pasteclip / pasteblock）交互状态：
+    //   copybase —— 拾取一个基点后按基点复制到剪贴板；
+    //   粘贴     —— 拾取一个落点，把剪贴板基点对齐到该点后落盘。
+    bool clipBasePending_ = false;          // 正在拾取 copybase 基点
+    bool clipPastePending_ = false;         // 正在拾取粘贴落点
+    bool clipPasteAsBlock_ = false;         // 粘贴落点拾取完成后是否转为块引用（pasteblock）
+    clipboard::Payload clipPastePayload_;   // 粘贴阶段暂存的剪贴板载荷
+
     // ---- 剖面填充（区域拾取模式）状态 ----
     SectionStyle   sectionStyle_;            // 最近一次使用的剖面样式（点选填充复用）
     SectionLoopSet pickLoops_;               // 全图闭环集合缓存（惰性重建，避免逐帧解析）
@@ -212,7 +221,17 @@ private:
     // 阵列复制：基于当前选择集生成矩形 / 环形阵列副本（原图元保留，副本继承全部属性）
     void arrayRectangular();   // 矩形阵列...：打开 ArrayDialog(矩形页) → makeRectangularArray
     void arrayPolar();         // 环形阵列...：打开 ArrayDialog(环形页) → makePolarArray（非模态，支持视图拾取中心）
+    void arrayPath();          // 路径阵列...：沿选区中第一条 Polyline/Spline 等距布点 → makePathArray
     void onCanvasPointPicked(const Vec3& p);   // 视图拾取中心点完成后回填对话框并复位拾取态
+
+    // 连合（JOIN）：把选中的同层 Line/Arc 按端点容差连合为 Polyline（GUI 传真实 snap 容差）
+    void joinSelected();
+
+    // ---- 剪贴板族（copyclip / copybase / pasteclip / pasteblock GUI 入口）----
+    void copyClipToClipboard(bool withBase);   // withBase=false: 包围盒左下角为基点；true: 进入基点拾取
+    void pasteFromClipboard(bool asBlock);     // asBlock=false: 平移粘贴；true: 转为块引用插入
+    void handleClipPick(const Vec3& p);        // onCanvasPointPicked 的剪贴板拦截分支
+    void finishClipPick();                     // 复位剪贴板拾取态与光标
 
     // 镜像（点 / 线）：选中图元 → 点「镜像」→ 选基准（点 / 直线）→ 自动生成镜像副本
     void mirror();                          // 入口：弹出"点镜像 / 线镜像"选择

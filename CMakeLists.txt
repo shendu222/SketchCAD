@@ -58,6 +58,7 @@ set(CORE_SOURCES
     src/core/GripOps.cpp
     src/core/sheet_frame.cpp
     src/core/Modify.cpp
+    src/core/Clipboard.cpp
     src/core/Cleanup.cpp
     src/core/AircraftViews.cpp
     src/core/FlangeViews.cpp
@@ -75,6 +76,7 @@ set(CORE_SOURCES
     src/core/TextStyle.cpp
     src/core/QSelect.cpp
     src/core/Units.cpp
+    src/core/SpatialIndex.cpp
 )
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
@@ -159,6 +161,41 @@ target_include_directories(SketchSelfTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchSelfTest PRIVATE -Wall -Wextra)
+
+# 黄金样本（tests/golden/ 静态 DXF 锚点）拷贝到构建根目录，供 t_goldenSamples 无头读取
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden
+     DESTINATION ${CMAKE_BINARY_DIR})
+
+# ===================== 性能基准（增量同步 + 均匀网格空间索引）=====================
+# 带 QApplication，可实例化 GraphicsView（与真实交互同一代码路径）：
+# 测 打开(rebuild)/单点拾取(索引 vs 全量)/一致性差分/选择高亮/平移缩放 FPS。
+# 三档规模 1万/5万/10万，对照验收目标。无头环境 FPS 为交互处理开销代理（见源码注释）。
+add_executable(SketchBenchmark
+    bench/SketchBenchmark.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_include_directories(SketchBenchmark PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(SketchBenchmark PRIVATE -Wall -Wextra)
+
+# ===================== 打印样式样张生成器（A4/A3 黑白 PDF 目检 + 双路回归）=====================
+# 产出四类 GB 线型（粗实/细实/虚线/点画）的黑白样张（带样式表 vs 不带样式表），
+# 并对两路出图做灰度直方图/墨量/彩色像素回归比对，支撑打印样式映射的验收。
+add_executable(PlotStyleSamples
+    bench/PlotStyleSamples.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_include_directories(PlotStyleSamples PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(PlotStyleSamples PRIVATE -Wall -Wextra)
 
 # ===================== 脚本宿主：可选语言引擎 =====================
 # 默认仅 JavaScript（Qt 内置 QJSEngine，零外部依赖）参与构建。

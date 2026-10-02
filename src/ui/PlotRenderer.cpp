@@ -9,6 +9,10 @@
 #include <QPainterPath>
 #include "core/TextStyle.h"         // resolveTextStyle / resolveFields / wrapText
 #include <QPen>
+#include <QBrush>
+#include <QPixmap>
+#include <QImage>
+#include <QTransform>
 #include <QFont>
 #include <QFontMetricsF>
 #include <cmath>
@@ -88,6 +92,31 @@ QPen makePen(const Element& e, double scaleDev, const ResolvedPlotStyle& rs, dou
         }
     }
     return pen;
+}
+
+// 灰度有序抖动（4×4 Bayer 矩阵）：为「已灰度化 + dither=true」的图元生成网点画刷。
+// 黑白打印机/黑白 PDF 上，中间灰若无抖动会被压成纯黑或纯白，丢失剖面/填充层次；
+// 抖动用「黑点密度 = 1 - gray」在白底上逼近目标灰度：gray=0 全黑、gray=1 全白。
+// 网点间距按「设备像素」定义（tileDevicePx），再按 1/scaleDev 反缩放贴回世界坐标，
+// 使网点在纸面上恒为固定物理尺寸，不随图幅缩放而变粗/变细。
+QBrush makeDitherBrush(double gray, double scaleDev, int tileDevicePx = 4) {
+    if (gray <= 0.001) return QBrush(Qt::black);
+    if (gray >= 0.999) return QBrush(Qt::white);
+    static const int bayer[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+    const int n = std::clamp(tileDevicePx, 2, 8);
+    QImage img(n, n, QImage::Format_RGB32);
+    img.fill(qRgb(255, 255, 255));
+    // 黑点数 ∝ (1 - gray)：gray 越大（越浅）→ 黑点越少 → 视觉越淡。
+    const int onCount = int(std::lround((1.0 - gray) * n * n));
+    for (int i = 0; i < n * n; ++i) {
+        if (bayer[i % 16] * (n * n / 16) < onCount)
+            img.setPixel(i % n, i / n, qRgb(0, 0, 0));
+    }
+    QPixmap pm = QPixmap::fromImage(img);
+    QBrush br(pm);
+    // 抵消世界变换：贴图 tile 以「设备像素」为单位，不随 scaleDev 放大。
+    if (scaleDev > 1e-9) br.setTransform(QTransform::fromScale(1.0 / scaleDev, 1.0 / scaleDev));
+    return br;
 }
 
 struct Ctx {
@@ -172,7 +201,12 @@ void paintHatch(QPainter* p, const Element& e, Ctx& c) {
 
     if (mode == HatchDraw::SolidFill) {                    // 狭小区域：涂黑代替剖面线
         p->setPen(outlinePen);
-        p->setBrush(rs.color);
+        if (rs.gray && rs.dither) {
+            // 黑白出图 + 抖动：按灰度生成网点画刷（灰度<1 时保留层次，不糊成纯黑）
+            p->setBrush(makeDitherBrush(rs.grayValue, c.scaleDev));
+        } else {
+            p->setBrush(rs.color);
+        }
         if (!path.isEmpty()) p->drawPath(path);
         return;
     }

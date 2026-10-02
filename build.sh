@@ -47,6 +47,14 @@ sync_hatch() {
 sync_hatch "$ROOT/build/hatch"
 echo "[OK] 剖面 PAT 图案已同步到 build/hatch/"
 
+# 同步启动画面封面到 exe 同级（main.cpp 按候选路径查找；缺失时自动跳过启动画面）。
+sync_cover() {
+    local dst="$1"
+    [ -f "$ROOT/CAD封面.jpeg" ] && cp "$ROOT/CAD封面.jpeg" "$dst/"
+}
+sync_cover "$ROOT/build/"
+echo "[OK] 启动画面封面已同步到 build/"
+
 if [ "$MODE" = "test" ]; then
     echo "---- 核心层自测 ----"
     # Qt 在 MSYS 伪终端下默认不写 stderr，需显式声明有控制台
@@ -59,6 +67,13 @@ if [ "$MODE" = "dist" ]; then
     "$QT_ROOT/bin/windeployqt.exe" --release --no-translations \
         --no-system-d3d-compiler --no-opengl-sw "$WROOT/dist/SketchCAD.exe" >/dev/null
     sync_hatch "$ROOT/dist/hatch"
+    sync_cover "$ROOT/dist/"
+    # 部署 Qt 图像格式插件：JPEG 解码依赖 imageformats/qjpeg.dll。
+    # dist/ 是脱离 Qt 安装目录的独立部署，缺该插件时 CAD封面.jpeg 会"文件存在却加载失败"。
+    mkdir -p "$ROOT/dist/imageformats"
+    cp "$QT_ROOT/plugins/imageformats/"*.dll "$ROOT/dist/imageformats/" 2>/dev/null || true
+    echo "[OK] 图像格式插件已部署到 dist/imageformats/"
     echo "[OK] 已打包: $ROOT/dist/SketchCAD.exe（含 Qt 运行时，可拷贝到无 Qt 环境运行）"
     echo "[OK] 剖面 PAT 图案已同步到 dist/hatch/"
+    echo "[OK] 启动画面封面已同步到 dist/"
 fi

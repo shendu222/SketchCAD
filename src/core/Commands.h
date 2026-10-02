@@ -174,6 +174,12 @@ class QConnectCommand  : public ICommand { public: bool execute(const CommandCon
 // select_layer <name> / deselect_layer <name>
 class SelectCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
+// ---- 快速选择（QSELECT）：按 图元类型 / 图层 / 颜色 / 线型 四维过滤并选中匹配图元 ----
+// 交互模式（GUI）由 MainWindow 直接打开 QSelectDialog；本命令提供无头 / 脚本等价入口，
+// 单行关键字形式：qselect type=直线 layer=0 color=#ff0000 linestyle=实线
+// （任一维省略 = 不过滤该维；全空 = 不执行选择仅提示，避免盲目全选）。
+class QSelectCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
 // ---- 图层管理 ----
 // 按 ctx.cmd 分派（layer 为顶层精确命令）：
 //   layer add <名称> [颜色] [线宽] [线型]
@@ -201,6 +207,15 @@ class LayerCommand : public ICommand { public: bool execute(const CommandContext
 //   dynset  <引用id> <参数名> <值|状态名>          设置动态参数（数值或可见性状态）
 //   dynlist <块名>                                 列出块定义的动态参数
 class BlockCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
+// ---- 剪贴板族（copyclip / copybase / pasteclip / pasteblock）----
+// 单一类按 ctx.cmd 分派（与 BlockCommand / ModifyCommand 同构）：
+//   copyclip                 把当前选择集写入内部剪贴板（基点 = 选区包围盒左下角）
+//   copybase <x,y>           同上，但基点用户指定（AutoCAD COPYBASE 语义）
+//   pasteclip [x,y]          粘贴为独立图元：基点对齐落点（缺省 0,0；GUI 菜单进入光标拾取）
+//   pasteblock <x,y>         粘贴为块：整包收进块定义 + 放置一个块引用
+// 剪贴板数据 = 版本化 JSON（自定义 mime），旧版/损坏内容一律拒绝并提示，不崩溃。
+class ClipCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
 // ---- 外部参照（Xref）命令族 ----
 // 按 ctx.cmd 分派（与 LayerCommand / BlockCommand 同构），语义对齐 AutoCAD 的 XATTACH/XDETACH：

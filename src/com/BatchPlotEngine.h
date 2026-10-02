@@ -34,6 +34,16 @@ struct BatchTask {
     QString     source;    // 输入图纸路径（.json/.dxf/.dwg）
     QString     output;    // 输出路径（.pdf/.dxf/.dwg/.step/.json，按扩展名分派）
     QJsonObject settings;  // 可选：PrintSettings JSON（仅 PDF 输出消费；空对象 = 默认版式）
+
+    // ---- 打印样式表透传（黑白出图；仅 PDF 输出消费）----
+    // 两种形式（可与 settings 共存，styleTable 优先）：
+    //   * ctbText 非空 → 按简化 CTB 文本解析为样式表（颜色/图层/线型 → 线宽/灰度/抖动）。
+    //   * preset 非空 → 内置预设名："gb"（GB 黑白，按线型分粗/细）/ "gbGray"（灰度抖动）
+    //     / "none"（清空样式表）。同时置 monochrome=true 时走黑白出图总开关。
+    // 外部系统（COM 批量出图）用这两个字段即可为每张图指定黑白线宽/灰度，无需手工拼
+    // 整份 PrintSettings JSON。留空则沿用 settings 内的 plotStyle / 默认行为。
+    QString     ctbText;   // 简化 CTB 文本（UTF-8）
+    QString     preset;    // 内置样式表预设名（gb / gbGray / none）
 };
 
 struct BatchTaskResult {
@@ -77,8 +87,11 @@ public:
 
     // 无头导出：按输出扩展名分派 pdf/dxf/dwg/step/json。
     // settings 仅 PDF 消费（PrintSettings::fromJson，空对象用默认版式）。
+    // ctbText/preset 为打印样式表透传（黑白出图，见 BatchTask 注释），优先于 settings。
     static bool exportDrawing(SketchModel& model, const QString& path,
-                              const QJsonObject& settings, QString* err);
+                              const QJsonObject& settings, QString* err,
+                              const QString& ctbText = QString(),
+                              const QString& preset  = QString());
 
     // ---- 批量执行 ----
     // tasksJson 既接受对象 {"tasks":[...]} 也接受裸数组 [...]，

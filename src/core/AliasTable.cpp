@@ -35,6 +35,8 @@ QMap<QString, QString> AliasTable::defaultAliases() {
     d["b"]   = "block";
     d["x"]   = "explode";
     d["dt"]  = "mtext";
+    // q → qselect：快速选择命令（Commands.cpp 已 registerExact("qselect", ...)），
+    // 此别名现已生效，命令行输入 q / qselect 均可唤起快速选择。
     d["q"]   = "qselect";
     return d;
 }

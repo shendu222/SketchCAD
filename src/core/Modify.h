@@ -147,6 +147,44 @@ std::vector<Change> makePolarArray(const std::vector<Element>& src,
                                    const Vec3& center, int count,
                                    double angleRangeDeg);
 
+// ---------- 17. 路径阵列 (Path Array) ----------
+// 把 src 中每个图元沿已离散的路径点列等距复制。
+//   * pathPts：路径的密集采样点列（Polyline 用 geo::samplePolyline、Spline 用
+//     geo::sampleSpline 离散；由调用方翻译，本函数只认点列——保持 Modify 层
+//     「输入是几何数据、不解析图元语义」的边界）。
+//   * spacing > 0  → Measure 语义：从路径起点起每 spacing 放一个项目；
+//                    路径长不足 spacing 时放不下第二个项目 → 返回空（退化）。
+//   * spacing <= 0 且 count >= 2 → Divide 语义：count 个项目均分全长
+//                    （步长 = L/(count-1)，与 AutoCAD「项目数」方式一致）。
+//   * 两者都不满足（路径退化/参数非法）→ 返回空。
+//   * 位置 P0（路径起点）即原图元位置 → 跳过（与矩形/环形阵列同范式）；
+//     其余位置生成平移副本（id=-1，属性完整继承）。
+//   * 仅平移、不旋转（AutoCAD 的「对齐项目」切线旋转不在此实现，见设计文档）。
+std::vector<Change> makePathArray(const std::vector<Element>& src,
+                                  const std::vector<Vec3>& pathPts,
+                                  double spacing, int count = 0);
+
+// ---------- 18. 连合 (Join) ----------
+// JOIN 端点容差的命令行/无头默认值（mm）。
+// GUI 菜单入口应传视图捕捉容差 worldTol()（= 8px / 缩放），与 OSNAP 拾取手感一致；
+// 命令行/脚本/自测没有视图缩放概念，用该固定值（约等于 1:1 视图下的捕捉容差量级）。
+inline constexpr double kJoinDefaultTol = 0.5;
+
+// 把 src 中「同层、端点在 tol 内首尾相接」的 Line/Arc 链式连合为开放 Polyline。
+//   * 只认 Line / Arc，且只连合同一图层的图元（跨层不连）。
+//   * 端点重合判定统一走 geo::almostEqual(p, q, tol)。
+//   * Arc 参与连合时按弧长离散为折线顶点（每段 ≥8 点、步长 ≤2mm）并入——
+//     Polyline 的弧段存储是「三相邻点外接圆」语义，无法无损承载任意独立弧；
+//     离散保证 explode 可逆（全产出直线段）且形状等价（偏差 ≪ 视觉分辨极限）。
+//   * 链内 ≥2 个图元才产出：删除链内全部源图元 + 新增 1 条 Polyline
+//     （id=-1，继承链首图元属性；接缝处直接复用前一节点坐标，消除容差内缝隙）。
+//   * 孤立图元（无邻居）与其它类型图元保留不动（不产 Change）。
+//   * 无任何可连合链 → 返回空。
+std::vector<Change> makeJoin(const std::vector<Element>& src, double tol);
+
+// JOIN 内部：弧离散采样点数（弧长每 ~2mm 一点，夹在 [8, 64]）。
+int joinArcSampleCount(double arcLenDeg, double radius);
+
 // ============================================================
 // 把 Change 列表写入 SketchModel 的便捷封装。
 // 由命令 / 菜单统一调用，避免重复写"pushMemento → remove → add"三件套。

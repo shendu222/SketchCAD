@@ -6,8 +6,11 @@
 #include <QStringList>
 #include <QDateTime>
 #include <QSet>
+#include <QMap>
+#include <map>
 #include <cmath>
 #include <algorithm>
+#include <functional>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -159,30 +162,109 @@ static QString dxfLayer(const Element& e) {
     return ly.isEmpty() ? QStringLiteral("0") : ly;
 }
 
-QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawingScale, int insunits) {
+// 产品 9 种线型 → DXF LTYPE 名。命名与 fromDxf 侧 lineStyleFromDxfName 反向兼容：
+// DASHED*/DOTTED/CENTER/PHANTOM/DASHDOT* 前缀均能映射回对应 LineStyle
+// （Wave/DoubleBreak/Thick* 回读粗化为 Dashed/DashDot——R12 dash 语义无法表达波浪/
+// 双折/粗细档，属有损映射，文档注明）。
+static const char* dxfLtypeName(LineStyle ls) {
+    switch (ls) {
+        case LineStyle::Dashed:       return "DASHED";
+        case LineStyle::Dotted:       return "DOTTED";
+        case LineStyle::DashDot:      return "CENTER";
+        case LineStyle::DashDotDot:   return "PHANTOM";
+        case LineStyle::Wave:         return "DASHEDWAVE";
+        case LineStyle::DoubleBreak:  return "DASHDOTDBRK";
+        case LineStyle::ThickDashed:  return "DASHEDTHICK";
+        case LineStyle::ThickDashDot: return "DASHDOTTHICK";
+        case LineStyle::Solid:        break;
+    }
+    return "CONTINUOUS";
+}
+
+// 写一条 LTYPE 表条目（R12：72=65 对齐码恒 'A'、73=划数、40=总图案长、49=每划长度；
+// 正值=落笔画线、负值=空移、0=点）。GB/T 4457.4 线素长度的近似值。
+static void dxfWriteLtype(QStringList& L, const char* name, const char* desc,
+                          const std::vector<double>& dashes) {
+    double total = 0.0;
+    for (double d : dashes) total += std::fabs(d);
+    L << "0" << "LTYPE" << "2" << name << "70" << "64"
+      << "3" << desc << "72" << "65"
+      << "73" << QString::number((int)dashes.size())
+      << "40" << QString::number(total, 'f', 6);
+    for (double d : dashes) L << "49" << QString::number(d, 'f', 6);
+}
+
+// Dimension 12 类 → DXF DIMENSION 70 组码类型；-1 = R12 无对应原生表达（保留炸开）。
+//   Distance/Horizontal/Vertical→0（旋转线性，50 写投影角）  Aligned/Baseline/Continue→1
+//   Diameter→3  Radius→4  Angle→5；Arc/Leader/Ordinate 无原生组码语义 → 炸开。
+static int dxfDimKind(DimensionType t) {
+    switch (t) {
+        case DimensionType::Distance:
+        case DimensionType::Horizontal:
+        case DimensionType::Vertical:  return 0;
+        case DimensionType::Aligned:
+        case DimensionType::Baseline:
+        case DimensionType::Continue:  return 1;
+        case DimensionType::Diameter:  return 3;
+        case DimensionType::Radius:    return 4;
+        case DimensionType::Angle:     return 5;
+        default:                       return -1;
+    }
+}
+
+QByteArray toDxf(const std::vector<Element>& elems, QString* err,
+                 double drawingScale, int insunits,
+                 const std::vector<BlockDef>* blocks, const DxfExportOptions* opts) {
     if (err) err->clear();
+    const DxfExportOptions defOpt;                    // 默认值 = 旧炸开行为
+    const DxfExportOptions& opt = opts ? *opts : defOpt;
 
     // 标注数字要还原成实物尺寸：把绘图比例交给 dim::build
     dim::Style dimSt;
     dimSt.drawingScale = (drawingScale > 1e-12) ? drawingScale : 1.0;
 
-    QStringList L;
+    QStringList L;       // 最终文件体（HEADER/TABLES/BLOCKS/ENTITIES/EOF 按序拼装）
+    QStringList LEnt;    // ENTITIES 段先行写出（期间收集 *D 匿名块，BLOCKS 段最后拼装）
+    // *D 匿名块队列：原生标注的显示几何（块名 → 块体内码，坐标已相对定义点）
+    std::vector<std::pair<QString, QStringList>> anonDims;
+    int anonSeq = 0;
+
     const auto num = [](double v) { return QString::number(v, 'f', 6); };
 
-    // ---- 图层清单 ----
-    QSet<QString> layers;
-    layers.insert(QStringLiteral("0"));
-    for (const auto& e : elems) layers.insert(dxfLayer(e));
-
     // ---- 图形范围（供看图软件 zoom-extents）----
+    // 原生模式下块引用不再炸开输出，但范围必须包含块内几何：用 expandRef 生成
+    // 世界坐标展开副本参与包围盒计算（展开结果只算范围，不落盘）。
+    // 旧调用（opts==nullptr）保持原逻辑：直接对 elems 计算，输出与升级前一致。
+    std::vector<Element> boundsEls;
+    if (opts != nullptr && blocks != nullptr) {
+        boundsEls.reserve(elems.size());
+        for (const auto& e : elems) {
+            if (e.type == ElementType::BlockRef) {
+                const auto subs = block::expandRef(e, *blocks);
+                boundsEls.insert(boundsEls.end(), subs.begin(), subs.end());
+            } else {
+                boundsEls.push_back(e);
+            }
+        }
+    } else {
+        boundsEls = elems;
+    }
     QRectF ext(0.0, 0.0, 0.0, 0.0);
     bool hasExt = false;
-    for (const auto& e : elems) {
+    for (const auto& e : boundsEls) {
         const QRectF b = geo::elementBounds(e);
         ext = hasExt ? ext.united(b) : b;
         hasExt = true;
     }
     const QString ymin = num(ext.top()), ymax = num(ext.bottom());
+
+    // ---- 图层清单（块内图元图层并入，保证 LAYER 表覆盖所有引用）----
+    QSet<QString> layers;
+    layers.insert(QStringLiteral("0"));
+    for (const auto& e : elems) layers.insert(dxfLayer(e));
+    if (blocks)
+        for (const auto& d : *blocks)
+            for (const auto& e : d.entities) layers.insert(dxfLayer(e));
 
     // ---- HEADER ----
     // 显式声明版本是必须的：本文件用的是 R12 实体与组码，不声明版本解析器只能猜，
@@ -200,57 +282,96 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
       << "9" << "$LIMMAX"  << "10" << num(ext.right()) << "20" << ymax
       << "0" << "ENDSEC";
 
-    // ---- TABLES：线型表（CONTINUOUS 是图层必须引用的线型）+ 图层表 ----
+    // ---- TABLES：线型表（产品 9 线型全定义）+ 图层表 + 文字样式表 + 标注样式表 ----
     // 注意：R12 没有真彩色(420) 与线宽(370) 组码，所以这里只登记 ACI 颜色，
     // 颜色信息经 62 组码近似到最近的 ACI 色号（本程序调色板本就是标准色，损失可忽略）。
     L << "0" << "SECTION" << "2" << "TABLES"
-      << "0" << "TABLE" << "2" << "LTYPE" << "70" << "1"
-      << "0" << "LTYPE" << "2" << "CONTINUOUS" << "70" << "64"
-      << "3" << "Solid line" << "72" << "65" << "73" << "0" << "40" << "0.0"
-      << "0" << "ENDTAB"
+      << "0" << "TABLE" << "2" << "LTYPE" << "70" << "9";
+    dxfWriteLtype(L, "CONTINUOUS",   "Solid line",             {});
+    dxfWriteLtype(L, "DASHED",       "Dashed __ __ __",        {12.0, -3.0});
+    dxfWriteLtype(L, "DOTTED",       "Dotted . . . .",         {0.0, -3.0});
+    dxfWriteLtype(L, "CENTER",       "Center __ . __ .",       {30.0, -4.0, 0.0, -4.0});
+    dxfWriteLtype(L, "PHANTOM",      "Phantom __ . . .",       {50.0, -5.0, 0.0, -5.0, 0.0, -5.0});
+    dxfWriteLtype(L, "DASHEDWAVE",   "Wave (dash approx)",     {3.0, -2.0});
+    dxfWriteLtype(L, "DASHDOTDBRK",  "Double break (approx)",  {30.0, -4.0, 0.0, -4.0});
+    dxfWriteLtype(L, "DASHEDTHICK",  "Thick dashed",           {12.0, -3.0});
+    dxfWriteLtype(L, "DASHDOTTHICK", "Thick dash-dot",         {30.0, -4.0, 0.0, -4.0});
+    L << "0" << "ENDTAB"
       << "0" << "TABLE" << "2" << "LAYER" << "70" << QString::number(layers.size());
     for (const QString& ly : layers)
         L << "0" << "LAYER" << "2" << ly
           << "70" << "0" << "62" << "7" << "6" << "CONTINUOUS";
-    L << "0" << "ENDTAB" << "0" << "ENDSEC";
+    L << "0" << "ENDTAB";
+    // 文字样式表：TEXT 实体缺省指向 STANDARD，必须给出定义（R12 最小集：
+    // 40=固定字高 0=不固定、41=宽度因子、50=倾角、71=生成标志、42=上次字高、3=字体文件）
+    L << "0" << "TABLE" << "2" << "STYLE" << "70" << "1"
+      << "0" << "STYLE" << "2" << "STANDARD" << "70" << "0"
+      << "40" << "0.0" << "41" << "1.0" << "50" << "0.0" << "71" << "0"
+      << "42" << "2.5" << "3" << "txt"
+      << "0" << "ENDTAB";
+    // 标注样式表（组码对照 paulbourke DXF R12 / Autodesk 官方参考）：
+    // 40=DIMSCALE 41=DIMASZ 42=DIMEXO 43=DIMDLI 44=DIMEXE 140=DIMTXT 141=DIMCEN
+    // 142=DIMTSZ 144=DIMLFAC 147=DIMGAP 77=DIMTAD 78=DIMZIN。
+    // DIMLFAC=1/绘图比例：AutoCAD 测得图上距离 × DIMLFAC = 实物尺寸
+    // （与 dim::build 的 value = measured / drawingScale 同一语义，regen 后数值正确）。
+    const double dimlfac = (dimSt.drawingScale > 1e-12) ? 1.0 / dimSt.drawingScale : 1.0;
+    L << "0" << "TABLE" << "2" << "DIMSTYLE" << "70" << "1"
+      << "0" << "DIMSTYLE" << "2" << "STANDARD" << "70" << "0"
+      << "40" << "1.0"                       // DIMSCALE 全局比例
+      << "41" << "3.5"                       // DIMASZ  箭头大小
+      << "42" << "0.0"                       // DIMEXO  界线起点偏移
+      << "43" << "10.0"                      // DIMDLI  基线间距
+      << "44" << "2.5"                       // DIMEXE  界线超出量
+      << "140" << "3.5"                      // DIMTXT  标注字高
+      << "141" << "0.0"                      // DIMCEN  圆心标记（关）
+      << "142" << "0.0"                      // DIMTSZ  斜线尺寸（0=箭头）
+      << "144" << num(dimlfac)               // DIMLFAC 线性测量比例因子
+      << "147" << "0.8"                      // DIMGAP  文字与尺寸线间距
+      << "77" << "1"                         // DIMTAD  文字置于尺寸线上方（GB）
+      << "78" << "0"                         // DIMZIN  零抑制（不抑制）
+      << "0" << "ENDTAB" << "0" << "ENDSEC";
 
-    L << "0" << "SECTION" << "2" << "ENTITIES";
+    // ============ 实体段（先行写出；期间收集 *D 匿名块，BLOCKS 段最后拼装）============
+    LEnt << "0" << "SECTION" << "2" << "ENTITIES";
 
-    // 实体公共头：图层 + ACI 颜色
-    const auto ent = [&](const QString& type, const Element& e) {
-        L << "0" << type << "8" << dxfLayer(e) << "62" << QString::number(aciFromRgb(e.color));
+    // 实体公共头：图层 + ACI 颜色 + 线型（非实线带出 6 组码，LTYPE 表已定义同名线型）
+    const auto ent = [&](QStringList& T, const QString& type, const Element& e) {
+        T << "0" << type << "8" << dxfLayer(e) << "62" << QString::number(aciFromRgb(e.color));
+        if (e.lineStyle != LineStyle::Solid)
+            T << "6" << dxfLtypeName(e.lineStyle);
     };
 
     // 多段线：R12 用 POLYLINE/VERTEX/SEQEND（LWPOLYLINE 是 R13+ 实体，不能出现在 R12 文件里）。
     // arcFlags[i]=true 表示 pts[i]→pts[i+1] 为圆弧段，用 VERTEX 的 42 组码（bulge=tan(含角/4)）表达，
     // 保留真实弧段而不是离散成折线。
-    const auto polylineEx = [&](const Element& e, const std::vector<Vec3>& pts,
+    const auto polylineEx = [&](QStringList& T, const Element& e, const std::vector<Vec3>& pts,
                                const std::vector<bool>& arcFlags, bool closed) {
         if (pts.size() < 2) return;
-        ent(QStringLiteral("POLYLINE"), e);
-        L << "66" << "1" << "70" << (closed ? "1" : "0");
+        ent(T, QStringLiteral("POLYLINE"), e);
+        T << "66" << "1" << "70" << (closed ? "1" : "0");
         const int segCount = closed ? (int)pts.size() : (int)pts.size() - 1;
         for (int i = 0; i < (int)pts.size(); ++i) {
-            L << "0" << "VERTEX" << "8" << dxfLayer(e)
+            T << "0" << "VERTEX" << "8" << dxfLayer(e)
               << "10" << num(pts[i].x) << "20" << num(pts[i].y);
             if (i < (int)arcFlags.size() && arcFlags[i] && i < segCount) {
                 const geo::ArcSeg as = geo::arcThrough(pts, i, closed);
                 if (as.valid && as.radius > 1e-12) {
                     const double bulge = std::tan(as.sweepDeg * M_PI / 180.0 / 4.0);
-                    if (std::fabs(bulge) > 1e-12) L << "42" << QString::number(bulge, 'f', 9);
+                    if (std::fabs(bulge) > 1e-12) T << "42" << QString::number(bulge, 'f', 9);
                 }
             }
         }
-        L << "0" << "SEQEND" << "8" << dxfLayer(e);
+        T << "0" << "SEQEND" << "8" << dxfLayer(e);
     };
-    const auto polyline = [&](const Element& e, const std::vector<Vec3>& pts, bool closed) {
-        polylineEx(e, pts, std::vector<bool>(), closed);
+    const auto polyline = [&](QStringList& T, const Element& e,
+                              const std::vector<Vec3>& pts, bool closed) {
+        polylineEx(T, e, pts, std::vector<bool>(), closed);
     };
 
     // 文本：把多行内容按行拆成多个 TEXT 实体。
     // 绝不能把含 \n 的字符串整段写进组码 1 —— 那会把值行劈成两行，后续组码全部错位，
     // 整份 DXF 直接不可解析（标注数字就是 "xx m\n(xx ft)" 这种双行文本）。
-    const auto textLines = [&](const Element& e, const QString& raw, const Vec3& pos,
+    const auto textLines = [&](QStringList& T, const Element& e, const QString& raw, const Vec3& pos,
                                double h, double rot, bool centered, double wf = 1.0) {
         QString t = raw;
         t.replace("\r\n", "\n");
@@ -261,76 +382,162 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             const QString line = dxfSafe(parts.at(i));
             if (line.trimmed().isEmpty()) continue;
             const double y = pos.y - i * lineH;
-            ent(QStringLiteral("TEXT"), e);
-            L << "10" << num(pos.x) << "20" << num(y) << "40" << num(h);
-            if (std::fabs(wf - 1.0) > 1e-9) L << "41" << num(wf);   // 宽度因子（MTEXT）
-            if (std::fabs(rot) > 1e-9) L << "50" << num(rot);
-            if (centered) L << "72" << "1" << "73" << "2" << "11" << num(pos.x) << "21" << num(y);
-            L << "1" << line;
+            ent(T, QStringLiteral("TEXT"), e);
+            T << "10" << num(pos.x) << "20" << num(y) << "40" << num(h);
+            if (std::fabs(wf - 1.0) > 1e-9) T << "41" << num(wf);   // 宽度因子（MTEXT）
+            if (std::fabs(rot) > 1e-9) T << "50" << num(rot);
+            if (centered) T << "72" << "1" << "73" << "2" << "11" << num(pos.x) << "21" << num(y);
+            T << "1" << line;
         }
     };
 
-    int splineSampled = 0;
-    for (const auto& e : elems) {
+    // 实心箭头（SOLID 三角形：第 4 点与第 3 点重合退化为三角形——DXF 标准写法）。
+    // 尺寸由 dimSt（arrowLen/arrowWidth）决定，原生 *D 块与降级炸开共用同一几何。
+    const auto arrowSolid = [&](QStringList& T, const Element& e, const dim::Arrow& ar) {
+        const double rad = ar.dirDeg * M_PI / 180.0;
+        const double cx = std::cos(rad), sy = std::sin(rad);
+        const Vec3 back(ar.tip.x - cx * dimSt.arrowLen, ar.tip.y - sy * dimSt.arrowLen, 0);
+        const Vec3 off(-sy * dimSt.arrowWidth * 0.5, cx * dimSt.arrowWidth * 0.5, 0);
+        const Vec3 p1 = back + off, p2 = back - off;
+        ent(T, QStringLiteral("SOLID"), e);
+        T << "10" << num(ar.tip.x) << "20" << num(ar.tip.y)
+          << "11" << num(p1.x) << "21" << num(p1.y)
+          << "12" << num(p2.x) << "22" << num(p2.y)
+          << "13" << num(p2.x) << "23" << num(p2.y);
+    };
+
+    // ---- 实体写出（含块/标注/填充原生分支；递归支持块内嵌套块引用，depth<8 防环）----
+    std::function<void(const Element&, QStringList&, int)> writeEntity =
+        [&](const Element& e, QStringList& T, int depth) {
         if (e.type == ElementType::Line && e.pts.size() >= 2) {
-            ent(QStringLiteral("LINE"), e);
-            L << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
+            ent(T, QStringLiteral("LINE"), e);
+            T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
               << "11" << num(e.pts[1].x) << "21" << num(e.pts[1].y) << "31" << "0.0";
         } else if (e.type == ElementType::Circle && !e.pts.empty()) {
-            ent(QStringLiteral("CIRCLE"), e);
-            L << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
+            ent(T, QStringLiteral("CIRCLE"), e);
+            T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
               << "40" << num(e.radius);
         } else if (e.type == ElementType::Arc && !e.pts.empty()) {
-            ent(QStringLiteral("ARC"), e);
-            L << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
+            ent(T, QStringLiteral("ARC"), e);
+            T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
               << "40" << num(e.radius)
               << "50" << num(e.startAngle) << "51" << num(e.endAngle);
         } else if (e.type == ElementType::Ellipse && !e.pts.empty()) {
-            // R12 无原生 ELLIPSE 实体，按椭圆母线采样成闭合多段线
-            polyline(e, geo::sampleEllipse(e.pts[0], e.radius, e.radiusY, e.rotation, 96), true);
+            // R12 无原生 ELLIPSE 实体（R13+ 才有），按椭圆母线采样成闭合多段线；
+            // 段数经 DxfExportOptions::ellipseSegments 配置（默认 96，与旧版一致）
+            polyline(T, e, geo::sampleEllipse(e.pts[0], e.radius, e.radiusY, e.rotation,
+                     opt.ellipseSegments > 8 ? opt.ellipseSegments : 96), true);
         } else if (e.type == ElementType::Rectangle && e.pts.size() >= 2) {
             const double x0 = e.pts[0].x, y0 = e.pts[0].y, x1 = e.pts[1].x, y1 = e.pts[1].y;
-            polyline(e, {Vec3(x0, y0, 0), Vec3(x1, y0, 0), Vec3(x1, y1, 0), Vec3(x0, y1, 0)},
+            polyline(T, e, {Vec3(x0, y0, 0), Vec3(x1, y0, 0), Vec3(x1, y1, 0), Vec3(x0, y1, 0)},
                      e.polyClosed());
         } else if (e.type == ElementType::Polygon && e.pts.size() >= 2) {
-            polyline(e, e.pts, e.polyClosed());   // 剪切过的轮廓导成开放多段线
+            polyline(T, e, e.pts, e.polyClosed());   // 剪切过的轮廓导成开放多段线
         } else if (e.type == ElementType::Polyline && e.pts.size() >= 2) {
-            polylineEx(e, e.pts, e.arcFlags, e.closed);
+            polylineEx(T, e, e.pts, e.arcFlags, e.closed);
         } else if (e.type == ElementType::Dimension) {
-            // 标注按 GB 生成的几何「炸开」导出：尺寸线/界线用 LINE、箭头用实心 SOLID、
-            // 数字用 TEXT。这样任何看图软件不依赖标注样式表也能显示成国标的样子。
             const dim::Geom g = dim::build(e, dimSt);
-            if (!g.valid) continue;
+            if (!g.valid) return;
+            const int kind = dxfDimKind(e.dtype);
+            // 原生 DIMENSION：仅顶层（块内标注炸开，避免依赖块内 DIMSTYLE 上下文）
+            // 且类型可映射（9 类）；Arc/Leader/Ordinate 3 类无原生组码语义，保留炸开。
+            if (opts && opt.nativeDims && depth == 0 && kind >= 0) {
+                // ---- 定义点与附加点（组码语义对照 R12 DIMENSION）----
+                Vec3 defP;                          // 10/20：线性=尺寸线定位点；径向=弧上定义点
+                Vec3 p13, p14; bool has1314 = false;
+                Vec3 p15;      bool has15 = false;
+                double rotDeg = 0.0;
+                if (kind == 0) {
+                    has1314 = true; p13 = e.pts[0]; p14 = e.pts[1];
+                    // 产品语义：Distance 自动取投影较长方向；Horizontal/Vertical 显式指定。
+                    // 50 组码写入后，导入端按该方向投影即还原原值。
+                    if      (e.dtype == DimensionType::Horizontal) rotDeg = 0.0;
+                    else if (e.dtype == DimensionType::Vertical)   rotDeg = 90.0;
+                    else rotDeg = (std::fabs(e.pts[1].x - e.pts[0].x) <
+                                   std::fabs(e.pts[1].y - e.pts[0].y)) ? 90.0 : 0.0;
+                    defP = g.line.empty() ? g.textPos
+                        : Vec3((g.line[0].first.x + g.line[0].second.x) * 0.5,
+                               (g.line[0].first.y + g.line[0].second.y) * 0.5, 0);
+                } else if (kind == 1) {          // 对齐/基线/连续：13/14=两定义点
+                    has1314 = true; p13 = e.pts[0]; p14 = e.pts[1];
+                    defP = g.line.empty() ? g.textPos
+                        : Vec3((g.line[0].first.x + g.line[0].second.x) * 0.5,
+                               (g.line[0].first.y + g.line[0].second.y) * 0.5, 0);
+                } else if (kind == 5) {          // 角度：15=顶点、13/14=两脚
+                    has15 = true; has1314 = true;
+                    p15 = e.pts[0]; p13 = e.pts[1]; p14 = e.pts[2];
+                    defP = g.arcPoly.size() >= 2 ? g.arcPoly[g.arcPoly.size() / 2] : g.textPos;
+                } else {                          // 半径(4)/直径(3)：15=圆心、10=弧上定义点
+                    has15 = true; p15 = e.pts[0];
+                    defP = e.pts[1];
+                }
+                // ---- *D 匿名块：标注显示几何。块内坐标=世界-定义点、BLOCK 基点=0：
+                //      无论读取方按「相对定义点偏移」（AutoCAD 语义）还是「普通 INSERT
+                //      at defP」（平移 = defP - base）解释，都还原为同一世界坐标。
+                const QString aname = QStringLiteral("*D%1").arg(++anonSeq);
+                QStringList BD;
+                const auto rel = [&](const Vec3& p) { return Vec3(p.x - defP.x, p.y - defP.y, 0); };
+                const auto seg = [&](const Vec3& a, const Vec3& b) {
+                    const Vec3 ra = rel(a), rb = rel(b);
+                    ent(BD, QStringLiteral("LINE"), e);
+                    BD << "10" << num(ra.x) << "20" << num(ra.y) << "30" << "0.0"
+                       << "11" << num(rb.x) << "21" << num(rb.y) << "31" << "0.0";
+                };
+                for (const auto& s : g.ext)  seg(s.first, s.second);
+                for (const auto& s : g.line) seg(s.first, s.second);
+                if (g.arcPoly.size() >= 2) {
+                    std::vector<Vec3> ap;
+                    ap.reserve(g.arcPoly.size());
+                    for (const auto& p : g.arcPoly) ap.push_back(rel(p));
+                    Element pe;                    // 块内折线代理（样式继承标注）
+                    pe.type = ElementType::Polyline;
+                    pe.layer = e.layer; pe.color = e.color; pe.lineStyle = e.lineStyle;
+                    polylineEx(BD, pe, ap, std::vector<bool>(), false);
+                }
+                for (const auto& ar : g.arrows) {
+                    dim::Arrow ra = ar;
+                    ra.tip = rel(ar.tip);
+                    arrowSolid(BD, e, ra);
+                }
+                if (!g.label.isEmpty())
+                    textLines(BD, e, g.label, rel(g.textPos), dimSt.textHeight, g.textRotDeg, true);
+                anonDims.push_back({aname, BD});
+                // ---- DIMENSION 实体本体 ----
+                ent(T, QStringLiteral("DIMENSION"), e);
+                T << "2" << aname
+                  << "10" << num(defP.x) << "20" << num(defP.y) << "30" << "0.0"
+                  << "11" << num(g.textPos.x) << "21" << num(g.textPos.y) << "31" << "0.0"
+                  << "70" << QString::number(kind);
+                if (kind == 0) T << "50" << num(rotDeg);
+                if (has1314)
+                    T << "13" << num(p13.x) << "23" << num(p13.y) << "33" << "0.0"
+                      << "14" << num(p14.x) << "24" << num(p14.y) << "34" << "0.0";
+                if (has15)
+                    T << "15" << num(p15.x) << "25" << num(p15.y) << "35" << "0.0";
+                if (!e.text.isEmpty()) T << "1" << dxfSafe(e.text);
+                T << "3" << "STANDARD";
+                return;
+            }
+            // 降级：按 GB 生成的几何「炸开」导出：尺寸线/界线用 LINE、箭头用实心 SOLID、
+            // 数字用 TEXT。这样任何看图软件不依赖标注样式表也能显示成国标的样子。
             const auto seg = [&](const Vec3& a, const Vec3& b) {
-                ent(QStringLiteral("LINE"), e);
-                L << "10" << num(a.x) << "20" << num(a.y) << "30" << "0.0"
+                ent(T, QStringLiteral("LINE"), e);
+                T << "10" << num(a.x) << "20" << num(a.y) << "30" << "0.0"
                   << "11" << num(b.x) << "21" << num(b.y) << "31" << "0.0";
             };
             for (const auto& s : g.ext)  seg(s.first, s.second);
             for (const auto& s : g.line) seg(s.first, s.second);
             for (size_t i = 1; i < g.arcPoly.size(); ++i) seg(g.arcPoly[i - 1], g.arcPoly[i]);
-            const dim::Style st;
-            for (const auto& ar : g.arrows) {
-                const double rad = ar.dirDeg * M_PI / 180.0;
-                const double cx = std::cos(rad), sy = std::sin(rad);
-                const Vec3 back(ar.tip.x - cx * st.arrowLen, ar.tip.y - sy * st.arrowLen, 0);
-                const Vec3 off(-sy * st.arrowWidth * 0.5, cx * st.arrowWidth * 0.5, 0);
-                const Vec3 p1 = back + off, p2 = back - off;
-                // SOLID 的第 4 点与第 3 点重合即退化为三角形（DXF 的标准写法）
-                ent(QStringLiteral("SOLID"), e);
-                L << "10" << num(ar.tip.x) << "20" << num(ar.tip.y)
-                  << "11" << num(p1.x) << "21" << num(p1.y)
-                  << "12" << num(p2.x) << "22" << num(p2.y)
-                  << "13" << num(p2.x) << "23" << num(p2.y);
-            }
+            for (const auto& ar : g.arrows) arrowSolid(T, e, ar);
             if (!g.label.isEmpty())
-                textLines(e, g.label, g.textPos, st.textHeight, g.textRotDeg, true);
+                textLines(T, e, g.label, g.textPos, dimSt.textHeight, g.textRotDeg, true);
         } else if (e.type == ElementType::Spline && e.pts.size() >= 2) {
             // 样条按屏幕上看到的那条 Catmull-Rom 曲线离散后导出。
             // 直接导原始控制点会让 DXF 里变成折线 —— 跟屏幕显示不一致，
             // 下游看到的形状就不是设计者画的那条曲线了。
-            polyline(e, geo::sampleSpline(e.pts, 16), false);
-            ++splineSampled;
+            // R12 无 SPLINE 原生实体；段数经 DxfExportOptions::splineSegments 配置精度。
+            polyline(T, e, geo::sampleSpline(e.pts,
+                     opt.splineSegments > 2 ? opt.splineSegments : 16), false);
         } else if ((e.type == ElementType::Text || e.type == ElementType::MText)
                    && !e.pts.empty() && !e.text.isEmpty()) {
             // 文本：单行 Text 与多行 MText 统一按行拆成多个 TEXT 实体（R12 无 MTEXT 原生实体，
@@ -338,7 +545,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             // 导出前解析 %<字段>% 占位（导出为求值后的静态快照）；MText 带出宽度因子、
             // 旋转角与对齐列（对齐列为中心列时用中间对齐 72/73，与 9 点对齐的列语义对应）。
             const bool isMT = (e.type == ElementType::MText);
-            textLines(e, resolveFields(e.text, nullptr), e.pts[0],
+            textLines(T, e, resolveFields(e.text, nullptr), e.pts[0],
                       e.radius > 0.1 ? e.radius : 3.5,
                       isMT ? e.rotation : 0.0,
                       isMT && (e.textAlign % 3 == 1),
@@ -357,14 +564,14 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             // 横线（R+1 条）
             for (int r = 0; r <= R; ++r) {
                 const double y = e.pts[0].y - r * rh;
-                ent(QStringLiteral("LINE"), e);
-                L << "10" << num(xs.front()) << "20" << num(y) << "30" << "0.0"
+                ent(T, QStringLiteral("LINE"), e);
+                T << "10" << num(xs.front()) << "20" << num(y) << "30" << "0.0"
                   << "11" << num(xs.back())  << "21" << num(y) << "31" << "0.0";
             }
             // 竖线（C+1 条）
             for (int c = 0; c <= C; ++c) {
-                ent(QStringLiteral("LINE"), e);
-                L << "10" << num(xs[c]) << "20" << num(e.pts[0].y) << "30" << "0.0"
+                ent(T, QStringLiteral("LINE"), e);
+                T << "10" << num(xs[c]) << "20" << num(e.pts[0].y) << "30" << "0.0"
                   << "11" << num(xs[c]) << "21" << num(e.pts[0].y - R * rh) << "31" << "0.0";
             }
             // 单元格文字（居中：72/73=1/2 + 第二插入点 11/21）
@@ -374,8 +581,8 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
                     if (t.trimmed().isEmpty()) continue;
                     const double cx = (xs[c] + xs[c + 1]) / 2.0;
                     const double cy = e.pts[0].y - (r + 0.5) * rh;
-                    ent(QStringLiteral("TEXT"), e);
-                    L << "10" << num(cx) << "20" << num(cy) << "40" << num(th)
+                    ent(T, QStringLiteral("TEXT"), e);
+                    T << "10" << num(cx) << "20" << num(cy) << "40" << num(th)
                       << "72" << "1" << "73" << "2"
                       << "11" << num(cx) << "21" << num(cy)
                       << "1" << dxfSafe(t);
@@ -387,13 +594,109 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err, double drawing
             const Vec3 d(std::cos(rad), std::sin(rad), 0);
             const Vec3 a(e.pts[0].x - d.x * 1e4, e.pts[0].y - d.y * 1e4, 0);
             const Vec3 b(e.pts[0].x + d.x * 1e4, e.pts[0].y + d.y * 1e4, 0);
-            ent(QStringLiteral("LINE"), e);
-            L << "10" << num(a.x) << "20" << num(a.y) << "30" << "0.0"
+            ent(T, QStringLiteral("LINE"), e);
+            T << "10" << num(a.x) << "20" << num(a.y) << "30" << "0.0"
               << "11" << num(b.x) << "21" << num(b.y) << "31" << "0.0";
+        } else if (e.type == ElementType::Point && !e.pts.empty()) {
+            // POINT（R12 原生实体）：此前被静默丢弃，现补写（两模式均增强）
+            ent(T, QStringLiteral("POINT"), e);
+            T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0";
+        } else if (e.type == ElementType::Hatch && !e.pts.empty()) {
+            if (opts && opt.nativeHatch) {
+                // 原生 HATCH：图案线定义（角度/间距随图元）+ 多段线边界路径。
+                // 外环 flag=3（external|polyline）、孔 flag=2（polyline）；每顶点 72=0（无凸度）。
+                // R12 规范无边界路径组码（91/92+ 为 R13+ 引入），但 ZWCAD/浩辰/GstarCAD 导出
+                // R12 均按此事实标准写法、AutoCAD R14+ 读取容错——这是填充在 AutoCAD 中
+                // 可编辑的唯一途径。
+                ent(T, QStringLiteral("HATCH"), e);
+                T << "10" << "0.0" << "20" << "0.0" << "30" << "0.0"
+                  << "2" << "ANSI31" << "70" << "0" << "71" << "0"
+                  << "78" << "1"
+                  << "53" << num(e.rotation)                                 // 图案线角度（度）
+                  << "43" << "0.0" << "44" << "0.0"                          // 图案线基点
+                  << "45" << "0.0"
+                  << "46" << num(e.radius > 0.05 ? e.radius : 2.5)           // 图案线间距
+                  << "79" << "0"                                             // 连续线（无 dash）
+                  << "91" << QString::number(1 + (int)e.holes.size());       // 边界环数
+                const auto writeLoop = [&](const std::vector<Vec3>& loop, const char* flag) {
+                    T << "92" << flag << "73" << "1"
+                      << "93" << QString::number((int)loop.size());
+                    for (const auto& p : loop)
+                        T << "72" << "0" << "10" << num(p.x) << "20" << num(p.y);
+                };
+                writeLoop(e.pts, "3");
+                for (const auto& hole : e.holes) writeLoop(hole, "2");
+                T << "75" << "0" << "76" << "1";   // style=Normal(奇偶) / predefined 图案
+            }
+            // nativeHatch 关闭 → 保持旧版行为（静默跳过）
+        } else if (e.type == ElementType::BlockRef) {
+            // 块引用：优先原生 INSERT（含 ATTRIB 属性值）；外部参照/嵌套过深时兜底
+            // expandRef 展开（约束：expandBlockRef 行为仅在块无法原生表达时启用）；
+            // 无块表（旧调用方）或定义缺失 → 静默跳过（与旧版一致）。
+            const BlockDef* def = nullptr;
+            if (blocks)
+                for (const auto& d : *blocks)
+                    if (d.name == e.blockName && !d.isXref) { def = &d; break; }
+            if (def && opts && opt.nativeBlocks && depth < 8) {
+                const double sx = std::fabs(e.scaleX) > 1e-12 ? e.scaleX : 1.0;
+                const double sy = std::fabs(e.scaleY) > 1e-12 ? e.scaleY : 1.0;
+                ent(T, QStringLiteral("INSERT"), e);
+                T << "2" << dxfSafe(e.blockName);
+                if (!e.blockAttrs.empty()) T << "66" << "1";   // 属性跟随标志
+                T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
+                  << "41" << num(sx) << "42" << num(sy) << "43" << "1.0"
+                  << "50" << num(e.rotation);
+                for (const auto& a : e.blockAttrs) {
+                    ent(T, QStringLiteral("ATTRIB"), e);
+                    T << "10" << num(e.pts[0].x) << "20" << num(e.pts[0].y) << "30" << "0.0"
+                      << "40" << "3.5"
+                      << "2" << dxfSafe(a.tag)
+                      << "1" << dxfSafe(a.value)
+                      << "70" << "0";
+                }
+                if (!e.blockAttrs.empty())
+                    T << "0" << "SEQEND" << "8" << dxfLayer(e);
+            } else if (def) {
+                // 无法原生表达（嵌套超深）：展开为世界坐标子图元递归写出
+                const auto subs = block::expandRef(e, *blocks);
+                for (const auto& s : subs) writeEntity(s, T, depth + 1);
+            }
+        }
+    };
+
+    for (const auto& e : elems) writeEntity(e, LEnt, 0);
+    LEnt << "0" << "ENDSEC";
+
+    // ---- BLOCKS 段：用户块定义（含 ATTDEF 属性定义）+ 原生标注的 *D 匿名块 ----
+    L << "0" << "SECTION" << "2" << "BLOCKS";
+    if (blocks && opts && opt.nativeBlocks) {
+        for (const auto& d : *blocks) {
+            if (d.isXref) continue;                              // 外部参照不内联（保持引用语义）
+            if (d.name.startsWith(QLatin1Char('*'))) continue;   // 匿名块由本次导出重建
+            L << "0" << "BLOCK" << "8" << "0" << "2" << dxfSafe(d.name) << "70" << "0"
+              << "10" << num(d.basePoint.x) << "20" << num(d.basePoint.y) << "30" << "0.0";
+            for (const auto& ad : d.attdefs)
+                L << "0" << "ATTDEF" << "8" << "0"
+                  << "10" << num(ad.pos.x) << "20" << num(ad.pos.y) << "30" << "0.0"
+                  << "40" << num(ad.height > 0.1 ? ad.height : 3.5)
+                  << "1" << dxfSafe(ad.defaultValue)   // 1=默认值
+                  << "2" << dxfSafe(ad.tag)            // 2=标签
+                  << "3" << dxfSafe(ad.prompt)         // 3=提示语
+                  << "70" << QString::number((ad.invisible ? 1 : 0) | (ad.constant ? 2 : 0));
+            for (const auto& se : d.entities) writeEntity(se, L, 1);
+            L << "0" << "ENDBLK" << "8" << "0";
         }
     }
-    L << "0" << "ENDSEC" << "0" << "EOF";
-    (void)splineSampled;
+    for (const auto& kv : anonDims) {
+        L << "0" << "BLOCK" << "8" << "0" << "2" << kv.first << "70" << "1"
+          << "10" << "0.0" << "20" << "0.0" << "30" << "0.0";
+        L << kv.second;
+        L << "0" << "ENDBLK" << "8" << "0";
+    }
+    L << "0" << "ENDSEC";
+
+    // ---- ENTITIES（先行生成的内容原样并入）+ EOF ----
+    L << LEnt << "0" << "EOF";
 
     // ---- 定编码：先按占位符生成，再依内容是否有非 ASCII 决定 $DWGCODEPAGE 并编码 ----
     // （占位符与代码页名都是 ASCII，替换不会改变"是否含非 ASCII"的判定，故可两步走）
@@ -1070,73 +1373,71 @@ bool hasCode(const std::vector<DxfPair>& p, int code) {
 
 } // namespace
 
-bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
-    if (err) err->clear();
-    if (stats) *stats = DxfImportStats();
-    // 先按文件声明的代码页/内容判定解码：我们的写出端中文用 GBK（ANSI_936），
-    // 英文/纯 ASCII 用 ANSI_1252，别家 CAD 也可能给 UTF-8。
-    const std::vector<DxfPair> tok = tokenizeDxf(decodeDxfBytes(data));
-    if (tok.empty()) { if (err) *err = QStringLiteral("文件为空或不是 DXF 文本"); return false; }
+// ---- 线型名 → 本程序 LineStyle（DXF LTYPE 表 / 实体 group 6 通用映射）----
+static LineStyle lineStyleFromDxfName(const QString& n) {
+    const QString s = n.trimmed().toUpper();
+    if (s.isEmpty() || s == "CONTINUOUS" || s == "BYLAYER" || s == "BYBLOCK")
+        return LineStyle::Solid;
+    if (s.startsWith("DASHED") || s == "HIDDEN") return LineStyle::Dashed;
+    if (s == "DOTTED" || s.startsWith("DOT"))    return LineStyle::Dotted;
+    if (s.startsWith("CENTER") || s.startsWith("DASHDOT")) return LineStyle::DashDot;
+    if (s == "DIVIDE" || s == "PHANTOM" || s.startsWith("DASHDOT2")) return LineStyle::DashDotDot;
+    return LineStyle::Solid;
+}
 
-    // HEADER $INSUNITS：文件数值的度量口径（AutoCAD 标准码）。缺头/0=无单位按 mm
-    // 解释（不缩放）；其余码由调用方经 Units.h::scaleElementsToUnit 整体换算到 mm。
-    int insunits = 4;
-    for (size_t i = 0; i + 1 < tok.size(); ++i) {
-        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$INSUNITS", Qt::CaseInsensitive) == 0) {
-            // 紧随其后的组码 70 为整数码值；容错：找不到 70 就取下一个可解析数值
-            if (tok[i + 1].code == 70) {
-                insunits = tok[i + 1].value.trimmed().toInt();
-            } else {
-                for (size_t j = i + 1; j < std::min(tok.size(), i + 4); ++j)
-                    if (tok[j].code >= 0 && tok[j].value.trimmed().toInt()) {
-                        insunits = tok[j].value.trimmed().toInt();
-                        break;
-                    }
-            }
-            break;
-        }
+// ---- 椭圆弧离散（DXF ELLIPSE 参数化：center + cos(t)·长轴 + sin(t)·短轴）----
+// 数学复核：点(t) = c + (a·cos t)·u + (b·sin t)·v，u,v 为长轴/短轴单位向量（v 由 u 旋转 90°）。
+static std::vector<Vec3> sampleEllipseArc(const Vec3& c, const Vec3& mj,
+                                          double ratio, double s, double e2, int n) {
+    const double a = std::hypot(mj.x, mj.y);
+    if (a < 1e-12) return {};
+    const Vec3 u(mj.x / a, mj.y / a, 0), v(-u.y, u.x, 0);
+    const double b = a * ratio;
+    double span = e2 - s;
+    while (span < 0) span += 2 * M_PI;
+    while (span > 2 * M_PI + 1e-9) span -= 2 * M_PI;
+    std::vector<Vec3> pts;
+    for (int k = 0; k <= n; ++k) {
+        const double t = s + span * k / n;
+        const double ct = std::cos(t), st = std::sin(t);
+        pts.push_back(Vec3(c.x + a * ct * u.x + b * st * v.x,
+                           c.y + a * ct * u.y + b * st * v.y, 0));
     }
-    if (stats) stats->insunits = insunits;
+    return pts;
+}
 
-    // 定位 ENTITIES 段
-    size_t start = tok.size();
-    for (size_t i = 0; i + 1 < tok.size(); ++i) {
-        if (tok[i].code == 0 && tok[i].value.trimmed().compare("SECTION", Qt::CaseInsensitive) == 0 &&
-            tok[i + 1].code == 2 && tok[i + 1].value.trimmed().compare("ENTITIES", Qt::CaseInsensitive) == 0) {
-            start = i + 2;
-            break;
-        }
-    }
-    if (start >= tok.size()) { if (err) *err = QStringLiteral("未找到 ENTITIES 段"); return false; }
+// ---- DXF 回读上下文（ENTITIES 与 BLOCKS 共用一套实体分发）----
+// 设计：扫描整份 token 流，按当前 SECTION 把实体分发给 handleEntity；
+// 顶层 ENTITIES 的图元进 out，BLOCKS 段内的图元进对应 BlockDef 的 entities；
+// 未知/不支持实体只计数跳过，绝不中断整档（约束：未知实体跳过并计数）。
+struct DxfImportCtx {
+    std::vector<Element>& out;
+    DxfImportStats& st;
+    int count = 0, arcsKept = 0, arcsDropped = 0;
+    std::vector<Vec3> pending;
+    std::vector<double> pendingBulge;
+    std::vector<DxfPair> pendingProps;
+    bool pendingClosed = false, inPoly = false;
+    int section = 0;                  // 0 无 / 1 ENTITIES / 2 BLOCKS / 3 TABLES
+    int lastBlockRefIdx = -1;         // 最近一个顶层 BlockRef（接收后续 ATTRIB）
+    bool inBlock = false;
+    BlockDef curBlock;
+    std::map<QString, std::vector<Element>> blockEntities;  // name -> 块内图元
 
-    // 通用样式套用
-    const auto style = [](Element& e, const std::vector<DxfPair>& p) {
+    explicit DxfImportCtx(std::vector<Element>& o, DxfImportStats& s) : out(o), st(s) {}
+
+    void applyStyle(Element& e, const std::vector<DxfPair>& p) {
         const QString ly = firstStr(p, 8).trimmed();
         if (!ly.isEmpty()) e.layer = ly;
         if (hasCode(p, 62)) e.color = rgbFromAci((int)firstNum(p, 62, 7));
         const double lw100 = firstNum(p, 370, 13.0);   // 1/100 mm
         e.lineWidth = std::max(1.0, std::round(lw100 / 13.0));
         e.lineWidthAuto = false;
-        e.lineStyle = LineStyle::Solid;
-    };
+        e.lineStyle = lineStyleFromDxfName(firstStr(p, 6));   // 非 CONTINUOUS → LineStyle 映射
+    }
 
-    int count = 0;
-    int arcsKept = 0, arcsDropped = 0;
-    size_t i = start;
-    // 旧式 POLYLINE 的状态（VERTEX 逐点跟随，SEQEND 收尾）
-    std::vector<Vec3> pending;
-    std::vector<double> pendingBulge;      // 每个顶点的 bulge（组码 42），写在**段起点**
-    std::vector<DxfPair> pendingProps;
-    bool pendingClosed = false, inPoly = false;
-
-    // bulge（凸度）→ arcFlags。这是本函数唯一需要「两种参数化之间换算」的地方：
-    //   外部 CAD：段由「起点 + 凸度 bulge」定义，bulge = tan(扫掠角/4)，可表达任意圆弧；
-    //   本模型  ：段的圆由「三相邻点外接圆」决定（geo::arcThrough），是另一套参数化。
-    // 因此只有二者一致时才敢标成弧段；不一致（幅值或方向对不上）就退回直线段——
-    // 宁可少画一段弧，也绝不画出方向错误的圆弧（那比直线更糟）。
-    // 一致的判据：由 bulge 反算的扫掠角 与 三相邻点定圆给出的扫掠角 之差 < 0.5°。
-    const auto makeArcFlags = [&](const std::vector<Vec3>& pts, const std::vector<double>& bulges,
-                                  bool closed) {
+    std::vector<bool> makeArcFlags(const std::vector<Vec3>& pts, const std::vector<double>& bulges,
+                                   bool closed) {
         const int n = (int)pts.size();
         const int nSegs = closed ? n : n - 1;
         std::vector<bool> flags((size_t)std::max(0, nSegs), false);
@@ -1149,116 +1450,395 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
             else ++arcsDropped;
         }
         return flags;
-    };
+    }
 
-    const auto flushPolyline = [&]() {
+    void flush() {
         if (inPoly && pending.size() >= 2) {
             Element e; e.type = ElementType::Polyline;
             e.pts = pending; e.closed = pendingClosed;
             e.arcFlags = makeArcFlags(pending, pendingBulge, pendingClosed);
-            e.name = QStringLiteral("导入:折线");
-            style(e, pendingProps);
-            out.push_back(std::move(e));
-            ++count;
+            e.name = QStringLiteral("导入:多段线");
+            applyStyle(e, pendingProps);
+            emitEl(std::move(e));
         }
         pending.clear(); pendingBulge.clear(); pendingProps.clear(); pendingClosed = false; inPoly = false;
-    };
+    }
 
+    void emitEl(Element e) {
+        if (inBlock) curBlock.entities.push_back(std::move(e));
+        else { out.push_back(std::move(e)); ++count; }
+    }
+
+    void handleEntity(const QString& t, const std::vector<DxfPair>& p);
+};
+
+void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p) {
+    if (t == "VERTEX") {
+        if (inPoly) {
+            pending.push_back(Vec3(firstNum(p, 10), firstNum(p, 20), 0));
+            pendingBulge.push_back(firstNum(p, 42, 0.0));   // 该顶点出发那一段的凸度
+        }
+        return;
+    }
+    if (t == "POLYLINE") { flush(); inPoly = true; pendingClosed = ((int)firstNum(p, 70, 0) & 1) != 0; pendingProps = p; return; }
+    if (t == "SEQEND")   { flush(); return; }
+
+    // ---- 原 7 类（保持往返兼容）----
+    if (t == "LINE") {
+        Element e; e.type = ElementType::Line;
+        e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0), Vec3(firstNum(p, 11), firstNum(p, 21), 0)};
+        e.name = QStringLiteral("导入:直线"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+    if (t == "CIRCLE") {
+        Element e; e.type = ElementType::Circle; e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
+        e.radius = firstNum(p, 40); e.name = QStringLiteral("导入:圆"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+    if (t == "ARC") {
+        Element e; e.type = ElementType::Arc; e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
+        e.radius = firstNum(p, 40); e.startAngle = firstNum(p, 50); e.endAngle = firstNum(p, 51);
+        e.name = QStringLiteral("导入:圆弧"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+    if (t == "LWPOLYLINE") {
+        std::vector<Vec3> v; std::vector<double> bulges; double lx = 0, ly = 0; bool haveX = false;
+        for (const auto& q : p) {
+            if (q.code == 10) { lx = q.value.trimmed().toDouble(); haveX = true; }
+            else if (q.code == 20) {
+                ly = q.value.trimmed().toDouble();
+                if (haveX) { v.push_back(Vec3(lx, ly, 0)); bulges.push_back(0.0); haveX = false; }
+            } else if (q.code == 42 && !bulges.empty()) bulges.back() = q.value.trimmed().toDouble();
+        }
+        if (v.size() >= 2) {
+            Element e; e.type = ElementType::Polyline; e.pts = v; e.closed = ((int)firstNum(p, 70, 0) & 1) != 0;
+            e.arcFlags = makeArcFlags(v, bulges, e.closed); e.name = QStringLiteral("导入:多段线");
+            applyStyle(e, p); emitEl(std::move(e));
+        }
+        return;
+    }
+    if (t == "TEXT" || t == "MTEXT") {
+        const QString s = firstStr(p, 1).trimmed();
+        if (!s.isEmpty()) {
+            Element e; e.type = ElementType::Text; e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
+            e.text = s; e.radius = firstNum(p, 40, 3.5); e.name = QStringLiteral("导入:文本");
+            applyStyle(e, p); emitEl(std::move(e));
+        }
+        return;
+    }
+
+    // ---- 扩展实体（任务目标：15+ 类）----
+
+    // ELLIPSE：10/20=圆心，11/21=长轴端点(相对圆心)，40=ratio(短/长)，41/42=参数角起止。
+    if (t == "ELLIPSE") {
+        Vec3 c(firstNum(p, 10), firstNum(p, 20), 0);
+        Vec3 mj(firstNum(p, 11), firstNum(p, 21), 0);
+        const double ratio = firstNum(p, 40, 1.0);
+        const double a = std::hypot(mj.x, mj.y);
+        double start = firstNum(p, 41, 0.0), endp = firstNum(p, 42, 2 * M_PI);
+        double span = endp - start;
+        while (span < 0) span += 2 * M_PI;
+        while (span > 2 * M_PI + 1e-9) span -= 2 * M_PI;
+        if (a > 1e-12 && std::fabs(span - 2 * M_PI) < 1e-6) {
+            Element e; e.type = ElementType::Ellipse; e.pts = {c};
+            e.radius = a; e.radiusY = a * ratio; e.rotation = std::atan2(mj.y, mj.x) * 180.0 / M_PI;
+            e.name = QStringLiteral("导入:椭圆"); applyStyle(e, p); emitEl(std::move(e));
+        } else {
+            std::vector<Vec3> pts = sampleEllipseArc(c, mj, ratio, start, endp, 64);
+            if (pts.size() >= 2) {
+                Element e; e.type = ElementType::Polyline; e.pts = pts; e.closed = false;
+                e.name = QStringLiteral("导入:椭圆弧"); applyStyle(e, p); emitEl(std::move(e));
+            } else ++st.fallbackEntities;
+        }
+        return;
+    }
+
+    // SPLINE：控制点(10/20) 或 拟合点(11/21)；优先拟合点重建（Catmull-Rom 插值严格过各点），
+    // 无拟合点用控制点；退化(<2点)回落折线。新几何（样条重建）由人工复核。
+    if (t == "SPLINE") {
+        std::vector<Vec3> ctrl, fit;
+        for (size_t k = 0; k + 1 < p.size(); ++k) {
+            if (p[k].code == 10 && p[k + 1].code == 20) ctrl.push_back(Vec3(p[k].value.toDouble(), p[k + 1].value.toDouble(), 0));
+            if (p[k].code == 11 && p[k + 1].code == 21) fit.push_back(Vec3(p[k].value.toDouble(), p[k + 1].value.toDouble(), 0));
+        }
+        const std::vector<Vec3>& pts = fit.empty() ? ctrl : fit;
+        if (pts.size() >= 2) {
+            Element e; e.type = ElementType::Spline; e.pts = pts; e.splineSubType = 0;
+            e.name = QStringLiteral("导入:样条"); applyStyle(e, p); emitEl(std::move(e));
+        } else ++st.fallbackEntities;
+        return;
+    }
+
+    // DIMENSION：70=类型。读标注类型与测定点，重建为本产品 Dimension 图元；
+    // 复杂(ordinate/未知)回落 LINE+TEXT 并计数。
+    if (t == "DIMENSION") {
+        const int dt = (int)firstNum(p, 70, 0);
+        Vec3 defP(firstNum(p, 10), firstNum(p, 20), 0);   // 定义点（半径/直径时为弧上一点；线性时为备用）
+        Vec3 midP(firstNum(p, 11), firstNum(p, 21), 0);   // 标注线中点（文字位置）
+        Vec3 p1(firstNum(p, 13), firstNum(p, 23), 0);     // 延伸线原点1（线性/角度）
+        Vec3 p2(firstNum(p, 14), firstNum(p, 24), 0);     // 延伸线原点2（线性/角度）
+        Vec3 center(firstNum(p, 15), firstNum(p, 25), 0); // 弧圆心(半径/直径) / 角度顶点
+        const QString txt = firstStr(p, 1).trimmed();
+        Element e; e.type = ElementType::Dimension; e.refA = -1; e.refB = -1; e.text = txt;
+        bool ok = false;
+        switch (dt) {
+            case 0: {   // 旋转/水平/竖直：用 50 角投影量距离，统一存 Distance
+                const double ang = firstNum(p, 50, 0.0) * M_PI / 180.0;
+                const Vec3 u(std::cos(ang), std::sin(ang), 0);
+                const double val = std::fabs((p2.x - p1.x) * u.x + (p2.y - p1.y) * u.y);
+                e.dtype = DimensionType::Distance; e.dimValue = val; e.pts = {p1, p2}; ok = true;
+            } break;
+            case 1: {   // 对齐
+                e.dtype = DimensionType::Aligned; e.dimValue = p1.distTo(p2); e.pts = {p1, p2}; ok = true;
+            } break;
+            case 2: case 5: {   // 角度（顶点=center，两脚=p1/p2）
+                const Vec3 a1v(p1.x - center.x, p1.y - center.y, 0), a2v(p2.x - center.x, p2.y - center.y, 0);
+                double ang = std::fabs(std::atan2(a1v.y, a1v.x) - std::atan2(a2v.y, a2v.x)) * 180.0 / M_PI;
+                while (ang > 180.0001) ang = 360.0 - ang;
+                e.dtype = DimensionType::Angle; e.dimValue = ang; e.pts = {center, p1, p2}; ok = true;
+            } break;
+            case 3: {   // 直径：2 × 圆心到弧上定义点距离
+                e.dtype = DimensionType::Diameter; e.dimValue = 2.0 * center.distTo(defP); e.pts = {center, defP}; ok = true;
+            } break;
+            case 4: {   // 半径：圆心到弧上定义点距离
+                e.dtype = DimensionType::Radius; e.dimValue = center.distTo(defP); e.pts = {center, defP}; ok = true;
+            } break;
+            default: ok = false;   // ordinate/未知 → 降级
+        }
+        if (ok) { e.name = QStringLiteral("导入:标注"); applyStyle(e, p); emitEl(std::move(e)); }
+        else {
+            Element ln; ln.type = ElementType::Line; ln.pts = {p1, p2};
+            ln.name = QStringLiteral("导入:标注(降级)"); applyStyle(ln, p); emitEl(std::move(ln));
+            if (!txt.isEmpty()) {
+                Element tx; tx.type = ElementType::Text; tx.pts = {midP}; tx.text = txt;
+                tx.radius = firstNum(p, 40, 3.5); tx.name = QStringLiteral("导入:标注文字(降级)");
+                applyStyle(tx, p); emitEl(std::move(tx));
+            }
+            ++st.fallbackEntities;
+        }
+        return;
+    }
+
+    // HATCH：91=边界环数；每环 92 bit2=多段线边界(读 93 顶点数 + 10/20)，否则视为复杂边环。
+    // SOLID 与简单多段线边界 → 本产品 Hatch；复杂边环回落边界线并计数；岛检测简化版(holes)。
+    if (t == "HATCH") {
+        const int nLoops = (int)firstNum(p, 91, 0);
+        std::vector<std::vector<Vec3>> loops;
+        bool complex = false;
+        size_t k = 0;
+        for (int loop = 0; loop < nLoops && k < p.size(); ++loop) {
+            while (k < p.size() && p[k].code != 92) ++k;
+            if (k >= p.size()) break;
+            const int flag = (int)p[k].value.toDouble(); ++k;
+            if (flag & 2) {   // 多段线边界
+                // 规范顺序：92 flag / 73 is_closed(path 级) / 93 顶点数 / [72 has-bulge、
+                // 42 bulge、10/20]×n。73/72/42 均可省略（旧样本无这些码）——逐个容错跳过。
+                if (k < p.size() && p[k].code == 73) ++k;   // path 级闭合标志（环天然闭合，忽略）
+                int vcount = 0;
+                if (k < p.size() && p[k].code == 93) { vcount = (int)p[k].value.toDouble(); ++k; }
+                std::vector<Vec3> verts; int read = 0;
+                while (k < p.size() && read < vcount) {
+                    if (p[k].code == 72) { ++k; continue; }   // 顶点级 has-bulge 标志
+                    if (p[k].code == 42) { ++k; continue; }   // bulge 值（本产品不用）
+                    if (p[k].code == 91) { ++k; continue; }   // source object id（派生路径）
+                    if (p[k].code != 10) break;               // 下一环的 92 或其他 → 停
+                    const double x = p[k].value.toDouble(); ++k;
+                    double y = 0; if (k < p.size() && p[k].code == 20) { y = p[k].value.toDouble(); ++k; }
+                    verts.push_back(Vec3(x, y, 0));
+                    ++read;
+                }
+                loops.push_back(verts);
+            } else {   // 边环（线/弧/椭圆/样条）→ 复杂
+                complex = true;
+                while (k < p.size() && p[k].code != 92) ++k;
+            }
+        }
+        if (!complex && !loops.empty() && loops[0].size() >= 3) {
+            Element e; e.type = ElementType::Hatch; e.pts = loops[0]; e.closed = true;
+            for (size_t L = 1; L < loops.size(); ++L) if (loops[L].size() >= 3) e.holes.push_back(loops[L]);
+            e.rotation = 45; e.radius = 2.5; e.lineWidth = 0.5; e.sectionMaterial = 0;
+            e.name = QStringLiteral("导入:剖面区域"); applyStyle(e, p); emitEl(std::move(e));
+        } else {
+            for (auto& lp : loops)
+                if (lp.size() >= 2) {
+                    Element e; e.type = ElementType::Polyline; e.pts = lp; e.closed = true;
+                    e.name = QStringLiteral("导入:填充边界(降级)"); applyStyle(e, p); emitEl(std::move(e));
+                }
+            ++st.fallbackEntities;
+        }
+        return;
+    }
+
+    // POINT：10/20=位置。
+    if (t == "POINT") {
+        Element e; e.type = ElementType::Point; e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
+        e.name = QStringLiteral("导入:点"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+
+    // LEADER：顶点在 10/20 序列 → 引线按 Polyline 重建（无专用 LEADER 图元），降级计数。
+    if (t == "LEADER") {
+        std::vector<Vec3> verts;
+        for (size_t k = 0; k + 1 < p.size(); ++k)
+            if (p[k].code == 10 && p[k + 1].code == 20) verts.push_back(Vec3(p[k].value.toDouble(), p[k + 1].value.toDouble(), 0));
+        if (verts.size() >= 2) {
+            Element e; e.type = ElementType::Polyline; e.pts = verts; e.closed = false;
+            e.name = QStringLiteral("导入:引线"); applyStyle(e, p); emitEl(std::move(e));
+        }
+        ++st.fallbackEntities; return;
+    }
+
+    // ATTRIB：并入最近一个顶层块引用的属性（tag=2, value=1）。块内 ATTRIB 忽略。
+    if (t == "ATTRIB") {
+        const QString tag = firstStr(p, 2).trimmed();
+        const QString val = firstStr(p, 1).trimmed();
+        if (!inBlock && lastBlockRefIdx >= 0 && lastBlockRefIdx < (int)out.size())
+            out[lastBlockRefIdx].blockAttrs.push_back({tag, val});
+        return;
+    }
+
+    // ATTDEF（块定义内的属性声明）：静默忽略，不计数、不中断。
+    // 属性"模板"信息对本产品无对应数据（BlockRef 属性值由 ATTRIB 直接携带），跳过即可。
+    if (t == "ATTDEF") return;
+
+    // SOLID（实心四边形/三角形）：本产品无填充面图元 → 闭合多段线重建。
+    // DXF 顶点序 10/11/12/13 按 1→2→4→3 环绕（3/4 重合即三角形，AutoCAD 标准写法）。
+    // 常见于标注匿名块（*D）内的箭头图形，导入后随块过滤；独立 SOLID 亦保留形状。
+    if (t == "SOLID") {
+        const Vec3 q1(firstNum(p, 10), firstNum(p, 20), 0);
+        const Vec3 q2(firstNum(p, 11), firstNum(p, 21), 0);
+        const Vec3 q3(firstNum(p, 12), firstNum(p, 22), 0);
+        const Vec3 q4(firstNum(p, 13), firstNum(p, 23), 0);
+        Element e; e.type = ElementType::Polyline; e.closed = true;
+        e.pts = {q1, q2, q4, q3};
+        e.name = QStringLiteral("导入:实心面"); applyStyle(e, p); emitEl(std::move(e));
+        return;
+    }
+
+    // XLINE / RAY：10/20=基点(起点)，11/21=方向向量 → 构造线复用 Xline（pts[0]+rotation）。
+    if (t == "XLINE") {
+        Vec3 base(firstNum(p, 10), firstNum(p, 20), 0);
+        Vec3 dir(firstNum(p, 11), firstNum(p, 21), 0);
+        if (dir.x == 0 && dir.y == 0) dir = Vec3(1, 0, 0);
+        Element e; e.type = ElementType::Xline; e.pts = {base};
+        e.rotation = std::atan2(dir.y, dir.x) * 180.0 / M_PI;
+        e.name = QStringLiteral("导入:构造线"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+    if (t == "RAY") {
+        Vec3 startP(firstNum(p, 10), firstNum(p, 20), 0);
+        Vec3 dir(firstNum(p, 11), firstNum(p, 21), 0);
+        if (dir.x == 0 && dir.y == 0) dir = Vec3(1, 0, 0);
+        Element e; e.type = ElementType::Xline; e.pts = {startP};
+        e.rotation = std::atan2(dir.y, dir.x) * 180.0 / M_PI;
+        e.name = QStringLiteral("导入:射线"); applyStyle(e, p); emitEl(std::move(e)); return;
+    }
+
+    // INSERT：2=块名，10/20=插入点，41/42=XY缩放，50=旋转，44/45=行列间距，70/71=行列数。
+    // 读 BLOCKS 段建块表后，块引用为引用式 BlockRef（仅存名+变换+属性）；MINSERT 阵列逐实例生成。
+    if (t == "INSERT") {
+        const QString name = firstStr(p, 2).trimmed();
+        Vec3 ins(firstNum(p, 10), firstNum(p, 20), 0);
+        const double sx = firstNum(p, 41, 1.0), sy = firstNum(p, 42, 1.0);
+        const double rot = firstNum(p, 50, 0.0);
+        int cols = (int)firstNum(p, 70, 1), rows = (int)firstNum(p, 71, 1);
+        const double colSp = firstNum(p, 44, 0), rowSp = firstNum(p, 45, 0);
+        if (cols < 1) cols = 1;
+        if (rows < 1) rows = 1;
+        const Vec3 colDir(std::cos(rot * M_PI / 180.0), std::sin(rot * M_PI / 180.0), 0);
+        const Vec3 rowDir(-std::sin(rot * M_PI / 180.0), std::cos(rot * M_PI / 180.0), 0);
+        lastBlockRefIdx = -1;
+        for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
+            const Vec3 pos = ins + colDir * (colSp * c) + rowDir * (rowSp * r);
+            Element e; e.type = ElementType::BlockRef; e.blockName = name; e.pts = {pos};
+            e.scaleX = sx; e.scaleY = sy; e.rotation = rot;
+            e.name = QStringLiteral("导入:块引用"); applyStyle(e, p);
+            emitEl(std::move(e));
+            if (r == 0 && c == 0 && !inBlock) lastBlockRefIdx = (int)out.size() - 1;
+        }
+        return;
+    }
+
+    // 未知/不支持实体：跳过并计数，禁止中断整档（约束）。
+    ++st.unknownEntities;
+}
+
+bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
+    if (err) err->clear();
+    DxfImportStats ls;
+    // 先按文件声明的代码页/内容判定解码：我们的写出端中文用 GBK（ANSI_936），
+    // 英文/纯 ASCII 用 ANSI_1252，别家 CAD 也可能给 UTF-8。
+    const std::vector<DxfPair> tok = tokenizeDxf(decodeDxfBytes(data));
+    if (tok.empty()) { if (err) *err = QStringLiteral("文件为空或不是 DXF 文本"); if (stats) *stats = ls; return false; }
+
+    // HEADER $INSUNITS：文件数值的度量口径（AutoCAD 标准码）。缺头/0=无单位按 mm
+    // 解释（不缩放）；其余码由调用方经 Units.h::scaleElementsToUnit 整体换算到 mm。
+    int insunits = 4;
+    for (size_t i = 0; i + 1 < tok.size(); ++i) {
+        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$INSUNITS", Qt::CaseInsensitive) == 0) {
+            if (tok[i + 1].code == 70) insunits = tok[i + 1].value.trimmed().toInt();
+            else for (size_t j = i + 1; j < std::min(tok.size(), i + 4); ++j)
+                if (tok[j].code >= 0 && tok[j].value.trimmed().toInt()) { insunits = tok[j].value.trimmed().toInt(); break; }
+            break;
+        }
+    }
+    ls.insunits = insunits;
+
+    // 扫描整份 token，按 SECTION 把实体分发给 Ctx.handleEntity（ENTITIES 与 BLOCKS 共用）。
+    DxfImportCtx C(out, ls);
+    size_t i = 0;
     while (i < tok.size()) {
         if (tok[i].code != 0) { ++i; continue; }
         const QString t = tok[i].value.trimmed().toUpper();
-        if (t == "ENDSEC" || t == "EOF") { flushPolyline(); break; }
-
-        std::vector<DxfPair> props;
-        size_t j = i + 1;
-        while (j < tok.size() && tok[j].code != 0) { props.push_back(tok[j]); ++j; }
-
-        if (t == "VERTEX") {
-            if (inPoly) {
-                pending.push_back(Vec3(firstNum(props, 10), firstNum(props, 20), 0));
-                pendingBulge.push_back(firstNum(props, 42, 0.0));   // 该顶点出发那一段的凸度
+        if (t == "SECTION") {
+            if (i + 1 < tok.size() && tok[i + 1].code == 2) {
+                const QString sec = tok[i + 1].value.trimmed().toUpper();
+                C.section = (sec == "ENTITIES") ? 1 : (sec == "BLOCKS") ? 2 : (sec == "TABLES") ? 3 : 0;
             }
-        } else if (t == "POLYLINE") {
-            flushPolyline();
-            inPoly = true;
-            pendingClosed = ((int)firstNum(props, 70, 0) & 1) != 0;
-            pendingProps = props;
-        } else if (t == "SEQEND") {
-            flushPolyline();
-        } else if (t == "LINE") {
-            Element e; e.type = ElementType::Line;
-            e.pts = {Vec3(firstNum(props, 10), firstNum(props, 20), 0),
-                     Vec3(firstNum(props, 11), firstNum(props, 21), 0)};
-            e.name = QStringLiteral("导入:直线");
-            style(e, props);
-            out.push_back(std::move(e)); ++count;
-        } else if (t == "CIRCLE") {
-            Element e; e.type = ElementType::Circle;
-            e.pts = {Vec3(firstNum(props, 10), firstNum(props, 20), 0)};
-            e.radius = firstNum(props, 40);
-            e.name = QStringLiteral("导入:圆");
-            style(e, props);
-            out.push_back(std::move(e)); ++count;
-        } else if (t == "ARC") {
-            Element e; e.type = ElementType::Arc;
-            e.pts = {Vec3(firstNum(props, 10), firstNum(props, 20), 0)};
-            e.radius = firstNum(props, 40);
-            e.startAngle = firstNum(props, 50);
-            e.endAngle = firstNum(props, 51);
-            e.name = QStringLiteral("导入:圆弧");
-            style(e, props);
-            out.push_back(std::move(e)); ++count;
-        } else if (t == "LWPOLYLINE") {
-            // LWPOLYLINE（R13+ 实体）的顶点是「10/20 成对 + 可选 42 凸度」顺序出现，
-            // 故 42 出现在两点之间时归属**上一个刚完成的顶点**（与 POLYLINE 同语义：
-            // bulge 写在段起点上）。
-            std::vector<Vec3> v;
-            std::vector<double> bulges;
-            double lx = 0, ly = 0;
-            bool haveX = false;
-            for (const auto& q : props) {
-                if (q.code == 10) { lx = q.value.trimmed().toDouble(); haveX = true; }
-                else if (q.code == 20) {
-                    ly = q.value.trimmed().toDouble();
-                    if (haveX) { v.push_back(Vec3(lx, ly, 0)); bulges.push_back(0.0); haveX = false; }
-                } else if (q.code == 42 && !bulges.empty()) {
-                    bulges.back() = q.value.trimmed().toDouble();
-                }
-            }
-            if (v.size() >= 2) {
-                Element e; e.type = ElementType::Polyline;
-                e.pts = v;
-                e.closed = ((int)firstNum(props, 70, 0) & 1) != 0;
-                e.arcFlags = makeArcFlags(e.pts, bulges, e.closed);
-                e.name = QStringLiteral("导入:多段线");
-                style(e, props);
-                out.push_back(std::move(e)); ++count;
-            }
-        } else if (t == "TEXT" || t == "MTEXT") {
-            const QString s = firstStr(props, 1).trimmed();
-            if (!s.isEmpty()) {
-                Element e; e.type = ElementType::Text;
-                e.pts = {Vec3(firstNum(props, 10), firstNum(props, 20), 0)};
-                e.text = s;
-                e.radius = firstNum(props, 40, 3.5);
-                e.name = QStringLiteral("导入:文本");
-                style(e, props);
-                out.push_back(std::move(e)); ++count;
-            }
+            i += 2; continue;
         }
-        // SOLID / POINT / 其它实体：跳过（本程序无对应图元类型）
-        i = j;
+        if (t == "ENDSEC") { C.flush(); C.section = 0; C.inBlock = false; C.curBlock = BlockDef(); i += 1; continue; }
+        if (t == "EOF")    { C.flush(); break; }
+
+        if (C.section == 2 && t == "BLOCK") {
+            std::vector<DxfPair> props; size_t j = i + 1; while (j < tok.size() && tok[j].code != 0) { props.push_back(tok[j]); ++j; }
+            C.curBlock = BlockDef();
+            C.curBlock.name = firstStr(props, 2).trimmed();
+            C.curBlock.basePoint = Vec3(firstNum(props, 10), firstNum(props, 20), 0);
+            C.inBlock = true;
+            i = j; continue;
+        }
+        if (C.section == 2 && t == "ENDBLK") {
+            C.flush();
+            if (!C.curBlock.name.isEmpty()) C.blockEntities[C.curBlock.name] = C.curBlock.entities;
+            C.curBlock = BlockDef(); C.inBlock = false;
+            i += 1; continue;
+        }
+        if (C.section == 3) {   // TABLES：仅消费（LTYPE 名映射已由 lineStyleFromDxfName 按名处理）
+            std::vector<DxfPair> props; size_t j = i + 1; while (j < tok.size() && tok[j].code != 0) { props.push_back(tok[j]); ++j; }
+            i = j; continue;
+        }
+        if (C.section == 1 || C.section == 2) {
+            std::vector<DxfPair> props; size_t j = i + 1; while (j < tok.size() && tok[j].code != 0) { props.push_back(tok[j]); ++j; }
+            C.handleEntity(t, props);
+            i = j; continue;
+        }
+        ++i;
     }
 
-    if (count == 0) {
+    // 收尾：BLOCKS 段解析出的块定义交回调用方（MainWindow 负责 addBlockDef）。
+    // '*' 前缀为匿名块（*D 标注图形块、*Model_Space / *Paper_Space），不进模型块表：
+    // *D 的内容已由 DIMENSION 组码直接重建，进表反而会产生悬空定义。
+    for (const auto& kv : C.blockEntities) {
+        if (kv.first.startsWith(QLatin1Char('*'))) continue;
+        BlockDef d; d.name = kv.first; d.entities = kv.second;
+        ls.blocks.push_back(std::move(d));
+    }
+
+    if (C.count == 0) {
         if (err) *err = QStringLiteral("ENTITIES 段里没有可识别的图元");
+        if (stats) *stats = ls;
         return false;
     }
-    if (stats) {
-        stats->entities    = count;
-        stats->arcsKept    = arcsKept;
-        stats->arcsDropped = arcsDropped;
-    }
+    ls.entities    = C.count;
+    ls.arcsKept    = C.arcsKept;
+    ls.arcsDropped = C.arcsDropped;
+    if (stats) *stats = ls;
     return true;
 }
 

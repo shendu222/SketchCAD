@@ -713,6 +713,7 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
 
     connect(model_, &SketchModel::modelChanged, this, &GraphicsView::onModelChanged);
     connect(model_, &SketchModel::selectionChanged, this, &GraphicsView::onSelectionChanged);
+    connect(model_, &SketchModel::elementUpdated, this, &GraphicsView::onElementUpdated);
     connect(model_, &SketchModel::viewChanged, this, &GraphicsView::onViewChanged);
     connect(model_, &SketchModel::planeChanged, this, &GraphicsView::onModelChanged);
     connect(model_, &SketchModel::activeToolChanged, this, &GraphicsView::onActiveToolChanged);
@@ -876,7 +877,25 @@ void GraphicsView::rebuild() {
     scene_->clear();
     previewItem_ = nullptr;                // scene_->clear() 已把预览项一并销毁
     gripPreviewItem_ = nullptr;            // 夹点变换预览项同理
-    for (const auto& e : model_->elements()) {
+    items_.clear();
+    itemBounds_.clear();
+    spatial_.clear();
+    // 自适应单元尺寸：每轴约 sqrt(N) 单元 → 单元尺寸取 2^k，单元内平均约 1 个图元
+    const auto& all = model_->elements();
+    QRectF bnds; bool any = false;
+    for (const auto& e : all) {
+        if (!e.visible) continue;
+        QRectF b = elementBoundsForIndex(e);
+        if (b.isNull()) continue;
+        bnds = any ? bnds.united(b) : b; any = true;
+    }
+    if (any) {
+        const double span = std::max(bnds.width(), bnds.height());
+        double cs = span / std::sqrt(std::max(1.0, (double)all.size()));
+        if (cs < 1.0) cs = 1.0;
+        spatial_.setCellSize(std::pow(2.0, std::ceil(std::log2(cs))));
+    }
+    for (const auto& e : all) {
         if (!e.visible) continue;
         auto* it = new ElementItem(e);
         it->model = model_;                      // 块引用展开需要块表
@@ -889,8 +908,126 @@ void GraphicsView::rebuild() {
         if (e.type == ElementType::Dimension) z -= 10.0;
         it->setZValue(z);
         scene_->addItem(it);
+        items_[e.id] = it;
+        const QRectF b = elementBoundsForIndex(e);
+        itemBounds_[e.id] = b;
+        spatial_.add(e.id, b);
     }
+    // 重建后重置选择差量基线
+    prevSelected_.clear();
+    for (int id : model_->selection()) prevSelected_.insert(id);
     viewport()->update();
+}
+
+// 索引用包围盒：对齐 model::boundsOf（非块用 geo::elementBounds；块引用按块表展开取并集）
+QRectF GraphicsView::elementBoundsForIndex(const Element& e) const {
+    if (e.type == ElementType::BlockRef) {
+        QRectF b; bool any = false;
+        for (const auto& s : model_->expandBlockRef(e)) {
+            const QRectF sb = geo::elementBounds(s);
+            if (sb.isNull()) continue;
+            b = any ? b.united(sb) : sb; any = true;
+        }
+        if (!any && !e.pts.empty()) b = QRectF(e.pts[0].x, e.pts[0].y, 0, 0);
+        return b;
+    }
+    return geo::elementBounds(e);
+}
+
+// 精确拾取距离（与旧 hitTest 完全一致；BlockRef 展开后取子图元最小距离）
+double GraphicsView::pickDist(const Element& e, const Vec3& w, const SketchModel* m) {
+    if (e.type == ElementType::BlockRef) {
+        const auto subs = m->expandBlockRef(e);
+        return subs.empty()
+                ? (e.pts.empty() ? 1e18 : w.distTo(e.pts[0]))
+                : geo::distanceToElements(subs, w);
+    }
+    return geo::distanceToElement(e, w);
+}
+
+void GraphicsView::syncItemAddOrUpdate(const Element& e) {
+    ElementItem* item;
+    auto it = items_.find(e.id);
+    if (it == items_.end()) {
+        item = new ElementItem(e);
+        item->model = model_;
+        scene_->addItem(item);
+        items_[e.id] = item;
+    } else {
+        item = it->second;
+    }
+    item->setElement(e);                      // prepareGeometryChange + 赋值 + 重绘
+    item->showLineWeight = showLineWeight_;
+    item->dimScale = model_->scaleRatio();
+    item->warn = conflictIds_.contains(e.id);
+    item->highlight = model_->isSelected(e.id);
+    item->setVisible(e.visible);
+    double z = (double)linePriority(e.lineStyle);
+    if (e.type == ElementType::Dimension) z -= 10.0;
+    item->setZValue(z);
+    const QRectF b = elementBoundsForIndex(e);
+    itemBounds_[e.id] = b;
+    spatial_.update(e.id, b);                // 先按旧单元移除再按新包围盒登记（幂等）
+}
+
+void GraphicsView::syncItemRemove(int id) {
+    auto it = items_.find(id);
+    if (it == items_.end()) return;
+    scene_->removeItem(it->second);
+    delete it->second;
+    items_.erase(it);
+    itemBounds_.erase(id);
+    spatial_.remove(id);
+}
+
+void GraphicsView::setItemHighlight(int id, bool on) {
+    auto it = items_.find(id);
+    if (it == items_.end()) return;
+    if (it->second->highlight != on) { it->second->highlight = on; it->second->update(); }
+}
+
+// modelChanged 无增量信号（批量/结构性变更，或增量信号已处理过本批次）时的差异同步：
+// 复用既有场景项，仅对「新增 / 包围盒变化 / 已删除」的图元做增删改，避免全量重建。
+void GraphicsView::syncIncremental() {
+    // 1) 移除：场景中存在但模型已无的 id（含 id 复用后的旧项）
+    for (auto it = items_.begin(); it != items_.end(); ) {
+        if (!model_->element(it->first)) {
+            scene_->removeItem(it->second);
+            delete it->second;
+            spatial_.remove(it->first);
+            itemBounds_.erase(it->first);
+            it = items_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    // 2) 新增 / 几何变更：按模型元素表差异更新
+    const auto& es = model_->elements();
+    for (const auto& e : es) {
+        if (!e.visible) {
+            // 不可见图元：若曾建项则移除（可见性切换）
+            if (items_.count(e.id)) syncItemRemove(e.id);
+            continue;
+        }
+        auto it = items_.find(e.id);
+        if (it == items_.end()) {
+            syncItemAddOrUpdate(e);
+        } else {
+            const QRectF b = elementBoundsForIndex(e);
+            if (b != itemBounds_[e.id] || it->second->el.type != e.type) {
+                syncItemAddOrUpdate(e);    // 包围盒或类型变化 → 更新项 + 索引
+            }
+        }
+    }
+}
+
+void GraphicsView::onElementUpdated(int id) {
+    // 单图元几何变更：O(1) 增量更新项 + 索引，并标记本批次已增量处理，
+    // 使随后的 modelChanged 不再触发全量差异扫描。
+    incSyncPending_ = true;
+    const Element* e = model_->element(id);
+    if (!e) { syncItemRemove(id); return; }
+    syncItemAddOrUpdate(*e);
 }
 
 void GraphicsView::applyLineWeightToItems() {
@@ -999,8 +1136,22 @@ void GraphicsView::zoomToElement(int id) {
     fitToRect(b.adjusted(-2, -2, 2, 2));
 }
 
-void GraphicsView::onModelChanged() { rebuild(); }
-void GraphicsView::onSelectionChanged(int) { rebuild(); }
+void GraphicsView::onModelChanged() {
+    // 本编辑批次已通过 onElementUpdated 增量处理（O(1)）→ 仅刷新视口，不做差异扫描。
+    if (incSyncPending_) { incSyncPending_ = false; viewport()->update(); return; }
+    // 批量/结构性变更（clear/load/undo、图层增删、平面切换…）→ 差异同步（复用场景项，不全量重建）
+    syncIncremental();
+    viewport()->update();
+}
+void GraphicsView::onSelectionChanged(int) {
+    // 选中高亮改为增量：仅切换受影响图元的高亮标记，不重建场景。
+    QSet<int> cur;
+    for (int id : model_->selection()) cur.insert(id);
+    for (int id : prevSelected_) if (!cur.contains(id)) setItemHighlight(id, false);
+    for (int id : cur)            if (!prevSelected_.contains(id)) setItemHighlight(id, true);
+    prevSelected_ = cur;
+    viewport()->update();
+}
 void GraphicsView::onViewChanged() { viewport()->update(); }
 
 // ---------------------------- 背景与坐标系 ----------------------------
@@ -1673,48 +1824,45 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
 // ---------------------------- 命中检测 ----------------------------
 
 int GraphicsView::hitTest(const QPoint& viewPos) const {
-    const Vec3 w = toVec3(mapToScene(viewPos));
-    // 容差以屏幕像素定义再换算到世界单位 —— 无论放大到多少倍，"手感"始终一致
-    const double tol = PICK_TOL_PX / std::max(1e-6, zoom_);
-    int best = -1;
-    double bestD = tol;
-    const auto& es = model_->elements();
-    // 逆序遍历：后创建的图元视觉在上层，距离相同时优先选中它
-    for (int i = (int)es.size() - 1; i >= 0; --i) {
-        if (!es[i].visible) continue;
-        double d;
-        if (es[i].type == ElementType::BlockRef) {
-            // 块引用：点块内任一图形都应命中整个块 —— 对展开后的子图元取最小距离
-            const auto subs = model_->expandBlockRef(es[i]);
-            d = subs.empty()
-                    ? (es[i].pts.empty() ? 1e18 : w.distTo(es[i].pts[0]))
-                    : geo::distanceToElements(subs, w);
-        } else {
-            d = geo::distanceToElement(es[i], w);
-        }
-        if (d < bestD) { bestD = d; best = es[i].id; }
-    }
-    return best;
+    const auto all = hitTestAll(viewPos);
+    return all.empty() ? -1 : all.front();
 }
 
 std::vector<int> GraphicsView::hitTestAll(const QPoint& viewPos) const {
     const Vec3 w = toVec3(mapToScene(viewPos));
+    // 容差以屏幕像素定义再换算到世界单位 —— 无论放大到多少倍，"手感"始终一致
     const double tol = PICK_TOL_PX / std::max(1e-6, zoom_);
     std::vector<std::pair<double, int>> hits;    // (距离, id)：近的优先
-    const auto& es = model_->elements();
-    for (const auto& e : es) {
-        if (!e.visible) continue;
-        double d;
-        if (e.type == ElementType::BlockRef) {
-            const auto subs = model_->expandBlockRef(e);
-            d = subs.empty() ? (e.pts.empty() ? 1e18 : w.distTo(e.pts[0]))
-                             : geo::distanceToElements(subs, w);
-        } else {
-            d = geo::distanceToElement(e, w);
+    const bool useIdx = useIndex_ && spatial_.enabled();
+    if (useIdx) {
+        // 索引路径：查询容差矩形覆盖的网格单元，仅对候选做精确判定 → O(候选数)。
+        // 候选元素从本视图维护的 items_ 映射 O(1) 取出（与场景项同步，零改模型），
+        // 避免走 model_->element(id) 的 O(N) 线性查找，使拾取真正降为 O(候选)。
+        const auto cand = spatial_.queryPoint(QPointF(w.x, w.y), tol);
+        for (int id : cand) {
+            auto it = items_.find(id);
+            if (it == items_.end()) continue;
+            const ElementItem* item = it->second;
+            if (!item->el.visible) continue;
+            const double d = pickDist(item->el, w, model_);
+            if (d < tol) hits.push_back({d, id});
         }
-        if (d < tol) hits.push_back({d, e.id});
+    } else {
+        // 全量路径（特性开关关闭 / 索引未启用）：与原实现逐字一致，供双跑对照
+        const auto& es = model_->elements();
+        for (const auto& e : es) {
+            if (!e.visible) continue;
+            const double d = pickDist(e, w, model_);
+            if (d < tol) hits.push_back({d, e.id});
+        }
     }
-    std::sort(hits.begin(), hits.end());
+    // 升序：距离近的优先；距离相等时大 id（后创建/视觉上层）优先，
+    // 与旧版「逆序遍历 + 严格小于才替换」的并列语义完全一致。
+    std::sort(hits.begin(), hits.end(),
+              [](const std::pair<double, int>& a, const std::pair<double, int>& b) {
+                  if (a.first != b.first) return a.first < b.first;
+                  return a.second > b.second;
+              });
     std::vector<int> ids;
     ids.reserve(hits.size());
     for (const auto& h : hits) ids.push_back(h.second);
@@ -4007,11 +4155,26 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
             // 窗口取消：移除矩形内图元的选中
             model_->deselectWindow(r);
         } else {
-            // 统一走核心层 selectWindow，不在交互层另写一份 intersects 判定：
-            // 「框选命中」只应有一份真相，菜单/命令行与画布拖拽必须同语义，否则两条路径
-            // 会各自漂移。核心层按「几何包围盒 + 1e-6 双侧膨胀」判定，零面积包围盒
-            // （水平线 / 垂直线）也能命中；结算日志同样由核心层统一输出。
-            model_->selectWindow(r, additive);
+            // 框选命中只有一份真相：核心层按「几何包围盒 + 1e-6 双侧膨胀」判定。
+            // 索引开启时先用均匀网格把候选从全部图元缩小到矩形覆盖的单元，再用与核心层
+            // 完全相同的判定筛选，保证开启/关闭索引结果集一致；关闭索引时直接回落核心层全量。
+            if (useIndex_ && spatial_.enabled()) {
+                const double eps = 1e-6;
+                const auto cand = spatial_.queryRect(r.adjusted(-eps, -eps, eps, eps));
+                std::vector<int> sel;
+                sel.reserve(cand.size());
+                for (int id : cand) {
+                    const Element* e2 = model_->element(id);
+                    if (!e2 || !e2->visible) continue;
+                    if (r.intersects(elementBoundsForIndex(*e2).adjusted(-eps, -eps, eps, eps)))
+                        sel.push_back(id);
+                }
+                if (additive) model_->addToSelection(sel); else model_->setSelection(sel);
+                model_->log(QStringLiteral("框选完成：选中 %1 个图元%2")
+                                .arg(sel.size()).arg(additive ? QStringLiteral("（已并入选区）") : QString()));
+            } else {
+                model_->selectWindow(r, additive);
+            }
         }
         marquee_ = QRectF();
         viewport()->update();

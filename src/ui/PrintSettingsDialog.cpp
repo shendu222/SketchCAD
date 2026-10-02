@@ -20,6 +20,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QPageSize>
+#include <QFile>
 
 namespace SketchCAD {
 
@@ -98,30 +99,52 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
     // ---------------- 打印样式 CTB ----------------
     auto* styleBox = new QGroupBox(QStringLiteral("打印样式 (简化 CTB)"));
     auto* sl = new QGridLayout(styleBox);
+
+    // 样式表预设行：黑白出图一键切换（GB 预设 / 灰度抖动 / 导入 CTB）
+    presetCombo_ = new QComboBox();
+    presetCombo_->addItem(QStringLiteral("无（沿用图元颜色与线宽组）"));   // idx 0
+    presetCombo_->addItem(QStringLiteral("GB 黑白出图（按线型分粗/细，纯黑不抖动）")); // idx 1
+    presetCombo_->addItem(QStringLiteral("GB 灰度抖动（粗/细分线宽 + 中间调网点）"));  // idx 2
+    presetCombo_->addItem(QStringLiteral("自定义 / 已导入 CTB"));         // idx 3
+    importCtbBtn_ = new QPushButton(QStringLiteral("导入 CTB..."));
+    monoBox_ = new QCheckBox(QStringLiteral("黑白出图(打印机/PDF)"));
+    sl->addWidget(new QLabel(QStringLiteral("样式表预设")), 0, 0);
+    sl->addWidget(presetCombo_, 0, 1, 1, 2);
+    sl->addWidget(importCtbBtn_, 0, 3);
+    sl->addWidget(monoBox_, 1, 0, 1, 2);
+
     styleTargetType_ = new QComboBox();
     styleTargetType_->addItem(QStringLiteral("按图层"));
     styleTargetType_->addItem(QStringLiteral("按颜色"));
-    sl->addWidget(new QLabel(QStringLiteral("匹配维度")), 0, 0);
-    sl->addWidget(styleTargetType_, 0, 1);
+    styleTargetType_->addItem(QStringLiteral("按线型"));
+    sl->addWidget(new QLabel(QStringLiteral("匹配维度")), 2, 0);
+    sl->addWidget(styleTargetType_, 2, 1);
     styleTargetName_ = new QLineEdit();
-    styleTargetName_->setPlaceholderText(QStringLiteral("图层名(如 0)")); // 按颜色时显示颜色值
-    sl->addWidget(new QLabel(QStringLiteral("目标")), 1, 0);
-    sl->addWidget(styleTargetName_, 1, 1);
+    styleTargetName_->setPlaceholderText(QStringLiteral("图层名(如 0)")); // 按颜色/线型时显示目标值
+    sl->addWidget(new QLabel(QStringLiteral("目标")), 3, 0);
+    sl->addWidget(styleTargetName_, 3, 1);
     styleColorPick_ = new QPushButton(QStringLiteral("选择颜色"));
-    sl->addWidget(styleColorPick_, 1, 2);
+    sl->addWidget(styleColorPick_, 3, 2);
     styleOverrideColor_ = new QCheckBox(QStringLiteral("覆盖颜色"));
     styleOverrideWidth_ = new QCheckBox(QStringLiteral("覆盖线宽"));
     styleWidth_ = new QDoubleSpinBox(); styleWidth_->setRange(0.05, 10); styleWidth_->setDecimals(2);
     styleWidth_->setSuffix(" mm");
-    sl->addWidget(styleOverrideColor_, 2, 0);
-    sl->addWidget(styleOverrideWidth_, 2, 1);
-    sl->addWidget(styleWidth_, 2, 2);
+    styleOverrideGray_ = new QCheckBox(QStringLiteral("灰度(黑白)"));
+    styleGray_ = new QDoubleSpinBox(); styleGray_->setRange(0.0, 1.0); styleGray_->setDecimals(2);
+    styleGray_->setSingleStep(0.05);
+    styleDither_ = new QCheckBox(QStringLiteral("抖动"));
+    sl->addWidget(styleOverrideColor_, 4, 0);
+    sl->addWidget(styleOverrideWidth_, 4, 1);
+    sl->addWidget(styleWidth_, 4, 2);
+    sl->addWidget(styleOverrideGray_, 5, 0);
+    sl->addWidget(styleGray_, 5, 1);
+    sl->addWidget(styleDither_, 5, 2);
     styleAddBtn_ = new QPushButton(QStringLiteral("添加/更新"));
     styleDelBtn_ = new QPushButton(QStringLiteral("删除"));
-    sl->addWidget(styleAddBtn_, 3, 1);
-    sl->addWidget(styleDelBtn_, 3, 2);
+    sl->addWidget(styleAddBtn_, 6, 1);
+    sl->addWidget(styleDelBtn_, 6, 2);
     styleList_ = new QListWidget();
-    sl->addWidget(styleList_, 4, 0, 1, 3);
+    sl->addWidget(styleList_, 7, 0, 1, 4);
 
     auto pickColor = [this]() {
         QColor c = QColorDialog::getColor(Qt::black, this, QStringLiteral("选择输出颜色"));
@@ -136,7 +159,11 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
     connect(styleAddBtn_, &QPushButton::clicked, this, &PrintSettingsDialog::onAddStyle);
     connect(styleDelBtn_, &QPushButton::clicked, this, &PrintSettingsDialog::onDeleteStyle);
     connect(styleList_, &QListWidget::currentRowChanged, this, [this](int){ onStyleSelected(); });
+    connect(presetCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &PrintSettingsDialog::onPresetChanged);
+    connect(importCtbBtn_, &QPushButton::clicked, this, &PrintSettingsDialog::onImportCtb);
     connect(styleTargetType_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int t) {
+        // t=0 图层（可键入）；t=1 颜色（弹选色）；t=2 线型（弹选列表）
         styleTargetName_->setEnabled(t == 0);
         if (t == 1) {
             QColor c = QColorDialog::getColor(Qt::black, this, QStringLiteral("选择要匹配的图元颜色"));
@@ -144,6 +171,26 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
                 styleTargetName_->setText(c.name(QColor::HexArgb));
                 styleTargetName_->setEnabled(false);
             }
+        } else if (t == 2) {
+            bool ok = false;
+            const QStringList names = {
+                QStringLiteral("实线"), QStringLiteral("虚线"), QStringLiteral("点线"),
+                QStringLiteral("点划线"), QStringLiteral("双点划线"), QStringLiteral("波浪线"),
+                QStringLiteral("双折线"), QStringLiteral("粗虚线"), QStringLiteral("粗点画线") };
+            const QString picked = QInputDialog::getItem(this, QStringLiteral("选择线型"),
+                                                         QStringLiteral("线型"), names, 0, false, &ok);
+            if (ok) {
+                // 显示中文，内部按索引映射回 LineStyle 枚举（与 Element.h 顺序一致）
+                const int idx = names.indexOf(picked);
+                static const LineStyle kMap[9] = {
+                    LineStyle::Solid, LineStyle::Dashed, LineStyle::Dotted,
+                    LineStyle::DashDot, LineStyle::DashDotDot, LineStyle::Wave,
+                    LineStyle::DoubleBreak, LineStyle::ThickDashed, LineStyle::ThickDashDot };
+                if (idx >= 0) styleTargetName_->setText(plotStyleName(kMap[idx]));
+                styleTargetName_->setEnabled(false);
+            }
+        } else {
+            styleTargetName_->clear();
         }
     });
 
@@ -210,6 +257,63 @@ void PrintSettingsDialog::syncFromSettings() {
     centerVBox_->setChecked(s_.centerV);
     borderBox_->setChecked(s_.drawBorder);
     lineWidthScale_->setValue(s_.lineWidthScale);
+    monoBox_->setChecked(s_.monochrome);
+    // 依据当前样式表内容反推预设下拉（能识别 GB 预设就高亮它，否则显示自定义）
+    presetCombo_->blockSignals(true);
+    if (s_.plotStyle.empty()) {
+        presetCombo_->setCurrentIndex(0);
+    } else if (s_.plotStyle.globalGrayOn()) {
+        presetCombo_->setCurrentIndex(2);   // 灰度抖动预设
+    } else if (!s_.plotStyle.styleStyles().isEmpty()) {
+        presetCombo_->setCurrentIndex(1);   // GB 黑白（按线型）
+    } else {
+        presetCombo_->setCurrentIndex(3);   // 自定义
+    }
+    presetCombo_->blockSignals(false);
+}
+
+void PrintSettingsDialog::onPresetChanged(int idx) {
+    switch (idx) {
+    case 0:   // 无：清空样式表
+        s_.plotStyle.clearAll();
+        break;
+    case 1:   // GB 黑白：按线型分粗/细，纯黑不抖动
+        s_.plotStyle = PlotStyleTable::gbPreset(currentLineWidthGroup());
+        break;
+    case 2:   // GB 灰度抖动：粗/细分线宽 + 全局灰度抖动
+        s_.plotStyle = PlotStyleTable::gbPresetGrayDither();
+        break;
+    case 3:   // 自定义：保持现状，由用户手工编辑
+        break;
+    default:
+        break;
+    }
+    syncStyleList();
+}
+
+void PrintSettingsDialog::onImportCtb() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("导入简化 CTB 打印样式表"), QString(),
+        QStringLiteral("CTB 样式表 (*.ctb *.txt);;所有文件 (*)"));
+    if (path.isEmpty()) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::warning(this, QStringLiteral("导入失败"), QStringLiteral("无法打开文件: %1").arg(path));
+        return;
+    }
+    const QString text = QString::fromUtf8(f.readAll());
+    f.close();
+    PlotStyleTable t;
+    QString err;
+    if (!PlotStyleTable::fromCtb(text, &t, &err)) {
+        QMessageBox::warning(this, QStringLiteral("CTB 解析警告"),
+                             QStringLiteral("存在无法解析的行（已跳过）：\n%1").arg(err));
+    }
+    s_.plotStyle = t;
+    presetCombo_->blockSignals(true);
+    presetCombo_->setCurrentIndex(3);   // 导入后视为自定义表
+    presetCombo_->blockSignals(false);
+    syncStyleList();
 }
 
 void PrintSettingsDialog::onPaperChanged(int idx) {
@@ -223,16 +327,23 @@ void PrintSettingsDialog::onStyleSelected() {
     const QListWidgetItem* it = styleList_->item(row);
     if (!it) return;
     const QString key = it->data(Qt::UserRole).toString();
-    // key 形如 "L:图层名" 或 "C:颜色名"
+    // 统一回填所有可编辑字段（含灰度/抖动）
+    auto fill = [this](const PlotStyleEntry& e) {
+        styleOverrideColor_->setChecked(e.overrideColor);
+        styleOverrideWidth_->setChecked(e.overrideWidth);
+        styleWidth_->setValue(e.widthMm);
+        styleOverrideGray_->setChecked(e.overrideGray);
+        styleGray_->setValue(e.gray);
+        styleDither_->setChecked(e.dither);
+    };
+    // key 形如 "L:图层名" / "C:颜色名" / "S:线型名"
     if (key.startsWith("L:")) {
         const QString layer = key.mid(2);
         auto fit = s_.plotStyle.layerStyles().find(layer);
         if (fit != s_.plotStyle.layerStyles().end()) {
             styleTargetType_->setCurrentIndex(0);
             styleTargetName_->setText(layer);
-            styleOverrideColor_->setChecked(fit->overrideColor);
-            styleOverrideWidth_->setChecked(fit->overrideWidth);
-            styleWidth_->setValue(fit->widthMm);
+            fill(fit.value());
         }
     } else if (key.startsWith("C:")) {
         const QString colStr = key.mid(2);            // "#rrggbbaa"
@@ -241,9 +352,15 @@ void PrintSettingsDialog::onStyleSelected() {
         if (fit != s_.plotStyle.colorStyles().end()) {
             styleTargetType_->setCurrentIndex(1);
             styleTargetName_->setText(colStr);
-            styleOverrideColor_->setChecked(fit->overrideColor);
-            styleOverrideWidth_->setChecked(fit->overrideWidth);
-            styleWidth_->setValue(fit->widthMm);
+            fill(fit.value());
+        }
+    } else if (key.startsWith("S:")) {
+        const int si = key.mid(2).toInt();
+        auto fit = s_.plotStyle.styleStyles().find(si);
+        if (fit != s_.plotStyle.styleStyles().end()) {
+            styleTargetType_->setCurrentIndex(2);
+            styleTargetName_->setText(plotStyleName((LineStyle)si));
+            fill(fit.value());
         }
     }
 }
@@ -253,19 +370,30 @@ void PrintSettingsDialog::onAddStyle() {
     e.overrideColor = styleOverrideColor_->isChecked();
     e.overrideWidth = styleOverrideWidth_->isChecked();
     e.widthMm = styleWidth_->value();
+    e.overrideGray = styleOverrideGray_->isChecked();
+    e.gray = styleGray_->value();
+    e.dither = styleDither_->isChecked();
     QColor chosen = styleColorPick_->property("chosen").value<QColor>();
     if (!chosen.isValid()) chosen = Qt::black;
     e.color = chosen;
 
-    if (styleTargetType_->currentIndex() == 0) {
+    const int dim = styleTargetType_->currentIndex();
+    if (dim == 0) {
         const QString layer = styleTargetName_->text().trimmed();
         if (layer.isEmpty()) { QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请填写图层名")); return; }
         s_.plotStyle.setLayerStyle(layer, e);
-    } else {
+    } else if (dim == 1) {
         const QString colStr = styleTargetName_->text().trimmed();
         QColor col(colStr);
         if (!col.isValid()) { QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择要匹配的颜色")); return; }
         s_.plotStyle.setColorStyle(col, e);
+    } else {
+        LineStyle ls;
+        if (!plotStyleFromName(styleTargetName_->text().trimmed(), &ls)) {
+            QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择线型"));
+            return;
+        }
+        s_.plotStyle.setStyleStyle(ls, e);
     }
     syncStyleList();
 }
@@ -278,30 +406,53 @@ void PrintSettingsDialog::onDeleteStyle() {
     const QString key = it->data(Qt::UserRole).toString();
     if (key.startsWith("L:")) s_.plotStyle.clearLayer(key.mid(2));
     else if (key.startsWith("C:")) s_.plotStyle.clearColor(QColor(key.mid(2)));
+    else if (key.startsWith("S:")) s_.plotStyle.clearStyle((LineStyle)key.mid(2).toInt());
     syncStyleList();
 }
 
 void PrintSettingsDialog::syncStyleList() {
     styleList_->clear();
+    // 条目描述统一附「灰度/抖动」后缀，便于黑白出图前目检
+    auto desc = [](const PlotStyleEntry& e) {
+        QString tail;
+        if (e.overrideGray)
+            tail = QStringLiteral(" 灰度%1%2")
+                .arg(e.gray, 0, 'f', 2)
+                .arg(e.dither ? QStringLiteral("(抖动)") : QString());
+        else if (e.overrideWidth)
+            tail = QStringLiteral(" 线宽%1mm").arg(e.widthMm, 0, 'g', 2);
+        if (e.overrideGray && e.overrideWidth)
+            tail += QStringLiteral(" 线宽%1mm").arg(e.widthMm, 0, 'g', 2);
+        return tail;
+    };
     for (auto it = s_.plotStyle.layerStyles().begin(); it != s_.plotStyle.layerStyles().end(); ++it) {
         const PlotStyleEntry& e = it.value();
-        const QString desc = QStringLiteral("图层[%1] → %2%3 %4")
+        const QString d = QStringLiteral("图层[%1] → %2%3")
             .arg(it.key())
-            .arg(e.overrideColor ? e.color.name() : QStringLiteral("沿用"))
-            .arg(e.overrideColor ? "" : "")
-            .arg(e.overrideWidth ? QStringLiteral("线宽%1mm").arg(e.widthMm, 0, 'g', 2) : QStringLiteral("沿用线宽"));
-        auto* item = new QListWidgetItem(desc);
+            .arg(e.overrideColor ? e.color.name() : QStringLiteral("沿用色"))
+            .arg(desc(e));
+        auto* item = new QListWidgetItem(d);
         item->setData(Qt::UserRole, "L:" + it.key());
         styleList_->addItem(item);
     }
     for (auto it = s_.plotStyle.colorStyles().begin(); it != s_.plotStyle.colorStyles().end(); ++it) {
         const PlotStyleEntry& e = it.value();
-        const QString desc = QStringLiteral("颜色[%1] → %2 %3")
-            .arg(it.key(), 0, 16)
-            .arg(e.overrideColor ? e.color.name() : QStringLiteral("沿用"))
-            .arg(e.overrideWidth ? QStringLiteral("线宽%1mm").arg(e.widthMm, 0, 'g', 2) : QStringLiteral("沿用线宽"));
-        auto* item = new QListWidgetItem(desc);
+        const QString d = QStringLiteral("颜色[#%1] → %2%3")
+            .arg(QString::number(it.key() & 0x00FFFFFF, 16).rightJustified(6, QLatin1Char('0')))
+            .arg(e.overrideColor ? e.color.name() : QStringLiteral("沿用色"))
+            .arg(desc(e));
+        auto* item = new QListWidgetItem(d);
         item->setData(Qt::UserRole, "C:#" + QString::number(it.key(), 16));
+        styleList_->addItem(item);
+    }
+    for (auto it = s_.plotStyle.styleStyles().begin(); it != s_.plotStyle.styleStyles().end(); ++it) {
+        const PlotStyleEntry& e = it.value();
+        const QString d = QStringLiteral("线型[%1] → %2%3")
+            .arg(plotStyleName((LineStyle)it.key()))
+            .arg(e.overrideColor ? e.color.name() : QStringLiteral("灰度黑"))
+            .arg(desc(e));
+        auto* item = new QListWidgetItem(d);
+        item->setData(Qt::UserRole, "S:" + QString::number(it.key()));
         styleList_->addItem(item);
     }
 }
@@ -402,6 +553,7 @@ void PrintSettingsDialog::onAccept() {
     s_.centerV = centerVBox_->isChecked();
     s_.drawBorder = borderBox_->isChecked();
     s_.lineWidthScale = lineWidthScale_->value();
+    s_.monochrome = monoBox_->isChecked();
     accept();
 }
 

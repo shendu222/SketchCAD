@@ -1082,6 +1082,16 @@ bool SketchModel::addBlockDef(const BlockDef& def) {
     return true;
 }
 
+bool SketchModel::addBlockDefQuiet(const BlockDef& def) {
+    const QString n = def.name.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
+    if (hasBlock(n)) { log(QStringLiteral("块 %1 已存在").arg(n), "warn"); return false; }
+    BlockDef d = def; d.name = n;
+    blocks_.push_back(std::move(d));
+    emit blocksChanged();     // 引用重绘；不压栈（撤销由外层 beginEdit 统一负责）
+    return true;
+}
+
 bool SketchModel::redefineBlock(const BlockDef& def) {
     const QString n = def.name.trimmed();
     if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }

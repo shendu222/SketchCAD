@@ -175,6 +175,24 @@ std::vector<int> qselect(const SketchModel* m, const FilterDef& f,
     return out;
 }
 
+// ---- 四维快速选择（命令行 / 脚本 / 测试共用入口）----
+std::vector<int> qselectByDims(const SketchModel* m, const QString& type,
+                               const QString& layer, const QString& color,
+                               const QString& lineStyle) {
+    if (!m) return {};
+    // 全空：未指定任何过滤维度 → 返回空，不盲目全选（避免误选整图）
+    if (type.isEmpty() && layer.isEmpty() && color.isEmpty() && lineStyle.isEmpty())
+        return {};
+    FilterDef f;
+    f.name = QStringLiteral("QSELECT");
+    f.matchAll = true;   // 多维之间为 AND 组合
+    if (!type.isEmpty())       f.conds.push_back({QSelectProp::Type,      QSelectOp::Eq, type});
+    if (!layer.isEmpty())      f.conds.push_back({QSelectProp::Layer,     QSelectOp::Eq, layer});
+    if (!color.isEmpty())      f.conds.push_back({QSelectProp::Color,     QSelectOp::Eq, color});
+    if (!lineStyle.isEmpty())  f.conds.push_back({QSelectProp::LineStyle, QSelectOp::Eq, lineStyle});
+    return qselect(m, f, nullptr);
+}
+
 // ---- 候选值枚举：单遍收集 + QSet 去重 + 排序 ----
 QStringList uniquePropValues(const SketchModel* m, QSelectProp prop) {
     QStringList out;

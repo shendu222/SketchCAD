@@ -170,9 +170,11 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
 // ---------------------------------------------------------------------------
 // 无头导出：按扩展名分派 pdf/dxf/dwg/step/json（与 MainWindow 的
 // writeDrawing/exportPdfDirect 同语义：BlockRef 先展开，导出物即所见）
+// ctbText/preset 非空时叠加打印样式表（黑白出图），优先于 settings 内的 plotStyle。
 // ---------------------------------------------------------------------------
 bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
-                                    const QJsonObject& settings, QString* err) {
+                                    const QJsonObject& settings, QString* err,
+                                    const QString& ctbText, const QString& preset) {
     if (path.isEmpty()) {
         if (err) *err = comErrorText(SCAD_E_BAD_ARG) + QStringLiteral("：输出路径为空");
         return false;
@@ -185,13 +187,34 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
         PrintSettings s = PrintSettings::defaults();
         if (!settings.isEmpty())
             s.fromJson(settings);
+        // 打印样式表透传：ctbText 优先于 preset；两者都空则沿用 settings/默认。
+        if (!ctbText.isEmpty()) {
+            PlotStyleTable t;
+            QString e2;
+            if (!PlotStyleTable::fromCtb(ctbText, &t, &e2)) {
+                // 解析有瑕疵：已解析的行仍生效，仅记录警告，不阻断出图
+                appendLog(QString(), QStringLiteral("[plotstyle] CTB 部分行解析失败：") + e2);
+            }
+            s.plotStyle = t;
+            s.monochrome = true;   // 导入样式表即视为黑白出图意图
+        } else if (!preset.isEmpty()) {
+            if (preset.compare(QLatin1String("gb"), Qt::CaseInsensitive) == 0) {
+                s.plotStyle = PlotStyleTable::gbPreset(currentLineWidthGroup());
+                s.monochrome = true;
+            } else if (preset.compare(QLatin1String("gbGray"), Qt::CaseInsensitive) == 0) {
+                s.plotStyle = PlotStyleTable::gbPresetGrayDither();
+                s.monochrome = true;
+            } else if (preset.compare(QLatin1String("none"), Qt::CaseInsensitive) == 0) {
+                s.plotStyle.clearAll();
+                s.monochrome = false;
+            }
+        }
         if (!PrintEngine::exportPdf(&model, s, path)) {
             if (err) *err = comErrorText(SCAD_E_PLOT_FAILED) + QStringLiteral("：") + path;
             return false;
         }
         return true;
     }
-
     // ---- 图纸格式导出 ----
     cadfmt::CadFormat fmt = cadfmt::formatFromPath(path);
     if (fmt == cadfmt::CadFormat::Unknown)
@@ -213,9 +236,15 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
     QString e;
     const double ds = model.scaleRatio();
     switch (fmt) {
-    case cadfmt::CadFormat::Dxf:
-        out = cadfmt::toDxf(exp, &e, ds, insunitsCode(model.units().length));
+    case cadfmt::CadFormat::Dxf: {
+        // 原生导出：块/标注/填充以原生实体写出（与 GUI 侧 saveFileAs/exportDxf 同一行为）。
+        // DWG/STEP 仍走预炸开的 exp（R12 二进制容器与 STEP 无块/标注语义）。
+        cadfmt::DxfExportOptions no;
+        no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
+        out = cadfmt::toDxf(model.elements(), &e, ds, insunitsCode(model.units().length),
+                            &model.blockTable(), &no);
         break;
+    }
     case cadfmt::CadFormat::Dwg:
         out = cadfmt::toDwg(exp, &e, ds);
         break;
@@ -307,7 +336,7 @@ BatchResult BatchPlotEngine::runTasks(const QVector<BatchTask>& tasks, const QSt
             QString e;
             if (!loadDrawing(model, t.source, &e)) {
                 r.error = e;
-            } else if (!exportDrawing(model, t.output, t.settings, &e)) {
+            } else if (!exportDrawing(model, t.output, t.settings, &e, t.ctbText, t.preset)) {
                 r.error = e;
             } else {
                 r.ok = true;
@@ -368,6 +397,23 @@ BatchResult BatchPlotEngine::runBatch(const QString& tasksJson, const QString& l
         t.source   = o["source"].toString();
         t.output   = o["output"].toString();
         t.settings = o["settings"].toObject();
+        // 打印样式表透传：
+        //   "styleTable": "gb" | "gbGray" | "none"        → 内置预设
+        //   "styleTable": "# 注释...\nLAYER 0 WIDTH=0.35" → 简化 CTB 文本
+        //   "preset": "gb"                                → 内置预设（等价字段）
+        const QJsonValue stv = o["styleTable"];
+        if (stv.isString()) {
+            const QString st = stv.toString();
+            // 含换行/空格/「LAYER|COLOR|STYLE|GRAYSCALE」关键字 → 视为 CTB 文本，否则预设名
+            const bool looksCtb = st.contains(QLatin1Char('\n')) ||
+                                  st.contains(QLatin1String("LAYER"), Qt::CaseInsensitive) ||
+                                  st.contains(QLatin1String("COLOR"), Qt::CaseInsensitive) ||
+                                  st.contains(QLatin1String("STYLE"), Qt::CaseInsensitive) ||
+                                  st.contains(QLatin1String("GRAYSCALE"), Qt::CaseInsensitive);
+            if (looksCtb) t.ctbText = st; else t.preset = st;
+        }
+        if (t.preset.isEmpty() && o["preset"].isString())
+            t.preset = o["preset"].toString();
         tasks.append(t);
     }
     return runTasks(tasks, logPath);

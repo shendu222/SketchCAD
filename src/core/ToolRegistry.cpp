@@ -58,6 +58,10 @@ ToolRegistry::ToolRegistry() {
     registerTool({"toggle_layer",         QStringLiteral("(取消)选择图层"),
                   ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
                   QStringLiteral("(取消)选择图层：点击图元，同层已全选中则整层取消，否则整层选中")});
+    // 快速选择（QSELECT）：与 QSelectDialog 共用过滤引擎；命令行等价入口为 qselect（别名 q）。
+    registerTool({"qselect",              QStringLiteral("快速选择"),
+                  ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,
+                  QStringLiteral("快速选择(QSELECT)：按对象类型/图层/颜色/线型筛选并选中匹配图元")});
     // 不规则范围选择（AutoCAD FENCE / WPolygon / CPolygon 对齐）：点选顶点围出范围
     registerTool({"fence",                QStringLiteral("栏选"),
                   ToolCategory::Select, ParamBarMode::None, DimensionType::Distance,

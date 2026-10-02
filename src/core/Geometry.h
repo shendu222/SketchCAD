@@ -13,6 +13,13 @@ namespace geo {
 // ---------- 基础 ----------
 double distPointSegment(const Vec3& p, const Vec3& a, const Vec3& b);
 
+// 端点/坐标重合判定（容差 tol，单位 mm）。
+// JOIN 端点连合、阵列退化检测、剪切容差等所有「两个点算不算同一个点」的判定
+// 统一走这里，避免各模块自写 fabs(dx)<eps 时 eps 取值漂移。
+inline bool almostEqual(const Vec3& a, const Vec3& b, double tol) {
+    return a.distTo(b) <= tol;
+}
+
 // 角度规整
 double wrapDeg180(double d);   // -> (-180, 180]
 double wrapDeg360(double d);   // -> [0, 360)

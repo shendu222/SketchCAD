@@ -171,6 +171,10 @@ public:
     bool hasBlock(const QString& name) const { return findBlockDef(name) != nullptr; }
     // 新增块定义：空名 / 重名 / 与保留名冲突 → false。
     bool addBlockDef(const BlockDef& def);
+    // 静默新增块定义：不压撤销快照（调用前需 beginEdit() 一次），重名 → false。
+    // 剪贴板粘贴等「一次 beginEdit 覆盖块表+图元」的组合操作专用；
+    // 独立添加块请走 addBlockDef()（自带快照，可单独撤销）。
+    bool addBlockDefQuiet(const BlockDef& def);
     // 用当前选择集创建块定义：以 basePt 为基点收进定义。
     //   deleteSource=true  → 删除原图元并在 basePt 放置一个块引用（AutoCAD BLOCK 语义），返回引用 id；
     //   deleteSource=false → 保留原图元、不放置引用，返回 -1。

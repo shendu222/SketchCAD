@@ -11,8 +11,10 @@
 #include "SplineModes.h"
 #include "EllipseModes.h"
 #include "ElementFactory.h"
+#include "QSelect.h"        // 快速选择（QSELECT）四维过滤引擎
 #include "Modify.h"
 #include "ChamferFillet.h"
+#include "Clipboard.h"
 #include "Xref.h"
 #include "ConstraintSolver.h"
 #include "AircraftViews.h"
@@ -1572,6 +1574,124 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         m->log(QString("已拉伸 %1 个端点").arg(changes.size()));
         return true;
     }
+    if (cmd == "join") {
+        // 连合：把选区中同层、端点相接的 Line/Arc 连成 Polyline。
+        //   join [tol]    tol 缺省 0.5mm（GUI 菜单入口传视图捕捉容差 worldTol()）
+        auto src = selectedElems();
+        if (src.empty()) { m->log("无可连合图元（请先选中 Line/Arc）", "warn"); return false; }
+        double tol = modify::kJoinDefaultTol;
+        if (ctx.toks.size() >= 2) {
+            bool ok = false; tol = ctx.toks[1].toDouble(&ok);
+            if (!ok || tol <= 0) { m->log("容差须为正数（mm）", "warn"); return false; }
+        }
+        auto changes = modify::makeJoin(src, tol);
+        if (changes.empty()) { m->log("未发现可连合的端点相接链（同层 Line/Arc 且端点距 ≤ 容差）", "warn"); return false; }
+        m->beginEdit(QStringLiteral("修改-连合"));
+        auto added = modify::applyChanges(m, changes, QString());
+        QStringList ids;
+        for (int id : added) ids << ("#" + QString::number(id));
+        m->log(QString("已连合为 %1 条折线（容差 %2 mm）：%3")
+                   .arg(added.size()).arg(tol, 0, 'f', 3).arg(ids.join(", ")));
+        return true;
+    }
+    if (cmd == "arrayrect") {
+        // 矩形阵列：arrayrect <rows> <cols> <rowSpacing> <colSpacing>
+        if (ctx.toks.size() < 5) { m->log("用法: arrayrect <行数> <列数> <行间距> <列间距>", "warn"); return false; }
+        bool ok1, ok2, ok3, ok4;
+        const int rows = ctx.toks[1].toInt(&ok1), cols = ctx.toks[2].toInt(&ok2);
+        const double rsp = ctx.toks[3].toDouble(&ok3), csp = ctx.toks[4].toDouble(&ok4);
+        if (!ok1 || !ok2 || !ok3 || !ok4 || rows < 1 || cols < 1) {
+            m->log("参数无效（行/列 ≥1，间距可为 0）", "warn"); return false;
+        }
+        auto src = selectedElems();
+        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        auto changes = modify::makeRectangularArray(src, rows, cols, rsp, csp);
+        if (changes.empty()) { m->log("1×1 阵列无副本（原图元保留）", "warn"); return false; }
+        m->beginEdit(QStringLiteral("修改-矩形阵列"));
+        auto added = modify::applyChanges(m, changes, QString());
+        m->log(QString("矩形阵列 %1×%2（间距 %3/%4 mm）：新增 %5 个副本")
+                   .arg(rows).arg(cols).arg(rsp, 0, 'f', 2).arg(csp, 0, 'f', 2).arg(added.size()));
+        return true;
+    }
+    if (cmd == "arraypolar") {
+        // 环形阵列：arraypolar <cx,cy> <count> [angleRange]
+        // 基点语义与 AutoCAD 对齐：选中单个圆/弧且未显式给中心时，默认取其圆心。
+        auto src = selectedElems();
+        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        Vec3 center;
+        int argIdx = 1;
+        bool centerGiven = (ctx.toks.size() >= 2 && ctx.parsePoint(1, center));
+        if (centerGiven) argIdx = 2;
+        if (!centerGiven) {
+            const Element* first = nullptr;
+            for (const auto& e : src)
+                if (e.type == ElementType::Circle || e.type == ElementType::Arc) { first = &e; break; }
+            if (first && !first->pts.empty()) {
+                center = first->pts[0];   // 默认捕捉圆心
+            } else {
+                m->log("用法: arraypolar <cx,cy> <count> [角度范围]（选中圆/弧时可省略中心=圆心）", "warn");
+                return false;
+            }
+        }
+        if (ctx.toks.size() <= argIdx) { m->log("缺少数量参数 <count>", "warn"); return false; }
+        bool ok = false;
+        const int count = ctx.toks[argIdx].toInt(&ok);
+        if (!ok || count < 1) { m->log("数量须 ≥1", "warn"); return false; }
+        const double range = ctx.toks.size() > argIdx + 1 ? ctx.toks[argIdx + 1].toDouble() : 360.0;
+        auto changes = modify::makePolarArray(src, center, count, range);
+        if (changes.empty()) { m->log("count<2 无副本（原图元保留）", "warn"); return false; }
+        m->beginEdit(QStringLiteral("修改-环形阵列"));
+        auto added = modify::applyChanges(m, changes, QString());
+        m->log(QString("环形阵列 %1 份 / %2°（中心 %3,%4）：新增 %5 个副本")
+                   .arg(count).arg(range, 0, 'f', 2)
+                   .arg(center.x, 0, 'f', 2).arg(center.y, 0, 'f', 2).arg(added.size()));
+        return true;
+    }
+    if (cmd == "arraypath") {
+        // 路径阵列：arraypath <pathId> <spacing>   Measure 语义（每 spacing 一个）
+        //            arraypath divide <pathId> <count>   Divide 语义（count 等分全长）
+        bool divide = (ctx.toks.size() >= 2 && ctx.toks[1].toLower() == "divide");
+        const int baseIdx = divide ? 2 : 1;
+        if (ctx.toks.size() < baseIdx + 2) {
+            m->log("用法: arraypath <路径id> <间距> | arraypath divide <路径id> <数量>", "warn");
+            return false;
+        }
+        bool ok = false;
+        const int pathId = ctx.toks[baseIdx].toInt(&ok);
+        if (!ok) { m->log("路径 id 无效", "warn"); return false; }
+        const Element* path = m->element(pathId);
+        if (!path) { m->log("路径图元不存在", "warn"); return false; }
+        // 路径离散：Polyline 用弧感知采样，Spline 用样条采样；其余类型不支持
+        std::vector<Vec3> pathPts;
+        if (path->type == ElementType::Polyline && path->pts.size() >= 2) {
+            pathPts = geo::samplePolyline(path->pts, path->arcFlags, path->closed, 32);
+        } else if (path->type == ElementType::Spline && path->pts.size() >= 2) {
+            pathPts = geo::sampleSpline(path->pts, 32);
+        } else {
+            m->log("路径仅支持折线（Polyline）或样条（Spline）", "warn"); return false;
+        }
+        double spacing = 0.0; int count = 0;
+        if (divide) {
+            count = ctx.toks[baseIdx + 1].toInt(&ok);
+            if (!ok || count < 2) { m->log("数量须 ≥2", "warn"); return false; }
+        } else {
+            spacing = ctx.toks[baseIdx + 1].toDouble(&ok);
+            if (!ok || spacing < 0) { m->log("间距须 ≥0（0 = 按数量均分，需用 divide）", "warn"); return false; }
+        }
+        auto src = selectedElems();
+        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        auto changes = modify::makePathArray(src, pathPts, spacing, count);
+        if (changes.empty()) {
+            m->log(divide ? "路径退化或数量不足，未生成副本"
+                          : "路径长度小于间距，放不下第二个项目（未生成副本）", "warn");
+            return false;
+        }
+        m->beginEdit(QStringLiteral("修改-路径阵列"));
+        auto added = modify::applyChanges(m, changes, QString());
+        m->log(QString("路径阵列沿 #%1：%2 个位置点，新增 %3 个副本")
+                   .arg(pathId).arg(changes.size() / (int)src.size() + 1).arg(added.size()));
+        return true;
+    }
     m->log("未知 modify 子命令: " + cmd, "warn");
     return false;
 }
@@ -2097,6 +2217,43 @@ bool SelectCommand::execute(const CommandContext& ctx) {
 }
 
 // ============================================================
+// 快速选择命令（QSELECT）：四维过滤并选中匹配图元
+// 交互 GUI 走 MainWindow::openQSelect()（QSelectDialog）；本命令为无头 / 脚本等价入口，
+// 复用 QSelect 引擎（qselectByDims），不改动其 API 与语义。
+// ============================================================
+bool QSelectCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    if (!m) return false;
+
+    // 逐维解析关键字（单行形式，等价于"逐维提示、回车=不过滤该维"的无头等价物）
+    QString type, layer, color, linestyle;
+    for (int i = 1; i < ctx.toks.size(); ++i) {
+        const QString t = ctx.toks[i];
+        const int eq = t.indexOf('=');
+        if (eq <= 0) continue;                       // 跳过非法 token
+        const QString key = t.left(eq).toLower();
+        const QString val = t.mid(eq + 1).trimmed();
+        if      (key == "type")      type = val;
+        else if (key == "layer")     layer = val;
+        else if (key == "color")     color = val;
+        else if (key == "linestyle") linestyle = val;
+        else m->log(QStringLiteral("快速选择：未知关键字 '%1'（可用 type/layer/color/linestyle）").arg(key), "warn");
+    }
+
+    // 全空（未指定任何维度）= 不执行选择，避免盲目全选，并给出用法提示。
+    if (type.isEmpty() && layer.isEmpty() && color.isEmpty() && linestyle.isEmpty()) {
+        m->log(QStringLiteral("快速选择：未指定任何过滤条件，未改变选择集。"
+                              "用法: qselect type=直线 [layer=0] [color=#ff0000] [linestyle=实线]"), "warn");
+        return true;   // 非致命：仅提示，不改变选择集
+    }
+
+    const std::vector<int> hits = qselectByDims(m, type, layer, color, linestyle);
+    m->applySelectionDelta(hits, QSelectAction::Replace);   // 单次落地，一次 selectionChanged
+    m->log(QStringLiteral("快速选择：命中 %1 个对象（已替换选择集）").arg(hits.size()));
+    return true;
+}
+
+// ============================================================
 // 图层管理命令
 // ============================================================
 namespace {
@@ -2462,6 +2619,81 @@ bool BlockCommand::execute(const CommandContext& ctx) {
 // ============================================================
 // 与 block 命令族同构（单一入口 + 子命令分派）。所有错误信息由 SketchModel 统一
 // 产出并写日志，此处只做参数解析与结果判真，避免出现"两处各说一半"的错乱提示。
+//
+// ============================================================
+// 剪贴板族（copyclip / copybase / pasteclip / pasteblock）
+// ------------------------------------------------------------
+// 数据链：选区 → clipboard::Payload → 版本化 JSON → QClipboard 自定义 mime。
+// 粘贴：mime → JSON → Payload → pasteInto（合并块表 + Quiet 落盘，单步撤销）。
+// 版本不符 / 坏 JSON / 无内容一律 log 提示并返回 false，绝不越界解析。
+bool ClipCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    const QString& cmd = ctx.cmd;
+
+    if (cmd == "copyclip" || cmd == "copybase") {
+        std::vector<Element> src;
+        for (int id : m->selection())
+            if (const Element* e = m->element(id)) src.push_back(*e);
+        if (src.empty()) { m->log("无可复制图元（请先选中）", "warn"); return false; }
+
+        clipboard::Payload p;
+        if (cmd == "copybase") {
+            if (ctx.toks.size() < 2) { m->log("用法: copybase <x,y>", "warn"); return false; }
+            if (!ctx.parsePoint(1, p.base)) { m->log("基点解析失败", "warn"); return false; }
+        } else {
+            // copyclip 基点 = 选区包围盒左下角（对齐 AutoCAD 默认基点语义）
+            bool first = true;
+            double minX = 0, minY = 0;
+            for (const auto& e : src) {
+                const QRectF b = geo::elementBounds(e);
+                if (first) { minX = b.left(); minY = b.bottom(); first = false; }
+                else { minX = std::min(minX, b.left()); minY = std::min(minY, b.bottom()); }
+            }
+            p.base = Vec3(minX, minY, 0);
+        }
+        p.elements = std::move(src);
+
+        // 依赖的块定义随包携带（跨实例粘贴保留块表）：收集选区内 BlockRef 引用的
+        // 块名，把它们（及其嵌套依赖）从块表拷出。实现收敛在 clipboard 层，
+        // 命令行与 GUI 菜单共用同一份，语义不会漂移。
+        p.blocks = clipboard::collectBlockDeps(*m, p.elements);
+
+        if (!clipboard::putToClipboard(p)) { m->log("写入剪贴板失败", "warn"); return false; }
+        m->log(QString("已复制 %1 个图元到剪贴板（基点 %2,%3%4）")
+                   .arg(p.elements.size()).arg(p.base.x, 0, 'f', 2).arg(p.base.y, 0, 'f', 2)
+                   .arg(p.blocks.empty() ? QString() : QStringLiteral("，含块 %1 个").arg(p.blocks.size())));
+        return true;
+    }
+
+    if (cmd == "pasteclip" || cmd == "pasteblock") {
+        clipboard::Payload p;
+        QString err;
+        if (!clipboard::getFromClipboard(&p, &err)) {
+            m->log(err.isEmpty() ? QStringLiteral("剪贴板内容不可用") : err, "warn");
+            return false;
+        }
+        Vec3 to(0, 0, 0);
+        const int ptIdx = 1;
+        if (ctx.toks.size() > ptIdx) {
+            if (!ctx.parsePoint(ptIdx, to)) { m->log("落点解析失败", "warn"); return false; }
+        } else if (cmd == "pasteblock") {
+            m->log("用法: pasteblock <x,y>", "warn"); return false;
+        }
+        const bool asBlock = (cmd == "pasteblock");
+        m->beginEdit(asBlock ? QStringLiteral("剪贴板-粘贴为块") : QStringLiteral("剪贴板-粘贴"));
+        QString msg;
+        if (!clipboard::pasteInto(m, p, to, asBlock, &msg)) {
+            m->undo();   // 空转回滚：粘贴失败不留 beginEdit 快照
+            m->log(msg.isEmpty() ? QStringLiteral("粘贴失败") : msg, "warn");
+            return false;
+        }
+        m->log(msg);
+        return true;
+    }
+
+    m->log("未知剪贴板子命令: " + cmd, "warn");
+    return false;
+}
 
 bool XrefCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
@@ -2756,6 +2988,11 @@ void CommandRegistry::registerBuiltins() {
         registerExact("explode",           mod);
         registerExact("align",             mod);
         registerExact("stretch",           mod);
+        // ---- 批量编辑三件套（JOIN / 命令行阵列）----
+        registerExact("join",              mod);   // 连合：同层 Line/Arc → Polyline
+        registerExact("arrayrect",         mod);   // 矩形阵列（命令行等价于 GUI 阵列对话框）
+        registerExact("arraypolar",        mod);   // 环形阵列（基点默认捕捉圆心）
+        registerExact("arraypath",         mod);   // 路径阵列（沿 Polyline/Spline）
     }
     registerExact("undo", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) { ctx.model->undo(); return true; }));
@@ -2928,6 +3165,10 @@ void CommandRegistry::registerBuiltins() {
         registerExact("toggle_layer",        sel);
     }
 
+    // ---- 快速选择（QSELECT）：四维过滤引擎接线（别名 q → qselect 不再悬空）----
+    // GUI 交互由 MainWindow::openQSelect() 打开 QSelectDialog；此处为命令行 / 脚本 / 无头等价入口。
+    registerExact("qselect", std::make_shared<QSelectCommand>());
+
     // ---- 图层管理 ----
     registerExact("layer", std::make_shared<LayerCommand>());
 
@@ -2940,6 +3181,15 @@ void CommandRegistry::registerBuiltins() {
         registerExact("attlist", blk);   // 属性提取
         registerExact("dynset",  blk);   // 动态参数赋值 / 可见性状态切换
         registerExact("dynlist", blk);   // 动态参数列表
+    }
+
+    // ---- 剪贴板族：copyclip / copybase / pasteclip / pasteblock ----
+    {
+        auto clip = std::make_shared<ClipCommand>();
+        registerExact("copyclip",  clip);
+        registerExact("copybase",  clip);
+        registerExact("pasteclip", clip);
+        registerExact("pasteblock",clip);
     }
 
     // ---- 样条子模式（前缀分派：绘制 spline_parabola/spline_hyperbola/

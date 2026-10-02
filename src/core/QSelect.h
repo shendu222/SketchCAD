@@ -79,6 +79,16 @@ bool matchFilter(const Element& e, const FilterDef& f);
 std::vector<int> qselect(const SketchModel* m, const FilterDef& f,
                          const std::vector<int>* scopeSelection = nullptr);
 
+// ---- 四维快速选择（命令行 / 脚本 / 测试共用，无 GUI 依赖）----
+// 按 图元类型 / 图层 / 颜色 / 线型 四维过滤，各维度为空字符串 = 不过滤该维；
+// 全部为空 = 未指定任何条件 → 返回空（不盲目全选，与 AutoCAD QSELECT 须至少选一类一致）。
+// 这是 QSELECT 引擎对外最便捷的单次入口，命令 qselect 与自测均复用它（不改动底层引擎语义）。
+std::vector<int> qselectByDims(const SketchModel* m,
+                               const QString& type,       // 图元类型名（elementTypeName，如 "直线"）
+                               const QString& layer,      // 图层名
+                               const QString& color,      // 颜色 #rrggbb
+                               const QString& lineStyle); // 线型名（lineStyleName，如 "实线"）
+
 // ---- 候选值枚举（下拉框）：整个图形内某特性的去重取值（升序）----
 QStringList uniquePropValues(const SketchModel* m, QSelectProp prop);
 

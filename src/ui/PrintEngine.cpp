@@ -45,7 +45,8 @@ void renderViewport(SketchModel* model, QPainter& p, const PrintSettings& s,
     const QRectF clipDev(mL * pxPerMm, mT * pxPerMm, printW * pxPerMm, printH * pxPerMm);
     const QRectF clipWorld = inv.mapRect(clipDev);
 
-    PlotRenderer::renderModel(&p, model, scaleDev, clipWorld, s.plotStyle, s.lineWidthScale);
+    // 打印样式：黑白总开关 + 简化 CTB 映射在渲染前统一解析（见 effectivePlotStyle）
+    PlotRenderer::renderModel(&p, model, scaleDev, clipWorld, s.effectivePlotStyle(), s.lineWidthScale);
     p.restore();
 }
 
@@ -178,6 +179,7 @@ QJsonObject PrintSettings::toJson() const {
     o["centerH"]    = centerH;
     o["centerV"]    = centerV;
     o["drawBorder"] = drawBorder;
+    o["monochrome"] = monochrome;     // 新增：黑白出图总开关（缺省 false → 旧档不变）
     o["plotStyle"]  = plotStyle.toJson();
     QJsonArray vps;
     for (const auto& vp : viewports) vps.append(vp.toJson());
@@ -199,6 +201,7 @@ void PrintSettings::fromJson(const QJsonObject& o) {
     centerH    = o.value("centerH").toBool(true);
     centerV    = o.value("centerV").toBool(true);
     drawBorder = o.value("drawBorder").toBool(true);
+    monochrome = o.value("monochrome").toBool(false);   // 缺 key → false（旧档行为不变）
     plotStyle.fromJson(o.value("plotStyle").toObject());
     viewports.clear();
     const QJsonArray vps = o.value("viewports").toArray();
@@ -209,6 +212,14 @@ PrintSettings PrintSettings::defaults() {
     PrintSettings s;
     s.viewports.append(PlotLayout::fullModelViewport());
     return s;
+}
+
+PlotStyleTable PrintSettings::effectivePlotStyle() const {
+    // 黑白总开关开启且用户未提供自定义表 → 套用 GB 预设（按当前线宽组 G1..G5 分粗/细）。
+    // 用户已自定义表时以自定义表为准（黑白开关不覆盖，避免抹掉手工线宽分组）。
+    if (monochrome && plotStyle.empty())
+        return PlotStyleTable::gbPreset(currentLineWidthGroup());
+    return plotStyle;
 }
 
 } // namespace SketchCAD

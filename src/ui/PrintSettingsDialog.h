@@ -23,6 +23,8 @@ public:
 
 private slots:
     void onPaperChanged(int idx);
+    void onPresetChanged(int idx);      // 样式表预设切换（GB 黑白 / 灰度抖动 / 导入 CTB）
+    void onImportCtb();                 // 从 .ctb 文本导入
     void onAddStyle();
     void onDeleteStyle();
     void onStyleSelected();
@@ -58,12 +60,18 @@ private:
     QDoubleSpinBox* lineWidthScale_;   // 打印线宽比例（默认 0.5，细一档）
 
     // 打印样式 CTB
+    QComboBox* presetCombo_;            // 样式表预设（无 / GB 黑白 / GB 灰度抖动 / 自定义）
+    QPushButton* importCtbBtn_;         // 导入简化 CTB
+    QCheckBox* monoBox_;                // 黑白出图总开关
     QComboBox* styleTargetType_;
     QLineEdit* styleTargetName_;
     QPushButton* styleColorPick_;
     QCheckBox* styleOverrideColor_;
     QCheckBox* styleOverrideWidth_;
     QDoubleSpinBox* styleWidth_;
+    QCheckBox* styleOverrideGray_;      // 覆盖灰度（黑白出图）
+    QDoubleSpinBox* styleGray_;         // 灰度值 0=黑 1=白
+    QCheckBox* styleDither_;            // 灰度抖动（网点）
     QPushButton* styleAddBtn_;
     QPushButton* styleDelBtn_;
     QListWidget* styleList_;

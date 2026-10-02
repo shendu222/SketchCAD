@@ -437,6 +437,21 @@ void MainWindow::buildMenu() {
     mk(e, QStringLiteral("删除"), QKeySequence::Delete,[this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
     e->addSeparator();
+    // ---- 剪贴板族：copyclip / copybase / pasteclip / pasteblock ----
+    // 与上方「复制/粘贴」（模型内部剪贴板）互补：走系统剪贴板上的版本化 JSON
+    // （application/x-sketchcad-clip），支持跨 SketchCAD 实例搬运图元，
+    // 粘贴时依赖的块定义一并合并进目标图（详见 core/Clipboard.h）。
+    // 快捷键避开既有 Ctrl+C / Ctrl+V（模型内部剪贴板），用 Alt/Shift 组合。
+    QMenu* clipMenu = e->addMenu(icons::make("copy"), QStringLiteral("剪贴板(&L)"));
+    mk(clipMenu, QStringLiteral("复制(&C)"), QKeySequence("Ctrl+Alt+C"), [this] { copyClipToClipboard(false); })
+        ->setIcon(icons::make("copy"));
+    mk(clipMenu, QStringLiteral("带基点复制(&B)..."), QKeySequence("Ctrl+Shift+C"), [this] { copyClipToClipboard(true); })
+        ->setIcon(icons::make("copy"));
+    mk(clipMenu, QStringLiteral("粘贴(&P)"), QKeySequence("Ctrl+Alt+V"), [this] { pasteFromClipboard(false); })
+        ->setIcon(icons::make("paste"));
+    mk(clipMenu, QStringLiteral("粘贴为块(&K)..."), QKeySequence("Ctrl+Shift+V"), [this] { pasteFromClipboard(true); })
+        ->setIcon(icons::make("paste"));
+    e->addSeparator();
     // ---- 选择工具：编组 / 快速选择 / 过滤器（QSELECT / FILTER）----
     // 三者共用 SketchModel 选择集状态，与点击选择/框选/图层选择完全一致。
     QMenu* selMenu = e->addMenu(icons::make("qselect"), QStringLiteral("选择工具(&S)"));
@@ -489,6 +504,14 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("duplicate"));
     mk(arrayMenu, QStringLiteral("环形阵列..."), QKeySequence(), [this] { arrayPolar(); })
         ->setIcon(icons::make("rotate"));
+    mk(arrayMenu, QStringLiteral("路径阵列..."), QKeySequence(), [this] { arrayPath(); })
+        ->setIcon(icons::make("duplicate"));
+
+    // ---- 连合（JOIN）：同层 Line/Arc 按端点容差连合为 Polyline ----
+    // 容差取视图真实 snap 容差（8px/zoom），与画布拾取手感一致；
+    // 命令行入口 join [tol] 缺省 0.5mm。两者共用 modify::makeJoin。
+    mk(mod, QStringLiteral("连合(&J)"), QKeySequence(), [this] { joinSelected(); })
+        ->setIcon(icons::make("line_join"));
 
     // ---- 剖面填充（GB/T 4457.5-2013 技术制图 剖面区域的表示法）----
     // 把选中的闭合图元（圆/椭圆/矩形/多边形/闭合折线）转成剖面区域并套用标准剖面线规则。
@@ -923,6 +946,10 @@ void MainWindow::buildMenu() {
     sel->addSeparator();
     mk(sel, QStringLiteral("反选"),     QKeySequence("Ctrl+Shift+I"), [this] { model_->invertSelection(); })
         ->setIcon(icons::make("invert_selection"));
+    sel->addSeparator();
+    // 快速选择（QSELECT）：打开 QSelectDialog，按类型/图层/颜色/线型筛选并落地选择集
+    mk(sel, QStringLiteral("快速选择(&Q)..."), QKeySequence(), [this] { openQSelect(); })
+        ->setIcon(icons::make("qselect"));
     sel->addSeparator();
     // 按属性累加选择：以当前选中的"参考图元"的线型/颜色为匹配条件，把同类图元加入选区，
     // 保留已有选择（不清除、不取消）——满足"累加选择"需求。
@@ -3020,10 +3047,16 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     // 把绘图比例传给导出层，保证标注数字导出的是实物尺寸（GB/T 14690）
     const double ds = model_->scaleRatio();
     switch (fmt) {
-    case cadfmt::CadFormat::Dxf:
+    case cadfmt::CadFormat::Dxf: {
+        // 原生导出：块/标注/填充以原生实体写出（AutoCAD/ZWCAD 打开后标注与填充可编辑、
+        // 块不展开）。DWG/STEP 仍走预炸开的 exp（R12 二进制容器与 STEP 无块/标注语义）。
+        cadfmt::DxfExportOptions no;
+        no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
         // $INSUNITS 携带当前单位口径（AutoCAD 标准码），跨单位交换的语义锚点
-        out = cadfmt::toDxf(exp, &e, ds, insunitsCode(model_->units().length));
+        out = cadfmt::toDxf(model_->elements(), &e, ds, insunitsCode(model_->units().length),
+                            &model_->blockTable(), &no);
         break;
+    }
     case cadfmt::CadFormat::Dwg:
         out = cadfmt::toDwg(exp, &e, ds);
         break;
@@ -3103,10 +3136,13 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         if (rescaled)
             scaleElementsToUnit(imported, srcUnit);
         model_->clear();
+        // 块定义须先于 BlockRef 图元注册：INSERT 引用按名解析，缺定义则渲染为空。
+        for (const auto& b : st.blocks) model_->addBlockDef(b);
         model_->beginEdit(QStringLiteral("导入 DXF"));
         model_->addElementsQuiet(imported);
-        QString note = QStringLiteral("已打开 DXF：%1（导入 %2 个图元；标注/样条已按几何炸开）")
-                           .arg(path).arg(imported.size());
+        QString note = QStringLiteral("已打开 DXF：%1（导入 %2 个图元%3；标注/样条已按几何炸开）")
+                           .arg(path).arg(imported.size())
+                           .arg(st.blocks.empty() ? QString() : QStringLiteral("，块定义 %1 个").arg(st.blocks.size()));
         if (rescaled)
             note += QStringLiteral("；按文件头 $INSUNITS 自 %1 换算到 mm")
                         .arg(lengthUnitName(srcUnit));
@@ -3115,7 +3151,12 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
             note += QStringLiteral("；其中 %1 段圆弧因表示法差异按直线导入（另有 %2 段已还原）")
                         .arg(st.arcsDropped).arg(st.arcsKept);
         }
-        model_->log(note, st.arcsDropped > 0 ? "warn" : "info");
+        // 复杂实体（HATCH/DIMENSION/LEADER 降级、未知类型跳过）也须如实计数告知
+        if (st.fallbackEntities > 0)
+            note += QStringLiteral("；%1 个复杂实体已按基元降级导入").arg(st.fallbackEntities);
+        if (st.unknownEntities > 0)
+            note += QStringLiteral("；%1 个未知实体类型已跳过").arg(st.unknownEntities);
+        model_->log(note, (st.arcsDropped > 0 || st.fallbackEntities > 0 || st.unknownEntities > 0) ? "warn" : "info");
         // 打开后把整幅图适配居中。不能沿用 fitView()（固定 zoom=4 且以**原点**为中心）：
         // 外部 DXF 的图形常画在远离原点处（如 x≈200~240），按原点居中会落在视口外，
         // 表现为"打开了却一片空白"。
@@ -3415,6 +3456,8 @@ void MainWindow::arrayPolar() {
 void MainWindow::onCanvasPointPicked(const Vec3& p) {
     // 镜像（点 / 线）基准拾取优先处理：拦截后不进入阵列对话框回填逻辑。
     if (mirrorPending_) { handleMirrorPick(p); return; }
+    // 剪贴板（copybase 基点 / 粘贴落点）拾取次优先处理。
+    if (clipBasePending_ || clipPastePending_) { handleClipPick(p); return; }
     // 仅当处于拾取态且有活动对话框时回填；否则复位拾取态（避免左键被永久吞掉）。
     if (!view_->pointPickMode()) return;
     if (!activeArrayDialog_) {
@@ -3495,6 +3538,156 @@ void MainWindow::finishMirror() {
 
 void MainWindow::onPointPickCancelled() {
     if (mirrorPending_) finishMirror();
+    if (clipBasePending_ || clipPastePending_) finishClipPick();
+}
+
+// ============================ 连合（JOIN） ============================
+// GUI 入口：把选中的同层 Line/Arc 按端点容差连合为 Polyline。
+// 容差传 view_->worldTol()（= 8px/zoom，真实捕捉容差），与画布拾取手感一致；
+// 命令行入口 join [tol] 缺省 kJoinDefaultTol=0.5mm，两者共用 modify::makeJoin。
+void MainWindow::joinSelected() {
+    std::vector<Element> src = collectSelectedElements(model_);
+    if (src.empty()) { model_->log(QStringLiteral("请先选中要连合的 Line/Arc"), "warn"); return; }
+    auto changes = modify::makeJoin(src, view_->worldTol());
+    if (changes.empty()) {
+        model_->log(QStringLiteral("没有可连合的链（只连合同层且端点在容差内相接的 Line/Arc）"), "warn");
+        return;
+    }
+    model_->beginEdit(QStringLiteral("连合"));
+    const auto newIds = modify::applyChanges(model_, changes, QString());
+    if (!newIds.empty()) model_->setSelection(newIds);   // 选中连合结果，便于继续编辑
+    model_->log(QStringLiteral("连合：%1 条图元 → %2 条 Polyline")
+                    .arg(src.size()).arg(newIds.size()));
+}
+
+// ============================ 路径阵列 ============================
+// GUI 入口：选区中第一条 Polyline/Spline 作路径，其余图元沿路径等距布点。
+// 与命令行 arraypath 同一离散口径（32 段）与同一核心 modify::makePathArray。
+void MainWindow::arrayPath() {
+    std::vector<Element> src;
+    const Element* path = nullptr;
+    for (int id : model_->selection()) {
+        const Element* e = model_->element(id);
+        if (!e) continue;
+        if (!path && (e->type == ElementType::Polyline || e->type == ElementType::Spline))
+            path = e;                       // 第一条 Polyline/Spline 作路径
+        else
+            src.push_back(*e);              // 其余图元作阵列源
+    }
+    if (!path || src.empty()) {
+        model_->log(QStringLiteral("路径阵列需要选区同时含 1 条 Polyline/Spline（路径）与待阵列图元"), "warn");
+        return;
+    }
+    std::vector<Vec3> pathPts;
+    if (path->type == ElementType::Spline)
+        pathPts = geo::sampleSpline(path->pts, 32);
+    else
+        pathPts = geo::samplePolyline(path->pts, path->arcFlags, path->closed, 32);
+
+    bool ok = false;
+    const double spacing = QInputDialog::getDouble(
+        this, QStringLiteral("路径阵列"),
+        QStringLiteral("项目间距 (mm)："), 10.0, 0.001, 1.0e6, 2, &ok);
+    if (!ok) return;
+
+    auto changes = modify::makePathArray(src, pathPts, spacing);
+    if (changes.empty()) {
+        model_->log(QStringLiteral("路径阵列退化：路径太短或间距大于路径全长"), "warn");
+        return;
+    }
+    model_->beginEdit(QStringLiteral("路径阵列"));
+    const auto newIds = modify::applyChanges(model_, changes, QString());
+    if (!newIds.empty()) model_->setSelection(newIds);
+    model_->log(QStringLiteral("路径阵列：%1 个源图元 → 新增 %2 个副本（间距 %3 mm，路径 #%4）")
+                    .arg(src.size()).arg(newIds.size()).arg(spacing, 0, 'f', 2).arg(path->id));
+}
+
+// ============================ 剪贴板族（GUI 入口） ============================
+// 与命令行 ClipCommand 完全同语义：组包/落盘均走 clipboard 命名空间同一实现，
+// 唯一差异是交互形态——copybase 基点与粘贴落点经画布拾取（pointPickMode），
+// pasteclip 在命令行缺省落点 (0,0)，GUI 必须拾取一个落点（所见即所得）。
+
+void MainWindow::copyClipToClipboard(bool withBase) {
+    std::vector<Element> src = collectSelectedElements(model_);
+    if (src.empty()) { model_->log(QStringLiteral("无可复制图元（请先选中）"), "warn"); return; }
+    if (withBase) {
+        // 带基点复制：进入拾取态，落点即基点（图元在 handleClipPick 里组包）
+        clipBasePending_ = true;
+        model_->setActiveTool(QStringLiteral("select"));
+        view_->setPointPickMode(true);
+        model_->log(QStringLiteral("带基点复制：请单击指定基点"));
+        return;
+    }
+    // 复制：基点 = 选区包围盒左下角（对齐 AutoCAD 默认基点语义，与命令行一致）
+    clipboard::Payload p;
+    bool first = true;
+    double minX = 0, minY = 0;
+    for (const auto& e : src) {
+        const QRectF b = geo::elementBounds(e);
+        if (first) { minX = b.left(); minY = b.bottom(); first = false; }
+        else { minX = std::min(minX, b.left()); minY = std::min(minY, b.bottom()); }
+    }
+    p.base = Vec3(minX, minY, 0);
+    p.elements = std::move(src);
+    p.blocks = clipboard::collectBlockDeps(*model_, p.elements);
+    if (!clipboard::putToClipboard(p)) { model_->log(QStringLiteral("写入剪贴板失败"), "warn"); return; }
+    model_->log(QStringLiteral("已复制 %1 个图元到剪贴板（基点 %2,%3）")
+                    .arg(p.elements.size()).arg(p.base.x, 0, 'f', 2).arg(p.base.y, 0, 'f', 2));
+}
+
+void MainWindow::pasteFromClipboard(bool asBlock) {
+    clipboard::Payload p;
+    QString err;
+    if (!clipboard::getFromClipboard(&p, &err)) {
+        model_->log(err.isEmpty() ? QStringLiteral("剪贴板内容不可用") : err, "warn");
+        return;
+    }
+    clipPastePayload_ = std::move(p);
+    clipPastePending_ = true;
+    clipPasteAsBlock_ = asBlock;
+    model_->setActiveTool(QStringLiteral("select"));
+    view_->setPointPickMode(true);
+    model_->log(asBlock ? QStringLiteral("粘贴为块：请单击指定插入点")
+                        : QStringLiteral("粘贴：请单击指定落点（剪贴板基点将对齐该点）"));
+}
+
+void MainWindow::handleClipPick(const Vec3& p) {
+    if (clipBasePending_) {
+        // 带基点复制：拾取点即基点
+        clipBasePending_ = false;
+        if (view_->pointPickMode()) view_->setPointPickMode(false);
+        std::vector<Element> src = collectSelectedElements(model_);
+        if (src.empty()) { model_->log(QStringLiteral("无可复制图元"), "warn"); return; }
+        clipboard::Payload pay;
+        pay.base = p;
+        pay.elements = std::move(src);
+        pay.blocks = clipboard::collectBlockDeps(*model_, pay.elements);
+        if (!clipboard::putToClipboard(pay)) { model_->log(QStringLiteral("写入剪贴板失败"), "warn"); return; }
+        model_->log(QStringLiteral("已复制 %1 个图元到剪贴板（基点 %2,%3）")
+                        .arg(pay.elements.size()).arg(pay.base.x, 0, 'f', 2).arg(pay.base.y, 0, 'f', 2));
+        return;
+    }
+
+    // 粘贴落点：把暂存载荷粘贴到拾取点
+    clipboard::Payload pay = std::move(clipPastePayload_);
+    const bool asBlock = clipPasteAsBlock_;
+    finishClipPick();
+    model_->beginEdit(asBlock ? QStringLiteral("剪贴板-粘贴为块") : QStringLiteral("剪贴板-粘贴"));
+    QString msg;
+    if (!clipboard::pasteInto(model_, pay, p, asBlock, &msg)) {
+        model_->undo();   // 空转回滚：粘贴失败不留 beginEdit 快照
+        model_->log(msg.isEmpty() ? QStringLiteral("粘贴失败") : msg, "warn");
+        return;
+    }
+    model_->log(msg);
+}
+
+void MainWindow::finishClipPick() {
+    clipBasePending_ = false;
+    clipPastePending_ = false;
+    clipPasteAsBlock_ = false;
+    clipPastePayload_ = clipboard::Payload{};
+    if (view_->pointPickMode()) view_->setPointPickMode(false);
 }
 
 // 材料类别 → 中文标签（供日志/提示使用；与 SectionDialog 的可选项一致）。
@@ -3762,7 +3955,11 @@ void MainWindow::exportDxf() {
                                                     QStringLiteral("DXF (*.dxf)"));
     if (fn.isEmpty()) return;
     QString err;
-    const QByteArray body = cadfmt::toDxf(model_->elements(), &err, model_->scaleRatio());
+    // 原生导出：块/标注/填充以原生实体写出（AutoCAD/ZWCAD 打开后可编辑、块不展开）
+    cadfmt::DxfExportOptions no;
+    no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
+    const QByteArray body = cadfmt::toDxf(model_->elements(), &err, model_->scaleRatio(),
+                                          4, &model_->blockTable(), &no);
     if (body.isEmpty()) { model_->log(QStringLiteral("导出失败：") + err, "error"); return; }
     QFile f(fn);
     if (f.open(QIODevice::WriteOnly)) {
