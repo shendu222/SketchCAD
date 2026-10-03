@@ -197,6 +197,21 @@ target_include_directories(PlotStyleSamples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(PlotStyleSamples PRIVATE -Wall -Wextra)
 
+# ===================== README 配图生成器（模板图纸离屏渲染 PNG）=====================
+# 六个参数化模板（法兰/箱体/轴承座/法兰轮毂/户型/飞机三面图）经 PrintEngine
+# 真实渲染链产出 docs/images/*.png，供 README「图文并茂」配图。仅供文档出图。
+add_executable(ReadmeShots
+    bench/ReadmeShots.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_include_directories(ReadmeShots PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(ReadmeShots PRIVATE -Wall -Wextra)
+
 # ===================== 脚本宿主：可选语言引擎 =====================
 # 默认仅 JavaScript（Qt 内置 QJSEngine，零外部依赖）参与构建。
 # 开启下列开关可额外把 Python / VBA 引擎编译进程序，支持更多脚本语言。
