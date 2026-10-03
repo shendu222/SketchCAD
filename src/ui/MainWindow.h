@@ -9,6 +9,7 @@
 #include <QColor>
 #include "ui/LayerPanel.h"   // LayerPanel 定义（位于 namespace SketchCAD），供 layerPanel_ 成员使用
 #include "ui/ConstraintBar.h" // ConstraintBar 定义（约束栏面板，需求③④）
+#include "ui/DesignCenterPanel.h" // DesignCenterPanel 定义（设计中心侧栏，供 designPanel_ 成员使用）
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
 #include "core/Section.h"    // SectionStyle / SectionLoopSet（剖面填充点选模式的样式与缓存）
 #include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
@@ -67,7 +68,9 @@ private:
     using ActionGroupList = QList<QPair<QString, QList<QAction*>>>;
 
     QDockWidget *bomDock_, *elemDock_, *propDock_, *logDock_, *cmdDock_, *layerDock_, *constraintDock_;
+    QDockWidget* designDock_;                 // 设计中心（符号库浏览/插入）侧栏
     LayerPanel* layerPanel_;
+    DesignCenterPanel* designPanel_;          // 设计中心面板（块表树 + 外部块库）
     ConstraintBar* constraintBar_;   // 约束栏面板（展示选中图元的约束与状态）
     // 工具条拆成两行，避免单行过长导致按钮被截断/挤压缩水/溢出窗口：
     //   toolbar_  = 第一行「草图工具」：选择 / 图元 / 曲线 / 标注 / 修改
@@ -273,6 +276,7 @@ private:
     void openPrintPreview();                             // 打印预览（QPrintPreviewWidget）
     void printDirect();                                 // 直接打印到打印机（模型空间）
     void exportPdfDirect();                             // 直接导出 PDF（QPdfWriter）
+    void exportPdfLayoutsDirect();                      // 按布局表导出 PDF（每布局一页；空表回落模型空间单页）
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"
@@ -289,9 +293,12 @@ private:
     void openInsertBlockDialog();                     // 插入块...（带预览）
     void openCreateBlockDialog();                     // 创建块...
     void openBlockManagerDialog();                    // 块管理器...（重命名/删除/重定义）
+    void openBlockEditorDialog();                     // BEDIT 在位编辑块（改一份定义 → 全部引用同步）
+    void openDesignCenter();                          // 设计中心（符号库浏览/插入）侧栏
     void explodeBlockFromMenu();                      // 分解块...（当前选中的块引用）
     void openAttachXrefDialog();                      // 附加外部参照...（选择文件 + 路径类型）
     void detachXrefFromMenu();                        // 分离外部参照...（从已附加列表中选择）
+    void insertBlockAtViewCenter(const QString& name); // 设计中心双击块 → 视图中心插入引用
 
     // ---- 样式（线宽 / 颜色）----
     void applyWidth(double px);               // 设默认线宽；若有选中则同时改选中图元

@@ -41,11 +41,26 @@ bool SelectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
             }
             ctx.model->toggleSelection(hit);
         } else if (ctx.model->isSelected(hit)) {
-            // 点击已选中图元 → 进入平移预备态
+            // 点击已选中图元 → 进入平移预备态（编组点击已扩展为整组，拖动即整组平移）
             ctx.setDragMovePending(true, w);
         } else {
-            ctx.model->setSelected(hit);
-            ctx.breakCycle();   // 普通选择退出选择循环
+            // 编组整体选中：普通点击命中编组成员 → 扩展为整组（Ctrl/Shift 分支已在
+            // 上方按单选切换处理，天然「穿透编组」）；FILTER 预选器若在位则对候选
+            // 过滤一次（用后即清）。
+            std::vector<int> ids = ctx.model->expandPickToGroup(hit, /*additive=*/false);
+            ids = ctx.model->applyPickFilterOnce(ids);
+            if (ids.empty()) {
+                ctx.model->clearSelection();
+                ctx.breakCycle();
+            } else if (ids.size() > 1) {
+                ctx.model->setSelection(ids);
+                ctx.model->log(QString("编组「%1」整体选中：%2 个对象（Ctrl+点击可穿透编组单选）")
+                                   .arg(ctx.model->element(hit)->groupName).arg(ids.size()));
+                ctx.breakCycle();
+            } else {
+                ctx.model->setSelected(ids.front());
+                ctx.breakCycle();   // 普通选择退出选择循环
+            }
         }
         return true;
     }

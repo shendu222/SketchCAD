@@ -1,5 +1,6 @@
 #include "Geometry.h"
 #include "SplineModes.h"
+#include "Gdt.h"   // buildFcf：形位公差框格距离/包围盒（无头纯几何，自测可直测）
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -422,6 +423,27 @@ double distanceToElement(const Element& e, const Vec3& p) {
         case ElementType::Point:
             return e.pts.empty() ? kBig : p.distTo(e.pts[0]);
 
+        case ElementType::MLeader: {
+            // 多重引线：到引线折线（附着点→折点→基线起点）各段的最短距离。
+            // 精确命中主要走 shape()；此处服务「最近实体」检索，故只算引线本体。
+            if (e.pts.size() < 2) return kBig;
+            double best = kBig;
+            for (size_t i = 0; i + 1 < e.pts.size(); ++i)
+                best = std::min(best, distPointSegment(p, e.pts[i], e.pts[i + 1]));
+            return best;
+        }
+
+        case ElementType::Fcf: {
+            // 形位公差框格：到框格矩形（pts[0] 左下角 + 由内容估算的格宽）的距离。
+            const FcfGeom g = buildFcf(e);
+            if (!g.valid || g.cells.empty()) return kBig;
+            QRectF r = g.cells.front().rect;
+            for (const auto& c : g.cells) r = r.united(c.rect);
+            const double dx = std::max({ 0.0, r.left() - p.x, p.x - r.right() });
+            const double dy = std::max({ 0.0, r.bottom() - p.y, p.y - r.top() });
+            return std::sqrt(dx * dx + dy * dy);
+        }
+
         case ElementType::Xline: {
             // 构造线：点到无限直线的距离（方向向量是单位向量，叉积绝对值即点线距离）。
             // 命中整条延伸线 —— 与"无限延伸"的显示一致，交点捕捉/近距拾取都依赖它。
@@ -832,7 +854,23 @@ QRectF elementBounds(const Element& e) {
         if (x > maxX) maxX = x;
         if (y > maxY) maxY = y;
     };
-    if (e.type == ElementType::Circle || e.type == ElementType::Arc) {
+    if (e.type == ElementType::Fcf) {
+        // 形位公差框格：按各格矩形并集（框格是正长方形，精确bounds）
+        const FcfGeom g = buildFcf(e);
+        if (g.valid && !g.cells.empty()) {
+            QRectF r = g.cells.front().rect;
+            for (const auto& c : g.cells) r = r.united(c.rect);
+            return r;
+        }
+    } else if (e.type == ElementType::MLeader) {
+        // 多重引线：引线折线 + 基线端点（文字另行叠加，见下）
+        const MLeaderGeom g = buildMLeader(e);
+        if (g.valid) {
+            for (const auto& s : g.leader) { inc(s.a.x, s.a.y); inc(s.b.x, s.b.y); }
+            for (const auto& s : g.landing) { inc(s.a.x, s.a.y); inc(s.b.x, s.b.y); }
+            for (const auto& t : g.texts) inc(t.anchor.x, t.anchor.y);
+        }
+    } else if (e.type == ElementType::Circle || e.type == ElementType::Arc) {
         // 圆/弧：按角度采样整段（圆弧可能比其端点更外凸，纯端点包围盒会漏选）
         if (!e.pts.empty() && e.radius > 1e-9) {
             const Vec3 c = e.pts[0];

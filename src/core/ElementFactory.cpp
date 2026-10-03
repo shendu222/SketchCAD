@@ -201,4 +201,34 @@ Element ElementFactory::createBoundary(const std::vector<Vec3>& pts,
     return e;
 }
 
+// 多重引线（MLeader）：pts=[附着点, 折点, 文字基线起点]，文字/字高/基线/箭头写专用字段。
+Element ElementFactory::createMLeader(const Vec3& tip, const Vec3& elbow, const Vec3& textAnchor,
+                                      const QString& text, double heightMm,
+                                      double landingMm, double arrowLenMm,
+                                      const SketchModel* model) {
+    Element e = create(ElementType::MLeader, QStringLiteral("多重引线"), model);
+    e.pts = { tip, elbow, textAnchor };
+    e.text   = text;
+    e.radius = (heightMm > 1e-6) ? heightMm : 3.5;      // 复用 radius = 文字高度(mm)
+    e.mleaderLanding  = landingMm;
+    e.mleaderArrowLen = (arrowLenMm > 1e-6) ? arrowLenMm : 3.5;
+    e.lineStyle = LineStyle::Solid;
+    return e;
+}
+
+// 形位公差框格（Fcf，GB/T 1182）：pts[0]=框格左下角，radius=框格高/字高，符号/公差/基准写专用字段。
+Element ElementFactory::createFcf(const Vec3& anchor, int symbol, const QString& tolerance,
+                                  const std::vector<QString>& datums, double heightMm,
+                                  const QString& modifier, const SketchModel* model) {
+    Element e = create(ElementType::Fcf, QStringLiteral("形位公差框格"), model);
+    e.pts = { anchor };
+    e.radius       = (heightMm > 1e-6) ? heightMm : 7.0;   // 复用 radius = 框格高/字高
+    e.fcfSymbol    = symbol;
+    e.fcfTolerance = tolerance;
+    e.fcfModifier  = modifier;
+    e.fcfDatums    = datums;
+    e.lineStyle = LineStyle::Solid;
+    return e;
+}
+
 } // namespace SketchCAD

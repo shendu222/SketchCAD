@@ -15,9 +15,12 @@
 #include "QSelect.h"
 #include "Units.h"
 #include "Snap.h"
+#include "Layout.h"   // PlotLayoutDef / PrintSettings（布局表）
 #include "ConstraintSolver.h"   // 显式几何约束表（ConstraintRecord）
 
 namespace SketchCAD {
+
+struct SectionStyle;   // 前向声明（定义在 Section.h；避免 SketchModel.h ↔ Section.h 循环包含）
 
 // 中央数据模型（QObject，信号驱动 UI 联动）
 class SketchModel : public QObject {
@@ -160,6 +163,22 @@ public:
     QJsonArray layersToJson() const;
     void setLayersFromJson(const QJsonArray& arr);
 
+    // ---- 图层动态语义（冻结/打印/透明度；仅追加接口，不动既有接口）----
+    // 冻结（frozen）：独立于 visible 的硬隔离——冻结层图元不参与命中/重算/打印（AutoCAD FROZEN 语义）。
+    // 打印开关（plot）：false = 该层不打印（可显示但不出图）。
+    // 透明度（alpha）：0~1，叠加到本层图元颜色 alpha 通道。
+    bool setLayerFrozen(const QString& name, bool frozen);
+    bool setLayerPlot(const QString& name, bool plot);
+    bool setLayerAlpha(const QString& name, double alpha);
+    // ByLayer 解析：byLayer=true 时返回「图层属性覆盖」后的图元副本（颜色/线型/线宽取自图层，线宽按固定值；
+    //   图层 alpha 叠加到颜色 alpha）；byLayer=false 或图层缺失时原样返回（快照语义）。
+    //   渲染（GraphicsView::penFor）与打印（PlotRenderer::paintOne）两侧共用此唯一入口。
+    Element resolveElement(const Element& e) const;
+    // 命中可拾取性：visible 且(所属图层未冻结) → 可拾取（冻结层零命中）。供 hitTest 与选择集统一判定。
+    bool elementPickable(const Element& e) const;
+    // 可打印性：所属图层未冻结且开启打印 → 可打印（冻结/关闭打印层打印零输出）。
+    bool elementPrintable(const Element& e) const;
+
     // ---- 块（Block）管理 ----
     // 采用「引用式」：块表存唯一一份 BlockDef；元素 BlockRef 只存块名 + 插入变换 +
     // 属性值 + 动态参数值。因此"块内图元被修改后同步更新所有引用"= 改一份定义即可，
@@ -205,6 +224,39 @@ public:
     QJsonArray blocksToJson() const;
     void setBlocksFromJson(const QJsonArray& arr);
 
+    // ---- BEDIT（块在位编辑）----
+    // 引用式模型下"改块内几何 → 所有引用同步刷新"天然成立：redefineBlockEntities 只改一份
+    // BlockDef 的 entities，所有 BlockRef 在渲染/命中/导出时经 expandBlockRef 实时读取，无需反向推送。
+    // 把块定义的块内图元取出为可编辑副本（attdefs/dynParams/basePoint 等定义不动，仅取 entities）。
+    std::vector<Element> getBlockEntities(const QString& name) const;
+    // 写回块内几何：仅替换 entities，保留 attdefs / dynParams / basePoint / description /
+    // Xref 字段；自动入撤销栈；引用实时刷新。Esc/取消时调用方不调用本函数即"不落盘"。
+    bool redefineBlockEntities(const QString& name, const std::vector<Element>& ents);
+
+    // ---- 填充边界联动（关联填充 / hatchedit）----
+    // 关联填充：把 hatchId 的填充边界来源登记为 srcIds（保留边界图元本体不动），
+    // 之后边界图元几何变更时经 refreshHatchBoundaries 自动重算该填充的 pts/holes。
+    // 仅接受可成环的边界（复用 Boundary 引擎判定）；不成环 → 拒绝并返回 false。
+    // 关联默认开（Element::hatchAssociative=true）；detach（置 false）即回到静态填充。
+    bool  associateHatchBoundary(int hatchId, const std::vector<int>& srcIds);
+    // 关联填充创建：由边界来源图元 srcIds 直接生成一个新的关联填充(Hatch)并入模型，
+    // **保留边界图元本体不动** —— 这是"改图后填充随动"的前提（既有"点选/先选后填"
+    // 填充会消费掉独占边界源，故关联填充需走本独立入口）。边界不成环 → 返回 -1。
+    // style 决定材质/角度/间距；来源 id 记入 hatchSrcIds 且 hatchAssociative=true。
+    int   createAssociativeHatch(const std::vector<int>& srcIds, const SectionStyle& style);
+    // 断开关联：清空来源并置 hatchAssociative=false（回到静态填充，边界再变不再随动）。
+    bool  detachHatchBoundary(int hatchId);
+    // 变更联动核心：把「本次被改/被删的图元 id 集合」映射到受影响的关联填充并重算
+    // 边界（复用 Boundary 引擎 buildClosedLoopsFromElements）；边界消失/不再成环则把
+    // 该填充标记失效（hatchInvalid=true）并计入返回值。仅重算受影响 Hatch（性能约束）。
+    // applyChanges / moveHandles / removeElement(s) 等几何变更出口统一调用本函数。
+    // 不压撤销栈——由调用方的 beginEdit/单步快照统一覆盖（改边界+填充重算 = 一个编辑步）。
+    int   refreshHatchBoundaries(const std::vector<int>& changedIds);
+    // hatchedit 支撑：就地改填充的「图案覆盖 / 比例 / 关联」字段（保留边界与既有 4 字段）。
+    // 单步撤销：beginEdit 由调用方做一次，本函数只做 updateElementQuiet 写入。
+    bool  setHatchPatternOverride(int hatchId, const QString& patName, double scale,
+                                  int triStateAssoc /* -1=不动 0=关 1=开 */);
+
     // ---- 文字样式（STYLE）管理 ----
     // 与图层/块表同级，由模型持有唯一数据源；图元经 Element::styleName 引用样式名，
     // 渲染/导出时按样式表解析字体/字高/宽度因子，实现「改样式 → 引用文字同步更新」。
@@ -243,6 +295,12 @@ public:
     // 整体选中编组全部成员（一次 selectionChanged），返回成员数
     int  selectGroup(const QString& name);
 
+    // ---- 编组整体选中语义（点击拾取扩展）----
+    // 普通点击命中编组成员 → 扩展为整组（仅可见成员，保持图元遍历序）；
+    // additive（Ctrl/Shift 修饰）= 穿透编组，只返回 {id} 本身（单选语义不变）。
+    // 非编组图元无论修饰键一律 {id}。纯查询不改选择集，UI 结算走 setSelection。
+    std::vector<int> expandPickToGroup(int id, bool additive) const;
+
     // ---- 快速选择 / 过滤器（QSELECT / FILTER）与选择集的统一落地口 ----
     // 替换/追加/排除一次完成，全程只发一次 selectionChanged（大图 O(n) 次刷新禁绝）。
     void applySelectionDelta(const std::vector<int>& hits, QSelectAction action);
@@ -255,6 +313,19 @@ public:
     bool deleteFilter(const QString& name);
     QJsonArray savedFiltersToJson() const;
     void setSavedFiltersFromJson(const QJsonArray& arr);
+
+    // ---- FILTER 预选器（作用于「随后一次」选择操作，用后即清）----
+    // 与 savedFilters（持久化命名过滤器）不同：预选器是**瞬态会话配置**（不入撤销栈、
+    // 不随图存档）。设置后，下一次点击/框选/栏选的候选集经 matchFilter 过滤，随即自动
+    // 清除——「预选」语义：约束一次选择，而不是持续改写选择行为。
+    const FilterDef& activePickFilter() const { return activePickFilter_; }
+    bool hasActivePickFilter() const { return !activePickFilter_.conds.empty(); }
+    // 空条件 FilterDef 等价清除（幂等）
+    void setActivePickFilter(const FilterDef& f);
+    void clearActivePickFilter();
+    // 对候选集套用预选器：无活动预选器 → 原样返回（不清除）；有 → 仅保留可见且
+    // matchFilter 命中的候选（保持原顺序），并消费（清除）预选器。UI 三处结算口共用。
+    std::vector<int> applyPickFilterOnce(const std::vector<int>& candidates);
 
     // ---- 单位（UNITS）与图纸界限（LIMITS）----
     // 单位不变式：内部几何一律 mm；单位设置只定义「显示与输入的换算口径」。
@@ -371,10 +442,63 @@ public:
     // 凡是要读标注数字的地方（渲染、导出、日志）都应从这里取样式再调 dim::build，
     // 否则会退回默认 1:1，把 1:2 图纸上的 100mm 显示成 50。
     dim::Style dimStyle() const;
+    // ---- 命名标注样式表（一图多标准 GB/T 4458.4 + ISO 129-1 并存）----
+    // 图元经 Element::dimStyleName **按名引用**表中条目（引用式，对标 blockTable 范式）：
+    // 改某条样式 → 引用它的全部标注实时联动；无 id 悬空。
+    int  dimStyleCount() const { return (int)dimStyles_.size(); }
+    const dim::DimStyleEntry* dimStyleAt(int i) const;             // 越界返回 nullptr
+    const dim::DimStyleEntry* findDimStyle(const QString& name) const;
+    bool hasDimStyle(const QString& name) const { return findDimStyle(name) != nullptr; }
+    // 新建样式：空名 / 重名 → false（自带撤销快照，可单独撤销）
+    bool addDimStyle(const dim::DimStyleEntry& e);
+    // 原地更新样式定义（按 name；改名同步更新引用它的图元 dimStyleName）
+    bool updateDimStyle(const dim::DimStyleEntry& e);
+    // 重命名样式：同步更新所有引用它的图元
+    bool renameDimStyle(const QString& oldName, const QString& newName);
+    // 删除样式：引用它的图元 dimStyleName 置空（回落当前样式）
+    bool removeDimStyle(const QString& name);
+    QString currentDimStyle() const { return currentDimStyle_; }
+    bool setCurrentDimStyle(const QString& name);
+    // **解析某图元实际应使用的样式**：dimStyleName → 表中条目；为空/未命中 → 当前样式；
+    // 两者都无则回落一张默认 dim::Style。已带上当前绘图比例（见 dimStyle()）。
+    // 渲染/导出/日志一律走此入口（与 dimStyle() 单一比例入口同源）。
+    dim::Style dimStyleFor(const Element& e) const;
+    // 序列化：样式表 + 当前样式名（随图存档；旧档无此字段 → 自动生成默认 "Standard"）
+    QJsonObject dimStylesToJson() const;
+    void       setDimStylesFromJson(const QJsonObject& o);
     void   setScaleRatio(double r, bool allowUndo = true);
     // 只改比例值、不缩放图元。用于读档：存档里的几何已经是按该比例画好的成品，
     // 若再走 setScaleRatio 会被二次缩放。allowUndo=false 时纯赋值（不压撤销）。
     void   setScaleRatioValue(double r);
+
+    // ---- 布局表（多布局：布局名 + 页面设置 + 视口集；随图存档，不入撤销栈）----
+    // 每个 PlotLayoutDef 持有一份完整 PrintSettings（页面参数/样式映射/视口集）。
+    // currentLayout_ 为空 → 模型空间打印（旧档无布局 key 时的回落行为）。
+    int  layoutCount() const { return (int)layouts_.size(); }
+    const PlotLayoutDef* layoutAt(int i) const;                // 越界返回 nullptr
+    const PlotLayoutDef* findLayout(const QString& name) const;
+    bool hasLayout(const QString& name) const { return findLayout(name) != nullptr; }
+    // 新建布局：空名 / 重名 → false。发出 layoutsChanged()。
+    bool addLayout(const QString& name, const PrintSettings& settings);
+    // 删除布局：若被删的是当前布局 → currentLayout_ 清空（回落模型空间）。
+    bool removeLayout(const QString& name);
+    bool renameLayout(const QString& oldName, const QString& newName);
+    // 原地替换布局的页面设置/视口集（不改名）；未命中 → false。
+    bool updateLayout(const QString& name, const PrintSettings& settings);
+    QString currentLayout() const { return currentLayout_; }   // 空 = 模型空间
+    // 切换当前布局：空名 = 切回模型空间；名字不存在 → false。
+    bool setCurrentLayout(const QString& name);
+    // 当前布局定义；无布局/当前为模型空间 → nullptr（打印链按模型空间处理）。
+    const PlotLayoutDef* currentLayoutDef() const;
+    // 序列化：顶层 "layouts" 数组 + "currentLayout" 字符串。旧档缺键 → 空表回落模型空间。
+    QJsonArray layoutsToJson() const;
+    void       setLayoutsFromJson(const QJsonObject& root);
+
+    // ---- 全局线型比例（LTSCALE，随图存档，不入撤销栈）----
+    // 控制所有虚线/点画线/双点画线的线素长度（dashSpecFor 图案整体缩放 LTSCALE 倍）。
+    // 渲染（penFor）与打印（makePen）两侧共用 model_->ltscale()，保证屏幕与图纸比例一致。
+    double ltscale() const { return ltscale_; }
+    void   setLtscale(double v);   // 与现值相同/非法(≤0)则静默忽略；变化发 ltscaleChanged()
 
     // ---- 绘制前样式（新建图元的默认颜色 / 线宽）----
     // 放在模型里而不是某个面板里，是为了让工具条、菜单、属性面板、命令行
@@ -485,10 +609,13 @@ signals:
     void showLineWeightChanged(bool on);                    // 线宽显示开关变化（状态栏/渲染联动）
     void dynModeChanged(bool on);                            // 动态输入 DYN 开关变化
     void scaleChanged(double ratio);
+    void ltscaleChanged(double ratio);                 // 全局线型比例变化（状态栏/渲染联动）
     void layersChanged();                    // 图层表增删/改名/样式/可见性变化
     void currentLayerChanged(const QString& name);   // 活动图层切换（用于 HUD 实时显示 / 面板高亮）
     void blocksChanged();                    // 块表增删/改名/重定义变化（引用需重绘）
     void textStylesChanged();                // 文字样式表变化（管理器需刷新）
+    void dimStylesChanged();                 // 标注样式表/当前样式变化（引用它的标注需重绘）
+    void layoutsChanged();                   // 布局表/当前布局变化（布局管理器/打印链需刷新）
     void unitsChanged();                     // 单位设置变化（状态栏/参数输入条实时跟随）
     void limitsChanged();                    // 图纸界限变化
     void snapConfigChanged();                // 捕捉全局配置变化（设置面板/菜单改动后即时生效）
@@ -498,7 +625,7 @@ signals:
     void paramsChanged();                    // 参数表变化（添加/修改/删除设计变量）
 
 private:
-    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; std::map<QString,double> params; };
+    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; std::map<QString,double> params; std::vector<dim::DimStyleEntry> dimStyles; QString currentDimStyle; };
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
@@ -518,6 +645,7 @@ private:
     bool chainLine_ = true;    // 直线默认连续绘制，右键结束
     LineDrawParams lp_;        // 直线绘制参数输入条（角度/长度、平行间隔/条数）
     double scaleRatio_ = 1.0;  // 绘图比例（图形:实际），1.0 = 1:1
+    double ltscale_ = 1.0;     // 全局线型比例（LTSCALE），1.0 = 标准线素长度
     QString commandPrompt_;    // 当前分段命令提示文本
     QStringList commandOptions_;   // 当前分段命令可选项关键字（如 ["C/闭合","U/放弃"]）
     bool showLineWeight_ = false;  // 线宽显示开关（状态栏可点击，默认关）
@@ -527,7 +655,12 @@ private:
     QString currentLayer_ = QStringLiteral("0");   // 活动图层（绘制目标层），默认 "0"
     std::vector<BlockDef> blocks_;   // 块表（唯一一份定义，所有 BlockRef 共享）
     std::vector<TextStyle> textStyles_;   // 文字样式表（唯一数据源，图元经 styleName 引用）
+    std::vector<dim::DimStyleEntry> dimStyles_;  // 标注样式表（一图多标准；图元经 dimStyleName 引用）
+    QString currentDimStyle_ = QStringLiteral("Standard");  // 当前标注样式（dimStyleName 为空者用它）
     std::vector<FilterDef> savedFilters_; // 命名过滤器（FILTER 保存/复用；仅持久化不入撤销栈）
+    FilterDef activePickFilter_;          // FILTER 预选器（瞬态，作用于随后一次选择，用后即清）
+    std::vector<PlotLayoutDef> layouts_;  // 布局表（多布局；不入撤销栈，随图存档）
+    QString currentLayout_;               // 当前布局名（空 = 模型空间）
     UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
     LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
     snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档，不入撤销栈）

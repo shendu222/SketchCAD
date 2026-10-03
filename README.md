@@ -6,7 +6,7 @@
 
 ![Build](https://img.shields.io/badge/build-SketchCAD%20%2F%20SelfTest-passing-brightgreen)
 
-![Tests](https://img.shields.io/badge/tests-403%20%2F%200%20passed-blue)
+目标】图层从"快照式分组"升级为主流动态语义，支撑大图治理与外来图纸语义还原。 【范围】1) ByLayer：Element 增加 byLayer 标志（默认新图元开），渲染/打印期动态解析层属性 （快照值作为 override 保留，属性面板单改图元自动转为 override）；2) 冻结 frozen/ 打印开关 plot/透明度 alpha 字段入 Layer（只增不改），冻结层不参与命中/重算/打印； 3) LTSCALE 全局线型比例（随图存档，命令 ltscale + 状态栏入口）；4) LAYISO/LAYUNISO/ LAYMCH 三条高频治理命令。 【约束】Layer 结构字段只增不改；旧档读入时 byLayer=false+快照=现值（行为完全向后兼容）； visible 烧进图元的历史行为保留（frozen 独立于 visible，二者叠加语义文档化）； GB/T 14665 标准层模板不动。 【验收】旧档逐字节语义兼容断言；冻结层图元 hitTest 零命中+打印零输出；ByLayer 改层色全层 实时联动断言；LTSCALE 0.5/2.0 下虚线段长比例断言；自测新增 ≥15 断言；零警告。
 
 
 

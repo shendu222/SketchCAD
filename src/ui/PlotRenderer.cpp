@@ -4,6 +4,7 @@
 #include "core/Section.h"          // hatchRegionFromElement / hatchDrawMode / generateHatchLines / generateHatchDots
 #include "core/Geometry.h"         // geo::Seg
 #include "core/DimStyle.h"         // dim::build / dim::Style / dim::Geom / dim::Arrow
+#include "core/Gdt.h"              // buildMLeader / buildFcf：多重引线与形位公差框格打印
 #include "core/DimensionStandard.h"// DimensionStandardConfig / ArrowForm
 #include "core/SheetSpec.h"        // standardTextHeightMm / currentSheetFormat
 #include <QPainterPath>
@@ -63,7 +64,7 @@ constexpr double kMaxPrintMm = 0.8;
 // （300dpi/A4 适配下 0.5mm 线被放大成数毫米的墨团，且虚线 dash 同步拉长连成实带）。
 // 屏幕渲染（ElementItem::penFor）用的是 cosmetic 笔 + 固定像素宽，因此两边单位语义不同、
 // 各自正确；dash 图案（Qt 单位=线宽 d）在两种语义下均与几何保持同一比例。
-QPen makePen(const Element& e, double scaleDev, const ResolvedPlotStyle& rs, double lineWidthScale) {
+QPen makePen(const Element& e, double scaleDev, const ResolvedPlotStyle& rs, double lineWidthScale, double ltscale) {
     (void)scaleDev;                               // 宽度走逻辑 mm，scaleDev 仅由变换承担
     QPen pen(rs.color);
     pen.setCosmetic(false);
@@ -76,9 +77,10 @@ QPen makePen(const Element& e, double scaleDev, const ResolvedPlotStyle& rs, dou
         pen.setStyle(Qt::SolidLine);             // 波浪/双折线由 buildPath 自定义路径绘制
         pen.setCapStyle(Qt::FlatCap);
     } else {
-        const DashSpec spec = dashSpecFor(e.lineStyle);
+        // LTSCALE：线素长度整体缩放（dashSpecScaled 同步缩放 pattern 与 minLengthD）
+        const DashSpec spec = dashSpecScaled(e.lineStyle, ltscale);
         const double lenMm = worldLengthOf(e);
-        if (spec.valid && !shouldFallbackToSolid(e.lineStyle, lenMm, effW)) {
+        if (spec.valid && lenMm >= spec.minLengthD * effW) {
             pen.setStyle(Qt::CustomDashLine);
             QVector<qreal> pat; pat.reserve((int)spec.pattern.size());
             for (double v : spec.pattern) pat.push_back(v);
@@ -125,9 +127,11 @@ struct Ctx {
     SketchModel* model = nullptr;
     QRectF clip;                  // 世界坐标裁剪矩形（Xline 用）
     const PlotStyleTable* style = nullptr;
+    double ltscale = 1.0;         // 全局线型比例（LTSCALE），随图元虚线长度缩放
 };
 
 void paintHatch(QPainter* p, const Element& e, Ctx& c);
+void paintGdt(QPainter* p, const Element& e, Ctx& c);   // 多重引线 / 形位公差框格（GD&T）
 void paintBoundary(QPainter* p, const Element& e, Ctx& c);
 void paintDimension(QPainter* p, const Element& e, Ctx& c);
 void paintText(QPainter* p, const Element& e, Ctx& c);
@@ -136,21 +140,29 @@ void paintTable(QPainter* p, const Element& e, Ctx& c);
 
 void paintOne(QPainter* p, const Element& e, Ctx& c) {
     if (e.type == ElementType::Constraint) return;   // 求解约束标记不打印
-    if (e.type == ElementType::Dimension) { paintDimension(p, e, c); return; }
-    if (e.type == ElementType::Text)      { paintText(p, e, c);      return; }
-    if (e.type == ElementType::Table)     { paintTable(p, e, c);     return; }
-    if (e.type == ElementType::Hatch)     { paintHatch(p, e, c);     return; }
-    if (e.type == ElementType::Boundary)  { paintBoundary(p, e, c);  return; }
-    if (e.type == ElementType::BlockRef)  { paintBlockRef(p, e, c);  return; }
+    // 图层动态语义：冻结层或关闭打印层 → 打印零输出（命中零、重算零、打印零）
+    if (c.model) {
+        const Layer* L = c.model->findLayer(e.layer);
+        if (L && (L->frozen || !L->plot)) return;
+    }
+    // ByLayer 动态解析：与渲染侧共用 model->resolveElement，保证改层属性全层实时联动
+    const Element& ee = (c.model ? c.model->resolveElement(e) : e);
+    if (ee.type == ElementType::Dimension) { paintDimension(p, ee, c); return; }
+    if (ee.type == ElementType::MLeader || ee.type == ElementType::Fcf) { paintGdt(p, ee, c); return; }
+    if (ee.type == ElementType::Text)      { paintText(p, ee, c);      return; }
+    if (ee.type == ElementType::Table)     { paintTable(p, ee, c);     return; }
+    if (ee.type == ElementType::Hatch)     { paintHatch(p, ee, c);     return; }
+    if (ee.type == ElementType::Boundary)  { paintBoundary(p, ee, c);  return; }
+    if (ee.type == ElementType::BlockRef)  { paintBlockRef(p, ee, c);  return; }
 
-    const ResolvedPlotStyle rs = c.style->resolve(e);
+    const ResolvedPlotStyle rs = c.style->resolve(ee);
     QPainterPath path;
-    if (e.type == ElementType::Xline)
-        path = ElementPath::buildPath(e, c.clip);     // 无限线：按页面裁剪
+    if (ee.type == ElementType::Xline)
+        path = ElementPath::buildPath(ee, c.clip);     // 无限线：按页面裁剪
     else
-        path = ElementPath::buildPath(e);
+        path = ElementPath::buildPath(ee);
     if (!path.isEmpty()) {
-        p->setPen(makePen(e, c.scaleDev, rs, c.lineWidthScale));
+        p->setPen(makePen(ee, c.scaleDev, rs, c.lineWidthScale, c.ltscale));
         p->setBrush(Qt::NoBrush);
         p->drawPath(path);
     }
@@ -332,6 +344,61 @@ void paintDimension(QPainter* p, const Element& e, Ctx& c) {
     p->restore();
 }
 
+// GD&T 打印：多重引线（实心箭头 + 引线 + 基线 + 文字）与形位公差框格（框线 + 符号 + 文字）。
+// 线框/符号笔画统一走 ElementPath::buildPath（与渲染同源），此处补实心箭头与文字。
+void paintGdt(QPainter* p, const Element& e, Ctx& c) {
+    const ResolvedPlotStyle rs = c.style->resolve(e);
+    const bool isLeader = (e.type == ElementType::MLeader);
+    const MLeaderGeom ml = isLeader ? buildMLeader(e, 1.0) : MLeaderGeom();
+    const FcfGeom     fg = (!isLeader) ? buildFcf(e, 1.0) : FcfGeom();
+
+    // 线框 / 符号 / 引线 / 基线
+    QPainterPath path = ElementPath::buildPath(e, c.clip);
+    if (!path.isEmpty()) {
+        p->setPen(makePen(e, c.scaleDev, rs, c.lineWidthScale, c.ltscale));
+        p->setBrush(Qt::NoBrush);
+        p->drawPath(path);
+    }
+
+    // 多重引线实心箭头
+    if (isLeader && ml.valid && !ml.leader.empty()) {
+        const Vec3 tip = ml.arrowTip;
+        Vec3 d = ml.leader.front().b - ml.leader.front().a;
+        double L = std::hypot(d.x, d.y);
+        if (L < 1e-9) { d = Vec3(1, 0, 0); L = 1.0; }
+        d.x /= L; d.y /= L;
+        const Vec3 base(tip.x + d.x * ml.arrowLen, tip.y + d.y * ml.arrowLen, tip.z);
+        const Vec3 n(-d.y * ml.arrowWidth, d.x * ml.arrowWidth, tip.z);
+        QPolygonF tri;
+        tri << QPointF(tip.x, tip.y)
+            << QPointF(base.x + n.x, base.y + n.y)
+            << QPointF(base.x - n.x, base.y - n.y);
+        p->setPen(Qt::NoPen);
+        p->setBrush(rs.color);
+        p->drawPolygon(tri);
+        p->setBrush(Qt::NoBrush);
+    }
+
+    // 文字（多重引线多行 + 框格各格）
+    const std::vector<GdtText>& texts = isLeader ? ml.texts : fg.texts;
+    if (!texts.empty()) {
+        p->save();
+        p->setPen(rs.color);
+        for (const auto& t : texts) {
+            if (t.text.isEmpty()) continue;
+            p->save();
+            p->translate(t.anchor.x, t.anchor.y);
+            p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);
+            QFont f = p->font();
+            f.setPixelSize(std::max(6, (int)std::lround(t.height * c.scaleDev)));
+            p->setFont(f);
+            p->drawText(QPointF(0, 0), t.text);
+            p->restore();
+        }
+        p->restore();
+    }
+}
+
 void paintText(QPainter* p, const Element& e, Ctx& c) {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const ResolvedPlotStyle rs = c.style->resolve(e);
@@ -456,6 +523,7 @@ void PlotRenderer::renderModel(QPainter* p, SketchModel* model, double scaleDev,
                               double lineWidthScale) {
     if (!p || !model) return;
     Ctx c{ scaleDev, lineWidthScale, model, clipWorld, &style };
+    c.ltscale = model->ltscale();   // 注入全局线型比例（与渲染侧同源）
     for (const auto& e : model->elements())
         paintOne(p, e, c);
 }
@@ -464,6 +532,7 @@ void PlotRenderer::renderElement(QPainter* p, const Element& e, SketchModel* mod
                                 double scaleDev, const QRectF& clipWorld,
                                 const PlotStyleTable& style, double lineWidthScale) {
     Ctx c{ scaleDev, lineWidthScale, model, clipWorld, &style };
+    c.ltscale = model ? model->ltscale() : 1.0;
     paintOne(p, e, c);
 }
 

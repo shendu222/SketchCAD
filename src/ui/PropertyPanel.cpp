@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QColorDialog>
@@ -106,6 +107,12 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
                            QString::fromUtf8(lineStyleName(ls)), i);
     }
 
+    // ---- ByLayer 动态解析开关 ----
+    // 勾选：渲染/打印时实时取所属图层属性（改图层色全层联动）；
+    // 取消：本图元以自身快照为覆盖值（override）。
+    cByLayer = new QCheckBox(QStringLiteral("随图层(ByLayer)"));
+    cByLayer->setToolTip(QStringLiteral("勾选后颜色/线型/线宽随所属图层变化；取消则冻结为当前显示值"));
+
     // ---- 颜色：一行预设色块 + 自定义按钮 ----
     bColor = new QPushButton(QStringLiteral("自定义..."));
     bColor->setAutoFillBackground(true);
@@ -120,7 +127,7 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
         b->setIconSize(QSize(18, 18));
         b->setAutoRaise(true);
         b->setToolTip(c.name().toUpper());
-        connect(b, &QToolButton::clicked, this, [this, c] { setColor(c); apply(); });
+        connect(b, &QToolButton::clicked, this, [this, c] { setColor(c); applyColor(); });
         prl->addWidget(b);
     }
     prl->addStretch();
@@ -157,6 +164,7 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     wLay->addWidget(cWidth); wLay->addWidget(bWidthAuto);
     form_->addRow(QStringLiteral("线宽"), wRow);
     form_->addRow(QStringLiteral("线型"), cLineStyle);
+    form_->addRow(QStringLiteral("ByLayer"), cByLayer);
     form_->addRow(QStringLiteral("常用色"), presetRow);
     form_->addRow(QStringLiteral("颜色"), bColor);
 
@@ -181,10 +189,11 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
         connect(s, &QDoubleSpinBox::editingFinished, this, &PropertyPanel::applyPoly);
     connect(cWidth, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PropertyPanel::applyWidth);
     connect(cLineStyle, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PropertyPanel::applyStyle);
+    connect(cByLayer, &QCheckBox::toggled, this, &PropertyPanel::applyByLayer);
     connect(bWidthAuto, &QPushButton::clicked, this, &PropertyPanel::restoreDefaultWidth);
     connect(bColor, &QPushButton::clicked, this, [this] {
         QColor c = QColorDialog::getColor(curColor_, this, QStringLiteral("选择图元颜色"));
-        if (c.isValid()) { setColor(c); apply(); }
+        if (c.isValid()) { setColor(c); applyColor(); }
     });
 
     clearFields();
@@ -345,12 +354,15 @@ void PropertyPanel::load(int id) {
     showRow(sPolyInRadius, isPoly);
     showRow(sPolyCircRadius, isPoly);
 
-    // 线宽下拉显示"实际生效线宽"（自动模式即线型默认档位），便于用户一眼看出当前粗细
-    int wi = cWidth->findData(e->effectiveLineWidth());
+    // 面板显示"实际生效"属性：ByLayer 开时用图层解析值（与画布一致），关时用本图元快照覆盖值。
+    const Element disp = model_->resolveElement(*e);
+    int wi = cWidth->findData(disp.effectiveLineWidth());
     cWidth->setCurrentIndex(wi >= 0 ? wi : 0);
-    cLineStyle->setCurrentIndex((int)e->lineStyle);
+    cLineStyle->setCurrentIndex((int)disp.lineStyle);
+    setColor(disp.color);
     // 已处于默认档位时禁用“恢复默认”，避免无意义操作
     bWidthAuto->setEnabled(!e->lineWidthAuto);
+    cByLayer->setChecked(e->byLayer);
     setEnabledFields(true);
     updating_ = false;
 }
@@ -373,33 +385,49 @@ void PropertyPanel::apply() {
         model_->setDefaultLineStyle((LineStyle)cLineStyle->currentIndex());
         return;
     }
-    // 名称/图层/颜色/半径/文本。线宽与线型由 applyWidth/applyStyle 专门处理，
-    // 以分别满足「手动覆盖(auto=false)」与「自动跟随线型(auto=true)」两种语义。
+    // 名称/图层/半径/文本。颜色由 applyColor 专门处理（改色自动转 override），
+    // 线宽与线型由 applyWidth/applyStyle 处理，避免改名等无关编辑误改颜色快照。
     model_->updateElementLinked(curId_, [this](Element& e) {
         e.name = eName->text();
         e.layer = eLayer->text();
-        e.color = curColor_;
         if (e.type == ElementType::Circle || e.type == ElementType::Arc) e.radius = sR->value();
         if (e.type == ElementType::Dimension || e.type == ElementType::Text) e.text = eText->text();
     });
 }
 
-// 改线宽下拉：固定为手动覆盖（lineWidthAuto=false），后续改线型不再自动改回线宽
+// 改颜色（预设色块或自定义）：按需求"属性面板单改图元自动转为 override"，
+// 即颜色一旦被显式指定，立即脱离 ByLayer、把当前颜色固化为本图元快照覆盖值。
+void PropertyPanel::applyColor() {
+    if (updating_ || curId_ < 0) return;
+    const QColor c = curColor_;
+    model_->updateElementLinked(curId_, [c](Element& e) {
+        e.color = c;
+        e.byLayer = false;
+    });
+    load(curId_);   // 刷新 ByLayer 勾选态与线宽/线型下拉
+}
+
+// 改线宽下拉：固定为手动覆盖（lineWidthAuto=false），后续改线型不再自动改回线宽；
+// 同时脱离 ByLayer（单改即转 override）
 void PropertyPanel::applyWidth() {
     if (updating_ || curId_ < 0) return;
     const double px = cWidth->currentData().toDouble();
     model_->updateElementLinked(curId_, [px](Element& e) {
         e.lineWidth = px;
         e.lineWidthAuto = false;
+        e.byLayer = false;
     });
+    load(curId_);
 }
 
-// 改线型下拉：若仍为自动模式，线宽跟随新线型的默认档位派生；手动覆盖则保持不变
+// 改线型下拉：若仍为自动模式，线宽跟随新线型的默认档位派生；手动覆盖则保持不变；
+// 同时脱离 ByLayer（单改即转 override）
 void PropertyPanel::applyStyle() {
     if (updating_ || curId_ < 0) return;
     const LineStyle ls = (LineStyle)cLineStyle->currentIndex();
     model_->updateElementLinked(curId_, [ls](Element& e) {
         e.lineStyle = ls;
+        e.byLayer = false;
         if (e.lineWidthAuto) e.lineWidth = LineStyleConfig::instance().defaultWidth(ls);
     });
     load(curId_);   // 刷新宽度下拉框与“恢复默认”按钮状态
@@ -409,6 +437,30 @@ void PropertyPanel::applyStyle() {
 void PropertyPanel::restoreDefaultWidth() {
     if (curId_ < 0) return;
     model_->updateElementLinked(curId_, [](Element& e) { e.lineWidthAuto = true; });
+    load(curId_);
+}
+
+// 勾选/取消 ByLayer：
+//  - 勾选(on)：恢复动态解析，e.byLayer=true。快照值保留但不再被使用（改图层色即全层联动）。
+//  - 取消(off)：冻结为覆盖值，e.byLayer=false，并把面板当前显示（即已解析/当前预览）的颜色、
+//    线宽、线型写入快照，使图元外观"看起来不变"但脱离图层控制。
+void PropertyPanel::applyByLayer() {
+    if (updating_ || curId_ < 0) return;
+    const bool on = cByLayer->isChecked();
+    const QColor c = curColor_;
+    const double w = cWidth->currentData().toDouble();
+    const LineStyle ls = (LineStyle)cLineStyle->currentIndex();
+    model_->updateElementLinked(curId_, [on, c, w, ls](Element& e) {
+        if (on) {
+            e.byLayer = true;
+        } else {
+            e.byLayer = false;
+            e.color = c;
+            e.lineWidth = w;
+            e.lineWidthAuto = false;
+            e.lineStyle = ls;
+        }
+    });
     load(curId_);
 }
 

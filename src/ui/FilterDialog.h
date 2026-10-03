@@ -24,6 +24,7 @@ private slots:
     void onSave();           // 保存当前条件为命名过滤器（重名覆盖）
     void onDelete();         // 删除选中的已保存过滤器
     void apply();            // 执行筛选并落地选择集
+    void armFilter();        // 设为预选器：作用于下一次拾取/框选/栏选（用后即清）
 
 private:
     FilterDef currentFilter() const;   // 从条件表收集过滤器定义

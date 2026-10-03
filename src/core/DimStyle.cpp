@@ -436,5 +436,50 @@ Geom build(const Element& e, const Style& st) {
     }
 }
 
+// ============================================================================
+// 命名标注样式表：name → Style 多实例化的序列化
+// ============================================================================
+QJsonObject dimStyleEntryToJson(const DimStyleEntry& e) {
+    QJsonObject o;
+    o["name"] = e.name;
+    const Style& s = e.style;
+    o["arrowLen"]    = s.arrowLen;
+    o["arrowWidth"]  = s.arrowWidth;
+    o["extBeyond"]   = s.extBeyond;
+    o["extGap"]      = s.extGap;
+    o["textHeight"]  = s.textHeight;
+    o["textGap"]     = s.textGap;
+    o["defOffset"]   = s.defOffset;
+    o["arcSeg"]      = s.arcSeg;
+    // 标准配置四元组（枚举按整数存，顺序只增不改）
+    o["std"]         = (int)s.stdConf.standard;
+    o["arrowForm"]   = (int)s.stdConf.arrowForm;
+    o["textOrient"]  = (int)s.stdConf.textOrientation;
+    o["tolStyle"]    = (int)s.stdConf.toleranceStyle;
+    return o;
+}
+
+DimStyleEntry dimStyleEntryFromJson(const QJsonObject& o) {
+    DimStyleEntry e;
+    e.name = o["name"].toString("Standard");
+    Style& s = e.style;
+    // 缺键回落默认（与 Style 的成员默认值一致）
+    s.arrowLen   = json::getDouble(o, "arrowLen",   3.5);
+    s.arrowWidth = json::getDouble(o, "arrowWidth", 1.1);
+    s.extBeyond  = json::getDouble(o, "extBeyond",  2.5);
+    s.extGap     = json::getDouble(o, "extGap",     0.0);
+    s.textHeight = json::getDouble(o, "textHeight", 3.5);
+    s.textGap    = json::getDouble(o, "textGap",    0.8);
+    s.defOffset  = json::getDouble(o, "defOffset",  12.0);
+    s.arcSeg     = json::getDouble(o, "arcSeg",     4.0);
+    s.stdConf.standard         = (DimensionStandard)  json::getInt(o, "std",        (int)DimensionStandard::GBT);
+    s.stdConf.arrowForm        = (ArrowForm)          json::getInt(o, "arrowForm",  (int)ArrowForm::ClosedFilled);
+    s.stdConf.textOrientation  = (TextOrientation)    json::getInt(o, "textOrient", (int)TextOrientation::AlignedReadable);
+    s.stdConf.toleranceStyle   = (ToleranceStyle)     json::getInt(o, "tolStyle",   (int)ToleranceStyle::None);
+    // drawingScale 不随样式存盘：它来自图纸比例（SketchModel::dimStyle 每次注入）
+    s.drawingScale = 1.0;
+    return e;
+}
+
 } // namespace dim
 } // namespace SketchCAD

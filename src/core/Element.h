@@ -10,8 +10,8 @@
 
 namespace SketchCAD {
 
-enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef, Xline, Boundary, MText, Table, Point };
-// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12，Xline=13，Boundary=14，MText=15，Table=16）。
+enum class ElementType { Line, Circle, Arc, Rectangle, Polygon, Spline, Constraint, Dimension, Ellipse, Polyline, Text, Hatch, BlockRef, Xline, Boundary, MText, Table, Point, MLeader, Fcf };
+// 注：ElementType 枚举「只增不改」，新类型必须追加到末尾（Text=10，Hatch=11，BlockRef=12，Xline=13，Boundary=14，MText=15，Table=16，Point=17，MLeader=18，Fcf=19）。
 // 已存盘 .json 文件里存的是整数序号，改顺序会让老文件读出错误类型。
 // Xline（构造线）：向两端无限延伸的辅助线。复用 pts[0]=通过点 + rotation=方向角(度)，无需新增字段。
 // Boundary（边界/BOUNDARY/BPOLY）：用户交互定义的填充边界闭合环（可含内孔），作为剖面填充的直接输入，
@@ -181,6 +181,8 @@ inline const char* elementTypeName(ElementType t) {
     case ElementType::MText:     return "多行文字";
     case ElementType::Table:     return "表格";
     case ElementType::Point:     return "点";
+    case ElementType::MLeader:   return "多重引线";
+    case ElementType::Fcf:       return "形位公差框格";
     }
     return "未知";
 }
@@ -292,6 +294,13 @@ struct Element {
     QString symbolLibrary;               // 符号库引用
     int refA = -1, refB = -1;            // 约束/标注引用的图元 id
     bool visible = true;
+    // ---- ByLayer 动态解析标志（图层动态语义核心）----
+    // true  = 该图元在渲染/打印期动态解析所属图层的颜色/线型/线宽（图层改 → 全层实时联动）；
+    //         新建图元默认 true（"新图元默认随层"）。
+    // false = 该图元使用自身快照值（color/lineStyle/lineWidth/lineWidthAuto），图层变化不影响它
+    //         （即 AutoCAD 的 "ByObject/覆盖"）。旧存档缺此键时回落 false + 快照=现值，
+    //         与"快照式分组"历史行为完全向后兼容。
+    bool byLayer = true;
 
     // ---- 尺寸驱动 / 参数化建模字段（Request M 新增）----
     // 这些字段使"标注(Dimension) ↔ 几何约束(尺寸类) ↔ 参数表"形成双向关联：
@@ -355,6 +364,34 @@ struct Element {
         return (idx >= 0 && idx < (int)tableCells.size()) ? tableCells[idx] : QString();
     }
 
+    // ---- 标注样式（DimStyle 表）引用 ----
+    // 标注图元经 dimStyleName **按名引用** DIMSTYLE 表中的一条样式（引用式范式，
+    // 对标 blockTable / textStyleName）：改样式定义 → 引用它的全部标注实时联动；
+    // 标注随块复制/删除后归属自动跟随，无 id 悬空。空串 = 用当前样式。
+    QString dimStyleName;
+
+    // ---- 多重引线（ElementType::MLeader）专用字段 ----
+    // 几何：pts[0]=箭头附着点(被引部位) → pts[1]=折点(水平段起点) → pts[2]=文字框基线起点。
+    //   pts 只有 2 点时按「直线引线 + 文字」退化绘制（无折点）。
+    // 复用：text=多行文字内容（可含 \n）、radius=文字高度(mm)、rotation=整条引线旋转角(度)。
+    // 专用：mleaderStyleName=引用 DIMSTYLE 表（空=当前样式）；mleaderLanding=基线(水平段)长度
+    //   (mm，<=0 表示无基线，首点直连文字)；mleaderArrowLen=箭头长(mm)。
+    QString mleaderStyleName;
+    double  mleaderLanding  = 0.0;   // 基线长度；<=0 = 无基线
+    double  mleaderArrowLen = 3.5;   // 箭头长
+
+    // ---- 形位公差框格（ElementType::Fcf，GB/T 1182 符号集子集）专用字段 ----
+    // 一个框格由若干「格」组成，依次为：[几何特征符号] [修饰符号] [公差值] [基准字母…]
+    // 几何：pts[0]=框格左下角锚点(世界坐标)，radius=框格高/字高(mm)，rotation=框格旋转角(度)。
+    // fcfSymbol   = FcfSymbol 枚举整数（直线度/平面度/圆度/圆柱度/平行/垂直/倾斜/位置/对称/圆跳动/全跳动）
+    // fcfModifier = 周边界/最大实体/最小实体/自由状态修饰符（M/L/S/P），可空
+    // fcfTolerance= 公差值文本（如 "0.05" / "⌀0.1" / "0.1 A"），可空（纯基准框格）
+    // fcfDatums   = 基准字母组（如 {"A"} 或 {"A","B"}，每字母一格）
+    int    fcfSymbol    = 0;
+    QString fcfModifier;
+    QString fcfTolerance;
+    std::vector<QString> fcfDatums;
+
     // 折线段类型标记（仅对 ElementType::Polyline 有效）：
     //   size() == 段数 == pts.size() - 1（开放）或 pts.size()（闭合）。
     //   false = 直线段，true = 圆弧段（圆弧由 3 个相邻节点 + 该段两端的相邻节点共同定心/半径）。
@@ -373,6 +410,20 @@ struct Element {
     std::vector<std::vector<Vec3>> holes;
     int sectionExempt = 0;      // 0 == SectionExempt::None
     int sectionMaterial = 0;    // 0 == SectionMaterial::General
+
+    // ---- 剖面填充「关联边界」与「图案覆盖」字段（hatchedit / 边界联动）----
+    // 与"就地改 4 字段"范式并存：这 4 个既有 style 字段（rotation/radius/material/exempt）
+    // 仍按原义使用；下面只增"边界来源 + 图案覆盖 + 关联开关"，供：
+    //   * hatchSrcIds —— 记录构成该填充边界的图元 id 集合（关联填充时非空）；
+    //   * hatchPattern/hatchScale —— 覆盖默认材料图案（PAT 名 / 比例倍数）；
+    //   * hatchAssociative —— 是否随边界联动（默认开；关闭=静态填充，detach 后回到静态）；
+    //   * hatchInvalid —— 边界消失/不成环时被标记失效（提示用，不再随动）。
+    // 旧存档缺这些键时全部回落默认（关联开、无来源、无覆盖、未失效），语义等价静态填充。
+    std::vector<int> hatchSrcIds;         // 边界来源图元 id 集合（空 = 非关联/静态）
+    QString        hatchPattern;          // PAT 图案名覆盖（空 = 按 sectionMaterial 取默认）
+    double         hatchScale   = 1.0;    // 图案比例倍数（作用于间距；1.0 = 原始）
+    bool           hatchAssociative = true; // 关联开关（默认开）
+    bool           hatchInvalid  = false;  // 边界失效标记（边界消失/不成环）
 
     // ---- 块引用（ElementType::BlockRef）专用字段 ----
     // 采用「引用式」：只存块名 + 插入变换 + 属性值 + 动态参数值，**不复制**块内几何。

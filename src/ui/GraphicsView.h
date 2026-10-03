@@ -81,6 +81,8 @@ private:
     QRectF rawBounds(const Element& e) const;
     void   paintOne(QPainter* p, const Element& e) const;
     void   paintDimension(QPainter* p, const Element& e) const;  // GB/T 4458.4-2003
+    void   paintMLeader(QPainter* p, const Element& e) const;    // 多重引线（箭头+基线+多行文字）
+    void   paintFcf(QPainter* p, const Element& e) const;        // 形位公差框格（GB/T 1182 符号）
     void   paintText(QPainter* p, const Element& e) const;       // 文本图元（标题栏栏目等）
     void   paintTable(QPainter* p, const Element& e) const;      // 表格图元（明细表：网格线 + 单元格文字）
     void   paintHatch(QPainter* p, const Element& e) const;      // 剖面区域（GB/T 4457.5-2013）
@@ -105,6 +107,8 @@ public:
     // 缩放/平移时保持屏幕常量显示不变。
     void fitView();
     void fitToRect(const QRectF& world);   // 将给定世界坐标矩形以 0.92 边距适配居中到视口（新建图纸后整幅可见）
+    // 当前视口中心的世界坐标（设计中心双击块时作为插入点）
+    Vec3 viewCenterWorld() const;
     void zoomBy(double f);
     // ---- 窗口缩放（框选放大）：进入后左键拖拽框选目标区域，释放后该区域充满整个绘图工作区域 ----
     void setZoomBoxMode(bool on);

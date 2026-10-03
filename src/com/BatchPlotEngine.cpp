@@ -153,7 +153,9 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     model.setLayersFromJson(root["layers"].toArray());
     model.setBlocksFromJson(root["blocks"].toArray());
     model.setTextStylesFromJson(root["textStyles"].toArray());
+    model.setDimStylesFromJson(root["dimStyles"].toObject());   // 旧文件无此键 → 单一默认 "Standard"
     model.setSavedFiltersFromJson(root["savedFilters"].toArray());
+    model.setLayoutsFromJson(root);   // 布局表（旧文件缺键 → 空表回落模型空间打印，与交互读档对齐）
     model.setUnits(UnitsMeta::fromJson(root["units"].toObject()));
     model.setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
     model.setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));
@@ -163,6 +165,9 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     // 存档比例只作元数据恢复（几何已是成品，不再缩放一次）
     if (root.contains("scaleRatio"))
         model.setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
+    // 全局线型比例随图恢复（缺键 → 回落 1.0）
+    if (root.contains("ltscale"))
+        model.setLtscale(root["ltscale"].toDouble(1.0));
     model.setDrawingPath(path);
     return true;
 }
@@ -258,6 +263,7 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
         root["app"] = QStringLiteral("SketchCAD");
         root["formatVersion"] = 1;
         root["scaleRatio"] = model.scaleRatio();
+        root["ltscale"] = model.ltscale();
         QJsonArray arr;
         for (const auto& e2 : model.elements())
             arr.append(::SketchCAD::elementToJson(e2));
@@ -265,7 +271,10 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
         root["layers"]      = model.layersToJson();
         root["blocks"]      = model.blocksToJson();
         root["textStyles"]  = model.textStylesToJson();
+        root["dimStyles"]   = model.dimStylesToJson();
         root["savedFilters"] = model.savedFiltersToJson();
+        root["layouts"]      = model.layoutsToJson();
+        root["currentLayout"] = model.currentLayout();
         root["units"]       = model.units().toJson();
         root["limits"]      = model.limits().toJson();
         root["snapConfig"]  = model.snapConfig().toJson();

@@ -68,6 +68,7 @@ set(CORE_SOURCES
     src/core/FloorPlanViews.cpp
     src/core/Section.cpp
     src/core/HatchLibrary.cpp
+    src/core/Gdt.cpp   # GD&T: 多重引线(MLeader) + 形位公差框格(Fcf) 几何生成器
     src/core/Block.cpp
     src/core/Xref.cpp
     src/core/CadFormats.cpp
@@ -113,6 +114,8 @@ set(UI_SOURCES
     src/ui/FloorPlanViewsDialog.cpp
     src/ui/ArrayDialog.cpp
     src/ui/BlockDialogs.cpp
+    src/ui/BlockEditorDialog.cpp
+    src/ui/DesignCenterPanel.cpp
     src/ui/SectionDialog.cpp
     src/ui/RegionManagerDialog.cpp
     src/ui/CleanupDialog.cpp

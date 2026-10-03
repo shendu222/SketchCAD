@@ -31,6 +31,16 @@ DashSpec dashSpecFor(LineStyle ls) {
     return s;
 }
 
+DashSpec dashSpecScaled(LineStyle ls, double ltscale) {
+    DashSpec s = dashSpecFor(ls);
+    if (!s.valid) return s;
+    const double k = (ltscale > 0.0) ? ltscale : 1.0;
+    if (k == 1.0) return s;                       // 比例 1.0：原样返回，零拷贝
+    for (double& v : s.pattern) v *= k;
+    s.minLengthD *= k;
+    return s;
+}
+
 bool shouldFallbackToSolid(LineStyle ls, double lengthMm, double d) {
     const DashSpec s = dashSpecFor(ls);
     if (!s.valid) return false;

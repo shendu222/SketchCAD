@@ -69,8 +69,10 @@ FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
     connect(bSave, &QPushButton::clicked, this, &FilterDialog::onSave);
 
     auto* bApply = new QPushButton(QStringLiteral("应用"), this);
+    auto* bArm   = new QPushButton(QStringLiteral("设为预选器（下一次拾取生效）"), this);
     auto* bClose = new QPushButton(QStringLiteral("关闭"), this);
     connect(bApply, &QPushButton::clicked, this, &FilterDialog::apply);
+    connect(bArm,   &QPushButton::clicked, this, &FilterDialog::armFilter);
     connect(bClose, &QPushButton::clicked, this, &QDialog::reject);
 
     // ---- 布局 ----
@@ -93,6 +95,7 @@ FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
     auto* applyRow = new QHBoxLayout;
     applyRow->addStretch(1);
     applyRow->addWidget(bApply);
+    applyRow->addWidget(bArm);
     applyRow->addWidget(bClose);
     right->addLayout(applyRow);
 
@@ -255,6 +258,16 @@ void FilterDialog::apply() {
     model_->log(QStringLiteral("过滤器「%1」：命中 %2 个对象（%3 选择集）")
                     .arg(f.name.isEmpty() ? QStringLiteral("(未命名)") : f.name)
                     .arg(hits.size()).arg(actName));
+}
+
+void FilterDialog::armFilter() {
+    FilterDef f = currentFilter();
+    if (f.conds.empty()) {
+        QMessageBox::information(this, QStringLiteral("设为预选器"), QStringLiteral("请先添加至少一条有效条件（特性不为「不限」）。"));
+        return;
+    }
+    model_->setActivePickFilter(f);   // 瞬态预选器：下一次拾取/框选/栏选生效后自动清除
+    accept();
 }
 
 } // namespace SketchCAD

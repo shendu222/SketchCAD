@@ -1009,11 +1009,15 @@ SectionRegion hatchRegionFromElement(const Element& e) {
     r.boundary = e.pts;
     r.holes = e.holes;
     // 角度复用 rotation；间距复用 radius（<=0 回落默认 3mm）
+    const double baseSpacing = (e.radius > 1e-9) ? e.radius : 3.0;
+    // 图案比例 hatchedit hatchScale：作为间距的附加倍数（1.0 = 原始；<=0 视为 1.0）
+    const double sc = (e.hatchScale > 1e-6) ? e.hatchScale : 1.0;
     r.style.angleDeg   = e.rotation;
-    r.style.spacingMm  = (e.radius > 1e-9) ? e.radius : 3.0;
+    r.style.spacingMm  = baseSpacing * sc;
     r.style.thinWidthPx = (e.lineWidth > 1e-9) ? e.lineWidth : 0.6;
     r.style.exempt   = (SectionExempt)e.sectionExempt;
     r.style.material = (SectionMaterial)e.sectionMaterial;
+    r.style.patNameOverride = e.hatchPattern;   // 图案覆盖（空 = 按材料默认）
     return r;
 }
 
@@ -1145,7 +1149,9 @@ HatchPattern hatchPatternFor(const SectionStyle& style) {
         break;
     }
     // PAT 覆盖：若材料映射到 hatch/ 目录下的 PAT 图案，标记 patName 以改用 PAT 生成。
-    const QString pn = patNameForMaterial(style.material);
+    // hatchedit 的 patNameOverride 优先于材料默认（用户显式覆盖优先）。
+    const QString pn = !style.patNameOverride.isEmpty() ? style.patNameOverride
+                                                        : patNameForMaterial(style.material);
     if (!pn.isEmpty()) pat.patName = pn;
     return pat;
 }

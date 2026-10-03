@@ -1055,11 +1055,15 @@ std::vector<int> applyChanges(SketchModel* model, const std::vector<Change>& cha
                               const QString& /*undoLabel*/) {
     if (!model) return {};
     std::vector<int> newIds;
+    // 收集"被改 / 被删"的既有图元 id：填充边界联动据此只重算受影响 Hatch（性能约束）。
+    // 纯新增（c.id<0）不涉及既有边界，故不纳入。
+    std::vector<int> touchedIds;
 
     // 1) 先按 remove 把要删的（静默）
     for (const auto& c : changes) {
         if (c.remove && c.id >= 0) {
             model->removeElementQuiet(c.id);
+            touchedIds.push_back(c.id);
         }
     }
 
@@ -1082,12 +1086,16 @@ std::vector<int> applyChanges(SketchModel* model, const std::vector<Change>& cha
                 dst = e;
                 dst.id = e.id;
             });
+            touchedIds.push_back(e.id);
         }
     }
     // 一次性添加所有新增（不压撤销）
     if (!toAdd.empty()) {
         newIds = model->addElementsQuiet(toAdd);
     }
+    // 3) 边界联动：被改/被删的图元若是某关联填充的边界来源，就地重算该填充
+    //    （不压撤销 —— 与本批改动同属调用方那一个 beginEdit 快照 = 单步撤销）。
+    model->refreshHatchBoundaries(touchedIds);
     return newIds;
 }
 

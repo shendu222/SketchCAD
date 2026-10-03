@@ -3,6 +3,7 @@
 #include "ConstraintSolver.h"
 #include "DimStyle.h"
 #include "Modify.h"
+#include "Section.h"    // buildClosedLoopsFromElements：填充边界重算（关联填充随动）
 #include "Xref.h"
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,15 @@ SketchModel::SketchModel(QObject* p) : QObject(p) {
     // 文字样式表默认含一条 "Standard"（与 AutoCAD 一致）：空字体族 = 走系统默认，
     // 字高 0 = 用图元自身 radius，宽度因子 1，无倾斜，非粗/斜体。
     textStyles_.push_back(TextStyle{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false});
+    // 标注样式表默认含一条 "Standard"（GB/T 4458.4 国标默认）：保证 dimStyleFor 永不为空，
+    // 旧档读入（无 dimStyles 键）也回落成这一张，语义等价于原"单全局 DimStyle"。
+    {
+        dim::DimStyleEntry d;
+        d.name  = QStringLiteral("Standard");
+        d.style = dim::Style();
+        dimStyles_.push_back(std::move(d));
+    }
+    currentDimStyle_ = QStringLiteral("Standard");
 }
 
 std::vector<Element>::iterator SketchModel::find(int id) {
@@ -34,6 +44,7 @@ void SketchModel::pushMemento(const QString& label) {
     Memento m;
     m.label = label; m.elems = elems_; m.nextId = nextId_;
     m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
+    m.dimStyles = dimStyles_; m.currentDimStyle = currentDimStyle_;
     undoStack_.push_back(std::move(m));
     if (undoStack_.size() > 200) undoStack_.erase(undoStack_.begin());
     redoStack_.clear();
@@ -61,6 +72,8 @@ bool SketchModel::removeElement(int id) {
         emit selectionChanged(selectedId_);
     }
     emit modelChanged();
+    // 边界联动：被删图元若是某关联填充的边界来源 → 该填充标记失效（与删除同属一个撤销步）
+    refreshHatchBoundaries({ id });
     return true;
 }
 
@@ -156,12 +169,15 @@ std::vector<SketchModel::HandleRef> SketchModel::collectLinked(const Vec3& p, do
 
 int SketchModel::moveHandles(const std::vector<HandleRef>& refs, const Vec3& to) {
     int n = 0;
+    std::vector<int> moved;
     for (const auto& r : refs) {
         auto it = find(r.elemId);
         if (it == elems_.end()) continue;
-        if (geo::setElementHandle(*it, r.index, to)) { ++n; emit elementUpdated(r.elemId); }
+        if (geo::setElementHandle(*it, r.index, to)) { ++n; emit elementUpdated(r.elemId); moved.push_back(r.elemId); }
     }
     if (n) emit modelChanged();
+    // 边界联动：直接拖动（非 applyChanges 路径）也要让关联填充随动
+    if (n) refreshHatchBoundaries(moved);
     return n;
 }
 
@@ -1006,6 +1022,10 @@ QJsonArray SketchModel::layersToJson() const {
         o["lineStyle"] = (int)l.lineStyle;
         o["visible"]   = l.visible;
         o["locked"]    = l.locked;
+        // 图层动态语义新字段（只增不改；旧档缺键 → 读端回落 frozen=false/plot=true/alpha=1.0）
+        o["frozen"]    = l.frozen;
+        o["plot"]      = l.plot;
+        o["alpha"]     = l.alpha;
         arr.append(o);
     }
     return arr;
@@ -1022,6 +1042,10 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
         l.lineStyle  = (LineStyle)json::getInt(o, "lineStyle", (int)LineStyle::Solid);
         l.visible    = json::getBool(o, "visible", true);
         l.locked     = json::getBool(o, "locked", false);
+        // 图层动态语义新字段：缺键回落默认值（向后兼容，不破坏旧档语义）
+        l.frozen    = json::getBool(o, "frozen", false);
+        l.plot      = json::getBool(o, "plot", true);
+        l.alpha     = json::getDouble(o, "alpha", 1.0);
         layers_.push_back(l);
     }
     // 保证默认层 "0" 始终存在（旧文件可能未保存该字段）
@@ -1029,6 +1053,74 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
     // 读档后若当前活动层不在新图层表中（旧文件无 layers 字段时常见），回落默认层
     if (!findLayer(currentLayer_)) currentLayer_ = QStringLiteral("0");
     emit layersChanged();
+}
+
+// ============================================================================
+// 图层动态语义：冻结 / 打印开关 / 透明度 / ByLayer 解析 / 命中·打印可判定
+// ============================================================================
+bool SketchModel::setLayerFrozen(const QString& name, bool frozen) {
+    Layer* l = findLayer(name.trimmed());
+    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (l->frozen == frozen) return true;
+    beginEdit((frozen ? QStringLiteral("冻结图层 ") : QStringLiteral("解冻图层 ")) + name);
+    l->frozen = frozen;
+    // 冻结改变命中/重算/打印语义 → 触发重绘（GraphicsView 经 elementPickable 排除冻结层）
+    emit layersChanged(); emit modelChanged();
+    log(QStringLiteral("%1图层 %2").arg(frozen ? "已冻结" : "已解冻").arg(name));
+    return true;
+}
+
+bool SketchModel::setLayerPlot(const QString& name, bool plot) {
+    Layer* l = findLayer(name.trimmed());
+    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (l->plot == plot) return true;
+    beginEdit((plot ? QStringLiteral("开启图层打印 ") : QStringLiteral("关闭图层打印 ")) + name);
+    l->plot = plot;
+    emit layersChanged(); emit modelChanged();   // 打印开关影响出图，触发重绘预览
+    log(QStringLiteral("图层 %1 打印已%2").arg(name).arg(plot ? "开启" : "关闭"));
+    return true;
+}
+
+bool SketchModel::setLayerAlpha(const QString& name, double alpha) {
+    Layer* l = findLayer(name.trimmed());
+    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    const double a = std::clamp(alpha, 0.0, 1.0);
+    if (std::fabs(l->alpha - a) < 1e-6) return true;
+    beginEdit(QStringLiteral("设置图层透明度 ") + name);
+    l->alpha = a;
+    emit layersChanged(); emit modelChanged();   // 透明度影响渲染，触发重绘
+    log(QStringLiteral("图层 %1 透明度 = %2").arg(name).arg(a, 0, 'f', 2));
+    return true;
+}
+
+Element SketchModel::resolveElement(const Element& e) const {
+    if (!e.byLayer) return e;                     // 覆盖（ByObject）：快照原样使用
+    const Layer* L = findLayer(e.layer);
+    if (!L) return e;                             // 图层缺失：保持原值，避免凭空改变外观
+    Element r = e;
+    if (L->color.isValid()) r.color = L->color;   // 图层颜色优先（无效色不覆盖）
+    r.lineStyle      = L->lineStyle;
+    r.lineWidth      = L->lineWidth;
+    r.lineWidthAuto  = false;                     // 随层线宽作为固定值（渲染/打印期不随线型派生）
+    if (L->alpha < 1.0 - 1e-6) {                 // 透明度叠加到颜色 alpha 通道（不污染快照）
+        QColor c = r.color;
+        c.setAlphaF(L->alpha);
+        r.color = c;
+    }
+    return r;
+}
+
+bool SketchModel::elementPickable(const Element& e) const {
+    if (!e.visible) return false;
+    const Layer* L = findLayer(e.layer);
+    if (L && L->frozen) return false;             // 冻结层零命中
+    return true;
+}
+
+bool SketchModel::elementPrintable(const Element& e) const {
+    const Layer* L = findLayer(e.layer);
+    if (L && (L->frozen || !L->plot)) return false;   // 冻结/关闭打印 → 打印零输出
+    return true;
 }
 
 // ============================================================================
@@ -1340,6 +1432,253 @@ void SketchModel::setBlocksFromJson(const QJsonArray& arr) {
     emit blocksChanged();
 }
 
+// ---- BEDIT（块在位编辑）----
+// 引用式模型：改一份 BlockDef 的 entities 即"所有引用同步刷新"，无需反向推送。
+std::vector<Element> SketchModel::getBlockEntities(const QString& name) const {
+    if (const BlockDef* d = findBlockDef(name)) return d->entities;
+    return {};
+}
+
+bool SketchModel::redefineBlockEntities(const QString& name, const std::vector<Element>& ents) {
+    const QString n = name.trimmed();
+    BlockDef* d = findBlockDef(n);
+    if (!d) { log(QStringLiteral("块 %1 不存在，无法在位编辑").arg(n), "warn"); return false; }
+    pushMemento(QStringLiteral("在位编辑块 ") + n);
+    d->entities = ents;
+    // 块内图元 id 归零：展开时重算，避免与顶层图元 id 冲突（attdefs/dynParams/basePoint
+    // 等定义字段保持不变 —— 这正是"保留动态块参数/属性定义"的语义保证）。
+    for (auto& e : d->entities) e.id = 0;
+    emit blocksChanged();
+    emit modelChanged();   // 引用几何随之变化，必须重绘
+    log(QStringLiteral("已在位编辑块 %1：%2 个引用同步更新，块内 %3 个图元")
+            .arg(n).arg(countBlockRefs(elems_, n)).arg(d->entities.size()));
+    return true;
+}
+
+// ============================================================================
+// 填充边界联动（关联填充 / hatchedit）
+// ----------------------------------------------------------------------------
+// 关联填充 = Hatch 记录其边界来源图元 id（Element::hatchSrcIds）。边界图元几何变更后，
+// 经 refreshHatchBoundaries 用 Boundary 引擎（buildClosedLoopsFromElements）把来源重解析为
+// 闭合环并就地改写该 Hatch 的 pts/holes（**不重建 Hatch**，保留材质/图案/颜色等全部字段）。
+// 边界消失或不再成环 → 该填充标记失效（hatchInvalid=true）并提示，不再随动。
+// ============================================================================
+namespace {
+
+// 射线法：点 p 是否在多边形 ring 内（even-odd）。用于把重解析出的多个环
+// 分类为「外边界」与「内孔」：外环取面积最大者，其余被它包含者为内孔。
+bool pointInRing(const std::vector<Vec3>& ring, const Vec3& p) {
+    if (ring.size() < 3) return false;
+    bool in = false;
+    for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {
+        const Vec3& a = ring[i];
+        const Vec3& b = ring[j];
+        if ((a.y > p.y) != (b.y > p.y)) {
+            const double x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
+            if (p.x < x) in = !in;
+        }
+    }
+    return in;
+}
+
+double ringArea(const std::vector<Vec3>& ring) {
+    if (ring.size() < 3) return 0.0;
+    double s = 0.0;
+    for (size_t i = 0, j = ring.size() - 1; i < ring.size(); j = i++)
+        s += (ring[j].x * ring[i].y - ring[i].x * ring[j].y);
+    return std::fabs(s) * 0.5;
+}
+
+// 由「边界来源图元」重解析出 (外边界, 内孔)。复用 Boundary 引擎把来源串成闭合环；
+// Boundary 图元自带的内孔环也一并纳入（buildClosedLoopsFromElements 只取其外环）。
+// 返回 false = 来源缺失 / 无法成闭合环（→ 填充失效）。
+bool rebuildHatchLoops(const std::vector<const Element*>& srcs,
+                       std::vector<Vec3>& outer, std::vector<std::vector<Vec3>>& holes) {
+    if (srcs.empty()) return false;
+    std::vector<Element> pool;
+    pool.reserve(srcs.size());
+    for (const auto* e : srcs) pool.push_back(*e);
+
+    std::vector<std::vector<Vec3>> loops =
+        buildClosedLoopsFromElements(pool, kDefaultClosureTol);
+    // Boundary 的内孔（引擎只登记其外环，此处把 hole 环补进来）
+    for (const auto& e : pool) {
+        if (e.type != ElementType::Boundary) continue;
+        for (const auto& hole : e.holes)
+            if (hole.size() >= 3) loops.push_back(hole);
+    }
+    if (loops.empty()) return false;
+
+    // 外环 = 面积最大者；内孔 = 被外环包含的其余环
+    size_t bi = 0;
+    for (size_t i = 1; i < loops.size(); ++i)
+        if (ringArea(loops[i]) > ringArea(loops[bi])) bi = i;
+    outer = loops[bi];
+    if (outer.size() < 3 || ringArea(outer) <= 0.0) return false;
+    holes.clear();
+    for (size_t i = 0; i < loops.size(); ++i) {
+        if (i == bi) continue;
+        if (loops[i].size() < 3) continue;
+        if (pointInRing(outer, loops[i].front())) holes.push_back(loops[i]);
+    }
+    return true;
+}
+
+} // namespace
+
+bool SketchModel::associateHatchBoundary(int hatchId, const std::vector<int>& srcIds) {
+    auto it = find(hatchId);
+    if (it == elems_.end() || it->type != ElementType::Hatch) {
+        log(QStringLiteral("关联填充失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        return false;
+    }
+    if (srcIds.empty()) {
+        log(QStringLiteral("关联填充失败：未指定边界图元"), "warn");
+        return false;
+    }
+    // 先按当前边界试解析一次：不成环则拒绝（避免登记一个永远失效的关联）
+    std::vector<const Element*> srcs;
+    for (int sid : srcIds) {
+        const Element* se = element(sid);
+        if (!se) { log(QStringLiteral("关联填充失败：边界图元 #%1 不存在").arg(sid), "warn"); return false; }
+        srcs.push_back(se);
+    }
+    std::vector<Vec3> outer; std::vector<std::vector<Vec3>> holes;
+    if (!rebuildHatchLoops(srcs, outer, holes)) {
+        log(QStringLiteral("关联填充失败：所选边界当前不构成闭合区域"), "warn");
+        return false;
+    }
+    pushMemento(QStringLiteral("关联填充边界 ") + it->name);
+    it = find(hatchId);
+    it->hatchSrcIds     = srcIds;
+    it->hatchAssociative = true;
+    it->hatchInvalid    = false;
+    it->pts  = outer;      // 立即按当前边界对齐一次
+    it->holes = holes;
+    emit modelChanged();
+    emit elementUpdated(hatchId);
+    log(QStringLiteral("剖面区域 #%1 已关联 %2 个边界图元（随边界自动更新）")
+            .arg(hatchId).arg((int)srcIds.size()));
+    return true;
+}
+
+int SketchModel::createAssociativeHatch(const std::vector<int>& srcIds, const SectionStyle& style) {
+    if (srcIds.empty()) {
+        log(QStringLiteral("关联填充失败：未指定边界图元"), "warn");
+        return -1;
+    }
+    std::vector<const Element*> srcs;
+    for (int sid : srcIds) {
+        const Element* se = element(sid);
+        if (!se) { log(QStringLiteral("关联填充失败：边界图元 #%1 不存在").arg(sid), "warn"); return -1; }
+        srcs.push_back(se);
+    }
+    // 先按当前边界试解析：不成环则拒绝（不产生"一出生就失效"的填充）
+    std::vector<Vec3> outer; std::vector<std::vector<Vec3>> holes;
+    if (!rebuildHatchLoops(srcs, outer, holes)) {
+        log(QStringLiteral("关联填充失败：所选边界当前不构成闭合区域"), "warn");
+        return -1;
+    }
+    // 组装 Hatch（就地字段语义：pts=外环，holes=内孔，rotation/radius/material/exempt 沿用 style）
+    SectionRegion region;
+    region.boundary = outer;
+    region.holes    = holes;
+    region.style    = style;
+    Element h = makeHatchElement(region, QStringLiteral("剖面区域(关联)"));
+    h.hatchSrcIds      = srcIds;
+    h.hatchAssociative = true;
+    h.hatchInvalid     = false;
+    // addElement 自带一次撤销快照（"新建图元"），此处不再额外 pushMemento，避免双步撤销。
+    const int id = addElement(h);
+    if (id > 0) {
+        log(QStringLiteral("已创建关联填充 #%1（来源 %2 个边界图元，随边界自动更新）")
+                .arg(id).arg((int)srcIds.size()));
+    }
+    return id;
+}
+
+bool SketchModel::detachHatchBoundary(int hatchId) {
+    auto it = find(hatchId);
+    if (it == elems_.end() || it->type != ElementType::Hatch) {
+        log(QStringLiteral("断开关联失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        return false;
+    }
+    if (!it->hatchAssociative && it->hatchSrcIds.empty()) return true;   // 已断开
+    pushMemento(QStringLiteral("断开填充关联 ") + it->name);
+    it = find(hatchId);
+    it->hatchAssociative = false;
+    // 保留 hatchSrcIds：关联开关是"可逆切换"——off 时 refreshHatchBoundaries 跳过本填充
+    // （= 静态填充，边界再变也不随动），再 on 即可恢复随动，无需重新登记边界。
+    emit modelChanged();
+    emit elementUpdated(hatchId);
+    log(QStringLiteral("剖面区域 #%1 已断开边界关联（回到静态填充）").arg(hatchId));
+    return true;
+}
+
+int SketchModel::refreshHatchBoundaries(const std::vector<int>& changedIds) {
+    if (changedIds.empty()) return 0;
+    int affected = 0, invalidated = 0;
+    // 只遍历"关联且有来源"的 Hatch —— 性能约束：边界重算限仅受影响 Hatch。
+    for (auto& h : elems_) {
+        if (h.type != ElementType::Hatch) continue;
+        if (!h.hatchAssociative || h.hatchSrcIds.empty()) continue;
+        // 受影响判定：该填充的来源集合与本次变更集有交集
+        bool hit = false;
+        for (int sid : h.hatchSrcIds) {
+            if (std::find(changedIds.begin(), changedIds.end(), sid) != changedIds.end()) { hit = true; break; }
+        }
+        if (!hit) continue;
+        ++affected;
+
+        // 取当前来源（缺失者跳过 → 视为边界消失）
+        std::vector<const Element*> srcs;
+        for (int sid : h.hatchSrcIds) if (const Element* se = element(sid)) srcs.push_back(se);
+
+        std::vector<Vec3> outer; std::vector<std::vector<Vec3>> holes;
+        if (rebuildHatchLoops(srcs, outer, holes)) {
+            // 就地改写边界（保留材质/图案/颜色/线宽等全部字段，不重建 Hatch）
+            h.pts = outer;
+            h.holes = holes;
+            if (h.hatchInvalid) {          // 从失效恢复
+                h.hatchInvalid = false;
+                log(QStringLiteral("剖面区域 #%1 边界已恢复，随动更新").arg(h.id));
+            }
+            emit elementUpdated(h.id);
+        } else {
+            // 边界消失/不再成环 → 标记失效（保留最后几何，交由提示与 hatchedit 处理）
+            if (!h.hatchInvalid) {
+                h.hatchInvalid = true;
+                log(QStringLiteral("剖面区域 #%1 的边界已消失或不成闭合区域，填充已标记失效（可用 HATCHEDIT 解除关联或重填）")
+                        .arg(h.id), "warn");
+            }
+            ++invalidated;
+            emit elementUpdated(h.id);
+        }
+    }
+    if (affected) emit modelChanged();
+    (void)invalidated;
+    return affected;
+}
+
+bool SketchModel::setHatchPatternOverride(int hatchId, const QString& patName, double scale,
+                                          int triStateAssoc) {
+    auto it = find(hatchId);
+    if (it == elems_.end() || it->type != ElementType::Hatch) {
+        log(QStringLiteral("HATCHEDIT 失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        return false;
+    }
+    const double sc = (scale > 1e-6) ? scale : ((it->hatchScale > 1e-6) ? it->hatchScale : 1.0);
+    // 就地改写（保留边界/内孔/材质/颜色等；单步撤销由调用方 beginEdit 覆盖）。
+    // patName 直接赋值：空串 = 清除覆盖（渲染层按 sectionMaterial 取默认图案）。
+    updateElementQuiet(hatchId, [&](Element& dst) {
+        dst.hatchPattern = patName;
+        dst.hatchScale   = sc;
+        if (triStateAssoc == 0)      { dst.hatchAssociative = false; }  // 断开（保留来源，可再开）
+        else if (triStateAssoc == 1) { dst.hatchAssociative = true; }
+    });
+    return true;
+}
+
 // ============================================================
 // 文字样式（STYLE）
 // ============================================================
@@ -1497,31 +1836,68 @@ std::vector<int> SketchModel::elementsInGroup(const QString& name) const {
     return ids;
 }
 
+// 编组跨 Xref 边界禁止：Xref 块引用的成员资格属于外部图纸，本图编组不得圈占
+// （普通块引用是本图对象，可编组）。返回 true 表示该图元是 Xref 块引用。
+namespace {
+bool isXrefBlockRef(const SketchModel* m, const Element& e) {
+    if (e.type != ElementType::BlockRef) return false;
+    const BlockDef* d = m->findBlockDef(e.blockName);
+    return d && d->isXref;
+}
+} // namespace
+
 bool SketchModel::createGroup(const QString& name, const std::vector<int>& ids) {
     const QString nm = name.trimmed();
     if (nm.isEmpty() || ids.empty()) {
         log(QStringLiteral("创建编组失败：编组名或对象为空"), "warn");
         return false;
     }
+    // Xref 边界守卫：剔除 Xref 块引用（不中断其余成员的编组）
+    std::vector<int> ok;
+    ok.reserve(ids.size());
+    int xrefN = 0;
+    for (int id : ids) {
+        const Element* e = element(id);
+        if (!e) continue;
+        if (isXrefBlockRef(this, *e)) { ++xrefN; continue; }
+        ok.push_back(id);
+    }
+    if (ok.empty()) {
+        log(QStringLiteral("创建编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组"), "warn");
+        return false;
+    }
+    if (xrefN > 0)
+        log(QStringLiteral("已跳过 %1 个外部参照（Xref 不参与本图编组）").arg(xrefN), "warn");
     // 允许重名 = 向既有编组添加成员（与「添加到编组」语义统一），无需拒绝
     beginEdit(QStringLiteral("创建编组 %1").arg(nm));
     QSet<int> want;
-    for (int id : ids) want.insert(id);
+    for (int id : ok) want.insert(id);
     for (auto& e : elems_) {
         if (!want.contains(e.id)) continue;
         e.groupName = nm;
         want.remove(e.id);
     }
-    log(QStringLiteral("已创建编组「%1」（%2 个对象）").arg(nm).arg(ids.size()));
+    log(QStringLiteral("已创建编组「%1」（%2 个对象）").arg(nm).arg(ok.size()));
     return true;
 }
 
 int SketchModel::addToGroup(const QString& name, const std::vector<int>& ids) {
     const QString nm = name.trimmed();
     if (nm.isEmpty() || ids.empty()) return 0;
+    // Xref 边界守卫：与 createGroup 同规则，静默跳过 Xref 块引用
+    std::vector<int> ok;
+    ok.reserve(ids.size());
+    for (int id : ids) {
+        const Element* e = element(id);
+        if (e && !isXrefBlockRef(this, *e)) ok.push_back(id);
+    }
+    if (ok.empty()) {
+        log(QStringLiteral("添加到编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组"), "warn");
+        return 0;
+    }
     beginEdit(QStringLiteral("添加到编组 %1").arg(nm));
     QSet<int> want;
-    for (int id : ids) want.insert(id);
+    for (int id : ok) want.insert(id);
     int n = 0;
     for (auto& e : elems_) {
         if (!want.contains(e.id) || e.groupName == nm) continue;
@@ -1579,6 +1955,20 @@ int SketchModel::selectGroup(const QString& name) {
     const std::vector<int> ids = elementsInGroup(name);
     setSelection(ids);
     return int(ids.size());
+}
+
+std::vector<int> SketchModel::expandPickToGroup(int id, bool additive) const {
+    const Element* e = element(id);
+    if (!e) return {};
+    // Ctrl/Shift 修饰 = 穿透编组（单选语义不变）；非编组成员无需扩展
+    if (additive || e->groupName.isEmpty()) return { id };
+    // 普通点击命中编组成员 → 整组选中（仅可见成员；隐藏成员不参与选择，与框选一致）
+    std::vector<int> out;
+    out.reserve(8);
+    for (const auto& el : elems_)
+        if (el.groupName == e->groupName && el.visible) out.push_back(el.id);
+    if (out.empty()) out.push_back(id);   // 兜底：全员隐藏时退化为单选
+    return out;
 }
 
 // ============================================================================
@@ -1641,6 +2031,37 @@ void SketchModel::setSavedFiltersFromJson(const QJsonArray& arr) {
         if (!f.name.trimmed().isEmpty() && f.isValid())
             savedFilters_.push_back(std::move(f));
     }
+}
+
+void SketchModel::setActivePickFilter(const FilterDef& f) {
+    activePickFilter_ = f;
+    activePickFilter_.name.clear();   // 预选器是瞬态配置，不带命名语义
+    if (activePickFilter_.conds.empty()) {
+        // 空条件 = 清除（幂等），不打扰日志
+    } else {
+        log(QStringLiteral("FILTER 预选器已设置（%1 条件）：作用于下一次拾取/框选/栏选，随后自动清除")
+                .arg(activePickFilter_.conds.size()));
+    }
+}
+
+void SketchModel::clearActivePickFilter() {
+    activePickFilter_ = FilterDef{};
+}
+
+std::vector<int> SketchModel::applyPickFilterOnce(const std::vector<int>& candidates) {
+    if (activePickFilter_.conds.empty()) return candidates;   // 无预选器：原样返回（不清除）
+    std::vector<int> kept;
+    kept.reserve(candidates.size());
+    for (int id : candidates) {
+        const Element* e = element(id);
+        if (e && e->visible && matchFilter(*e, activePickFilter_))
+            kept.push_back(id);
+    }
+    activePickFilter_ = FilterDef{};   // 用后即清：「作用于随后一次」
+    log(QStringLiteral("FILTER 预选器生效：候选 %1 个 → 命中 %2 个（预选器已自动清除）")
+            .arg(candidates.size()).arg(kept.size()),
+        kept.empty() ? QStringLiteral("warn") : QStringLiteral("info"));
+    return kept;
 }
 
 // ============================================================================
@@ -2040,9 +2461,11 @@ void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
     Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
+    rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
     redoStack_.push_back(std::move(rb));
     auto m = undoStack_.back(); undoStack_.pop_back();
     elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
+    dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
@@ -2053,9 +2476,11 @@ void SketchModel::undo() {
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
     Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
+    rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
     undoStack_.push_back(std::move(rb));
     auto m = redoStack_.back(); redoStack_.pop_back();
     elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
+    dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
@@ -2127,9 +2552,236 @@ QString SketchModel::scaleLabel() const { return formatScaleLabel(scaleRatio_); 
 
 // 标注样式唯一构造入口：带上当前绘图比例，保证标注数字是实物尺寸（GB/T 14690）
 dim::Style SketchModel::dimStyle() const {
-    dim::Style st;
+    dim::Style st = dimStyleFor(Element());
     st.drawingScale = scaleRatio_;
     return st;
+}
+
+// ============================================================================
+// 命名标注样式表（一图多标准）
+// ----------------------------------------------------------------------------
+// 图元经 dimStyleName 按名引用表中条目（引用式，对标 blockTable / textStyleName）。
+// 关键：dimStyle() 不再返回一张"硬编码默认样式"，而是经 dimStyleFor 解析当前样式——
+// 故改样式表 / 切当前样式后，全图标注经同一入口自动读到新值（即"样式切换全图联动"）。
+// ============================================================================
+const dim::DimStyleEntry* SketchModel::dimStyleAt(int i) const {
+    if (i < 0 || i >= (int)dimStyles_.size()) return nullptr;
+    return &dimStyles_[(size_t)i];
+}
+
+const dim::DimStyleEntry* SketchModel::findDimStyle(const QString& name) const {
+    for (const auto& e : dimStyles_) if (e.name == name) return &e;
+    return nullptr;
+}
+
+dim::Style SketchModel::dimStyleFor(const Element& e) const {
+    // 解析顺序：图元 dimStyleName → 当前样式 → 表首条 → 内置默认
+    const dim::DimStyleEntry* hit = nullptr;
+    if (!e.dimStyleName.isEmpty()) hit = findDimStyle(e.dimStyleName);
+    if (!hit && !currentDimStyle_.isEmpty()) hit = findDimStyle(currentDimStyle_);
+    if (!hit && !dimStyles_.empty()) hit = &dimStyles_.front();
+    dim::Style st = hit ? hit->style : dim::Style();
+    st.drawingScale = scaleRatio_;      // 比例不入样式表，每次按当前图纸注入
+    return st;
+}
+
+bool SketchModel::addDimStyle(const dim::DimStyleEntry& e) {
+    const QString n = e.name.trimmed();
+    if (n.isEmpty()) { log(QStringLiteral("标注样式名不能为空"), "warn"); return false; }
+    if (hasDimStyle(n)) { log(QStringLiteral("标注样式 %1 已存在").arg(n), "warn"); return false; }
+    pushMemento(QStringLiteral("新建标注样式 ") + n);
+    dim::DimStyleEntry d = e; d.name = n;
+    dimStyles_.push_back(std::move(d));
+    emit dimStylesChanged();
+    emit modelChanged();          // 引用它的标注需重绘
+    log(QStringLiteral("已创建标注样式 %1").arg(n));
+    return true;
+}
+
+bool SketchModel::updateDimStyle(const dim::DimStyleEntry& e) {
+    const QString n = e.name.trimmed();
+    auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
+                           [&](const dim::DimStyleEntry& d) { return d.name == n; });
+    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(n), "warn"); return false; }
+    pushMemento(QStringLiteral("修改标注样式 ") + n);
+    it->style = e.style;
+    emit dimStylesChanged();
+    emit modelChanged();
+    log(QStringLiteral("已更新标注样式 %1（引用它的标注已联动）").arg(n));
+    return true;
+}
+
+bool SketchModel::renameDimStyle(const QString& oldName, const QString& newName) {
+    auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
+                           [&](const dim::DimStyleEntry& d) { return d.name == oldName; });
+    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(oldName), "warn"); return false; }
+    const QString nn = newName.trimmed();
+    if (nn.isEmpty()) { log(QStringLiteral("新标注样式名不能为空"), "warn"); return false; }
+    if (nn == oldName) return true;
+    if (hasDimStyle(nn)) { log(QStringLiteral("标注样式 %1 已存在").arg(nn), "warn"); return false; }
+    pushMemento(QStringLiteral("重命名标注样式 ") + oldName);
+    it->name = nn;
+    if (currentDimStyle_ == oldName) currentDimStyle_ = nn;
+    int cnt = 0;
+    for (auto& el : elems_)
+        if (el.dimStyleName == oldName) { el.dimStyleName = nn; ++cnt; }
+    emit dimStylesChanged();
+    emit modelChanged();
+    log(QStringLiteral("标注样式 %1 已改名为 %2（%3 个标注同步）").arg(oldName).arg(nn).arg(cnt));
+    return true;
+}
+
+bool SketchModel::removeDimStyle(const QString& name) {
+    auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
+                           [&](const dim::DimStyleEntry& d) { return d.name == name; });
+    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(name), "warn"); return false; }
+    if (dimStyles_.size() == 1) { log(QStringLiteral("标注样式表至少保留一条"), "warn"); return false; }
+    pushMemento(QStringLiteral("删除标注样式 ") + name);
+    dimStyles_.erase(it);
+    if (currentDimStyle_ == name) currentDimStyle_ = dimStyles_.front().name;
+    int cnt = 0;
+    for (auto& el : elems_)
+        if (el.dimStyleName == name) { el.dimStyleName.clear(); ++cnt; }   // 回落当前样式
+    emit dimStylesChanged();
+    emit modelChanged();
+    log(QStringLiteral("已删除标注样式 %1；%2 个标注回落当前样式").arg(name).arg(cnt));
+    return true;
+}
+
+bool SketchModel::setCurrentDimStyle(const QString& name) {
+    if (!hasDimStyle(name)) { log(QStringLiteral("标注样式 %1 不存在").arg(name), "warn"); return false; }
+    if (currentDimStyle_ == name) return true;
+    currentDimStyle_ = name;
+    emit dimStylesChanged();
+    emit modelChanged();     // 空 dimStyleName 的标注解析到新当前样式 → 全图联动
+    log(QStringLiteral("当前标注样式 = %1").arg(name));
+    return true;
+}
+
+QJsonObject SketchModel::dimStylesToJson() const {
+    QJsonObject o;
+    QJsonArray arr;
+    for (const auto& d : dimStyles_) arr.append(dim::dimStyleEntryToJson(d));
+    o["styles"] = arr;
+    o["current"] = currentDimStyle_;
+    return o;
+}
+
+void SketchModel::setDimStylesFromJson(const QJsonObject& o) {
+    dimStyles_.clear();
+    for (const auto& v : o["styles"].toArray()) {
+        dim::DimStyleEntry d = dim::dimStyleEntryFromJson(v.toObject());
+        if (!d.name.trimmed().isEmpty()) dimStyles_.push_back(std::move(d));
+    }
+    // 旧档兼容：本字段整体缺失或为空数组 ⇒ 自动生成默认 "Standard" 一条，
+    // 于是「单全局 DimStyle」的旧图等价于"一张名为 Standard 的样式"，语义零变化。
+    if (dimStyles_.empty()) {
+        dim::DimStyleEntry d;
+        d.name = QStringLiteral("Standard");
+        d.style = dim::Style();
+        dimStyles_.push_back(std::move(d));
+    }
+    const QString cur = o["current"].toString();
+    currentDimStyle_ = hasDimStyle(cur) ? cur : dimStyles_.front().name;
+    emit dimStylesChanged();
+}
+
+// ============================================================================
+// 布局表（多布局；不入撤销栈，随图存档）
+// ============================================================================
+
+const PlotLayoutDef* SketchModel::layoutAt(int i) const {
+    return (i >= 0 && i < (int)layouts_.size()) ? &layouts_[i] : nullptr;
+}
+
+const PlotLayoutDef* SketchModel::findLayout(const QString& name) const {
+    for (const auto& l : layouts_)
+        if (l.name == name) return &l;
+    return nullptr;
+}
+
+bool SketchModel::addLayout(const QString& name, const PrintSettings& settings) {
+    if (name.trimmed().isEmpty() || findLayout(name)) return false;
+    PlotLayoutDef def;
+    def.name = name;
+    def.settings = settings;
+    layouts_.push_back(std::move(def));
+    emit layoutsChanged();
+    return true;
+}
+
+bool SketchModel::removeLayout(const QString& name) {
+    for (auto it = layouts_.begin(); it != layouts_.end(); ++it) {
+        if (it->name == name) {
+            layouts_.erase(it);
+            if (currentLayout_ == name) currentLayout_.clear();   // 回落模型空间
+            emit layoutsChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SketchModel::renameLayout(const QString& oldName, const QString& newName) {
+    if (newName.trimmed().isEmpty()) return false;
+    PlotLayoutDef* def = nullptr;
+    for (auto& l : layouts_)
+        if (l.name == oldName) { def = &l; break; }
+    if (!def) return false;
+    if (newName != oldName && findLayout(newName)) return false;  // 重名拒绝
+    def->name = newName;
+    if (currentLayout_ == oldName) currentLayout_ = newName;
+    emit layoutsChanged();
+    return true;
+}
+
+bool SketchModel::updateLayout(const QString& name, const PrintSettings& settings) {
+    for (auto& l : layouts_) {
+        if (l.name == name) {
+            l.settings = settings;
+            emit layoutsChanged();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SketchModel::setCurrentLayout(const QString& name) {
+    if (name.isEmpty()) {
+        if (currentLayout_.isEmpty()) return true;   // 幂等
+        currentLayout_.clear();
+        emit layoutsChanged();
+        return true;
+    }
+    if (!findLayout(name)) return false;
+    if (currentLayout_ == name) return true;         // 幂等
+    currentLayout_ = name;
+    emit layoutsChanged();
+    return true;
+}
+
+const PlotLayoutDef* SketchModel::currentLayoutDef() const {
+    if (currentLayout_.isEmpty()) return nullptr;
+    return findLayout(currentLayout_);
+}
+
+QJsonArray SketchModel::layoutsToJson() const {
+    QJsonArray arr;
+    for (const auto& l : layouts_) arr.append(l.toJson());
+    return arr;
+}
+
+void SketchModel::setLayoutsFromJson(const QJsonObject& root) {
+    layouts_.clear();
+    currentLayout_.clear();
+    // 旧档兼容：顶层无 "layouts" 键（或缺省空数组）⇒ 空表 = 模型空间打印，行为零变化。
+    for (const auto& v : root.value("layouts").toArray()) {
+        PlotLayoutDef def = PlotLayoutDef::fromJson(v.toObject());
+        if (!def.name.trimmed().isEmpty()) layouts_.push_back(std::move(def));
+    }
+    const QString cur = root.value("currentLayout").toString();
+    if (!cur.isEmpty() && findLayout(cur)) currentLayout_ = cur;
+    emit layoutsChanged();
 }
 
 // 修改绘图比例：把已有图元（不含图框/标题栏）按内容包围盒中心等比缩放。
@@ -2189,6 +2841,14 @@ void SketchModel::setScaleRatioValue(double r) {
     if (std::fabs(r - scaleRatio_) < 1e-12) return;
     scaleRatio_ = r;
     emit scaleChanged(r);
+}
+
+void SketchModel::setLtscale(double v) {
+    if (v <= 0.0) return;                          // 非法值静默忽略
+    if (std::fabs(v - ltscale_) < 1e-9) return;   // 幂等：同值不重复发信号
+    ltscale_ = v;
+    emit ltscaleChanged(v);
+    emit modelChanged();                           // 线型比例变化影响所有虚线渲染 → 触发重绘
 }
 
 } // namespace SketchCAD

@@ -2325,26 +2325,50 @@ bool LayerCommand::execute(const CommandContext& ctx) {
         m->applyLayerStyleToElements(t[2]);
         return true;
     }
+    // ---- 图层动态语义：冻结 / 打印 / 透明度（独立子命令 + set 字段双入口）----
+    if (sub == "frozen") {
+        if (t.size() < 3) { m->log("用法: layer frozen <名称> [on|off]", "warn"); return false; }
+        bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
+        return m->setLayerFrozen(t[2], on);
+    }
+    if (sub == "plot") {
+        if (t.size() < 3) { m->log("用法: layer plot <名称> [on|off]", "warn"); return false; }
+        bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
+        return m->setLayerPlot(t[2], on);
+    }
+    if (sub == "alpha") {
+        if (t.size() < 4) { m->log("用法: layer alpha <名称> <0..1>", "warn"); return false; }
+        bool ok; double v = t[3].toDouble(&ok);
+        if (!ok || v < 0.0 || v > 1.0) { m->log(QStringLiteral("无效透明度(需0..1): %1").arg(t[3]), "warn"); return false; }
+        return m->setLayerAlpha(t[2], v);
+    }
     if (sub == "set") {
-        if (t.size() < 5) { m->log("用法: layer set <名称> <color|width|style> <值>", "warn"); return false; }
+        if (t.size() < 5) { m->log("用法: layer set <名称> <color|width|style|frozen|plot|alpha> <值>", "warn"); return false; }
         const QString name = t[2];
         const Layer* l = m->findLayer(name);
         if (!l) { m->log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
         const QString field = t[3].toLower();
-        QColor c = l->color; double w = l->lineWidth; LineStyle ls = l->lineStyle;
         if (field == "color") {
             QColor nc = QColor(t[4]);
             if (!nc.isValid()) { m->log(QStringLiteral("无效颜色: %1").arg(t[4]), "warn"); return false; }
-            c = nc;
-            return m->setLayerStyle(name, &c, nullptr, nullptr);   // 只改颜色，同步本层颜色
+            return m->setLayerStyle(name, &nc, nullptr, nullptr);   // 只改颜色，同步本层颜色
         } else if (field == "width") {
             bool ok; double v = t[4].toDouble(&ok);
             if (!ok) { m->log(QStringLiteral("无效线宽: %1").arg(t[4]), "warn"); return false; }
-            w = v;
-            return m->setLayerStyle(name, nullptr, &w, nullptr);   // 只改线宽，同步本层线宽
+            return m->setLayerStyle(name, nullptr, &v, nullptr);   // 只改线宽，同步本层线宽
         } else if (field == "style") {
-            ls = parseLineStyleArg(t[4]);
+            LineStyle ls = parseLineStyleArg(t[4]);
             return m->setLayerStyle(name, nullptr, nullptr, &ls);   // 只改线型，同步本层线型
+        } else if (field == "frozen") {
+            bool on = (t[4].toLower() != "off" && t[4].toLower() != "0");
+            return m->setLayerFrozen(name, on);
+        } else if (field == "plot") {
+            bool on = (t[4].toLower() != "off" && t[4].toLower() != "0");
+            return m->setLayerPlot(name, on);
+        } else if (field == "alpha") {
+            bool ok; double v = t[4].toDouble(&ok);
+            if (!ok || v < 0.0 || v > 1.0) { m->log(QStringLiteral("无效透明度(需0..1): %1").arg(t[4]), "warn"); return false; }
+            return m->setLayerAlpha(name, v);
         } else {
             m->log(QStringLiteral("未知字段: %1").arg(t[3]), "warn"); return false;
         }
@@ -3169,8 +3193,520 @@ void CommandRegistry::registerBuiltins() {
     // GUI 交互由 MainWindow::openQSelect() 打开 QSelectDialog；此处为命令行 / 脚本 / 无头等价入口。
     registerExact("qselect", std::make_shared<QSelectCommand>());
 
+    // ---- group：命名编组（GROUP）命令行入口 ----
+    // 编组 = groupName 相同的图元集合（引用式，无独立编组表），随图元 JSON 随图存档。
+    //   group create <名>   用当前选中对象创建编组（Xref 块引用自动剔除）
+    //   group add <名>      把当前选中对象加入编组
+    //   group remove        把当前选中对象移出其所属编组
+    //   group list          列出全部编组及成员数
+    //   group ungroup <名>  解散编组（对象保留）
+    registerExact("group", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                m->log(QStringLiteral("用法：group [create <名> | add <名> | remove | list | ungroup <名>]"),
+                       QStringLiteral("error"));
+                return false;
+            }
+            const QString sub = ctx.toks[1].toLower();
+            if (sub == "create" || sub == "创建") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group create <编组名>（先选中对象）"), QStringLiteral("error")); return false; }
+                return m->createGroup(ctx.toks[2], m->selection());
+            }
+            if (sub == "add" || sub == "加入") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group add <编组名>（先选中对象）"), QStringLiteral("error")); return false; }
+                const int n = m->addToGroup(ctx.toks[2], m->selection());
+                if (n <= 0) { m->log(QStringLiteral("没有对象被加入编组（检查是否已选中对象/已属该组）"), QStringLiteral("warn")); return false; }
+                return true;
+            }
+            if (sub == "remove" || sub == "移除") {
+                const int n = m->removeFromGroup(m->selection());
+                if (n <= 0) { m->log(QStringLiteral("没有对象被移出编组（先选中编组成员）"), QStringLiteral("warn")); return false; }
+                return true;
+            }
+            if (sub == "list" || sub == "列表") {
+                const QStringList gs = m->groupNames();
+                if (gs.isEmpty()) { m->log(QStringLiteral("当前没有编组"), QStringLiteral("info")); return true; }
+                for (const QString& g : gs)
+                    m->log(QStringLiteral("编组「%1」：%2 个对象").arg(g).arg(m->elementCountInGroup(g)),
+                           QStringLiteral("info"));
+                return true;
+            }
+            if (sub == "ungroup" || sub == "解散") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group ungroup <编组名>（对象保留）"), QStringLiteral("error")); return false; }
+                return m->ungroup(ctx.toks[2]) > 0;
+            }
+            m->log(QStringLiteral("未知子命令 %1（可用：create/add/remove/list/ungroup）").arg(sub), QStringLiteral("error"));
+            return false;
+        }));
+
+    // ---- filter：FILTER 预选器（作用于随后一次选择操作，用后即清）----
+    // 复用 QSelect 引擎判定（matchFilter，引擎 API 不改），四维条件同 qselect：
+    //   filter type=直线 layer=0 color=#ff0000 linestyle=实线   设预选器（空维度忽略）
+    //   filter                                                 查看当前预选器
+    //   filter none|off|clear                                  清除预选器
+    registerExact("filter", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                if (!m->hasActivePickFilter()) {
+                    m->log(QStringLiteral("当前无 FILTER 预选器"), QStringLiteral("info"));
+                } else {
+                    QStringList desc;
+                    for (const auto& c : m->activePickFilter().conds)
+                        desc << QStringLiteral("%1=%2").arg(qselectPropName(c.prop), c.value);
+                    m->log(QStringLiteral("当前预选器：%1（作用于下一次拾取/框选/栏选）").arg(desc.join(QStringLiteral(" AND "))),
+                           QStringLiteral("info"));
+                }
+                return true;
+            }
+            const QString sub = ctx.toks[1].toLower();
+            if (sub == "none" || sub == "off" || sub == "clear" || sub == "清除") {
+                m->clearActivePickFilter();
+                m->log(QStringLiteral("已清除 FILTER 预选器"), QStringLiteral("info"));
+                return true;
+            }
+            // key=value 四维解析（与 qselect 同口径；缺省维度不限制）
+            QString type, layer, color, lineStyle;
+            for (int i = 1; i < ctx.toks.size(); ++i) {
+                const QString t = ctx.toks[i];
+                const int eq = t.indexOf('=');
+                if (eq <= 0) continue;
+                const QString k = t.left(eq).toLower();
+                const QString v = t.mid(eq + 1).trimmed();
+                if (v.isEmpty()) continue;
+                if      (k == "type" || k == "类型")     type = v;
+                else if (k == "layer" || k == "图层")    layer = v;
+                else if (k == "color" || k == "颜色")    color = v;
+                else if (k == "linestyle" || k == "线型") lineStyle = v;
+            }
+            if (type.isEmpty() && layer.isEmpty() && color.isEmpty() && lineStyle.isEmpty()) {
+                m->log(QStringLiteral("用法：filter [type=类型] [layer=图层] [color=#rrggbb] [linestyle=线型] | none"),
+                       QStringLiteral("error"));
+                return false;
+            }
+            FilterDef f;
+            f.matchAll = true;
+            if (!type.isEmpty())      f.conds.push_back({QSelectProp::Type,      QSelectOp::Eq, type});
+            if (!layer.isEmpty())     f.conds.push_back({QSelectProp::Layer,     QSelectOp::Eq, layer});
+            if (!color.isEmpty())     f.conds.push_back({QSelectProp::Color,     QSelectOp::Eq, color});
+            if (!lineStyle.isEmpty()) f.conds.push_back({QSelectProp::LineStyle, QSelectOp::Eq, lineStyle});
+            m->setActivePickFilter(f);
+            return true;
+        }));
+
+    // ---- layout：布局族（多布局 = 名字 + 页面设置 + 视口集，随图存档）----
+    //   layout new <名>                 新建布局（A4 默认页面设置，视口空 = 打印时回落模型空间取景）
+    //   layout set <名> | model         切换当前布局（model = 模型空间）
+    //   layout list                     列出全部布局（含当前标记）
+    //   layout rename <旧> <新>
+    //   layout delete <名>
+    //   layout copy <源> <新>           复制布局（页面设置与视口集一并复制）
+    //   layout vpscale <视口名> <比例>  改当前布局中某视口比例（"1:2" 或 0.5；1:2 = 出图缩小一半）
+    registerExact("layout", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            // 比例解析："a:b"（图纸:模型，1:2 → 0.5）或正小数（0.5）
+            auto parseRatio = [](const QString& s, double& out) -> bool {
+                const int colon = s.indexOf(':');
+                if (colon > 0) {
+                    bool okA = false, okB = false;
+                    const double a = s.left(colon).toDouble(&okA);
+                    const double b = s.mid(colon + 1).toDouble(&okB);
+                    if (okA && okB && a > 0 && b > 0) { out = a / b; return true; }
+                    return false;
+                }
+                bool ok = false;
+                const double v = s.toDouble(&ok);
+                if (ok && v > 0) { out = v; return true; }
+                return false;
+            };
+            if (ctx.toks.size() < 2) {
+                const QString cur = m->currentLayout().isEmpty()
+                    ? QStringLiteral("模型空间") : m->currentLayout();
+                m->log(QStringLiteral("当前：%1，共 %2 个布局（用法：layout new/set/list/rename/delete/copy/vpscale）")
+                           .arg(cur).arg(m->layoutCount()), QStringLiteral("info"));
+                return true;
+            }
+            const QString sub = ctx.toks[1].toLower();
+            if (sub == "new" || sub == "新建") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout new <布局名>"), QStringLiteral("error")); return false; }
+                if (!m->addLayout(ctx.toks[2], PrintSettings())) {
+                    m->log(QStringLiteral("新建布局失败（名字为空或已存在）"), QStringLiteral("error"));
+                    return false;
+                }
+                m->setCurrentLayout(ctx.toks[2]);
+                return true;
+            }
+            if (sub == "set" || sub == "切换") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout set <布局名|model>"), QStringLiteral("error")); return false; }
+                const QString nm = ctx.toks[2].toLower();
+                if (nm == "model" || nm == "模型" || nm == "模型空间") {
+                    m->setCurrentLayout(QString());
+                    m->log(QStringLiteral("已切换到模型空间"), QStringLiteral("info"));
+                    return true;
+                }
+                if (!m->setCurrentLayout(ctx.toks[2])) {
+                    m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error"));
+                    return false;
+                }
+                return true;
+            }
+            if (sub == "list" || sub == "列表") {
+                m->log(QStringLiteral("模型空间%1").arg(m->currentLayout().isEmpty() ? QStringLiteral("（当前）") : QString()),
+                       QStringLiteral("info"));
+                for (int i = 0; i < m->layoutCount(); ++i) {
+                    const PlotLayoutDef* d = m->layoutAt(i);
+                    m->log(QStringLiteral("布局「%1」：%2 个视口%3")
+                               .arg(d->name).arg(d->settings.viewports.size())
+                               .arg(m->currentLayout() == d->name ? QStringLiteral("（当前）") : QString()),
+                           QStringLiteral("info"));
+                }
+                return true;
+            }
+            if (sub == "rename" || sub == "改名") {
+                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout rename <旧名> <新名>"), QStringLiteral("error")); return false; }
+                if (!m->renameLayout(ctx.toks[2], ctx.toks[3])) {
+                    m->log(QStringLiteral("改名失败（旧名不存在/新名为空或重名）"), QStringLiteral("error"));
+                    return false;
+                }
+                return true;
+            }
+            if (sub == "delete" || sub == "删除") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout delete <布局名>"), QStringLiteral("error")); return false; }
+                if (!m->removeLayout(ctx.toks[2])) {
+                    m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error"));
+                    return false;
+                }
+                return true;
+            }
+            if (sub == "copy" || sub == "复制") {
+                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout copy <源布局> <新名>"), QStringLiteral("error")); return false; }
+                const PlotLayoutDef* src = m->findLayout(ctx.toks[2]);
+                if (!src) { m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                if (!m->addLayout(ctx.toks[3], src->settings)) {
+                    m->log(QStringLiteral("复制失败（新名为空或已存在）"), QStringLiteral("error"));
+                    return false;
+                }
+                return true;
+            }
+            if (sub == "vpscale" || sub == "视口比例") {
+                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout vpscale <视口名> <比例>（如 1:2 或 0.5）"), QStringLiteral("error")); return false; }
+                const PlotLayoutDef* def = m->currentLayoutDef();
+                if (!def) { m->log(QStringLiteral("当前处于模型空间（先 layout set <布局名>）"), QStringLiteral("error")); return false; }
+                double sc = 0.0;
+                if (!parseRatio(ctx.toks[3], sc)) {
+                    m->log(QStringLiteral("比例格式错误（示例：1:2 → 出图缩小一半；2:1 → 放大一倍）"), QStringLiteral("error"));
+                    return false;
+                }
+                PrintSettings s = def->settings;
+                bool hit = false;
+                for (auto& vp : s.viewports) {
+                    if (vp.name.compare(ctx.toks[2], Qt::CaseInsensitive) == 0) {
+                        vp.scale = sc;
+                        hit = true;
+                    }
+                }
+                if (!hit) { m->log(QStringLiteral("当前布局中无视口「%1」").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                m->updateLayout(def->name, s);
+                m->log(QStringLiteral("视口「%1」比例 = %2（模型 mm → 图纸 mm）").arg(ctx.toks[2]).arg(sc, 0, 'f', 4),
+                       QStringLiteral("info"));
+                return true;
+            }
+            m->log(QStringLiteral("未知子命令 %1（可用：new/set/list/rename/delete/copy/vpscale）").arg(sub), QStringLiteral("error"));
+            return false;
+        }));
+
+    // ---- mview：在当前布局中新建浮动视口（视口平铺的基础入口）----
+    //   mview <图纸X> <图纸Y> <宽> <高> [比例]
+    // paperRect 相对可打印区左上角、y 向下（mm）；比例 "1:2"/"0.5"，缺省 = 沿用布局整体比例。
+    // 无当前布局 → 自动创建并切换到默认布局「布局1」。
+    registerExact("mview", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 5) {
+                m->log(QStringLiteral("用法：mview <图纸X> <图纸Y> <宽> <高> [比例]，如 mview 10 10 90 60 1:2"),
+                       QStringLiteral("error"));
+                return false;
+            }
+            if (m->currentLayout().isEmpty()) {
+                if (!m->hasLayout(QStringLiteral("布局1")))
+                    m->addLayout(QStringLiteral("布局1"), PrintSettings());
+                m->setCurrentLayout(QStringLiteral("布局1"));
+                m->log(QStringLiteral("已自动创建并切换到布局「布局1」"), QStringLiteral("info"));
+            }
+            bool ok = false;
+            const double px = ctx.toks[1].toDouble(&ok);  if (!ok) { m->log(QStringLiteral("参数 1 不是数字"), QStringLiteral("error")); return false; }
+            const double py = ctx.toks[2].toDouble(&ok);  if (!ok) { m->log(QStringLiteral("参数 2 不是数字"), QStringLiteral("error")); return false; }
+            const double pw = ctx.toks[3].toDouble(&ok);  if (!ok || pw <= 0) { m->log(QStringLiteral("视口宽度必须为正数"), QStringLiteral("error")); return false; }
+            const double ph = ctx.toks[4].toDouble(&ok);  if (!ok || ph <= 0) { m->log(QStringLiteral("视口高度必须为正数"), QStringLiteral("error")); return false; }
+            double sc = 0.0;   // 0 = 沿用布局整体比例（fit-to-page / 自定义）
+            if (ctx.toks.size() >= 6) {
+                const int colon = ctx.toks[5].indexOf(':');
+                if (colon > 0) {
+                    bool okA = false, okB = false;
+                    const double a = ctx.toks[5].left(colon).toDouble(&okA);
+                    const double b = ctx.toks[5].mid(colon + 1).toDouble(&okB);
+                    if (!okA || !okB || a <= 0 || b <= 0) { m->log(QStringLiteral("比例格式错误（示例：1:2）"), QStringLiteral("error")); return false; }
+                    sc = a / b;
+                } else {
+                    const double v = ctx.toks[5].toDouble(&ok);
+                    if (!ok || v <= 0) { m->log(QStringLiteral("比例必须为正数"), QStringLiteral("error")); return false; }
+                    sc = v;
+                }
+            }
+            const PlotLayoutDef* def = m->currentLayoutDef();
+            PrintSettings s = def->settings;
+            PlotViewport vp;
+            vp.name = QStringLiteral("视口%1").arg(s.viewports.size() + 1);
+            vp.paperRect = QRectF(px, py, pw, ph);
+            vp.scale = sc;
+            s.viewports.append(vp);
+            m->updateLayout(def->name, s);
+            m->log(QStringLiteral("已在布局「%1」新建 %2：paper(%3, %4, %5×%6 mm)%7")
+                       .arg(def->name, vp.name)
+                       .arg(px, 0, 'f', 1).arg(py, 0, 'f', 1)
+                       .arg(pw, 0, 'f', 1).arg(ph, 0, 'f', 1)
+                       .arg(sc > 0 ? QStringLiteral("，比例 %1").arg(sc, 0, 'f', 4) : QStringLiteral("，比例沿用布局")),
+                   QStringLiteral("info"));
+            return true;
+        }));
+
     // ---- 图层管理 ----
     registerExact("layer", std::make_shared<LayerCommand>());
+
+    // ---- 图层动态语义：LTSCALE 全局线型比例 + LAYISO / LAYUNISO / LAYMCH 治理命令 ----
+    // ltscale <比例>：设定全局线型比例（控制所有虚线/点画线/双点画线的线素长度）。
+    //   0.5 → 线素缩短一半；2.0 → 线素拉长一倍。随图存档，不入撤销栈。
+    registerExact("ltscale", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            if (ctx.toks.size() < 2) {
+                ctx.model->log(QStringLiteral("当前全局线型比例 LTSCALE = %1")
+                                   .arg(ctx.model->ltscale(), 0, 'f', 3), QStringLiteral("info"));
+                return true;
+            }
+            bool ok = false;
+            const double v = ctx.toks[1].toDouble(&ok);
+            if (!ok || v <= 0.0) {
+                ctx.model->log(QStringLiteral("用法：ltscale <正数>（如 0.5 / 1 / 2）"), QStringLiteral("error"));
+                return false;
+            }
+            ctx.model->setLtscale(v);
+            ctx.model->log(QStringLiteral("全局线型比例 LTSCALE = %1").arg(v, 0, 'f', 3), QStringLiteral("info"));
+            return true;
+        }));
+    // layiso：隔离选中图元所属图层——冻结其余所有图层（冻结层零命中/零打印；layuniso 可逆）
+    registerExact("layiso", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList keep;
+            for (int id : m->selection()) {
+                const Element* e = m->element(id);
+                if (e && !keep.contains(e->layer)) keep.append(e->layer);
+            }
+            if (keep.isEmpty()) keep.append(m->currentLayer());   // 无选中：孤立当前活动层
+            int n = 0;
+            for (int i = 0; i < m->layerCount(); ++i) {
+                const Layer& l = m->layerAt(i);
+                if (!keep.contains(l.name) && m->setLayerFrozen(l.name, true)) ++n;
+            }
+            m->log(QStringLiteral("已隔离 %1 个图层（冻结其余 %2 个）").arg(keep.size()).arg(n), QStringLiteral("info"));
+            return true;
+        }));
+    // layuniso：解冻所有图层（解除 layiso 的隔离）
+    registerExact("layuniso", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            int n = 0;
+            for (int i = 0; i < m->layerCount(); ++i) {
+                const Layer& l = m->layerAt(i);
+                if (l.frozen && m->setLayerFrozen(l.name, false)) ++n;
+            }
+            m->log(QStringLiteral("已解冻 %1 个图层").arg(n), QStringLiteral("info"));
+            return true;
+        }));
+    // laymch <目标层>：把选中图元改属目标图层（图层匹配变更，大图治理高频命令）
+    registerExact("laymch", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                m->log(QStringLiteral("用法：laymch <目标图层名>"), QStringLiteral("error"));
+                return false;
+            }
+            const QString target = ctx.toks[1];
+            if (!m->hasLayer(target)) {
+                m->log(QStringLiteral("目标图层 %1 不存在").arg(target), QStringLiteral("warn"));
+                return false;
+            }
+            const std::vector<int> ids = m->selection();
+            if (ids.empty()) { m->log(QStringLiteral("没有选中任何图元"), QStringLiteral("warn")); return false; }
+            const bool ok = m->setElementLayers(ids, target, /*adoptStyle=*/false);
+            m->log(QStringLiteral("已将 %1 个图元改属图层 %2").arg(ids.size()).arg(target), QStringLiteral("info"));
+            return ok;
+        }));
+
+    // ---- hatchedit：填充（剖面区域）参数编辑 —— 图案 / 比例 / 角度 / 关联开关 ----
+    // 遵循「就地改字段、不重建 Hatch」既有范式：一次 beginEdit 覆盖全部选中填充，
+    // 保留边界 pts/holes 与材质/颜色等；改边界+改填充 = 单步撤销。
+    registerExact("hatchedit", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            std::vector<int> hids;
+            for (int id : m->selection()) {
+                const Element* e = m->element(id);
+                if (e && e->type == ElementType::Hatch) hids.push_back(id);
+            }
+            if (hids.empty()) {
+                m->log(QStringLiteral("请先选中至少一个剖面区域（填充）"), QStringLiteral("warn"));
+                return false;
+            }
+            if (ctx.toks.size() < 2) {
+                const Element* e = m->element(hids.front());
+                m->log(QStringLiteral("剖面区域 #%1：图案=%2 比例=%3 角度=%4° 关联=%5%6")
+                        .arg(hids.front())
+                        .arg(e->hatchPattern.isEmpty() ? QStringLiteral("(按材料默认)") : e->hatchPattern)
+                        .arg(e->hatchScale, 0, 'f', 3)
+                        .arg(e->rotation, 0, 'f', 1)
+                        .arg(e->hatchAssociative ? QStringLiteral("开") : QStringLiteral("关"))
+                        .arg(e->hatchInvalid ? QStringLiteral("（边界已失效）") : QString()),
+                        QStringLiteral("info"));
+                return true;
+            }
+            const QString opt = ctx.toks[1].toLower();
+            auto usage = [&]() {
+                m->log(QStringLiteral("用法：hatchedit [scale <倍数> | pattern <名|none> | angle <度> | assoc on|off]（先选中剖面区域）"),
+                       QStringLiteral("error"));
+                return false;
+            };
+            QString pat; bool setPat = false;
+            double scale = 0.0;                 // <=0 表示不动
+            double angle = 0.0; bool setAngle = false;
+            int assoc = -1;                     // -1 不动 / 0 关 / 1 开
+            if (opt == "scale" || opt == "比例") {
+                if (ctx.toks.size() < 3) return usage();
+                bool ok = false; scale = ctx.toks[2].toDouble(&ok);
+                if (!ok || scale <= 0.0) { m->log(QStringLiteral("比例须为正数"), QStringLiteral("error")); return false; }
+            } else if (opt == "pattern" || opt == "pat" || opt == "图案") {
+                if (ctx.toks.size() < 3) return usage();
+                pat = ctx.toks[2]; setPat = true;
+                if (pat.compare("none", Qt::CaseInsensitive) == 0 || pat == "-") pat.clear();
+            } else if (opt == "angle" || opt == "角度") {
+                if (ctx.toks.size() < 3) return usage();
+                bool ok = false; angle = ctx.toks[2].toDouble(&ok);
+                if (!ok) { m->log(QStringLiteral("角度须为数值"), QStringLiteral("error")); return false; }
+                setAngle = true;
+            } else if (opt == "assoc" || opt == "关联") {
+                if (ctx.toks.size() < 3) return usage();
+                const QString a = ctx.toks[2].toLower();
+                if (a == "on" || a == "1" || a == "开") assoc = 1;
+                else if (a == "off" || a == "0" || a == "关") assoc = 0;
+                else { m->log(QStringLiteral("关联开关只接受 on/off"), QStringLiteral("error")); return false; }
+            } else return usage();
+
+            // 单步撤销：一次 beginEdit 覆盖"改图案/比例/角度/关联"（全部就地改）
+            m->beginEdit(QStringLiteral("HATCHEDIT"));
+            int n = 0;
+            for (int id : hids) {
+                const Element* cur = m->element(id);
+                if (!cur || cur->type != ElementType::Hatch) continue;
+                if (setPat || scale > 0.0 || assoc != -1) {
+                    const QString  usePat   = setPat ? pat : cur->hatchPattern;
+                    const double   useScale = (scale > 0.0) ? scale : cur->hatchScale;
+                    m->setHatchPatternOverride(id, usePat, useScale, assoc);
+                }
+                if (setAngle) m->updateElementQuiet(id, [angle](Element& dst){ dst.rotation = angle; });
+                ++n;
+            }
+            m->log(QStringLiteral("HATCHEDIT：已就地修改 %1 个剖面区域（单步撤销）").arg(n), QStringLiteral("info"));
+            return n > 0;
+        }));
+
+    // ---- dimstyle：命名标注样式表（一图多标准 GB/T 4458.4 + ISO 129-1 并存）----
+    // 图元经 dimStyleName 按名引用表中条目；改样式 → 引用它的标注实时联动（经 dimStyleFor 解析）。
+    registerExact("dimstyle", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            // dimstyle（无参数 / list）→ 列出全部样式 + 当前样式
+            if (ctx.toks.size() < 2 || ctx.toks[1].toLower() == "list") {
+                QStringList lines;
+                for (int i = 0; i < m->dimStyleCount(); ++i) {
+                    const dim::DimStyleEntry* d = m->dimStyleAt(i);
+                    if (!d) continue;
+                    const bool cur = (d->name == m->currentDimStyle());
+                    lines << QString("%1%2  字高 %3 / 箭头 %4 / 标准 %5")
+                                 .arg(cur ? QStringLiteral("* ") : QString(), d->name)
+                                 .arg(d->style.textHeight, 0, 'f', 2)
+                                 .arg(d->style.arrowLen, 0, 'f', 2)
+                                 .arg(d->style.standard() == DimensionStandard::ISO ? QStringLiteral("ISO 129-1") : QStringLiteral("GB/T 4458.4"));
+                }
+                m->log(QStringLiteral("标注样式表（* = 当前）：\n%1\n当前样式 = %2")
+                           .arg(lines.join(QLatin1Char('\n')), m->currentDimStyle()), QStringLiteral("info"));
+                return true;
+            }
+            const QString sub = ctx.toks[1].toLower();
+            // dimstyle new <名> [gbt|iso] → 新建（可指定标准预设）
+            if (sub == "new" || sub == "create") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle new <名> [gbt|iso]"), QStringLiteral("error")); return false; }
+                dim::DimStyleEntry d;
+                d.name = ctx.toks[2];
+                if (ctx.toks.size() >= 4) {
+                    const std::string std_ = ctx.toks[3].toLower().toStdString();
+                    if (std_ == "iso")      d.style.stdConf = DimensionStandardConfig::isoDefault();
+                    else if (std_ == "gbt") d.style.stdConf = DimensionStandardConfig::gbtDefault();
+                    else { m->log(QStringLiteral("标准只接受 gbt / iso"), QStringLiteral("error")); return false; }
+                }
+                return m->addDimStyle(d);
+            }
+            // dimstyle set <名> → 置当前（新建标注默认用当前样式）
+            if (sub == "set" || sub == "current") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle set <名>"), QStringLiteral("error")); return false; }
+                return m->setCurrentDimStyle(ctx.toks[2]);
+            }
+            // dimstyle rename <旧名> <新名> → 重命名（同步更新引用）
+            if (sub == "rename") {
+                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：dimstyle rename <旧名> <新名>"), QStringLiteral("error")); return false; }
+                return m->renameDimStyle(ctx.toks[2], ctx.toks[3]);
+            }
+            // dimstyle apply <样式名> [图元id...] → 把选中/指定标注改引用该样式
+            if (sub == "apply") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle apply <样式名> [图元id...]"), QStringLiteral("error")); return false; }
+                const QString name = ctx.toks[2];
+                if (!m->hasDimStyle(name)) { m->log(QStringLiteral("标注样式 %1 不存在").arg(name), QStringLiteral("warn")); return false; }
+                std::vector<int> ids;
+                if (ctx.toks.size() >= 4) {
+                    for (int i = 3; i < ctx.toks.size(); ++i) {
+                        bool ok = false; const int id = ctx.toks[i].toInt(&ok);
+                        if (ok) ids.push_back(id);
+                    }
+                } else {
+                    for (int id : m->selection()) {
+                        const Element* e = m->element(id);
+                        if (e && (e->type == ElementType::Dimension || e->type == ElementType::MLeader)) ids.push_back(id);
+                    }
+                }
+                if (ids.empty()) { m->log(QStringLiteral("没有可应用样式的标注（请先选中标注）"), QStringLiteral("warn")); return false; }
+                m->beginEdit(QStringLiteral("应用标注样式 ") + name);
+                int n = 0;
+                for (int id : ids) {
+                    const Element* e = m->element(id);
+                    if (!e || (e->type != ElementType::Dimension && e->type != ElementType::MLeader)) continue;
+                    m->updateElementQuiet(id, [&name](Element& dst) {
+                        if (dst.type == ElementType::MLeader) dst.mleaderStyleName = name;
+                        else                                        dst.dimStyleName = name;
+                    });
+                    ++n;
+                }
+                m->log(QStringLiteral("已将 %1 个标注改用样式 %2（随该样式联动）").arg(n).arg(name), QStringLiteral("info"));
+                return n > 0;
+            }
+            // dimstyle delete <名> → 删除（引用者回落当前样式）
+            if (sub == "delete" || sub == "del" || sub == "remove") {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle delete <名>"), QStringLiteral("error")); return false; }
+                return m->removeDimStyle(ctx.toks[2]);
+            }
+            m->log(QStringLiteral("用法：dimstyle [list | new <名> [gbt|iso] | set <名> | rename <旧> <新> | apply <名> [id...] | delete <名>]"), QStringLiteral("error"));
+            return false;
+        }));
 
     // ---- 块（Block）命令族：块定义 / 插入 / 重定义 / 分解 / 属性块 / 动态块 ----
     {

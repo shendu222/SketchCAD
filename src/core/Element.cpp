@@ -1,5 +1,6 @@
 #include "Element.h"
 #include "Geometry.h"
+#include "Gdt.h"   // FcfSymbol 名称/越界防护（sizeDesc 用；Gdt.h 只依赖 Element.h，无循环）
 #include <cmath>
 #include <algorithm>
 
@@ -88,6 +89,23 @@ QString Element::sizeDesc() const {
                    .arg(blockAttrs.empty()
                             ? QString()
                             : QString(" / 属性 %1").arg(blockAttrs.size()));
+        case ElementType::MLeader:
+            // 多重引线：附着点 + 行数 + 基线
+            return QString("多重引线 @(%1,%2) / %3 行%4")
+                   .arg(pts.empty() ? 0.0 : pts[0].x, 0, 'f', 1)
+                   .arg(pts.empty() ? 0.0 : pts[0].y, 0, 'f', 1)
+                   .arg(text.count(QLatin1Char('\n')) + 1)
+                   .arg(mleaderLanding > 1e-9 ? QString(" / 基线 %1mm").arg(mleaderLanding, 0, 'f', 1) : QString());
+        case ElementType::Fcf: {
+            // 形位公差框格：符号 + 公差 + 基准（fcfDatums 是 vector<QString>，需手工拼接）
+            const char* sym = fcfSymbolValid(fcfSymbol) ? fcfSymbolName((FcfSymbol)fcfSymbol) : "未知";
+            QString datums;
+            for (const auto& d : fcfDatums) { if (!datums.isEmpty()) datums += QLatin1Char('-'); datums += d; }
+            return QString("形位公差 %1 / %2 / 基准 %3")
+                   .arg(QString::fromUtf8(sym))
+                   .arg(fcfTolerance.isEmpty() ? QString("—") : fcfTolerance)
+                   .arg(datums.isEmpty() ? QString("—") : datums);
+        }
         case ElementType::Xline:
             // 构造线：无限延伸，仅显示通过点与方向角（不由长度统计，参与 fit 取景时排除）。
             return QString("构造线 通过(%1,%2) 角度 %3°")
@@ -108,6 +126,7 @@ QJsonObject elementToJson(const Element& e) {
     QJsonObject o;
     o["id"] = e.id; o["type"] = (int)e.type; o["name"] = e.name; o["layer"] = e.layer;
     o["color"] = e.color.name(); o["lineWidth"] = e.lineWidth; o["lineWidthAuto"] = e.lineWidthAuto; o["lineStyle"] = (int)e.lineStyle; o["radius"] = e.radius;
+    o["byLayer"] = e.byLayer;   // 图层动态语义：随图存档（旧档无此键 → 读端回落 false + 快照=现值，完全向后兼容）
     o["startAngle"] = e.startAngle; o["endAngle"] = e.endAngle;
     o["radiusY"] = e.radiusY;
     o["rotation"] = e.rotation;
@@ -132,6 +151,16 @@ QJsonObject elementToJson(const Element& e) {
     o["holes"] = json::writeVec3Rings(e.holes);
     o["sectionExempt"] = e.sectionExempt;
     o["sectionMaterial"] = e.sectionMaterial;
+    // 关联边界 / 图案覆盖（只增字段；旧档缺键 → 读端回落默认 = 静态填充）
+    if (e.type == ElementType::Hatch) {
+        QJsonArray srcIds;
+        for (int sid : e.hatchSrcIds) srcIds.append(sid);
+        o["hatchSrcIds"] = srcIds;
+        o["hatchPattern"]    = e.hatchPattern;
+        o["hatchScale"]      = e.hatchScale;
+        o["hatchAssociative"] = e.hatchAssociative;
+        o["hatchInvalid"]    = e.hatchInvalid;
+    }
     // ---- 多行文字（MText）专用字段（旧存档无这些键 → 读端回落默认，无副作用）----
     if (e.type == ElementType::MText) {
         o["widthFactor"] = e.widthFactor;
@@ -170,6 +199,23 @@ QJsonObject elementToJson(const Element& e) {
         }
         o["dynValues"] = dyns;
     }
+    // ---- 标注样式引用（DimStyle 表；空串不写盘 → 旧档/新档缺键均回落"当前样式"）----
+    if (!e.dimStyleName.isEmpty()) o["dimStyleName"] = e.dimStyleName;
+    // ---- 多重引线（MLeader）专用字段 ----
+    if (e.type == ElementType::MLeader) {
+        if (!e.mleaderStyleName.isEmpty()) o["mleaderStyleName"] = e.mleaderStyleName;
+        o["mleaderLanding"]  = e.mleaderLanding;
+        o["mleaderArrowLen"] = e.mleaderArrowLen;
+    }
+    // ---- 形位公差框格（Fcf）专用字段 ----
+    if (e.type == ElementType::Fcf) {
+        o["fcfSymbol"]    = e.fcfSymbol;
+        o["fcfModifier"]  = e.fcfModifier;
+        o["fcfTolerance"] = e.fcfTolerance;
+        QJsonArray datums;
+        for (const QString& d : e.fcfDatums) datums.append(d);
+        o["fcfDatums"] = datums;
+    }
     return o;
 }
 
@@ -186,6 +232,9 @@ Element elementFromJson(const QJsonObject& o) {
     // 旧存档没有 lineWidthAuto 字段：默认按"手动覆盖"处理，保留老图纸原有的线宽外观
     e.lineWidthAuto = json::getBool(o, "lineWidthAuto", false);
     e.lineStyle = (LineStyle)json::getInt(o, "lineStyle", (int)LineStyle::Solid);
+    // 旧存档没有 byLayer 字段：默认 false（快照式分组的历史行为——图元用自身 color/width/style）；
+    // 新图元在 Element 构造时默认 true（随层）。这样"旧档逐字节语义兼容"自然成立。
+    e.byLayer = json::getBool(o, "byLayer", false);
     e.radius = o["radius"].toDouble();
     e.startAngle = o["startAngle"].toDouble();
     e.endAngle = o["endAngle"].toDouble();
@@ -217,6 +266,12 @@ Element elementFromJson(const QJsonObject& o) {
     e.holes = json::readVec3Rings(o, "holes");
     e.sectionExempt   = json::getInt(o, "sectionExempt", 0);
     e.sectionMaterial = json::getInt(o, "sectionMaterial", 0);
+    // 关联边界 / 图案覆盖（旧存档缺键 → 回落默认：无来源 / 无覆盖 / scale=1 / 关联开 / 未失效）
+    for (const auto& v : o["hatchSrcIds"].toArray()) e.hatchSrcIds.push_back(v.toInt());
+    e.hatchPattern     = json::getString(o, "hatchPattern", QString());
+    e.hatchScale       = json::getDouble(o, "hatchScale", 1.0);
+    e.hatchAssociative = json::getBool(o, "hatchAssociative", true);
+    e.hatchInvalid     = json::getBool(o, "hatchInvalid", false);
     // ---- 多行文字（MText）专用字段（旧存档缺键 → 回落默认，向后兼容）----
     e.widthFactor = json::getDouble(o, "widthFactor", 1.0);
     e.textAlign   = json::getInt(o, "textAlign", 1);
@@ -247,6 +302,17 @@ Element elementFromJson(const QJsonObject& o) {
         dv.state = dobj["state"].toString();
         e.dynValues.push_back(dv);
     }
+    // ---- 标注样式引用（空串 = 用当前样式；旧档缺键 → 空串，向后兼容）----
+    e.dimStyleName = json::getString(o, "dimStyleName", QString());
+    // ---- 多重引线（MLeader）专用字段（旧档缺键 → 回落默认）----
+    e.mleaderStyleName = json::getString(o, "mleaderStyleName", QString());
+    e.mleaderLanding   = json::getDouble(o, "mleaderLanding", 0.0);
+    e.mleaderArrowLen  = json::getDouble(o, "mleaderArrowLen", 3.5);
+    // ---- 形位公差框格（Fcf）专用字段（旧档缺键 → 回落默认）----
+    e.fcfSymbol    = json::getInt(o, "fcfSymbol", 0);
+    e.fcfModifier  = json::getString(o, "fcfModifier", QString());
+    e.fcfTolerance = json::getString(o, "fcfTolerance", QString());
+    for (const auto& v : o["fcfDatums"].toArray()) e.fcfDatums.push_back(v.toString());
     return e;
 }
 

@@ -1535,6 +1535,8 @@ int ConstraintSolver::naturalDof(const Element& e) {
         case ElementType::MText:
         case ElementType::Table:
         case ElementType::BlockRef:   return 2;                 // 锚点(2)；旋转/缩放不参与数值约束
+        case ElementType::MLeader:    return 2 * nPts;          // 附着点/折点/文字锚点各 2
+        case ElementType::Fcf:        return 2;                 // 框格锚点(2)；格宽由内容派生
         case ElementType::Constraint:
         case ElementType::Dimension:  return 0;
     }

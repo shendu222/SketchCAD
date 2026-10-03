@@ -9,6 +9,7 @@
 #include "core/Geometry.h"
 #include "core/SplineModes.h"
 #include "core/DimStyle.h"
+#include "core/Gdt.h"       // buildMLeader / buildFcf：多重引线与形位公差框格路径
 #include "core/TextStyle.h"
 #include "core/SketchModel.h"
 
@@ -320,6 +321,24 @@ QPainterPath buildPath(const Element& e, const QRectF& xlineClip) {
                 path.closeSubpath();
             }
             path.setFillRule(Qt::OddEvenFill);
+            break;
+        }
+
+        case ElementType::MLeader: {
+            // 多重引线：引线折线 + 基线（文字不在路径内，由 paintMLeader 单独绘）
+            const MLeaderGeom g = buildMLeader(e);
+            if (!g.valid) break;
+            for (const auto& s : g.leader) { path.moveTo(qpt(s.a)); path.lineTo(qpt(s.b)); }
+            for (const auto& s : g.landing) { path.moveTo(qpt(s.a)); path.lineTo(qpt(s.b)); }
+            break;
+        }
+
+        case ElementType::Fcf: {
+            // 形位公差框格：外框 + 符号笔画（各格矩形已在 Gdt 几何中算好）
+            const FcfGeom g = buildFcf(e);
+            if (!g.valid) break;
+            for (const auto& s : g.frame)      { path.moveTo(qpt(s.a)); path.lineTo(qpt(s.b)); }
+            for (const auto& s : g.symbolStrokes) { path.moveTo(qpt(s.a)); path.lineTo(qpt(s.b)); }
             break;
         }
     }

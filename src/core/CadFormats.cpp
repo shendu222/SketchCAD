@@ -2,7 +2,12 @@
 #include "Geometry.h"
 #include "DimStyle.h"
 #include "TextStyle.h"   // resolveFields：导出前把 %<字段>% 占位解析为求值快照
+#include "Block.h"       // 外部块表读取：block::blockDefFromJson / BlockDef
 #include <QFileInfo>
+#include <QFile>
+#include <QTextStream>
+#include <QJsonDocument>
+#include <QJsonArray>
 #include <QStringList>
 #include <QDateTime>
 #include <QSet>
@@ -1840,6 +1845,49 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
     ls.arcsDropped = C.arcsDropped;
     if (stats) *stats = ls;
     return true;
+}
+
+// ============================================================================
+// 外部块表读取（设计中心侧栏）
+// ============================================================================
+std::vector<BlockDef> blockTableFromJson(const QString& path) {
+    std::vector<BlockDef> out;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return out;
+    const QByteArray data = f.readAll();
+    f.close();
+    QJsonParseError perr;
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &perr);
+    if (doc.isNull()) return out;
+    // 兼容两种形态：① 顶层对象含 "blocks" 数组（SketchCAD 原生存档）；
+    //               ② 顶层即块定义数组（裸块表导出）。
+    QJsonArray arr;
+    if (doc.isObject() && doc.object().contains(QLatin1String("blocks")))
+        arr = doc.object().value(QLatin1String("blocks")).toArray();
+    else if (doc.isArray())
+        arr = doc.array();
+    else
+        return out;
+    for (const auto& v : arr) {
+        if (!v.isObject()) continue;
+        BlockDef d = block::blockDefFromJson(v.toObject());
+        if (!d.name.trimmed().isEmpty()) out.push_back(std::move(d));
+    }
+    return out;
+}
+
+std::vector<BlockDef> blockTableFromDxf(const QString& path) {
+    std::vector<BlockDef> out;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return out;
+    const QByteArray data = f.readAll();
+    f.close();
+    if (data.isEmpty()) return out;
+    std::vector<Element> dummy;
+    DxfImportStats st;
+    QString err;
+    if (fromDxf(data, dummy, &err, &st)) out = std::move(st.blocks);
+    return out;
 }
 
 } // namespace cadfmt

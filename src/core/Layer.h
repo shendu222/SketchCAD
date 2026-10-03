@@ -26,6 +26,15 @@ struct Layer {
     LineStyle lineStyle = LineStyle::Solid;         // 图层默认线型
     bool      visible   = true;                    // 是否显示（false = 整层隐藏）
     bool      locked    = false;                   // 是否锁定（UI 据此禁止编辑本层图元）
+    // ---- 图层动态语义（仅追加字段，不改动既有字段：满足"Layer 结构只增不改"约束）----
+    // 冻结（frozen）：独立于 visible 的"硬隔离"。冻结层图元不参与命中/重算/打印，
+    //   无论 visible 如何都不绘制、不可拾取、不出图（与 AutoCAD FROZEN 语义一致）。
+    //   visible 是"软隐藏"（仍参与重算与打印，仅不绘制）；frozen 是"硬冻结"（彻底排除）。
+    // 打印开关（plot）：false = 该层不打印（图层可显示但出图时跳过）。
+    // 透明度（alpha）：0~1，1 为完全不透明；渲染时叠加到本层图元颜色 alpha 通道。
+    bool      frozen    = false;                   // 是否冻结（true = 整层硬冻结，不参与命中/重算/打印）
+    bool      plot      = true;                    // 是否打印（false = 该层不输出到图纸）
+    double    alpha     = 1.0;                      // 图层透明度（1.0 = 不透明；0.0 = 全透明）
 
     // GB/T 14665-2012 第 8 章 表6：图层标识号（"01"~"15"）与标准名。
     // 非标准层（默认层 "0"、图框/标题栏等）留空，向后兼容、无副作用。

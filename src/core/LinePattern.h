@@ -15,6 +15,11 @@ struct DashSpec {
 // 线型 → 线素规格（4.2 公式）。Solid/Wave/DoubleBreak 返回 valid=false。
 DashSpec dashSpecFor(LineStyle ls);
 
+// 全局线型比例（LTSCALE）下的线素规格：把 dashSpecFor 的图案整体缩放 k 倍
+// （k<=0 视作 1.0）。渲染与打印两侧共用此单一入口，保证虚线段长比例恒等于 LTSCALE。
+// pattern 与 minLengthD 同步缩放，使相位对齐（dashPhaseOffset）与短线段回落阈值一并随比例变化。
+DashSpec dashSpecScaled(LineStyle ls, double ltscale);
+
 // 4.2：给定图上长度 lengthMm 与线宽 d，该线型是否应回落为细实线。
 bool shouldFallbackToSolid(LineStyle ls, double lengthMm, double d);
 

@@ -72,6 +72,9 @@ struct SectionStyle {
     double thinWidthPx = 0.6;     // 细实线线宽（GB/T 4457.4 细线，cosmetic 像素）
     SectionMaterial material = SectionMaterial::General;
     SectionExempt   exempt   = SectionExempt::None;
+    // 图案覆盖（hatchedit 设定）：非空时优先于「按 material 取默认图案」，
+    // 直接采用该 PAT 名（对应 hatch/ 目录下的 .pat）。空串 = 沿用材料默认。
+    QString patNameOverride;
 };
 
 struct SectionRegion {

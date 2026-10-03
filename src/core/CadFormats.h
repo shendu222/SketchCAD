@@ -124,5 +124,11 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = n
 bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);
 
+// ---- 外部块表读取（设计中心侧栏：列出外部文件的块定义，双击插入）----
+// 从 SketchCAD 原生存档 JSON（顶层含 "blocks" 数组）读取块定义列表；文件不存在/解析失败 → 空。
+std::vector<BlockDef> blockTableFromJson(const QString& path);
+// 从 DXF 文件的 BLOCKS 段读取块定义列表（仅取块表，不导入 ENTITIES）；文件不存在/解析失败 → 空。
+std::vector<BlockDef> blockTableFromDxf(const QString& path);
+
 } // namespace cadfmt
 } // namespace SketchCAD

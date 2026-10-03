@@ -8,6 +8,7 @@ class QDoubleSpinBox;
 class QSpinBox;
 class QPushButton;
 class QComboBox;
+class QCheckBox;
 class QFormLayout;
 class QWidget;
 
@@ -49,11 +50,14 @@ private:
     QComboBox *cWidth;                 // 线宽档位
     QPushButton *bWidthAuto;           // 「恢复默认」：清除手动覆盖，线宽随线型派生
     QComboBox *cLineStyle;             // 线型：实线/虚线/点划线/双点划线
+    QCheckBox *cByLayer;               // ByLayer 动态解析开关（勾选=随层；取消=本图元快照覆盖）
     QWidget *presetRow;                // 预设色一排小方块
     QColor curColor_;
     void apply();                      // 名称/图层/颜色/半径/文本（不含线宽/线型，见下方专方法）
+    void applyColor();                 // 改颜色（预设/自定义）-> 自动转 override(byLayer=false)
     void applyWidth();                 // 改线宽下拉 -> 手动覆盖(auto=false)
     void applyStyle();                 // 改线型下拉 -> 自动模式时线宽跟随派生
+    void applyByLayer();               // 勾选/取消 ByLayer：转动态解析或固化当前显示为快照覆盖
     void restoreDefaultWidth();        // “恢复默认”按钮 -> 清除手动覆盖(auto=true)
     void applyCartesian();             // 改了起点或终点 -> 反算长度与夹角（联动传播）
     void applyPolar();                 // 改了长度或夹角 -> 反算终点（联动传播）

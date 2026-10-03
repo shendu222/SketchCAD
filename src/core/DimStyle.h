@@ -1,6 +1,7 @@
 #pragma once
 #include <QString>
 #include <QColor>
+#include <QJsonObject>
 #include <vector>
 #include <utility>
 #include "Vec.h"
@@ -69,6 +70,21 @@ Geom    build(const Element& e, const Style& st = Style());
 
 // 计算标注文字按标准应取的旋转角（避免倒置、处理水平/ISO 对齐策略）
 double textRotationForLine(double lineAngleDeg, TextOrientation policy);
+
+// ---- 命名标注样式（DimStyle 表）----
+// 一图多标准：GB/T 4458.4 与 ISO 129-1 在箭头/字高/文字朝向/公差格式上不同，
+// 需在同一张图上并存多套命名样式。表以「name → Style」多实例化，
+// 图元经 dimStyleName 按名引用（引用式，对标 blockTable / textStyleName 范式）：
+// 改样式定义 → 引用它的全部标注实时联动；无 id 悬空问题。
+// dimStyleName 为空串时用「当前样式」（SketchModel 维护 currentDimStyle_）。
+struct DimStyleEntry {
+    QString name;             // 样式名（唯一键）；默认表首项固定名 "Standard"
+    Style   style;
+};
+
+// 序列化（随图存档；旧档无 dimStyles 键 → SketchModel 自动生成默认 "Standard" 一条）
+QJsonObject dimStyleEntryToJson(const DimStyleEntry& e);
+DimStyleEntry dimStyleEntryFromJson(const QJsonObject& o);
 
 } // namespace dim
 } // namespace SketchCAD

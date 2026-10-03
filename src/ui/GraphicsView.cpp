@@ -5,6 +5,7 @@
 #include "tools/ITool.h"
 #include "core/Geometry.h"
 #include "core/DimStyle.h"
+#include "core/Gdt.h"   // buildMLeader / buildFcf：多重引线与形位公差框格绘制
 #include "core/Trim.h"
 #include "core/Section.h"
 #include "core/LineWidthGroup.h"
@@ -242,9 +243,13 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
 // 波浪线/双折线由 buildPath 自定义路径绘制，这里用实线笔（避免叠加虚线）。
 // 抽取为独立函数：块引用内的子图元复用同一套笔参数，观感与独立图元完全一致。
 QPen ElementItem::penFor(const Element& e) const {
-    QPen pen(preview ? PREVIEW : (warn ? WARN : (highlight ? HL : e.color)));
+    // ByLayer 动态解析：随层图元在此统一解析为「图层属性覆盖」后的副本，
+    // 渲染与打印共用 model->resolveElement，使改层色/线型/线宽全层实时联动。
+    const Element re = model ? model->resolveElement(e) : e;
+    const double lt = model ? model->ltscale() : 1.0;   // 全局线型比例 LTSCALE
+    QPen pen(preview ? PREVIEW : (warn ? WARN : (highlight ? HL : re.color)));
     pen.setCosmetic(true);                       // 线宽按屏幕像素固定，缩放不改变视觉粗细
-    const double effW = e.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
+    const double effW = re.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
     double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
     if (!showLineWeight) wpx = 1.0;              // 线宽显示关（LWDISPLAY）：一律细线
     pen.setWidthF(preview ? std::max(1.0, wpx)
@@ -253,13 +258,14 @@ QPen ElementItem::penFor(const Element& e) const {
     pen.setJoinStyle(Qt::RoundJoin);
     if (preview) {
         pen.setStyle(Qt::DashLine);
-    } else if (e.lineStyle == LineStyle::Wave || e.lineStyle == LineStyle::DoubleBreak) {
+    } else if (re.lineStyle == LineStyle::Wave || re.lineStyle == LineStyle::DoubleBreak) {
         pen.setStyle(Qt::SolidLine);
         pen.setCapStyle(Qt::FlatCap);
     } else {
-        const DashSpec spec = dashSpecFor(e.lineStyle);
-        const double lenMm = worldLengthOf(e);
-        if (spec.valid && !shouldFallbackToSolid(e.lineStyle, lenMm, effW)) {
+        // LTSCALE：线素长度整体缩放（dashSpecScaled 同步缩放 pattern 与 minLengthD）
+        const DashSpec spec = dashSpecScaled(re.lineStyle, lt);
+        const double lenMm = worldLengthOf(e);   // 几何长度用原图元（不受 byLayer 影响）
+        if (spec.valid && lenMm >= spec.minLengthD * effW) {
             pen.setStyle(Qt::CustomDashLine);
             QVector<qreal> pat;
             pat.reserve((int)spec.pattern.size());
@@ -268,7 +274,7 @@ QPen ElementItem::penFor(const Element& e) const {
             pen.setDashOffset(dashPhaseOffset(lenMm, effW, spec));
             pen.setCapStyle(Qt::FlatCap);
         } else {
-            const Qt::PenStyle ps = toPenStyle(e.lineStyle);
+            const Qt::PenStyle ps = toPenStyle(re.lineStyle);
             pen.setStyle(ps);
             pen.setCapStyle(ps == Qt::SolidLine ? Qt::FlatCap : Qt::RoundCap);
         }
@@ -317,6 +323,8 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
     }
 
     if (e.type == ElementType::Dimension) { paintDimension(p, e); return; }
+    if (e.type == ElementType::MLeader)   { paintMLeader(p, e); return; }
+    if (e.type == ElementType::Fcf)       { paintFcf(p, e); return; }
     if (e.type == ElementType::Text || e.type == ElementType::MText) { paintText(p, e); return; }
     if (e.type == ElementType::Table)     { paintTable(p, e); return; }
     if (e.type == ElementType::Hatch)     { paintHatch(p, e); return; }
@@ -427,6 +435,16 @@ void ElementItem::paintDimension(QPainter* p, const Element& e) const {
     st.drawingScale = dimScale;          // 数字按实物尺寸（GB/T 14690）
     // T6：数字字高随当前图纸幅面派生（GB/T 14665-2012 5.6 表3：A0/A1→5，A2/A3/A4→3.5）
     st.textHeight = standardTextHeightMm(currentSheetFormat(), false);
+    // 命名标注样式（一图多标准）：**仅当元素显式引用了 DIMSTYLE 表中某式时**以表定义为准，
+    // 实现「改样式 → 引用它的标注全图联动」。未引用（dimStyleName 空）时保持上面的历史
+    // 派生（按 e.standard + 图幅字高），确保既有标注零行为变化、旧档无回归。
+    if (model && !e.dimStyleName.isEmpty()) {
+        if (const dim::DimStyleEntry* de = model->findDimStyle(e.dimStyleName)) {
+            dim::Style named = de->style;
+            named.drawingScale = dimScale;
+            st = named;
+        }
+    }
     if (e.dimTextHeight > 1e-6) st.textHeight = e.dimTextHeight;  // 单图元字高覆盖（如各制图模板）
     const dim::Geom g = dim::build(e, st);
     if (!g.valid) return;
@@ -545,6 +563,92 @@ void ElementItem::paintDimension(QPainter* p, const Element& e) const {
 // 文本图元（标题栏栏目、说明文字等）：在锚点(pts[0])以左对齐、垂直居中的方式落字。
 // 复用 Dimension 的「抵消视图 Y 翻转 + 缩放后按像素落字」手法，保证文字方向正确且随缩放变化。
 // 文字高度(mm)存于 e.radius；pts[0] 为文字左下锚点（绘制区域 x∈[pts.x, pts.x+w], y 以 pts.y 为中心）。
+// GB/T 4458.4 / ISO 129 多重引线：实心箭头 + 引线折线 + 水平基线 + 多行文字。
+void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
+    const MLeaderGeom g = buildMLeader(e, 1.0);
+    if (!g.valid) return;
+    const double z = viewZoom();
+
+    QPen thin = p->pen();
+    thin.setCosmetic(true);
+    thin.setStyle(Qt::SolidLine);
+    thin.setWidthF(std::max(1.0, p->pen().widthF() * 0.5));
+    p->setPen(thin);
+    p->setBrush(Qt::NoBrush);
+    for (const auto& s : g.leader)  p->drawLine(qpt(s.a), qpt(s.b));
+    for (const auto& s : g.landing) p->drawLine(qpt(s.a), qpt(s.b));
+
+    // 实心箭头（尖端在附着点，底边沿引线后退 arrowLen，GB/T 4458.4 6d 风格）
+    if (g.leader.size() >= 1) {
+        const Vec3 tip = g.arrowTip;
+        Vec3 d = g.leader.front().b - g.leader.front().a;   // 附着点 → 折点
+        double L = std::hypot(d.x, d.y);
+        if (L < 1e-9) { d = Vec3(1, 0, 0); L = 1.0; }
+        d.x /= L; d.y /= L;
+        const Vec3 base(tip.x + d.x * g.arrowLen, tip.y + d.y * g.arrowLen, tip.z);
+        const Vec3 n(-d.y * g.arrowWidth, d.x * g.arrowWidth, tip.z);
+        QPolygonF tri;
+        tri << qpt(tip) << qpt(Vec3(base.x + n.x, base.y + n.y, base.z))
+            << qpt(Vec3(base.x - n.x, base.y - n.y, base.z));
+        p->setPen(Qt::NoPen);
+        p->setBrush(e.color);
+        p->drawPolygon(tri);
+        p->setBrush(Qt::NoBrush);
+    }
+
+    // 多行文字（逐行锚点已在几何里；用屏幕恒定字号绘制）
+    if (!g.texts.empty()) {
+        p->save();
+        p->setPen(e.color);
+        for (const auto& t : g.texts) {
+            if (t.text.isEmpty()) continue;
+            p->save();
+            p->translate(t.anchor.x, t.anchor.y);
+            p->scale(1.0 / z, -1.0 / z);
+            QFont f = p->font();
+            f.setPixelSize(std::max(8, (int)std::lround(t.height * z)));
+            p->setFont(f);
+            p->drawText(QPointF(0, 0), t.text);
+            p->restore();
+        }
+        p->restore();
+    }
+}
+
+// GB/T 1182 形位公差框格：外框 + 分隔线 + 几何特征符号 + 公差/基准文字。
+void ElementItem::paintFcf(QPainter* p, const Element& e) const {
+    const FcfGeom g = buildFcf(e, 1.0);
+    if (!g.valid) return;
+    const double z = viewZoom();
+
+    QPen thin = p->pen();
+    thin.setCosmetic(true);
+    thin.setStyle(Qt::SolidLine);
+    thin.setWidthF(std::max(1.0, p->pen().widthF() * 0.5));
+    p->setPen(thin);
+    p->setBrush(Qt::NoBrush);
+    for (const auto& s : g.frame)         p->drawLine(qpt(s.a), qpt(s.b));
+    for (const auto& s : g.symbolStrokes) p->drawLine(qpt(s.a), qpt(s.b));
+
+    if (!g.texts.empty()) {
+        p->save();
+        p->setPen(e.color);
+        for (const auto& t : g.texts) {
+            if (t.text.isEmpty()) continue;
+            p->save();
+            p->translate(t.anchor.x, t.anchor.y);
+            p->scale(1.0 / z, -1.0 / z);
+            QFont f = p->font();
+            f.setPixelSize(std::max(8, (int)std::lround(t.height * z)));
+            p->setFont(f);
+            // 锚点为格内居中：向左对齐到锚点（几何里已按格宽居中算好锚点）
+            p->drawText(QPointF(0, 0), t.text);
+            p->restore();
+        }
+        p->restore();
+    }
+}
+
 void ElementItem::paintText(QPainter* p, const Element& e) const {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const double z = viewZoom();
@@ -862,6 +966,12 @@ void GraphicsView::fitToRect(const QRectF& r) {
     fitWorldRect(r, 0.92);   // 留一点边距，避免图框贴边
 }
 
+Vec3 GraphicsView::viewCenterWorld() const {
+    if (!viewport()) return Vec3(0, 0, 0);
+    const QPointF c = mapToScene(viewport()->rect().center());
+    return Vec3(c.x(), c.y(), 0.0);
+}
+
 void GraphicsView::zoomBy(double f) {
     const QPointF c = viewport()->rect().center();
     const QPointF anchor = mapToScene(c.toPoint());
@@ -961,7 +1071,8 @@ void GraphicsView::syncItemAddOrUpdate(const Element& e) {
     item->dimScale = model_->scaleRatio();
     item->warn = conflictIds_.contains(e.id);
     item->highlight = model_->isSelected(e.id);
-    item->setVisible(e.visible);
+    // 可见性 = 图元自身 visible 且所属图层未冻结（冻结层硬隔离，不参与渲染/命中）
+    item->setVisible(model_->elementPickable(e));
     double z = (double)linePriority(e.lineStyle);
     if (e.type == ElementType::Dimension) z -= 10.0;
     item->setZValue(z);
@@ -1843,7 +1954,8 @@ std::vector<int> GraphicsView::hitTestAll(const QPoint& viewPos) const {
             auto it = items_.find(id);
             if (it == items_.end()) continue;
             const ElementItem* item = it->second;
-            if (!item->el.visible) continue;
+            // 冻结层零命中：elementPickable 同时校验 visible 与「所属图层未冻结」
+            if (!model_->elementPickable(item->el)) continue;
             const double d = pickDist(item->el, w, model_);
             if (d < tol) hits.push_back({d, id});
         }
@@ -1851,7 +1963,8 @@ std::vector<int> GraphicsView::hitTestAll(const QPoint& viewPos) const {
         // 全量路径（特性开关关闭 / 索引未启用）：与原实现逐字一致，供双跑对照
         const auto& es = model_->elements();
         for (const auto& e : es) {
-            if (!e.visible) continue;
+            // 冻结层零命中：elementPickable 同时校验 visible 与「所属图层未冻结」
+            if (!model_->elementPickable(e)) continue;
             const double d = pickDist(e, w, model_);
             if (d < tol) hits.push_back({d, e.id});
         }
@@ -2899,6 +3012,10 @@ void GraphicsView::finalizeShapePick() {
             if (hitIt) ids.push_back(e.id);
         }
     }
+    // FILTER 预选器：作用于本次栏选/圈围/圈交结算（用后即清）；形状退化（未构成
+    // 有效范围）不算一次选择操作，不消费预选器。
+    if (pendingPts_.size() >= 2 && model_->hasActivePickFilter())
+        ids = model_->applyPickFilterOnce(ids);
     if (ids.empty()) {
         model_->log(QString("%1：没有图元被选中").arg(shape::modeName(m)), "warn");
     } else {
@@ -4158,9 +4275,17 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
             // 框选命中只有一份真相：核心层按「几何包围盒 + 1e-6 双侧膨胀」判定。
             // 索引开启时先用均匀网格把候选从全部图元缩小到矩形覆盖的单元，再用与核心层
             // 完全相同的判定筛选，保证开启/关闭索引结果集一致；关闭索引时直接回落核心层全量。
-            if (useIndex_ && spatial_.enabled()) {
+            // FILTER 预选器在位时同样走候选循环（判定同源），随后对候选套预选器（用后即清）。
+            const bool pickFilterOn = model_->hasActivePickFilter();
+            if ((useIndex_ && spatial_.enabled()) || pickFilterOn) {
                 const double eps = 1e-6;
-                const auto cand = spatial_.queryRect(r.adjusted(-eps, -eps, eps, eps));
+                std::vector<int> cand;
+                if (useIndex_ && spatial_.enabled()) {
+                    cand = spatial_.queryRect(r.adjusted(-eps, -eps, eps, eps));
+                } else {
+                    cand.reserve(model_->elements().size());
+                    for (const auto& el : model_->elements()) cand.push_back(el.id);
+                }
                 std::vector<int> sel;
                 sel.reserve(cand.size());
                 for (int id : cand) {
@@ -4169,6 +4294,7 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
                     if (r.intersects(elementBoundsForIndex(*e2).adjusted(-eps, -eps, eps, eps)))
                         sel.push_back(id);
                 }
+                if (pickFilterOn) sel = model_->applyPickFilterOnce(sel);
                 if (additive) model_->addToSelection(sel); else model_->setSelection(sel);
                 model_->log(QStringLiteral("框选完成：选中 %1 个图元%2")
                                 .arg(sel.size()).arg(additive ? QStringLiteral("（已并入选区）") : QString()));

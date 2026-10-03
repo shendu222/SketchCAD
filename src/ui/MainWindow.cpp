@@ -46,6 +46,8 @@
 #include "ui/FloorPlanViewsDialog.h"
 #include "ui/ArrayDialog.h"
 #include "ui/BlockDialogs.h"
+#include "ui/BlockEditorDialog.h"
+#include "ui/DesignCenterPanel.h"
 #include "ui/SectionDialog.h"
 #include "ui/RegionManagerDialog.h"
 #include "ui/CleanupDialog.h"
@@ -381,6 +383,7 @@ void MainWindow::buildMenu() {
     mk(pr, QStringLiteral("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
     mk(pr, QStringLiteral("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
     mk(pr, QStringLiteral("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
+    mk(pr, QStringLiteral("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); });
     pr->addSeparator();
     mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); });
     bar->addMenu(pr);
@@ -1042,6 +1045,7 @@ void MainWindow::buildMenu() {
     panels->addAction(propDock_->toggleViewAction());
     panels->addAction(logDock_->toggleViewAction());
     panels->addAction(cmdDock_->toggleViewAction());
+    panels->addAction(designDock_->toggleViewAction());
     panels->addSeparator();
     if (toolbar_)  panels->addAction(toolbar_->toggleViewAction());
     if (toolbar2_) panels->addAction(toolbar2_->toggleViewAction());
@@ -1397,6 +1401,18 @@ void MainWindow::exportPdfDirect() {
         model_->log(QStringLiteral("导出 PDF 失败"), "warn");
 }
 
+void MainWindow::exportPdfLayoutsDirect() {
+    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF（全部布局）"),
+                                                     QStringLiteral("SketchCAD.pdf"),
+                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+    if (path.isEmpty()) return;
+    const int pages = PrintEngine::exportPdfLayouts(model_, path);
+    if (pages > 0)
+        model_->log(QStringLiteral("已按布局导出 PDF（%1 页）：%2").arg(pages).arg(path), "info");
+    else
+        model_->log(QStringLiteral("导出 PDF 失败"), "warn");
+}
+
 void MainWindow::printDirect() {
     QPrinter printer(QPrinter::HighResolution);
     QPrintDialog dlg(&printer, this);
@@ -1425,6 +1441,8 @@ void MainWindow::buildBlockMenu(QMenu* m) {
         [this] { openCreateBlockDialog(); }, "block");
     add(m, QStringLiteral("插入块..."), QKeySequence(),
         [this] { openInsertBlockDialog(); }, "block");
+    add(m, QStringLiteral("在位编辑块..."), QKeySequence(),
+        [this] { openBlockEditorDialog(); }, "block");
     m->addSeparator();
     add(m, QStringLiteral("块管理器..."), QKeySequence(),
         [this] { openBlockManagerDialog(); }, "block");
@@ -1455,6 +1473,47 @@ void MainWindow::openCreateBlockDialog() {
 void MainWindow::openBlockManagerDialog() {
     BlockManagerDialog dlg(model_, this);
     dlg.exec();
+}
+
+void MainWindow::openBlockEditorDialog() {
+    // BEDIT：目标块名解析优先级 ① 当前选中的块引用 → 其块名；② 当前选择的单个图元所引用的块；
+    // ③ 弹窗让用户从块表里挑一个。均无则提示先插入/选中块。
+    QString name;
+    for (int id : model_->selection()) {
+        const Element* e = model_->element(id);
+        if (e && e->type == ElementType::BlockRef) { name = e->blockName; break; }
+    }
+    if (name.isEmpty() && model_->blockCount() == 1) name = model_->blockTable().front().name;
+    if (name.isEmpty() || !model_->hasBlock(name)) {
+        // 兜底：从块表里选一个
+        if (model_->blockCount() == 0) {
+            QMessageBox::information(this, QStringLiteral("在位编辑块"),
+                QStringLiteral("当前图还没有块定义，请先「创建块」或「插入块」。"));
+            return;
+        }
+        QStringList names;
+        for (const auto& d : model_->blockTable()) names << d.name;
+        bool ok = false;
+        name = QInputDialog::getItem(this, QStringLiteral("在位编辑块"),
+                                     QStringLiteral("选择要编辑的块："), names, 0, false, &ok);
+        if (!ok || name.isEmpty()) return;
+    }
+    if (!model_->hasBlock(name)) return;
+    BlockEditorDialog dlg(model_, name, this);
+    dlg.exec();   // 确定 → redefineBlockEntities（全部引用同步）；取消/Esc → 丢弃不落盘
+}
+
+void MainWindow::openDesignCenter() {
+    designDock_->show();
+    designDock_->raise();
+}
+
+void MainWindow::insertBlockAtViewCenter(const QString& name) {
+    if (name.isEmpty() || !model_->hasBlock(name)) return;
+    const Vec3 c = view_->viewCenterWorld();
+    const int id = model_->insertBlock(name, c);
+    if (id < 0) return;
+    model_->setSelection({ id });
 }
 
 void MainWindow::explodeBlockFromMenu() {
@@ -2779,6 +2838,12 @@ void MainWindow::buildDocks() {
     constraintDock_->setObjectName("dockConstraint");
     constraintDock_->setWidget(constraintBar_);
 
+    // 设计中心（符号库浏览/插入）：当前图块表 + 外部文件块表；双击块在视图中心插入
+    designPanel_ = new DesignCenterPanel(model_, this);
+    designDock_ = new QDockWidget(QStringLiteral("设计中心"), this);
+    designDock_->setObjectName("dockDesignCenter");
+    designDock_->setWidget(designPanel_);
+
     // 左栏：上 BOM 树 / 中 图元面板 / 下 图层
     addDockWidget(Qt::LeftDockWidgetArea, bomDock_);
     splitDockWidget(bomDock_, elemDock_, Qt::Vertical);
@@ -2787,18 +2852,25 @@ void MainWindow::buildDocks() {
     addDockWidget(Qt::RightDockWidgetArea, propDock_);
     splitDockWidget(propDock_, constraintDock_, Qt::Vertical);
     splitDockWidget(constraintDock_, logDock_, Qt::Vertical);
+    // 设计中心：右侧独立停靠（初始隐藏，可从「视图 > 面板」勾出）
+    addDockWidget(Qt::RightDockWidgetArea, designDock_);
     // 底部：命令行
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
+    designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
 
     // 初始分栏比例：左 240 / 右 300；左栏上下各分
     resizeDocks({bomDock_, propDock_}, {240, 300}, Qt::Horizontal);
     resizeDocks({bomDock_, elemDock_, layerDock_}, {300, 200, 160}, Qt::Vertical);
     resizeDocks({propDock_, constraintDock_, logDock_}, {320, 200, 280}, Qt::Vertical);
+
+    // 设计中心：双击块 → 在视图中心插入引用（外部块已由面板并入本图块表）
+    connect(designPanel_, &DesignCenterPanel::insertBlockRequested,
+            this, &MainWindow::insertBlockAtViewCenter);
 }
 
 void MainWindow::connectSignals() {
@@ -3016,13 +3088,17 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     root["app"] = QStringLiteral("SketchCAD");
     root["formatVersion"] = 1;
     root["scaleRatio"] = model_->scaleRatio();         // 比例随图存档，打开时恢复
+    root["ltscale"] = model_->ltscale();               // 全局线型比例随图存档，打开时恢复
     QJsonArray arr;
     for (const auto& e2 : model_->elements()) arr.append(elementToJson(e2));
     root["elements"] = arr;
     root["layers"] = model_->layersToJson();   // 图层表随图存档（旧文件无此字段则读回时回退单层"0"）
     root["blocks"] = model_->blocksToJson();   // 块表随图存档（旧文件无此字段则读回时无块定义）
     root["textStyles"] = model_->textStylesToJson();   // 文字样式表随图存档（旧文件无此字段则回落单一默认 "Standard"）
+    root["dimStyles"] = model_->dimStylesToJson();     // 标注样式表随图存档（旧文件无此字段则回落单一默认 "Standard"）
     root["savedFilters"] = model_->savedFiltersToJson(); // 命名过滤器随图存档（检索配置，不入撤销栈）
+    root["layouts"] = model_->layoutsToJson();           // 布局表随图存档（旧文件无此键 → 空表回落模型空间打印）
+    root["currentLayout"] = model_->currentLayout();     // 当前布局名（空 = 模型空间）
     root["units"]  = model_->units().toJson();   // 单位口径随图存档（旧文件无此键 → 回落 mm/度/2 位）
     root["limits"] = model_->limits().toJson();  // 图纸界限随图存档（旧文件无此键 → 回落 A3/不检查）
     root["snapConfig"] = model_->snapConfig().toJson();  // 捕捉全局配置随图存档（旧文件无此键 → 回落默认）
@@ -3229,7 +3305,11 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     // 读回文字样式表（若有）。图元经 styleName 引用样式，必须与图元一并读回；
     // 旧文件无此字段 → 回落为单一默认 "Standard"（渲染解析非 null）。
     model_->setTextStylesFromJson(root["textStyles"].toArray());
+    // 读回标注样式表（一图多标准）。图元经 dimStyleName 引用样式，必须与图元一并读回；
+    // 旧文件无此字段 → 自动生成单一默认 "Standard"，等价于原"单全局 DimStyle"（零行为变化）。
+    model_->setDimStylesFromJson(root["dimStyles"].toObject());
     model_->setSavedFiltersFromJson(root["savedFilters"].toArray());   // 旧文件无此字段 → 空过滤器列表（容缺）
+    model_->setLayoutsFromJson(root);   // 布局表（顶层 "layouts"/"currentLayout"；旧文件缺键 → 空表回落模型空间打印）
     // 读回单位与图纸界限（若有）。二者为应用级配置：不发 modelChanged，只发各自的
     // 专用信号驱动状态栏/参数条刷新；旧文件无此字段 → 回落 mm/十进制度/2 位 + A3。
     model_->setUnits(UnitsMeta::fromJson(root["units"].toObject()));
@@ -3241,6 +3321,9 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
+    // 全局线型比例随图恢复（缺键 → 回落 1.0；setLtscale 内部守卫保证非正/无变化不触发重绘）
+    if (root.contains("ltscale"))
+        model_->setLtscale(root["ltscale"].toDouble(1.0));
     // 登记图纸路径：它是外部参照「相对路径」的解析基准（读回后 xref 才能被重新定位）
     model_->setDrawingPath(path);
     syncTitleBlockScale();

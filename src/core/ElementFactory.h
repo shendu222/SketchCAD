@@ -62,6 +62,23 @@ public:
     // 单元格内容由 TableDialog 填充；网格线颜色/线型走模型默认样式。
     static Element createTable(const Vec3& topLeft, int rows, int cols, const SketchModel* model);
 
+    // 多重引线（MLeader）：tip=箭头附着点；elbow=折点（可与 tip 同点表示直线引线）；
+    // textAnchor=文字框基线起点；text=多行内容（\n 分行）；heightMm=文字高度；
+    // landingMm=基线长度（<=0 无基线）；arrowLenMm=箭头长。
+    // pts 依次存 [tip, elbow, textAnchor]（三点，elbow==tip 时退化为两点）。
+    static Element createMLeader(const Vec3& tip, const Vec3& elbow, const Vec3& textAnchor,
+                                 const QString& text, double heightMm = 3.5,
+                                 double landingMm = 0.0, double arrowLenMm = 3.5,
+                                 const SketchModel* model = nullptr);
+
+    // 形位公差框格（Fcf，GB/T 1182）：anchor=框格左下角；symbol=几何特征符号（FcfSymbol 整数）；
+    // tolerance=公差值文本（可空）；datums=基准字母组；heightMm=框格高/字高。
+    // modifer=周边界/最大实体(M)/最小实体(L)/自由状态(S)/投影(P)修饰符（可空）。
+    static Element createFcf(const Vec3& anchor, int symbol, const QString& tolerance,
+                             const std::vector<QString>& datums, double heightMm = 7.0,
+                             const QString& modifier = QString(),
+                             const SketchModel* model = nullptr);
+
     // 块引用（BlockRef）：只创建"引用骨架"（块名 + 插入点/旋转/缩放）。
     // 属性默认值与动态参数默认值需由调用方从块定义补全 —— 常规路径请用
     // SketchModel::insertBlock()（它会调 block::makeRef 一并填好），本方法供
