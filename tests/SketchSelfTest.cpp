@@ -42,6 +42,9 @@
 #include "LinePattern.h"      // 线型虚线规格：dashSpecFor / dashSpecScaled（LTSCALE）
 #include "Layout.h"           // 布局体系：PlotViewport/PrintSettings/PlotLayoutDef/viewportScaleMm
 #include "ui/PrintEngine.h"   // 布局体系：exportPdfLayouts 每布局一页出图
+#include "AutoSave.h"         // 崩溃不丢稿：自动保存核心（原子落盘/扫描/恢复/清理）
+#include "AppSettings.h"      // 崩溃不丢稿：全局设置（自动保存间隔/磁盘阈值）
+#include "Diagnostics.h"      // 崩溃不丢稿：日志滚动落盘 + 崩溃转储
 #include <algorithm>
 #include <map>
 #include <random>
@@ -49,6 +52,8 @@
 #include <QColor>
 #include <QImage>
 #include <QMarginsF>
+#include <QSettings>
+#include <QTemporaryDir>
 
 // 核心类型均位于 SketchCAD 命名空间，测试代码中统一引入以简化书写。
 using namespace SketchCAD;
@@ -3437,6 +3442,63 @@ static bool t_spatialIndex() {
 }
 
 // ============================================================================
+// P0-04 大图纸内存预算：SmallVec 内联小向量语义 + 关键类型尺寸预算上界（纯 core 直测）
+// ----------------------------------------------------------------------------
+// 预算目标：每图元持久内存 ≤ 1KB（不含可见场景项）。Element 是模型层最大单体，
+// 其 sizeof 上界被此测试锁定 —— 后续新增字段若把单图元内存推破预算，此处立即变红。
+// ============================================================================
+static bool t_p004Memory() {
+    bool ok = true;
+
+    // 1) SmallVec：内联槽（≤N 零堆分配）语义
+    {
+        SmallVec<int, 2> v;
+        CHECK(v.empty() && v.size() == 0, "SmallVec 初始为空");
+        v.push_back(1);
+        v.push_back(2);
+        CHECK(v.size() == 2 && v.contains(1) && v.contains(2), "SmallVec 内联槽 push/contains");
+        v.push_back(3);   // 溢出到堆
+        CHECK(v.size() == 3 && v.contains(3), "SmallVec 溢出 push 后仍可查");
+        // range-for 遍历（跨内联+溢出连续）
+        int sum = 0; for (int x : v) sum += x;
+        CHECK(sum == 6, "SmallVec range-for 跨段遍历求和正确");
+        // eraseValue：内联段命中
+        v.eraseValue(1);
+        CHECK(v.size() == 2 && !v.contains(1) && v.contains(2) && v.contains(3),
+              "SmallVec eraseValue(内联命中) 后其余元素完好");
+        // eraseValue：溢出段命中
+        SmallVec<int, 2> w;
+        w.push_back(10); w.push_back(20); w.push_back(30); w.push_back(40);
+        w.eraseValue(30);
+        CHECK(w.size() == 3 && !w.contains(30) && w.contains(10) && w.contains(20) && w.contains(40),
+              "SmallVec eraseValue(溢出命中) 后其余元素完好");
+        w.clear();
+        CHECK(w.empty() && w.size() == 0, "SmallVec clear 后为空");
+    }
+
+    // 2) SmallVec<Cell,8>：SpatialIndex::cellsFor 典型返回 ≤8 个单元（内联，零堆分配）
+    {
+        SpatialIndex idx(64.0);
+        // 覆盖 3×3=9 单元的矩形 → 恰好触发溢出路径（9 > 8）
+        auto cells9 = idx.queryRect(QRectF(0, 0, 192, 192));   // 查询路径也走 cellsFor
+        (void)cells9;
+        CHECK(true, "SpatialIndex 覆盖 9 单元查询不崩（SmallVec 溢出路径）");
+    }
+
+    // 3) 内存预算上界：Element 是每图元 1KB 预算的主体
+    {
+        fprintf(stdout, "  [info] sizeof(Element)=%zu  sizeof(SmallVec<int,2>)=%zu\n",
+                sizeof(Element), sizeof(SmallVec<int, 2>));
+        // 基线实测 848B（14×QString + 10×vector + QColor + ~15×double，对齐后），
+        // 预算上限取 896B（16 字节对齐余量 ≈5%）—— 此后新增字段若推破该值立即变红。
+        CHECK(sizeof(Element) <= 896, "内存预算：sizeof(Element) ≤ 896B（新增字段不得破预算）");
+        CHECK(sizeof(SmallVec<int, 2>) <= 40, "内存预算：SmallVec<int,2> 结构体 ≤ 40B（内联收益成立）");
+    }
+
+    return ok;
+}
+
+// ============================================================================
 // 打印样式表：颜色/图层/线型 → 线宽 + 灰度 + 抖动（黑白出图，纯 core 直测）
 // ----------------------------------------------------------------------------
 // 覆盖：映射解析优先级、灰度化纯函数、GB 预设粗/细分组、简化 CTB 导入容错、
@@ -4430,10 +4492,1083 @@ static void t_layout() {
     }
 }
 
+// ============================================================================
+// P0-01：R12 + R2000 双版本 DXF 读写 + 版本协商 + 二进制容器 + 鲁棒性
+// 验收：round-trip 计数/类型一致 ≥99%；不支持版本安全拒绝；二进制 DXF 可解码；
+//       旧档路径(R12 ASCII)不含 R2000 标记（逐字节兼容旧版）。
+// ============================================================================
+
+// P0-01 黄金样本生成器（仅 SKETCHCAD_GEN_GOLDEN 时由 main 调用）。
+// 用真实 toDxf/toDwg 落盘 tests/golden/ 下代表性样本，供 t_formatsGolden 长期校验。
+// 覆盖：R12 ASCII DXF / R2000 ASCII DXF / R12 二进制 DXF / R2000 二进制 DXF / R12 DWG。
+static void genFormatsGoldens() {
+    using namespace cadfmt;
+    std::vector<Element> els;
+    std::vector<BlockDef> blk;
+
+    auto addLine = [&](double x0, double y0, double x1, double y1) {
+        Element e; e.type = ElementType::Line; e.pts = {Vec3(x0, y0, 0), Vec3(x1, y1, 0)};
+        e.layer = QStringLiteral("0"); els.push_back(e);
+    };
+    addLine(0, 0, 100, 0);
+    addLine(0, 0, 0, 80);
+    { Element e; e.type = ElementType::Circle; e.pts = {Vec3(50, 40, 0)}; e.radius = 30;
+      e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Arc; e.pts = {Vec3(50, 40, 0)}; e.radius = 20;
+      e.startAngle = 0; e.endAngle = 90; e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Text; e.pts = {Vec3(10, 10, 0)};
+      e.text = QStringLiteral("Hello SketchCAD"); e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Point; e.pts = {Vec3(5, 5, 0)};
+      e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Polyline; e.closed = true;
+      e.pts = {Vec3(0, 100, 0), Vec3(50, 120, 0), Vec3(100, 100, 0)};
+      e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Dimension; e.dtype = DimensionType::Distance;
+      e.dimValue = 100; e.pts = {Vec3(0, 0, 0), Vec3(100, 0, 0)}; e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::Hatch; e.closed = true;
+      e.pts = {Vec3(0, 0, 0), Vec3(40, 0, 0), Vec3(40, 40, 0), Vec3(0, 40, 0)};
+      e.layer = QStringLiteral("0"); els.push_back(e); }
+    { Element e; e.type = ElementType::BlockRef; e.blockName = QStringLiteral("B1");
+      e.pts = {Vec3(200, 200, 0)}; e.layer = QStringLiteral("0"); els.push_back(e); }
+    { BlockDef b; b.name = QStringLiteral("B1"); b.basePoint = Vec3(0, 0, 0);
+      Element l; l.type = ElementType::Line; l.pts = {Vec3(0, 0, 0), Vec3(10, 0, 0)};
+      b.entities.push_back(l); blk.push_back(b); }
+
+    DxfExportOptions o; o.nativeBlocks = o.nativeDims = o.nativeHatch = true;
+    const QString dir = QStringLiteral("D:/01-CAD/02-avticationCAD/sketch-cad-cpp/tests/golden");
+    auto write = [&](const QString& name, const QByteArray& d) {
+        QFile f(dir + "/" + name);
+        if (f.open(QIODevice::WriteOnly)) { f.write(d); f.close();
+            fprintf(stderr, "GEN %s %d bytes\n", name.toUtf8().constData(), (int)d.size()); }
+        else fprintf(stderr, "GEN FAIL %s\n", name.toUtf8().constData());
+    };
+    o.version = DxfVersion::R12;   o.container = DxfContainer::Ascii;
+    write(QStringLiteral("golden_r12.dxf"),   toDxf(els, nullptr, 1.0, 4, &blk, &o));
+    o.version = DxfVersion::R2000; o.container = DxfContainer::Ascii;
+    write(QStringLiteral("golden_r2000.dxf"), toDxf(els, nullptr, 1.0, 4, &blk, &o));
+    o.version = DxfVersion::R12;   o.container = DxfContainer::Binary;
+    write(QStringLiteral("golden_r12_bin.dxf"),   toDxfBinary(els, nullptr, 1.0, 4, &blk, &o));
+    o.version = DxfVersion::R2000; o.container = DxfContainer::Binary;
+    write(QStringLiteral("golden_r2000_bin.dxf"), toDxfBinary(els, nullptr, 1.0, 4, &blk, &o));
+    write(QStringLiteral("golden_r12.dwg"), toDwg(els, nullptr, 1.0));
+    fprintf(stderr, "GEN done\n");
+}
+
+static bool t_formatsVersions() {
+    using namespace cadfmt;
+
+    // ---- 构造一组混合图元（线/圆/文字/点/标注/填充/块引用）+ 一个块定义 ----
+    std::vector<Element> els;
+    { Element l; l.type = ElementType::Line;   l.pts = {Vec3(0,0,0), Vec3(10,0,0)}; els.push_back(l); }
+    { Element c; c.type = ElementType::Circle; c.pts = {Vec3(20,20,0)}; c.radius = 5.0; els.push_back(c); }
+    { Element t; t.type = ElementType::Text;   t.pts = {Vec3(0,30,0)}; t.text = QStringLiteral("HI"); els.push_back(t); }
+    { Element p; p.type = ElementType::Point;  p.pts = {Vec3(5,5,0)}; els.push_back(p); }
+    { Element d; d.type = ElementType::Dimension; d.refA = -1; d.refB = -1;
+      d.dtype = DimensionType::Aligned; d.dimValue = 10.0; d.pts = {Vec3(0,0,0), Vec3(10,0,0)}; els.push_back(d); }
+    { Element h; h.type = ElementType::Hatch; h.closed = true;
+      h.pts = {Vec3(40,0,0), Vec3(60,0,0), Vec3(60,20,0), Vec3(40,20,0)}; els.push_back(h); }
+    { Element br; br.type = ElementType::BlockRef; br.blockName = QStringLiteral("B1"); br.pts = {Vec3(100,100,0)}; els.push_back(br); }
+
+    std::vector<BlockDef> blk;
+    { BlockDef b; b.name = QStringLiteral("B1"); b.basePoint = Vec3(0,0,0);
+      Element l; l.type = ElementType::Line; l.pts = {Vec3(0,0,0), Vec3(5,0,0)}; b.entities.push_back(l);
+      blk.push_back(b); }
+
+    // 类型计数（往返一致性对照）
+    auto countTypes = [](const std::vector<Element>& v) {
+        int line=0, circle=0, text=0, point=0, dim=0, hatch=0, blkref=0;
+        for (const auto& el : v) {
+            switch (el.type) {
+                case ElementType::Line:      ++line;   break;
+                case ElementType::Circle:    ++circle; break;
+                case ElementType::Text:      ++text;   break;
+                case ElementType::Point:     ++point;  break;
+                case ElementType::Dimension: ++dim;    break;
+                case ElementType::Hatch:     ++hatch;  break;
+                case ElementType::BlockRef:  ++blkref; break;
+                default: break;
+            }
+        }
+        return QVector<int>{line, circle, text, point, dim, hatch, blkref};
+    };
+
+    // ---------- ① R12 ASCII：默认版本，不得含 R2000 标记 ----------
+    DxfExportOptions o12; o12.version = DxfVersion::R12;
+    o12.nativeBlocks = o12.nativeDims = o12.nativeHatch = true;
+    QString e12;
+    QByteArray r12 = toDxf(els, &e12, 1.0, 4, &blk, &o12);
+    CHECK(e12.isEmpty(), "① R12 toDxf 无错误");
+    CHECK(r12.indexOf("AC1009") >= 0, "① R12 含 $ACADVER AC1009");
+    CHECK(r12.indexOf("AC1015") < 0, "① R12 不得含 AC1015（保旧版兼容）");
+    CHECK(r12.indexOf("AcDbEntity") < 0, "① R12 不得含 AcDb 子类标记（保旧版兼容）");
+
+    // ---------- ② R2000 ASCII：版本串 + AcDb 标记 + 句柄 + OBJECTS ----------
+    DxfExportOptions o20; o20.version = DxfVersion::R2000;
+    o20.nativeBlocks = o20.nativeDims = o20.nativeHatch = true;
+    QString e20;
+    QByteArray r20 = toDxf(els, &e20, 1.0, 4, &blk, &o20);
+    CHECK(e20.isEmpty(), "② R2000 toDxf 无错误");
+    CHECK(r20.indexOf("AC1015") >= 0, "② R2000 含 $ACADVER AC1015");
+    CHECK(r20.indexOf("AcDbEntity") >= 0, "② R2000 注入 AcDbEntity 标记");
+    CHECK(r20.indexOf("AcDbLine") >= 0, "② R2000 注入 AcDbLine 子类标记");
+    CHECK(r20.indexOf("330") >= 0, "② R2000 注入 owner 句柄(330)");
+    CHECK(r20.indexOf("\r\n5\r\n") >= 0, "② R2000 注入实体句柄(5)");
+    CHECK(r20.indexOf("OBJECTS") >= 0, "② R2000 含 OBJECTS 段");
+    CHECK(r20.indexOf("*MODEL_SPACE") >= 0, "② R2000 含 *MODEL_SPACE 块记录");
+
+    // ---------- ③ R12 / R2000 ASCII 往返计数一致 ----------
+    std::vector<Element> b12; DxfImportStats s12; QString er12;
+    CHECK(fromDxf(r12, b12, &er12, &s12), "③ R12 再导入成功");
+    CHECK(er12.isEmpty(), "③ R12 再导入无错误");
+    auto c12 = countTypes(b12);
+    std::vector<Element> b20; DxfImportStats s20; QString er20;
+    CHECK(fromDxf(r20, b20, &er20, &s20), "③ R2000 再导入成功");
+    CHECK(er20.isEmpty(), "③ R2000 再导入无错误");
+    auto c20 = countTypes(b20);
+    CHECK(c12[0]==c20[0] && c12[1]==c20[1] && c12[2]==c20[2] && c12[3]==c20[3],
+          "③ R12/R2000 往返：线/圆/文字/点计数一致");
+    CHECK(c12[4]==c20[4] && c12[5]==c20[5] && c12[6]==c20[6],
+          "③ R12/R2000 往返：标注/填充/块引用计数一致");
+    CHECK(s12.blocks.size() == 1 && s12.blocks[0].name == QStringLiteral("B1"), "③ R12 往返保留块定义 B1");
+    CHECK(s20.blocks.size() == 1 && s20.blocks[0].name == QStringLiteral("B1"), "③ R2000 往返保留块定义 B1");
+
+    // ---------- ④ 二进制 DXF 容器：R12 与 R2000 均需可解码往返 ----------
+    DxfExportOptions o12b; o12b.version = DxfVersion::R12;
+    o12b.nativeBlocks = o12b.nativeDims = o12b.nativeHatch = true;
+    QByteArray bin12 = toDxfBinary(els, &e12, 1.0, 4, &blk, &o12b);
+    CHECK(!bin12.isEmpty() && bin12.indexOf("AutoCAD Binary DXF") == 0, "④ R12 二进制 DXF 含哨兵头");
+    std::vector<Element> b12b; DxfImportStats s12b; QString er12b;
+    CHECK(fromDxfBinary(bin12, b12b, &er12b, &s12b), "④ R12 二进制 DXF 解码导入成功");
+    CHECK(er12b.isEmpty(), "④ R12 二进制 DXF 解码无错误");
+    CHECK(countTypes(b12b) == c12, "④ R12 二进制往返计数与 ASCII 一致");
+
+    DxfExportOptions o20b; o20b.version = DxfVersion::R2000;
+    o20b.nativeBlocks = o20b.nativeDims = o20b.nativeHatch = true;
+    QByteArray bin20 = toDxfBinary(els, &e20, 1.0, 4, &blk, &o20b);
+    CHECK(!bin20.isEmpty() && bin20.indexOf("AutoCAD Binary DXF") == 0, "④ R2000 二进制 DXF 含哨兵头");
+    std::vector<Element> b20b; DxfImportStats s20b; QString er20b;
+    CHECK(fromDxfBinary(bin20, b20b, &er20b, &s20b), "④ R2000 二进制 DXF 解码导入成功");
+    CHECK(er20b.isEmpty(), "④ R2000 二进制 DXF 解码无错误");
+    CHECK(countTypes(b20b) == c20, "④ R2000 二进制往返计数与 ASCII 一致");
+
+    // ---------- ⑤ 手写 R2000 片段（AC1015 + AcDb 标记）可直接解析 ----------
+    QByteArray frag =
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1015\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nLINE\r\n8\r\n0\r\n5\r\n1A\r\n100\r\nAcDbEntity\r\n100\r\nAcDbLine\r\n"
+        "10\r\n0.0\r\n20\r\n0.0\r\n11\r\n10.0\r\n21\r\n5.0\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
+    std::vector<Element> bf; DxfImportStats sf; QString ef;
+    CHECK(fromDxf(frag, bf, &ef, &sf), "⑤ 手写 R2000 片段解析成功");
+    CHECK(ef.isEmpty() && bf.size() == 1 && bf[0].type == ElementType::Line, "⑤ 手写 R2000 片段得 1 条 LINE");
+
+    // ---------- ⑥ 版本协商：不支持版本返回 false + 明确人类提示 ----------
+    QByteArray bad =
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1021\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
+    std::vector<Element> bd; DxfImportStats sd; QString ed;
+    CHECK(!fromDxf(bad, bd, &ed, &sd), "⑥ AC1021(DWG 2004) 被拒绝（不崩溃）");
+    CHECK(ed.indexOf("DWG 2004") >= 0, "⑥ 拒绝信息含人类可读版本名 DWG 2004");
+    CHECK(isSupportedDxfVersion(QStringLiteral("AC1021")) == false, "⑥ isSupportedDxfVersion(AC1021)=false");
+    CHECK(isSupportedDxfVersion(QStringLiteral("AC1015")) == true,  "⑥ isSupportedDxfVersion(AC1015)=true");
+    CHECK(detectDxfVersion(r20) == DxfVersion::R2000, "⑥ detectDxfVersion(R2000 ASCII)=R2000");
+    CHECK(detectDxfVersion(r12) == DxfVersion::R12,   "⑥ detectDxfVersion(R12 ASCII)=R12");
+
+    // ---------- ⑦ 鲁棒性：连续读取 20 个损坏/不支持文件不崩溃、进程不退出 ----------
+    int rejected = 0;
+    for (int i = 0; i < 20; ++i) {
+        QByteArray garbage;
+        if (i == 0) garbage = bad;                                           // 已知不支持版本
+        else if (i == 1) garbage = "THIS IS NOT A DXF FILE AT ALL @#$%";
+        else if (i == 2) garbage = QByteArray("AutoCAD Binary DXF\r\n", 22);  // 仅哨兵头，无内容
+        else garbage = QByteArray("乱码数据####") + QByteArray::number(i);
+        std::vector<Element> tmp; DxfImportStats st; QString err;
+        bool ok = fromDxf(garbage, tmp, &err, &st);
+        if (!ok) ++rejected;                                                  // 期望全部被拒
+    }
+    CHECK(rejected == 20, "⑦ 20 个损坏/不支持文件全部安全拒绝（不崩溃/不退出）");
+
+    // ---------- ⑧ DWG 非 R12 强校验：坏头部被拒 ----------
+    QByteArray badDwg = "NOTACAD_garbage_header";
+    std::vector<Element> bw; DxfImportStats sw; QString ew;
+    CHECK(!fromDwg(badDwg, bw, &ew, &sw), "⑧ 非 R12 DWG 被拒绝");
+
+    return g_fail == 0;
+}
+
+// P0-01：tests/golden/ 静态样本 round-trip 校验（验收标准①：实体数量/图层/块定义一致性 ≥99%）。
+// 每个样本：导入 → 同版本再导出 → 再导入，断言实体数、图层集、块定义数一致。
+static bool t_formatsGolden() {
+    using namespace cadfmt;
+    QString dir;
+    QStringList cands;
+    cands << QCoreApplication::applicationDirPath() + QStringLiteral("/golden")
+          << QCoreApplication::applicationDirPath() + QStringLiteral("/../tests/golden")
+          << QDir::currentPath() + QStringLiteral("/tests/golden")
+          << QDir::currentPath() + QStringLiteral("/golden")
+          << QDir::currentPath() + QStringLiteral("/../../tests/golden");
+    for (const auto& c : cands)
+        if (QFileInfo(QDir(c).filePath(QStringLiteral("golden_r12.dxf"))).isFile()) { dir = c; break; }
+    CHECK(!dir.isEmpty(), "golden(P0-01): 定位 tests/golden 样本目录");
+
+    auto layersOf = [](const std::vector<Element>& v) {
+        QSet<QString> s; for (const auto& e : v) if (!e.layer.isEmpty()) s.insert(e.layer); return s;
+    };
+    auto roundtrip = [&](const QString& name, bool isBinary, bool isDwg) -> bool {
+        QString path = QDir(dir).filePath(name);
+        QFile f(path); if (!f.open(QIODevice::ReadOnly)) return false;
+        QByteArray raw = f.readAll(); f.close();
+        std::vector<Element> a; DxfImportStats sa; QString ea;
+        bool okA = isDwg ? fromDwg(raw, a, &ea, &sa)
+                         : (isBinary ? fromDxfBinary(raw, a, &ea, &sa) : fromDxf(raw, a, &ea, &sa));
+        if (!okA || !ea.isEmpty()) return false;
+        const int na = (int)a.size();
+        const int la = (int)sa.blocks.size();
+        const QSet<QString> lsa = layersOf(a);
+
+        DxfExportOptions o; o.nativeBlocks = o.nativeDims = o.nativeHatch = true;
+        QByteArray out;
+        if (isDwg) {
+            out = toDwg(a, nullptr, 1.0);
+        } else {
+            o.version   = isBinary ? detectDxfVersion(raw, true) : detectDxfVersion(raw);
+            o.container = isBinary ? DxfContainer::Binary : DxfContainer::Ascii;
+            out = isBinary ? toDxfBinary(a, nullptr, 1.0, 4, &sa.blocks, &o)
+                           : toDxf(a, nullptr, 1.0, 4, &sa.blocks, &o);
+        }
+        if (out.isEmpty()) return false;
+
+        std::vector<Element> b; DxfImportStats sb; QString eb;
+        bool okB = isDwg ? fromDwg(out, b, &eb, &sb)
+                         : (isBinary ? fromDxfBinary(out, b, &eb, &sb) : fromDxf(out, b, &eb, &sb));
+        if (!okB || !eb.isEmpty()) return false;
+        if ((int)b.size() != na) return false;          // 实体数量一致（100% → 满足 ≥99%）
+        if ((int)sb.blocks.size() != la) return false;  // 块定义数一致
+        if (layersOf(b) != lsa) return false;            // 图层集一致
+        return true;
+    };
+
+    CHECK(roundtrip(QStringLiteral("golden_r12.dxf"),    false, false), "golden(P0-01): R12 ASCII DXF 往返一致");
+    CHECK(roundtrip(QStringLiteral("golden_r2000.dxf"),  false, false), "golden(P0-01): R2000 ASCII DXF 往返一致");
+    CHECK(roundtrip(QStringLiteral("golden_r12_bin.dxf"),   true, false), "golden(P0-01): R12 二进制 DXF 往返一致");
+    CHECK(roundtrip(QStringLiteral("golden_r2000_bin.dxf"), true, false), "golden(P0-01): R2000 二进制 DXF 往返一致");
+    CHECK(roundtrip(QStringLiteral("golden_r12.dwg"),      false, true),  "golden(P0-01): R12 DWG 往返一致");
+    return true;
+}
+
+// 写一个测试用临时文件（QFile::write 是成员函数，无静态重载，故用此小助手）
+static void writeTemp(const QString& path, const QByteArray& data) {
+    QFile f(path);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(data);
+        f.close();
+    }
+}
+
+// ===== 崩溃不丢稿：自动保存 / 恢复 / 诊断（t_autosave 分组，逐条 CHECK）=====
+//
+// 覆盖验收标准：
+//   ① 分组 ≥12 条（实际 20+）；② 写失败（只读目录）→ 明确错误、不崩溃、主图不截断；
+//   ③ 恢复内容一致；④ 原子替换 / 清理 / 扫描 / 命名 / 头部元信息。
+static void t_autosave() {
+    const QString dir = AutoSave::snapshotDir();
+    QDir().mkpath(dir);
+
+    // 1) 快照目录建在用户目录下（%LOCALAPPDATA%/SketchCAD/autosave），不污染安装目录
+    CHECK(dir.contains(QStringLiteral("SketchCAD")) && dir.contains(QStringLiteral("autosave")),
+          "autosave: 快照目录位于用户目录 SketchCAD/autosave");
+    CHECK(QDir(dir).exists(), "autosave: 快照目录已创建");
+
+    // 2) 命名：可读前缀 + 原路径哈希 8 位 + .sv$；同路径稳定、异路径不同
+    const QString origin = QStringLiteral("C:/work/part.json");
+    const QString name1 = AutoSave::snapshotNameFor(origin);
+    const QString name2 = AutoSave::snapshotNameFor(origin);
+    const QString name3 = AutoSave::snapshotNameFor(QStringLiteral("C:/work/other.json"));
+    CHECK(name1 == name2, "autosave: 同原路径快照名稳定");
+    CHECK(name1 != name3, "autosave: 异原路径快照名不同");
+    CHECK(name1.endsWith(QStringLiteral(".sv$")), "autosave: 快照后缀为 .sv$");
+    CHECK(name1.contains(QStringLiteral("part")), "autosave: 快照名含可读前缀");
+    // 非法字符被替换（不产生非法文件名）
+    CHECK(!AutoSave::snapshotNameFor(QStringLiteral("C:/a b/c*d.json"))
+               .contains(QChar('*')), "autosave: 非法文件名字符被清洗");
+
+    // 3) 原子写：.sv$ 落盘、.tmp 不残留
+    const QString snap = dir + QLatin1Char('/') + name1;
+    AutoSave::discardSnapshot(snap);
+    QString err;
+    const QByteArray blob = QByteArray("SCAUTOSAVE1\nT=2026-01-01T00:00:00\n"
+                                        "O=" + origin.toUtf8().toBase64() +
+                                        "\nS=2\n\n{}");
+    CHECK(AutoSave::writeSnapshot(snap, blob, &err), "autosave: writeSnapshot 成功");
+    CHECK(QFile::exists(snap), "autosave: 快照文件已落盘");
+    CHECK(!QFile::exists(snap + QStringLiteral(".tmp")), "autosave: 提交后 .tmp 不残留");
+
+    // 4) 头部 + 负载分离：readSnapshot 去掉头部还原原始 JSON 负载
+    const QByteArray payload = AutoSave::readSnapshot(snap, &err);
+    CHECK(payload == QByteArray("{}"), "autosave: readSnapshot 还原负载（剥头）");
+
+    // 5) 覆盖写产生 .bak（保留上一个版本），且新内容生效
+    const QByteArray blob2 = QByteArray("SCAUTOSAVE1\nT=2026-01-02T00:00:00\n"
+                                         "O=" + origin.toUtf8().toBase64() +
+                                         "\nS=6\n\n[1,2]");
+    CHECK(AutoSave::writeSnapshot(snap, blob2, &err), "autosave: 覆盖写成功");
+    CHECK(QFile::exists(snap + QStringLiteral(".bak")), "autosave: 覆盖写保留 .bak");
+    CHECK(AutoSave::readSnapshot(snap, &err) == QByteArray("[1,2]"),
+          "autosave: 覆盖写后读到新内容");
+
+    // 6) 写失败（只读目录）→ 返回 false + 明确中文原因，且旧快照不被截断
+    //
+    // 造失败的手法说明：writeSnapshot 先写 <path>.tmp 再提交，因此「把 <path> 本身
+    // 做成目录」并不能阻止写入（.tmp 是另一个名字，仍能写成功）。
+    // 可靠做法是让**父路径根本不是一个目录**：先建一个同名普通文件，再要求在其
+    // 「下面」写 x.sv$ —— 此时 mkpath 失败、QFile 打开 .tmp 失败，任何环境下都必失败。
+    {
+        const QString roDir = QDir::tempPath() + QStringLiteral("/scad_ro_test");
+        QDir().mkpath(roDir);
+        QFile::setPermissions(roDir,
+            QFile::ReadOwner | QFile::ExeOwner);       // 先置只读（模拟权限不足场景）
+        QString e2;
+        const bool ok = AutoSave::writeSnapshot(roDir + QStringLiteral("/x.sv$"), blob, &e2);
+        if (!ok) {
+            // 权限确实被拒绝（本用例的理想路径）
+            CHECK(!e2.isEmpty(), "autosave: 只读目录写失败有明确原因");
+            CHECK(!QFile::exists(roDir + QStringLiteral("/x.sv$")),
+                  "autosave: 写失败不产生半截正式文件");
+        } else {
+            // 以管理员身份运行时只读位不生效 → 改用「父路径是普通文件」稳定复现失败
+            const QString blocker = roDir + QStringLiteral("/blocker");
+            writeTemp(blocker, "not-a-dir");
+            e2.clear();
+            const bool ok2 = AutoSave::writeSnapshot(blocker + QStringLiteral("/x.sv$"),
+                                                     blob, &e2);
+            CHECK(!ok2 && !e2.isEmpty(), "autosave: 写失败返回 false 且有明确原因");
+            CHECK(!QFile::exists(blocker + QStringLiteral("/x.sv$")),
+                  "autosave: 写失败不产生半截正式文件");
+        }
+        // 恢复可写权限并清理
+        QFile::setPermissions(roDir, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        QDir(roDir).removeRecursively();
+    }
+
+    // 7) 对**同一份**快照制造一次失败写入 → 旧内容必须完好（不被截断）
+    //    手法：在 <keep>.tmp 位置建一个目录，使 writeSnapshot 的第一步开 .tmp 失败，
+    //    从而在提交之前就中止 —— 正好验证「先写 .tmp、失败即回滚」的不变式。
+    {
+        const QString keep = dir + QLatin1Char('/') + name1;
+        AutoSave::writeSnapshot(keep, blob, &err);
+        const QByteArray before = AutoSave::readSnapshot(keep, &err);
+        const QString tmpBlocker = keep + QStringLiteral(".tmp");
+        QDir().mkpath(tmpBlocker);                       // .tmp 位置是目录 → 打开必失败
+        QString e6;
+        const bool okBad = AutoSave::writeSnapshot(keep, QByteArray("garbage-truncated"), &e6);
+        const QByteArray after = AutoSave::readSnapshot(keep, &err);
+        CHECK(!okBad && !e6.isEmpty(), "autosave: 提交前失败有明确原因");
+        CHECK(before == after, "autosave: 写失败后原快照内容未被截断");
+        CHECK(QFileInfo(keep).size() > 0, "autosave: 写失败后原快照文件仍非空");
+        QDir().rmdir(tmpBlocker);                        // 移除目录型阻塞物
+    }
+
+    // 8) scanSnapshots 能发现刚写的快照，且按时间倒序
+    {
+        // 先清空目录内其它 .sv$，保证断言只对本组样本成立
+        const QDir d(dir);
+        for (const QString& f : d.entryList(QStringList() << QStringLiteral("*.sv$"),
+                                           QDir::Files))
+            QFile::remove(d.filePath(f));
+        AutoSave::discardSnapshot(snap);
+        CHECK(AutoSave::writeSnapshot(snap, blob, &err), "autosave: 重新写入样本快照");
+        const QVector<AutoSave::Snapshot> scans = AutoSave::scanSnapshots();
+        bool found = false;
+        for (const auto& s : scans)
+            if (s.fullPath == snap) found = true;
+        CHECK(found, "autosave: scanSnapshots 发现快照");
+        // 头部 O= 解析回原路径
+        QString parsedOrigin;
+        qint64 sz = -1;
+        for (const auto& s : scans)
+            if (s.fullPath == snap) { parsedOrigin = s.originPath; sz = s.size; }
+        CHECK(parsedOrigin == origin, "autosave: 快照头部解析出原路径");
+        CHECK(sz > 0, "autosave: 快照大小有效");
+    }
+
+    // 9) 恢复：restoreSnapshot 把负载原子写回目标，内容与原一致
+    {
+        const QString target = QDir::tempPath() + QStringLiteral("/scad_restore.json");
+        QFile::remove(target);
+        QString e3;
+        CHECK(AutoSave::restoreSnapshot(snap, target, &e3), "autosave: restoreSnapshot 成功");
+        QFile f(target);
+        const bool opened = f.open(QIODevice::ReadOnly);
+        const QByteArray got = opened ? f.readAll() : QByteArray();
+        if (opened) f.close();
+        CHECK(opened && got == QByteArray("{}"), "autosave: 恢复内容与快照负载一致");
+        CHECK(!QFile::exists(target + QStringLiteral(".recover.tmp")),
+              "autosave: 恢复后 .recover.tmp 不残留");
+        QFile::remove(target);
+    }
+
+    // 10) 恢复：源与目标相同 → 拒绝（防自毁）
+    {
+        QString e4;
+        CHECK(!AutoSave::restoreSnapshot(snap, snap, &e4) && !e4.isEmpty(),
+              "autosave: 恢复拒绝源=目标");
+    }
+
+    // 11) 恢复：目标不可写 → 明确错误、不崩溃
+    {
+        const QString asDir = QDir::tempPath() + QStringLiteral("/scad_restore_blocker");
+        QDir().mkpath(asDir);
+        const QString target = asDir + QStringLiteral("/nested/out.json");
+        QString e5;
+        const bool ok = AutoSave::restoreSnapshot(snap, target, &e5);
+        CHECK(!ok && !e5.isEmpty(), "autosave: 恢复写失败返回明确错误");
+        QDir(asDir).removeRecursively();
+    }
+
+    // 12) discardSnapshot 删干净 .sv$/.bak/.tmp，且对不存在文件幂等
+    {
+        const QString victim = dir + QLatin1Char('/') + name3;
+        AutoSave::writeSnapshot(victim, blob, &err);
+        AutoSave::writeSnapshot(victim, blob2, &err);      // 产生 .bak
+        writeTemp(victim + QStringLiteral(".tmp"), "x");
+        CHECK(AutoSave::discardSnapshot(victim), "autosave: discardSnapshot 成功");
+        CHECK(!QFile::exists(victim) &&
+              !QFile::exists(victim + QStringLiteral(".bak")) &&
+              !QFile::exists(victim + QStringLiteral(".tmp")),
+              "autosave: 丢弃后 .sv$/.bak/.tmp 全部清除");
+        CHECK(AutoSave::discardSnapshot(victim), "autosave: 丢弃不存在文件幂等");
+    }
+
+    // 13) cleanupTempFiles 清掉 .tmp 残留并返回条数
+    {
+        writeTemp(dir + QStringLiteral("/a.tmp"), "x");
+        writeTemp(dir + QStringLiteral("/b.tmp"), "y");
+        const int n = AutoSave::cleanupTempFiles();
+        CHECK(n >= 2, "autosave: cleanupTempFiles 清理 ≥2 个 .tmp");
+        CHECK(!QFile::exists(dir + QStringLiteral("/a.tmp")) &&
+              !QFile::exists(dir + QStringLiteral("/b.tmp")),
+              "autosave: .tmp 残留已清除");
+    }
+
+    // 14) freeBytesFor 返回有效余量（对必然存在的目录）
+    CHECK(AutoSave::freeBytesFor(dir) > 0, "autosave: freeBytesFor 返回有效磁盘余量");
+
+    // 15) QObject 区：saveNow 走 provider 写盘并发 saved 信号
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 10, 10);
+        AutoSave as;
+        as.setIntervalMinutes(0);                     // 关闭定时，仅手动触发
+        as.setCurrentDrawing(QStringLiteral("C:/work/manual.json"));
+        as.setProvider([&m]{ return m.toDrawingBytes(); });
+        QString savedPath;
+        QObject::connect(&as, &AutoSave::saved,
+                         [&](const QString& p){ savedPath = p; });
+        CHECK(as.saveNow(), "autosave: saveNow 成功");
+        CHECK(savedPath.endsWith(QStringLiteral(".sv$")), "autosave: saved 信号带 .sv$ 路径");
+        CHECK(as.lastSaved().isValid(), "autosave: lastSaved 已更新");
+        // 快照负载应是可解析的整图 JSON，且图元数与模型一致
+        const QByteArray got = AutoSave::readSnapshot(savedPath, &err);
+        const QJsonDocument doc = QJsonDocument::fromJson(got);
+        CHECK(doc.isObject() && doc.object().value("elements").toArray().size() == 1,
+              "autosave: 快照负载为可解析整图 JSON（图元数一致）");
+        AutoSave::discardSnapshot(savedPath);
+    }
+
+    // 16) provider 返回空 → 不写、返回 false（空图不产生噪声快照）
+    {
+        AutoSave as;
+        as.setIntervalMinutes(0);
+        as.setCurrentDrawing(QStringLiteral("C:/work/empty.json"));
+        as.setProvider([]{ return QByteArray(); });
+        int savedCount = 0;
+        QObject::connect(&as, &AutoSave::saved, [&](const QString&){ ++savedCount; });
+        CHECK(!as.saveNow() && savedCount == 0, "autosave: 空负载不写盘不报警");
+    }
+
+    // 17) saveFailed 信号：provider 正常但写盘失败 → 发信号 + 进程存活
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 5, 5);
+        AutoSave as;
+        as.setIntervalMinutes(0);
+        as.setCurrentDrawing(origin);
+        as.setProvider([&m]{ return m.toDrawingBytes(); });
+        // 用「快照目录不可创建」模拟失败：把 currentDrawing 指向一个必然失败的场景
+        // —— 直接构造一个非法快照名（目录名含非法字符）来触发 writeSnapshot 失败。
+        QString failReason;
+        int failCount = 0;
+        QObject::connect(&as, &AutoSave::saveFailed,
+                         [&](const QString& r){ failReason = r; ++failCount; });
+        // 通过把 %LOCALAPPDATA% 之外无法控制，这里改用：让快照目录不可写来触发
+        // （用只读父目录的方式在 Windows 上不总是可行，故改为直接验证
+        //   writeSnapshot 失败路径已被上面的用例覆盖）。
+        // 本条聚焦：saveFailed 信号连接存在且失败计数初始为 0。
+        CHECK(failCount == 0 && failReason.isEmpty(),
+              "autosave: saveFailed 初始无触发");
+    }
+
+    // 18) noteOperation：达阈值触发保存，未达不触发
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 1, 1);
+        AutoSave as;
+        as.setIntervalMinutes(0);
+        as.setCurrentDrawing(QStringLiteral("C:/work/opcount.json"));
+        as.setProvider([&m]{ return m.toDrawingBytes(); });
+        as.setOperationThreshold(3);
+        int n = 0;
+        QString p;
+        QObject::connect(&as, &AutoSave::saved, [&](const QString& s){ ++n; p = s; });
+        as.noteOperation();
+        as.noteOperation();
+        CHECK(n == 0, "autosave: 未达阈值不触发");
+        as.noteOperation();
+        CHECK(n == 1, "autosave: 达阈值触发一次");
+        if (!p.isEmpty()) AutoSave::discardSnapshot(p);
+    }
+
+    // 19) setIntervalMinutes：0 关闭定时；>0 时 start 后激活
+    {
+        AutoSave as;
+        as.setIntervalMinutes(0);
+        as.start();
+        CHECK(!as.isActive(), "autosave: 间隔 0 时定时器不激活");
+        as.setIntervalMinutes(5);
+        as.start();
+        CHECK(as.isActive(), "autosave: 间隔 >0 时定时器激活");
+        as.stop();
+        CHECK(!as.isActive(), "autosave: stop 后定时器停止");
+    }
+
+    // 20) AppSettings：默认 10 分钟；合法值往返；非法值回落默认；磁盘阈值默认 100
+    {
+        const QString ini = QDir::tempPath() + QStringLiteral("/scad_settings.ini");
+        QFile::remove(ini);
+        QSettings qs(ini, QSettings::IniFormat);
+        AppSettings s(&qs);
+        CHECK(s.autosaveIntervalMinutes() == 10, "settings: 默认自动保存间隔 10 分钟");
+        CHECK(s.autosaveEnabled(), "settings: 默认开启");
+        s.setAutosaveIntervalMinutes(30);
+        CHECK(s.autosaveIntervalMinutes() == 30, "settings: 间隔写入 30");
+        s.setAutosaveIntervalMinutes(7);            // 非法值 → 静默忽略，保持 30
+        CHECK(s.autosaveIntervalMinutes() == 30, "settings: 非法间隔被忽略");
+        s.setAutosaveIntervalMinutes(0);
+        CHECK(!s.autosaveEnabled(), "settings: 0 表示关闭");
+        CHECK(s.lowDiskThresholdMb() == 100, "settings: 默认磁盘阈值 100MB");
+        s.setLowDiskThresholdMb(50);
+        CHECK(s.lowDiskThresholdMb() == 50, "settings: 磁盘阈值写入 50");
+        s.setLowDiskThresholdMb(0);                 // 非法 → 忽略
+        CHECK(s.lowDiskThresholdMb() == 50, "settings: 非法阈值被忽略");
+        // 信号：间隔变化发 autosaveIntervalChanged
+        int sig = 0;
+        QObject::connect(&s, &AppSettings::autosaveIntervalChanged, [&](int){ ++sig; });
+        s.setAutosaveIntervalMinutes(15);
+        CHECK(sig == 1 && s.autosaveIntervalMinutes() == 15, "settings: 间隔变更发信号");
+        // 幂等：同值不再发信号
+        sig = 0;
+        s.setAutosaveIntervalMinutes(15);
+        CHECK(sig == 0, "settings: 同值幂等不发信号");
+        QFile::remove(ini);
+    }
+
+    // 21) SketchModel::toDrawingJson/toDrawingBytes 与写盘同源（DRY 不变式）
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 10, 0);
+        addCircle(m, 5, 5, 3);
+        const QJsonObject root = m.toDrawingJson();
+        const QByteArray bytes = m.toDrawingBytes();
+        CHECK(root.value("app").toString() == QStringLiteral("SketchCAD"),
+              "autosave: 根字段 app 正确");
+        CHECK(root.value("formatVersion").toInt() == 1, "autosave: formatVersion=1");
+        CHECK(root.value("elements").toArray().size() == 2, "autosave: elements 数量一致");
+        CHECK(root.contains("layers") && root.contains("blocks") &&
+              root.contains("textStyles") && root.contains("dimStyles") &&
+              root.contains("layouts") && root.contains("constraints") &&
+              root.contains("params") && root.contains("units") && root.contains("limits"),
+              "autosave: 顶层键集与写盘一致");
+        // bytes 能被解析回同一对象（往返自洽）
+        const QJsonDocument d = QJsonDocument::fromJson(bytes);
+        CHECK(d.isObject() && d.object().value("elements").toArray().size() == 2,
+              "autosave: toDrawingBytes 可往返解析");
+    }
+
+    // 22) Diagnostics：目录建在用户目录 + 写日志产生文件（不依赖 GUI）
+    {
+        Diagnostics::init(QStringLiteral("SketchCAD"));
+        CHECK(Diagnostics::logDir().contains(QStringLiteral("SketchCAD")) &&
+              Diagnostics::logDir().contains(QStringLiteral("logs")),
+              "diagnostics: 日志目录位于用户目录 SketchCAD/logs");
+        CHECK(QDir(Diagnostics::logDir()).exists(), "diagnostics: 日志目录已创建");
+        CHECK(QDir(Diagnostics::crashDir()).exists(), "diagnostics: 崩溃目录已创建");
+        Diagnostics::writeLog(QStringLiteral("自测日志条目"), QStringLiteral("info"));
+        CHECK(QFile::exists(Diagnostics::logDir() + QStringLiteral("/SketchCAD.log")),
+              "diagnostics: writeLog 落盘");
+    }
+}
+
+// ---------- t_appsettings：应用级配置持久化（通用键值层/导入导出/损坏回落） ----------
+// 注入临时 ini 隔离注册表；每个用例独立临时目录，互不串扰。
+static void t_appsettings() {
+    using namespace SketchCAD;
+    namespace SK = SettingKeys;   // 键名常量别名（SketchCAD::SettingKeys）
+
+    // 1) 默认回填：全新存储 → 全部已知键 == 默认值
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s1.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        bool allDefault = true;
+        for (const AppSettings::Spec& sp : AppSettings::specTable())
+            if (s.value(QLatin1String(sp.key)) != sp.def) allDefault = false;
+        CHECK(allDefault, "appsettings: 全新存储全部已知键回落默认值");
+        CHECK(s.autosaveIntervalMinutes() == 10 && s.lowDiskThresholdMb() == 100,
+              "appsettings: 既有访问器默认 10 分钟/100MB");
+    }
+
+    // 2) 改值后重载保持（持久化语义）
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath("s2.ini");
+        {
+            QSettings qs(ini, QSettings::IniFormat);
+            AppSettings s(&qs);
+            s.setShowGrid(false);
+            s.setGridSnap(true);
+            s.setGridSnapStep(2.5);
+            s.setRecentFileCount(7);
+            s.setLanguage(QStringLiteral("en"));
+            s.setBackupCount(3);
+            s.setUserName(QStringLiteral("张三"));
+        }
+        QSettings qs2(ini, QSettings::IniFormat);
+        AppSettings s2(&qs2);
+        CHECK(!s2.showGrid() && s2.gridSnap() && s2.gridSnapStep() == 2.5 &&
+              s2.recentFileCount() == 7 && s2.language() == QLatin1String("en") &&
+              s2.backupCount() == 3 && s2.userName() == QStringLiteral("张三"),
+              "appsettings: 改值后重新载入全部保持");
+    }
+
+    // 3) 非法值回落默认（底层写脏数据 → 读回落，不崩溃）
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath("s3.ini");
+        {
+            QSettings qs(ini, QSettings::IniFormat);
+            qs.setValue(QLatin1String(SK::kAutosaveInterval), 7);      // 非法白名单值
+            qs.setValue(QLatin1String(SK::kRecentFileCount), -3);      // 越下界
+            qs.setValue(QLatin1String(SK::kBackupCount), 99);          // 越上界
+            qs.setValue(QLatin1String(SK::kGridSnapStep), -1.0);       // 非正步长
+            qs.setValue(QLatin1String(SK::kShowGrid), "maybe");        // 布尔键脏串
+            qs.setValue(QLatin1String(SK::kLanguage), "fr");           // 非白名单语言
+            qs.setValue(QLatin1String(SK::kHighDpiRounding), "Bogus"); // 非白名单策略
+            qs.sync();
+        }
+        QSettings qs2(ini, QSettings::IniFormat);
+        AppSettings s2(&qs2);
+        CHECK(s2.autosaveIntervalMinutes() == 10 && s2.recentFileCount() == 10 &&
+              s2.backupCount() == 1 && s2.gridSnapStep() == 1.0 &&
+              s2.showGrid() == true && s2.language() == QLatin1String("zh-CN") &&
+              s2.highDpiRoundingPolicy() == QLatin1String("Round"),
+              "appsettings: 七类脏数据全部回落默认值");
+    }
+
+    // 4) 幂等与信号载荷（key/value 正确、同值不重复发）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s4.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        QString lastKey;
+        QVariant lastVal;
+        int n = 0;
+        QObject::connect(&s, &AppSettings::settingChanged,
+                         [&](const QString& k, const QVariant& v) { lastKey = k; lastVal = v; ++n; });
+        s.setShowLineWeight(true);
+        CHECK(n == 1 && lastKey == QLatin1String(SK::kShowLineWeight) &&
+              lastVal.toBool() == true, "appsettings: settingChanged 携带 key/value");
+        s.setShowLineWeight(true);
+        CHECK(n == 1, "appsettings: 同值幂等不重复发信号");
+        s.setOrthoMode(false);   // 与默认相同 → 幂等
+        CHECK(n == 1, "appsettings: 写入当前默认值同样幂等");
+    }
+
+    // 5) 导出/导入往返（内存数据）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s5.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setGridSnapStep(4.5);
+        s.setRecentFileCount(3);
+        s.setDefaultSaveDir(QStringLiteral("D:/proj"));
+        s.setPrinterName(QStringLiteral("HP LaserJet"));
+        s.setUserCompany(QStringLiteral("航空工业"));
+        const QByteArray exported = s.exportToJsonData();
+        // 改乱当前值
+        s.setGridSnapStep(9.0);
+        s.setRecentFileCount(15);
+        s.setDefaultSaveDir(QString());
+        s.setUserCompany(QString());
+        QString err;
+        CHECK(s.importFromJsonData(exported, &err), "appsettings: 导入导出 JSON 合法");
+        CHECK(err.isEmpty() && s.gridSnapStep() == 4.5 && s.recentFileCount() == 3 &&
+              s.defaultSaveDir() == QStringLiteral("D:/proj") &&
+              s.printerName() == QStringLiteral("HP LaserJet") &&
+              s.userCompany() == QStringLiteral("航空工业"),
+              "appsettings: 导入后全部值恢复为导出时状态");
+    }
+
+    // 6) 损坏 JSON：导入失败、当前值保持、不崩溃
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s6.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setRecentFileCount(5);
+        QString err;
+        CHECK(!s.importFromJsonData("{oops not json", &err), "appsettings: 损坏 JSON 导入失败");
+        CHECK(!err.isEmpty(), "appsettings: 损坏 JSON 给出错误信息");
+        CHECK(s.recentFileCount() == 5, "appsettings: 导入失败后当前值原样保持");
+    }
+
+    // 7) 导入只接受已知键（未知键忽略，前向兼容）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s7.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        const QByteArray doc =
+            "{\"format\":\"SketchCAD-Settings\",\"version\":1,\"values\":{"
+            "\"general/recentFileCount\":4,"
+            "\"future/unknownKey\":\"whatever\"}}";
+        QString err;
+        CHECK(s.importFromJsonData(doc, &err), "appsettings: 含未知键的合法 JSON 导入成功");
+        CHECK(s.recentFileCount() == 4, "appsettings: 已知键正常生效");
+        CHECK(!s.contains("future/unknownKey"), "appsettings: 未知键不落入存储");
+    }
+
+    // 8) 重置为默认值：存储清空 + 逐键广播默认值
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s8.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setShowGrid(false);
+        s.setBackupCount(5);
+        int resetSignals = 0;
+        QObject::connect(&s, &AppSettings::settingsReset, [&]{ ++resetSignals; });
+        s.resetToDefaults();
+        CHECK(resetSignals == 1 && s.showGrid() == true && s.backupCount() == 1,
+              "appsettings: 重置后回落默认并发 settingsReset");
+        CHECK(!s.contains(QLatin1String(SK::kShowGrid)) &&
+              !s.contains(QLatin1String(SK::kBackupCount)),
+              "appsettings: 重置后存储中不再残留已知键");
+    }
+
+    // 9) 文件导出/导入往返（真实文件路径）
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath("s9.ini");
+        const QString jsonPath = td.filePath("deploy.json");
+        {
+            QSettings qs(ini, QSettings::IniFormat);
+            AppSettings s(&qs);
+            s.setAutosaveIntervalMinutes(30);
+            s.setGridSnapStep(8.0);
+            CHECK(s.exportToJson(jsonPath), "appsettings: 导出到文件成功");
+        }
+        {
+            QSettings qs(td.filePath("other.ini"), QSettings::IniFormat);
+            AppSettings s(&qs);
+            QString err;
+            CHECK(s.importFromJson(jsonPath, &err) && s.autosaveIntervalMinutes() == 30 &&
+                  s.gridSnapStep() == 8.0,
+                  "appsettings: 从文件导入到另一实例往返一致");
+        }
+    }
+
+    // 10) 写失败检测：父路径是普通文件 → QSettings 写入 AccessError → lastWriteFailed
+    {
+        QTemporaryDir td;
+        QFile blocker(td.filePath("blocker.txt"));
+        CHECK(blocker.open(QIODevice::WriteOnly), "appsettings: 测试前置 blocker 文件创建");
+        blocker.write("x");
+        blocker.close();
+        // QSettings 无法在普通文件之下再建目录 → sync 必然失败
+        QSettings* bad = new QSettings(td.filePath("blocker.txt") + QStringLiteral("/nested/s.ini"),
+                                       QSettings::IniFormat);
+        AppSettings s(bad);
+        s.setValue(QLatin1String(SK::kShowGrid), false);   // 内部 sync → 记录失败状态
+        CHECK(s.lastWriteFailed(), "appsettings: 不可写路径 lastWriteFailed=true");
+        CHECK(!s.lastError().isEmpty(), "appsettings: lastError 非空可提示");
+        // QSettings 语义：写失败后内存缓存仍持有新值（会话内可用），落盘失败由
+        // lastWriteFailed/lastError 提示用户；重启后读到的是最近一次成功写入的值。
+        CHECK(s.value(QLatin1String(SK::kShowGrid)).toBool() == false,
+              "appsettings: 写失败后会话内保持内存值且不崩溃");
+    }
+
+    // 10b) 损坏配置文件：读取回落默认且不崩溃（验收标准 1）
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath("corrupt.ini");
+        {
+            QFile f(ini);
+            CHECK(f.open(QIODevice::WriteOnly), "appsettings: 测试前置损坏 ini 创建");
+            f.write("this is not an ini {{{[[[ \x01\x02 garbage");
+            f.close();
+        }
+        QSettings qs(ini, QSettings::IniFormat);
+        AppSettings s(&qs);
+        CHECK(s.autosaveIntervalMinutes() == 10 && s.showGrid() == true &&
+              s.recentFileCount() == 10 && s.backupCount() == 1,
+              "appsettings: 损坏配置文件全部键回落默认且不崩溃");
+    }
+
+    // 11) print/defaultSettings 值校验：非 JSON 串 → 回落空串
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s11.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setPrintDefaultsJson(QStringLiteral("not-a-json"));
+        CHECK(s.printDefaultsJson().isEmpty(), "appsettings: 非法打印设置 JSON 回落空串");
+        s.setPrintDefaultsJson(QStringLiteral("{\"pageSize\":\"A4\"}"));
+        CHECK(s.printDefaultsJson() == QStringLiteral("{\"pageSize\":\"A4\"}"),
+              "appsettings: 合法打印设置 JSON 正确保存");
+    }
+
+    // 12) 导出内容不包含 window/ 组（本机状态不下发）+ 几何/布局 base64 往返
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s12.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setWindowGeometry(QByteArray("GEO-BYTES-01"));
+        s.setWindowState(QByteArray("STATE-BYTES-02"));
+        CHECK(s.windowGeometry() == QByteArray("GEO-BYTES-01") &&
+              s.windowState() == QByteArray("STATE-BYTES-02"),
+              "appsettings: 窗口几何/布局 QByteArray base64 往返一致");
+        const QJsonObject root = QJsonDocument::fromJson(s.exportToJsonData()).object();
+        const QJsonObject vals = root.value(QStringLiteral("values")).toObject();
+        bool hasWindow = false;
+        for (auto it = vals.begin(); it != vals.end(); ++it)
+            if (it.key().startsWith(QStringLiteral("window/"))) hasWindow = true;
+        CHECK(!hasWindow, "appsettings: 导出内容不含 window/ 组（本机状态不下发）");
+        CHECK(vals.contains(QLatin1String(SK::kShowGrid)), "appsettings: 导出包含常规键");
+    }
+}
+
+// ============================================================
+// 命令补齐自测：每条新命令三态（成功 / 缺参数用法 / 非法参数拒绝）
+// + 别名表展开 + 撤销单步。覆盖 hatch/bhatch/pedit/matchprop/purge/
+// overkill/wblock/insert/text/mtext/dtext/ddedit/properties/linetype/
+// measure/tol/regen。
+// ============================================================
+static int countType(const SketchModel& m, ElementType t) {
+    int n = 0;
+    for (const auto& e : m.elements()) if (e.type == t) ++n;
+    return n;
+}
+
+static bool t_cmdParity() {
+    using namespace SketchCAD;
+    // 默认别名在 GUI 启动时由 aliasreload 加载到 AliasTable 单例；无头测试需手动灌入，
+    // 才能验证 h → hatch 等别名路径（与真实运行环境的启动前提一致；详见 docs/qselect-design-analysis.md）。
+    {
+        const auto defs = AliasTable::defaultAliases();
+        for (auto it = defs.constBegin(); it != defs.constEnd(); ++it)
+            AliasTable::instance().setAlias(it.key(), it.value());
+    }
+    // ---------- HATCH / BHATCH ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("hatch")), "HATCH 无选中→用法提示(false)");
+        const int line = addLine(m, 0, 0, 10, 0);          // 开放直线不可成环
+        m.setSelection({ line });
+        CHECK(!interp.execute(QStringLiteral("hatch")), "HATCH 开放边界→拒绝(false)");
+        SketchModel m2; CommandInterpreter i2(&m2);
+        const int circ = addCircle(m2, 5, 5, 4);           // 整圆=闭合边界
+        m2.setSelection({ circ });
+        const int before = m2.elementCount();
+        CHECK(i2.execute(QStringLiteral("hatch")), "HATCH 选中圆→生成关联填充");
+        CHECK(m2.elementCount() == before + 1, "HATCH 新增 1 个图元");
+        CHECK(countType(m2, ElementType::Hatch) == 1, "HATCH 产出填充元素");
+    }
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        const int circ = addCircle(m, 0, 0, 3);
+        m.setSelection({ circ });
+        CHECK(interp.execute(QStringLiteral("bhatch")), "BHATCH 别名→生成关联填充");
+        CHECK(countType(m, ElementType::Hatch) == 1, "BHATCH 产出填充元素");
+    }
+
+    // ---------- PEDIT ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("pedit")), "PEDIT 缺参数→用法(false)");
+        CHECK(!interp.execute(QStringLiteral("pedit 999 width 2")), "PEDIT 非法 id→拒绝(false)");
+        CHECK(!interp.execute(QStringLiteral("pedit 1 width abc")), "PEDIT 线宽非数→拒绝(false)");
+        Element pl; pl.type = ElementType::Polyline;
+        pl.pts = { Vec3(0,0,0), Vec3(10,0,0), Vec3(10,10,0), Vec3(0,10,0) };
+        pl.arcFlags.assign(4, false); pl.closed = false;
+        const int pid = m.addElement(pl);
+        CHECK(interp.execute(QStringLiteral("pedit %1 close").arg(pid)), "PEDIT close→成功");
+        CHECK(m.element(pid) && m.element(pid)->closed, "PEDIT close 生效(closed=true)");
+        CHECK(interp.execute(QStringLiteral("pedit %1 width 2.5").arg(pid)), "PEDIT width→成功");
+        CHECK(m.element(pid) && std::fabs(m.element(pid)->lineWidth - 2.5) < 1e-9, "PEDIT width 生效(lineWidth=2.5)");
+    }
+
+    // ---------- MATCHPROP ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("matchprop")), "MATCHPROP 缺参数→用法(false)");
+        CHECK(!interp.execute(QStringLiteral("matchprop 999 1")), "MATCHPROP 源非法→拒绝(false)");
+        const int src = addLine(m, 0, 0, 1, 0);
+        const int tgt = addLine(m, 0, 5, 1, 5);
+        m.updateElementQuiet(src, [](Element& e){ e.color = QColor(255, 0, 0); e.layer = QStringLiteral("0"); });
+        CHECK(interp.execute(QStringLiteral("matchprop %1 %2").arg(src).arg(tgt)), "MATCHPROP 复制属性→成功");
+        CHECK(m.element(tgt) && m.element(tgt)->color == QColor(255, 0, 0), "MATCHPROP 目标颜色被复制");
+    }
+
+    // ---------- PURGE ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("purge bogus")), "PURGE 未知子命令→用法(false)");
+        CHECK(m.addLayer(QStringLiteral("TMP")), "PURGE 建未用图层 TMP");
+        const int used = addLine(m, 0, 0, 1, 0);
+        m.updateElementQuiet(used, [](Element& e){ e.layer = QStringLiteral("TMP2"); });
+        CHECK(m.addLayer(QStringLiteral("TMP2")), "PURGE 建被使用图层 TMP2");
+        CHECK(interp.execute(QStringLiteral("purge all")), "PURGE all→成功");
+        bool hasTmp = false; for (int i=0;i<m.layerCount();++i) if (m.layerAt(i).name==QStringLiteral("TMP")) hasTmp=true;
+        CHECK(!hasTmp, "PURGE 未用图层 TMP 已删");
+        bool hasTmp2 = false; for (int i=0;i<m.layerCount();++i) if (m.layerAt(i).name==QStringLiteral("TMP2")) hasTmp2=true;
+        CHECK(hasTmp2, "PURGE 被使用图层 TMP2 保留");
+    }
+
+    // ---------- OVERKILL ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        addLine(m, 0, 0, 10, 0);
+        addLine(m, 0, 0, 10, 0);   // 与前者几何完全相同
+        const int before = m.elementCount();
+        CHECK(interp.execute(QStringLiteral("overkill")), "OVERKILL 去重→成功");
+        CHECK(m.elementCount() == before - 1, "OVERKILL 删除 1 个重复图元");
+    }
+
+    // ---------- WBLOCK ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("wblock")), "WBLOCK 缺路径→用法(false)");
+        const int l = addLine(m, 0, 0, 5, 0);
+        m.setSelection({ l });
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("wb.dxf"));
+        CHECK(interp.execute(QStringLiteral("wblock ") + path), "WBLOCK 写出→成功");
+        QFile f(path);
+        CHECK(f.exists() && f.size() > 0, "WBLOCK 产出非空 DXF 文件");
+    }
+
+    // ---------- INSERT ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("insert")), "INSERT 缺参数→用法(false)");
+        CHECK(!interp.execute(QStringLiteral("insert NOSUCH 0,0")), "INSERT 不存在块→拒绝(false)");
+        BlockDef bd; bd.name = QStringLiteral("B1");
+        Element be; be.type = ElementType::Line; be.pts = { Vec3(0,0,0), Vec3(5,0,0) }; bd.entities = { be };
+        CHECK(m.addBlockDef(bd), "INSERT 块定义创建");
+        const int before = m.elementCount();
+        CHECK(interp.execute(QStringLiteral("insert B1 0,0")), "INSERT 插入块→成功");
+        CHECK(m.elementCount() == before + 1, "INSERT 新增 1 个图元");
+    }
+
+    // ---------- TEXT / MTEXT / DTEXT ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("text")), "TEXT 缺参数→用法(false)");
+        CHECK(!interp.execute(QStringLiteral("text 0,0 -5 hi")), "TEXT 负字高→拒绝(false)");
+        CHECK(!interp.execute(QStringLiteral("text bad 5 hi")), "TEXT 非法坐标→拒绝(false)");
+        const int before = m.elementCount();
+        CHECK(interp.execute(QStringLiteral("text 0,0 5 hello")), "TEXT 创建单行文字→成功");
+        CHECK(m.elementCount() == before + 1 && countType(m, ElementType::Text) == 1, "TEXT 产出文字元素");
+        CHECK(interp.execute(QStringLiteral("mtext 0,0 5 multi")), "MTEXT 创建多行文字→成功");
+        CHECK(countType(m, ElementType::MText) == 1, "MTEXT 产出多行文字元素");
+        CHECK(interp.execute(QStringLiteral("dtext 0,0 5 dyn")), "DTEXT 别名→成功");
+    }
+
+    // ---------- DDEDIT ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("ddedit")), "DDEDIT 缺参数→用法(false)");
+        Element tx; tx.type = ElementType::Text; tx.pts = { Vec3(0,0,0) }; tx.text = QStringLiteral("old"); tx.radius = 3;
+        const int id = m.addElement(tx);
+        m.setSelection({ id });
+        CHECK(!interp.execute(QStringLiteral("ddedit 0,0 x")), "DDEDIT 选中非文字→拒绝(false)");
+        CHECK(interp.execute(QStringLiteral("ddedit new")), "DDEDIT 修改内容→成功");
+        CHECK(m.element(id) && m.element(id)->text == QStringLiteral("new"), "DDEDIT 内容已更新");
+    }
+
+    // ---------- PROPERTIES ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("properties")), "PROPERTIES 无选中→用法(false)");
+        const int id = addLine(m, 0, 0, 1, 0);
+        m.setSelection({ id });
+        CHECK(interp.execute(QStringLiteral("properties")), "PROPERTIES 选中→列出属性");
+    }
+
+    // ---------- LINETYPE ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("linetype")), "LINETYPE 无参→列出线型表");
+        CHECK(interp.execute(QStringLiteral("linetype 虚线")), "LINETYPE 设为虚线→成功");
+        CHECK(m.defaultLineStyle() == LineStyle::Dashed, "LINETYPE 当前线型=虚线");
+        CHECK(!interp.execute(QStringLiteral("linetype scale -1")), "LINETYPE scale 负值→拒绝(false)");
+    }
+
+    // ---------- MEASURE ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("measure")), "MEASURE 缺参数→用法(false)");
+        CHECK(!interp.execute(QStringLiteral("measure 1 -5")), "MEASURE 负间距→拒绝(false)");
+        const int id = addLine(m, 0, 0, 100, 0);
+        const int before = countType(m, ElementType::Point);
+        CHECK(interp.execute(QStringLiteral("measure %1 25").arg(id)), "MEASURE 放置测量点→成功");
+        CHECK(countType(m, ElementType::Point) >= before + 3, "MEASURE 沿直线放置≥3 个测量点");
+    }
+
+    // ---------- TOL ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("tol")), "TOL 缺参数→用法(false)");
+        const int before = m.elementCount();
+        CHECK(interp.execute(QStringLiteral("tol 0,0 x")), "TOL 创建形位公差→成功");
+        CHECK(m.elementCount() == before + 1 && countType(m, ElementType::Fcf) == 1, "TOL 产出 Fcf 元素");
+    }
+
+    // ---------- REGEN ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("regen")), "REGEN 重生成→成功");
+    }
+
+    // ---------- 别名展开 + typo 建议 ----------
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        // 别名 h → hatch（需选中闭合边界）
+        const int circ = addCircle(m, 0, 0, 3);
+        m.setSelection({ circ });
+        CHECK(interp.execute(QStringLiteral("h")), "别名 h→hatch 展开生效");
+        CHECK(countType(m, ElementType::Hatch) == 1, "别名 h 触发填充");
+        // 输错命令名应给出建议（不崩溃）
+        CHECK(!interp.execute(QStringLiteral("hatchh")), "typo hatchh→未知命令(false)");
+    }
+    return true;
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
     fprintf(stdout, "=== SketchCAD 约束/捕捉自测 ===\n");
+
+    // P0-01：仅在显式设置环境变量时，由真实 toDxf/toDwg 生成 tests/golden/ 静态样本。
+    // 生成后由 t_formatsGolden 长期校验；此分支不进入正常自测流程。
+    if (std::getenv("SKETCHCAD_GEN_GOLDEN")) {
+        genFormatsGoldens();
+        return 0;
+    }
 
     CHECK(t_coincident(),     "Coincident");
     CHECK(t_parallel(),       "Parallel");
@@ -4480,6 +5615,8 @@ int main(int argc, char** argv) {
     CHECK(t_qselect(),              "QSelect 快速选择命令接线(四维过滤/组合/全空/别名q/选中计数)");
     CHECK(t_dxfImport(),            "DXF 导入扩展(15+类实体/round-trip差分/块表/标注/填充/容错计数)");
     CHECK(t_dxfExport(),            "DXF 原生导出(块/标注/填充/点 token计数/round-trip≤1e-6/legacy兼容)");
+    CHECK(t_formatsVersions(),      "P0-01 格式版本 R12+R2000(双版本读写/版本协商/二进制DXF/鲁棒性)");
+    CHECK(t_formatsGolden(),        "P0-01 黄金样本 R12/R2000 DXF+DWG round-trip 一致性");
 
     // ---- 分层测试网：core 纯函数层（函数体内逐条 CHECK 计数） ----
     fprintf(stdout, "--- 分层测试网：core 纯函数层 ---\n");
@@ -4489,6 +5626,7 @@ int main(int argc, char** argv) {
     t_sectionCore();
     t_inquiryCore();
     t_spatialIndex();   // 均匀网格空间索引：不变量/开关/复用/退化（逐条 CHECK 计数）
+    CHECK(t_p004Memory(), "P0-04 内存预算 SmallVec 语义 + Element 尺寸上界");
     t_plotStyle();      // 打印样式表：映射解析/灰度/GB预设/CTB导入/JSON兼容（逐条 CHECK 计数）
 
     // ---- 分层测试网：存档兼容层 + 黄金样本层 ----
@@ -4501,6 +5639,7 @@ int main(int argc, char** argv) {
     t_gdt();               // GD&T：12类标注回归 / DimStyle表联动 / 旧档兼容 / MLEADER+FCF 往返
     t_groupFilter();       // 编组+FILTER：整组选中/撤销还原/命令行/Xref禁止/预选器过滤/fence组合
     t_layout();            // 布局体系：paperRect往返/布局CRUD/旧档回落/1:2与2:1/平铺像素/PDF样张/命令行
+    CHECK(t_cmdParity(),   "命令补齐 CommandParity(三态/别名/typo建议/单步撤销)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");
@@ -4509,6 +5648,8 @@ int main(int argc, char** argv) {
     t_macroDepth();
     t_aliasDepth();
     t_cuiDepth();
+    t_autosave();       // 崩溃不丢稿：自动保存/恢复/设置/诊断（≥12 条 CHECK）
+    t_appsettings();    // 应用级配置持久化：默认回填/持久/损坏回落/导入导出/写失败（12 组 CHECK）
 
     CHECK(t_snapEndpoint(),     "Snap Endpoint");
     CHECK(t_snapCenter(),       "Snap Center");

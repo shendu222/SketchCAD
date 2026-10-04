@@ -31,6 +31,8 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QHBoxLayout>
+#include <QDateTime>   // P0-04：重绘节流时间戳
+#include <new>         // P0-04：std::bad_alloc
 #include <cmath>
 #include <algorithm>
 #include "core/ElementFactory.h"
@@ -79,6 +81,10 @@ static inline void panDbg(const QString&) {}
 #endif
 
 namespace SketchCAD {
+
+// ---- P0-04 内存防护测试钩子（仅自测置位；生产恒为 false）----
+bool GraphicsView::failItemAlloc_ = false;    // 置位后建项路径视为 std::bad_alloc
+bool GraphicsView::failIndexAlloc_ = false;   // 置位后索引登记路径视为 std::bad_alloc
 
 static QPointF qpt(const Vec3& v) { return QPointF(v.x, v.y); }
 static Vec3 toVec3(const QPointF& q) { return Vec3(q.x(), q.y()); }
@@ -224,6 +230,26 @@ QPainterPath ElementItem::shape() const {
 void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) {
     p->setBrush(Qt::NoBrush);
 
+    // ---- P0-04 LOD（细节层次）----
+    // 1) 极小比例（zoom < 0.05）：跳过标注文字/表格/填充线等细节，只画几何轮廓 ——
+    //    10 万图元整幅鸟瞰时避免为看不见的细节付出解析/绘制代价。几何轮廓的
+    //    形状与位置不变（缩放后细节完整恢复），拾取判定走几何距离、与本分支无关。
+    // 2) 图元屏幕尺寸 < 2px：退化为单点标记（任何比例下都成立，画了也看不见）。
+    const double z = viewZoom();
+    const QRectF br = boundingRect();
+    const double pxMax = std::max(br.width(), br.height()) * z;
+    if (!preview && pxMax < 2.0) {
+        // 屏幕上不足 2px：画一个 1px 实心点，代价 O(1)
+        const Element re = model ? model->resolveElement(el) : el;
+        QPen dp(re.color); dp.setCosmetic(true); dp.setWidthF(1.0);
+        p->setPen(dp); p->setBrush(re.color);
+        const QPointF c = br.center();
+        p->drawRect(QRectF(c.x() - 0.5 / z, c.y() - 0.5 / z, 1.0 / z, 1.0 / z));
+        p->setBrush(Qt::NoBrush);
+        return;
+    }
+    const bool lodSimple = (!preview && z < 0.05);
+
     // 构造辅助线（虚线细线）：让「圆心+半径」「三点定圆」「圆弧扫掠」的几何关系在拖动时可见
     if (!guides.empty()) {
         QPen gp(GUIDE);
@@ -235,6 +261,14 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
     }
 
     p->setPen(penFor(el));
+    if (lodSimple && (el.type == ElementType::Hatch || el.type == ElementType::Dimension ||
+                      el.type == ElementType::MLeader || el.type == ElementType::Fcf ||
+                      el.type == ElementType::Text || el.type == ElementType::MText ||
+                      el.type == ElementType::Table)) {
+        // LOD 简化：细节密集类图元只画其几何包围盒轮廓（不可辨细节，轮廓保留布局感）
+        p->drawRect(br);
+        return;
+    }
     paintOne(p, el);
 }
 
@@ -781,8 +815,7 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
 GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     : QGraphicsView(parent), model_(m) {
     scene_ = new QGraphicsScene(this);
-    setScene(scene_);
-    // 关键：让平移/缩放完全由 applyTransform() 的 setTransform 控制，杜绝 QGraphicsView 的自动居中。
+    setScene(scene_);    // 关键：让平移/缩放完全由 applyTransform() 的 setTransform 控制，杜绝 QGraphicsView 的自动居中。
     // 真根因（对照 Qt 6.10.1 qgraphicsview.cpp 源码逐行确认）：
     //   QGraphicsView 的水平/垂直定位公式为 viewport = matrix.map(scene) - scroll，
     //   其中 scrollX = hbar->value() - leftIndent（updateScroll()）。矩阵平移分量能否生效
@@ -893,6 +926,36 @@ void GraphicsView::applyTransform() {
         const double shiftY = got.dy() - want.dy();
         if (std::fabs(shiftX) > 0.01 || std::fabs(shiftY) > 0.01) build(-shiftX, -shiftY);
     }
+    // P0-04 视口裁剪：变换后可见区内若还有未建项（平移进入新区域），即时补建
+    //（受单帧预算约束，剩余交由空闲分帧调度）——保证所见区域始终有场景项可渲染。
+    // P0-04 性能：model_->element(id) 为 O(N)，逐候选调用会被高频变换放大成 O(N×M)；
+    // 先收集真实待建候选，仅在非空时一次性构建 id→Element 映射再 O(1) 查找。
+    if (cullActive() && !memLimited_ && !deferredSet_.empty()) {
+        const QRectF vis = visibleWorldRect();
+        const auto cand = spatial_.queryRect(vis);
+        std::vector<int> need;
+        for (int id : cand) {
+            if (items_.count(id) || !deferredSet_.count(id)) continue;
+            need.push_back(id);
+            if ((int)need.size() >= kBuildBudget) break;
+        }
+        if (!need.empty()) {
+            std::unordered_map<int, const Element*> byId;
+            byId.reserve(model_->elements().size() * 2);
+            for (const auto& e : model_->elements()) byId.emplace(e.id, &e);
+            int budget = (int)need.size();
+            for (int id : need) {
+                if (budget <= 0) break;
+                auto fit = byId.find(id);
+                const Element* e = (fit == byId.end()) ? nullptr : fit->second;
+                if (!e || !e->visible) continue;
+                deferredSet_.erase(id);
+                if (!buildItemFor(*e)) break;   // 内存不足：memLimited_ 置位，本帧停止
+                --budget;
+            }
+        }
+        // 可见区已补齐：清理队列中已不在可见区的旧积压（由空闲调度慢慢消化）
+    }
     emit viewTransformChanged();    // 通知标尺刷新
 }
 
@@ -980,7 +1043,7 @@ void GraphicsView::zoomBy(double f) {
     panY_ = c.y() + anchor.y() * zoom_;    // Y 翻转后此处符号与 X 相反
     applyTransform();
     model_->setViewScale(zoom_);
-    viewport()->update();
+    scheduleThrottledUpdate();   // P0-04：高频缩放合帧到 ~60fps（末帧必然绘制）
 }
 
 void GraphicsView::rebuild() {
@@ -988,8 +1051,10 @@ void GraphicsView::rebuild() {
     previewItem_ = nullptr;                // scene_->clear() 已把预览项一并销毁
     gripPreviewItem_ = nullptr;            // 夹点变换预览项同理
     items_.clear();
-    itemBounds_.clear();
+    deferredSet_.clear();
+    deferredOrder_.clear();
     spatial_.clear();
+    memLimited_ = false;                   // 全量重建视为新的内存预算周期
     // 自适应单元尺寸：每轴约 sqrt(N) 单元 → 单元尺寸取 2^k，单元内平均约 1 个图元
     const auto& all = model_->elements();
     QRectF bnds; bool any = false;
@@ -1005,28 +1070,60 @@ void GraphicsView::rebuild() {
         if (cs < 1.0) cs = 1.0;
         spatial_.setCellSize(std::pow(2.0, std::ceil(std::log2(cs))));
     }
+    // P0-04 视口裁剪：大图只建可见区场景项，离屏只登记索引 + 待建队列（空闲分帧补建）
+    const bool cull = cullActive();
+    const QRectF vis = cull ? visibleWorldRect() : QRectF();
     for (const auto& e : all) {
         if (!e.visible) continue;
-        auto* it = new ElementItem(e);
-        it->model = model_;                      // 块引用展开需要块表
-        it->highlight = model_->isSelected(e.id);
-        it->warn = conflictIds_.contains(e.id);
-        it->showLineWeight = showLineWeight_;    // 线宽显示开关（LWDISPLAY）
-        it->dimScale = model_->scaleRatio();     // 标注数字按实物尺寸显示
-        // GB/T 14665-2012 4.3：重合图线按优先级叠放（可见轮廓最上，尺寸线最下）
-        double z = (double)linePriority(e.lineStyle);
-        if (e.type == ElementType::Dimension) z -= 10.0;
-        it->setZValue(z);
-        scene_->addItem(it);
-        items_[e.id] = it;
         const QRectF b = elementBoundsForIndex(e);
-        itemBounds_[e.id] = b;
-        spatial_.add(e.id, b);
+        // 空间索引登记（拾取/框选依赖，与场景项解耦；bad_alloc → 禁用索引回落全量扫描）
+        if (GraphicsView::failIndexAlloc_) {
+            GraphicsView::failIndexAlloc_ = false;
+            spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true;
+        } else {
+            try { spatial_.add(e.id, b); }
+            catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
+        }
+        if (cull && !b.intersects(vis)) {
+            // 离屏：暂不建项（每项 ≈1.2KB 纯内存放大），进入分帧补建队列
+            if (deferredSet_.insert(e.id).second) deferredOrder_.push_back(e.id);
+            continue;
+        }
+        if (!buildItemFor(e)) break;       // 内存不足：立即停止建项（保持可用）
     }
     // 重建后重置选择差量基线
     prevSelected_.clear();
     for (int id : model_->selection()) prevSelected_.insert(id);
+    scheduleDeferredBuilds();
+    emit sceneStatsChanged();
     viewport()->update();
+}
+
+// 带内存防护的单图元建项：new ElementItem / addItem / spatial 任一 bad_alloc
+// 都不向上抛 —— 置 memLimited_、记日志、返回 false，视图与拾取保持可用。
+bool GraphicsView::buildItemFor(const Element& e) {
+    ElementItem* item = nullptr;
+    if (GraphicsView::failItemAlloc_) { GraphicsView::failItemAlloc_ = false; }
+    else { try { item = new ElementItem(e); } catch (const std::bad_alloc&) { item = nullptr; } }
+    if (!item) {
+        memLimited_ = true;
+        model_->log(QStringLiteral("内存不足，场景项创建已暂停（已建 %1 项）。图形仍可平移缩放与拾取。")
+                        .arg(items_.size()), "error");
+        return false;
+    }
+    item->model = model_;                      // 块引用展开需要块表
+    item->highlight = model_->isSelected(e.id);
+    item->warn = conflictIds_.contains(e.id);
+    item->showLineWeight = showLineWeight_;    // 线宽显示开关（LWDISPLAY）
+    item->dimScale = model_->scaleRatio();     // 标注数字按实物尺寸显示
+    // GB/T 14665-2012 4.3：重合图线按优先级叠放（可见轮廓最上，尺寸线最下）
+    double z = (double)linePriority(e.lineStyle);
+    if (e.type == ElementType::Dimension) z -= 10.0;
+    item->setZValue(z);
+    item->lastBounds = elementBoundsForIndex(e);
+    scene_->addItem(item);
+    items_[e.id] = item;
+    return true;
 }
 
 // 索引用包围盒：对齐 model::boundsOf（非块用 geo::elementBounds；块引用按块表展开取并集）
@@ -1059,10 +1156,13 @@ void GraphicsView::syncItemAddOrUpdate(const Element& e) {
     ElementItem* item;
     auto it = items_.find(e.id);
     if (it == items_.end()) {
-        item = new ElementItem(e);
-        item->model = model_;
-        scene_->addItem(item);
-        items_[e.id] = item;
+        // P0-04：新建项带内存防护 —— bad_alloc 时置 memLimited_ 并入待建队列，不抛出
+        if (!buildItemFor(e)) {
+            if (deferredSet_.insert(e.id).second) deferredOrder_.push_back(e.id);
+            scheduleDeferredBuilds();
+            return;
+        }
+        item = items_[e.id];
     } else {
         item = it->second;
     }
@@ -1077,18 +1177,30 @@ void GraphicsView::syncItemAddOrUpdate(const Element& e) {
     if (e.type == ElementType::Dimension) z -= 10.0;
     item->setZValue(z);
     const QRectF b = elementBoundsForIndex(e);
-    itemBounds_[e.id] = b;
-    spatial_.update(e.id, b);                // 先按旧单元移除再按新包围盒登记（幂等）
+    item->lastBounds = b;
+    if (GraphicsView::failIndexAlloc_) {
+        GraphicsView::failIndexAlloc_ = false;
+        spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true;
+    } else {
+        try { spatial_.update(e.id, b); }     // 先按旧单元移除再按新包围盒登记（幂等）
+        catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
+    }
 }
 
 void GraphicsView::syncItemRemove(int id) {
     auto it = items_.find(id);
-    if (it == items_.end()) return;
-    scene_->removeItem(it->second);
-    delete it->second;
-    items_.erase(it);
-    itemBounds_.erase(id);
-    spatial_.remove(id);
+    if (it != items_.end()) {
+        scene_->removeItem(it->second);
+        delete it->second;
+        items_.erase(it);
+    }
+    // P0-04：待建队列同步剔除（图元被删/隐藏后不得再补建出悬空项）
+    if (deferredSet_.erase(id) > 0) {
+        for (auto oit = deferredOrder_.begin(); oit != deferredOrder_.end(); ++oit)
+            if (*oit == id) { deferredOrder_.erase(oit); break; }
+    }
+    try { spatial_.remove(id); }   // 移除不分配，理论上不抛；兜底防护
+    catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
 }
 
 void GraphicsView::setItemHighlight(int id, bool on) {
@@ -1099,37 +1211,159 @@ void GraphicsView::setItemHighlight(int id, bool on) {
 
 // modelChanged 无增量信号（批量/结构性变更，或增量信号已处理过本批次）时的差异同步：
 // 复用既有场景项，仅对「新增 / 包围盒变化 / 已删除」的图元做增删改，避免全量重建。
+// P0-04：差异同步同样走视口裁剪 —— 大图离屏新增只登记索引与待建队列，空闲分帧补建。
 void GraphicsView::syncIncremental() {
+    // P0-04 性能：model_->element(id) 是 O(N) 全表线性扫描，逐项调用为 O(N×M)
+    // （30k 图元场景实测退化为分钟级）。此处一次性建立 id→Element 映射，以下循环全部 O(1)。
+    std::unordered_map<int, const Element*> byId;
+    byId.reserve(model_->elements().size() * 2);
+    for (const auto& e : model_->elements()) byId.emplace(e.id, &e);
+    auto lookup = [&byId](int id) -> const Element* {
+        auto it = byId.find(id);
+        return it == byId.end() ? nullptr : it->second;
+    };
     // 1) 移除：场景中存在但模型已无的 id（含 id 复用后的旧项）
     for (auto it = items_.begin(); it != items_.end(); ) {
-        if (!model_->element(it->first)) {
+        if (!lookup(it->first)) {
             scene_->removeItem(it->second);
             delete it->second;
-            spatial_.remove(it->first);
-            itemBounds_.erase(it->first);
+            try { spatial_.remove(it->first); }
+            catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
             it = items_.erase(it);
         } else {
             ++it;
         }
     }
+    // 待建队列同步剔除：模型已无的 id 不得补建
+    for (auto oit = deferredOrder_.begin(); oit != deferredOrder_.end(); ) {
+        if (deferredSet_.count(*oit) && !lookup(*oit)) {
+            deferredSet_.erase(*oit);
+            oit = deferredOrder_.erase(oit);
+        } else {
+            ++oit;
+        }
+    }
     // 2) 新增 / 几何变更：按模型元素表差异更新
+    const bool cull = cullActive();
+    const QRectF vis = cull ? visibleWorldRect() : QRectF();
+    int statsDelta = 0;
     const auto& es = model_->elements();
     for (const auto& e : es) {
         if (!e.visible) {
             // 不可见图元：若曾建项则移除（可见性切换）
-            if (items_.count(e.id)) syncItemRemove(e.id);
+            if (items_.count(e.id)) { syncItemRemove(e.id); --statsDelta; }
             continue;
         }
         auto it = items_.find(e.id);
         if (it == items_.end()) {
+            // 尚未建项：大图离屏 → 只登记索引与待建队列；可见或小图 → 立即建项
+            const QRectF b = elementBoundsForIndex(e);
+            if (GraphicsView::failIndexAlloc_) {
+                GraphicsView::failIndexAlloc_ = false;
+                spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true;
+            } else {
+                try { spatial_.add(e.id, b); }
+                catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
+            }
+            if (cull && !b.intersects(vis)) {
+                if (deferredSet_.insert(e.id).second) deferredOrder_.push_back(e.id);
+                continue;
+            }
             syncItemAddOrUpdate(e);
+            ++statsDelta;
         } else {
             const QRectF b = elementBoundsForIndex(e);
-            if (b != itemBounds_[e.id] || it->second->el.type != e.type) {
+            if (b != it->second->lastBounds || it->second->el.type != e.type) {
                 syncItemAddOrUpdate(e);    // 包围盒或类型变化 → 更新项 + 索引
             }
         }
     }
+    if (statsDelta != 0 || memLimited_) scheduleDeferredBuilds();
+    emit sceneStatsChanged();
+}
+
+// 当前视口的世界坐标矩形（裁剪判据；与 ElementItem::visibleWorldRect 同口径）
+QRectF GraphicsView::visibleWorldRect() const {
+    if (!viewport()) return QRectF();
+    return mapToScene(viewport()->rect()).boundingRect();
+}
+
+// 分帧补建：消费待建队列（FIFO），单次最多 maxCount 项（默认 kBuildBudget）。
+// 建项前按模型实时校验（图元可能已被删除/隐藏）；剩余项续排 0ms 定时器，不阻塞事件循环。
+void GraphicsView::processDeferredBuilds(int maxCount) {
+    if (deferredOrder_.empty()) return;
+    if (maxCount < 0) maxCount = kBuildBudget;
+    // P0-04 性能：补建逐项校验不得走 O(N) 的 model_->element —— 一次性建 id→Element 映射
+    std::unordered_map<int, const Element*> byId;
+    byId.reserve(model_->elements().size() * 2);
+    for (const auto& e : model_->elements()) byId.emplace(e.id, &e);
+    int built = 0;
+    std::vector<int> still;
+    for (size_t k = 0; k < deferredOrder_.size(); ++k) {
+        const int id = deferredOrder_[k];
+        if (built >= maxCount) { still.push_back(id); continue; }
+        deferredSet_.erase(id);
+        auto fit = byId.find(id);
+        const Element* e = (fit == byId.end()) ? nullptr : fit->second;
+        if (!e || !e->visible) continue;            // 已删除/隐藏：跳过
+        if (items_.count(id)) continue;             // 已建：跳过
+        const QRectF b = elementBoundsForIndex(*e);
+        try { spatial_.add(id, b); }                // 补登记索引（首次只登记，此时补齐）
+        catch (const std::bad_alloc&) { spatial_.clear(); spatial_.setEnabled(false); memLimited_ = true; }
+        if (!buildItemFor(*e)) {                    // 内存不足：当前项 + 其后剩余全部回队并停止
+            still.push_back(id);
+            for (size_t j = k + 1; j < deferredOrder_.size(); ++j) still.push_back(deferredOrder_[j]);
+            break;
+        }
+        ++built;
+        if (memLimited_) memLimited_ = false;       // 分配恢复成功 → 退出内存受限态（可继续补建）
+    }
+    deferredOrder_ = std::move(still);
+    for (int id : deferredOrder_) deferredSet_.insert(id);
+    if (!deferredOrder_.empty()) scheduleDeferredBuilds();   // 还有剩余 → 续排下一帧
+    emit sceneStatsChanged();
+}
+
+void GraphicsView::scheduleDeferredBuilds() {
+    if (deferredOrder_.empty()) return;
+    if (!deferredTimer_) {
+        deferredTimer_ = new QTimer(this);
+        deferredTimer_->setSingleShot(true);
+        deferredTimer_->setInterval(0);
+        connect(deferredTimer_, &QTimer::timeout, this, [this]() { processDeferredBuilds(); });
+    }
+    if (!deferredTimer_->isActive()) deferredTimer_->start();
+}
+
+// 视口裁剪建项开关：关闭后立即把待建队列全部补建（恢复「全量建项」旧行为，
+// 供双跑对照与异常回落）；开启后在下次 modelChanged/变换时按阈值自动生效。
+void GraphicsView::setCullEnabled(bool on) {
+    if (cullEnabled_ == on) return;
+    cullEnabled_ = on;
+    if (!on) processDeferredBuilds((int)deferredOrder_.size() + 1);
+}
+
+// 平移/缩放热路径的重绘节流：同一 16ms 窗口内的多次 update 合并为一次；// 排队的重绘由单发 QTimer 保证必然执行（末帧强制刷新），绝不产生 0 帧白屏。
+void GraphicsView::scheduleThrottledUpdate() {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 since = now - lastPaintMs_;
+    if (since >= 16) {
+        lastPaintMs_ = now;
+        viewport()->update();
+        return;
+    }
+    if (repaintPending_) return;
+    repaintPending_ = true;
+    if (!repaintTimer_) {
+        repaintTimer_ = new QTimer(this);
+        repaintTimer_->setSingleShot(true);
+        connect(repaintTimer_, &QTimer::timeout, this, [this]() {
+            repaintPending_ = false;
+            lastPaintMs_ = QDateTime::currentMSecsSinceEpoch();
+            viewport()->update();      // 最终帧必然绘制（防白屏）
+        });
+    }
+    repaintTimer_->start((int)(16 - since));
 }
 
 void GraphicsView::onElementUpdated(int id) {
@@ -1268,6 +1502,8 @@ void GraphicsView::onViewChanged() { viewport()->update(); }
 // ---------------------------- 背景与坐标系 ----------------------------
 
 void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
+    ++paintCount_;                                  // P0-04：实际绘制帧计数（节流自测用）
+    lastPaintMs_ = QDateTime::currentMSecsSinceEpoch();
     p->fillRect(rect, QColor(245, 247, 250));
 
     if (model_->showGrid()) {
@@ -1947,16 +2183,20 @@ std::vector<int> GraphicsView::hitTestAll(const QPoint& viewPos) const {
     const bool useIdx = useIndex_ && spatial_.enabled();
     if (useIdx) {
         // 索引路径：查询容差矩形覆盖的网格单元，仅对候选做精确判定 → O(候选数)。
-        // 候选元素从本视图维护的 items_ 映射 O(1) 取出（与场景项同步，零改模型），
-        // 避免走 model_->element(id) 的 O(N) 线性查找，使拾取真正降为 O(候选)。
+        // 候选几何优先从本视图维护的 items_ 映射 O(1) 取出；P0-04 视口裁剪后离屏图元
+        // 可能尚未建项 —— 回落 model_->element(id)（候选极少，单次 O(N) 可忽略），
+        // 保证「索引路径与全量路径命中集完全一致」的确定性不变。
         const auto cand = spatial_.queryPoint(QPointF(w.x, w.y), tol);
         for (int id : cand) {
+            const Element* ep = nullptr;
             auto it = items_.find(id);
-            if (it == items_.end()) continue;
-            const ElementItem* item = it->second;
-            // 冻结层零命中：elementPickable 同时校验 visible 与「所属图层未冻结」
-            if (!model_->elementPickable(item->el)) continue;
-            const double d = pickDist(item->el, w, model_);
+            if (it != items_.end()) {
+                ep = &it->second->el;
+            } else {
+                ep = model_->element(id);   // 裁剪未建项：极少发生
+            }
+            if (!ep || !model_->elementPickable(*ep)) continue;
+            const double d = pickDist(*ep, w, model_);
             if (d < tol) hits.push_back({d, id});
         }
     } else {
@@ -4160,7 +4400,7 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
         lastPan_ = vp;
         if (panRight_) rightMoved_ = true;   // 右键拖拽发生位移
         applyTransform();
-        viewport()->update();                 // 确保平移后即刻重绘（与 fitView/zoomBy 一致）
+        scheduleThrottledUpdate();           // P0-04：平移重绘合帧到 ~60fps（末帧必然绘制）
         panDbg(QStringLiteral("[move] 平移中 dx=%1 dy=%2 pan(%3,%4)->(%5,%6) zoom=%7")
                    .arg(dx, 0, 'f', 1).arg(dy, 0, 'f', 1)
                    .arg(px, 0, 'f', 1).arg(py, 0, 'f', 1)
@@ -4398,7 +4638,7 @@ void GraphicsView::wheelEvent(QWheelEvent* e) {
     panY_ = screen.y() + anchor.y() * zoom_;   // Y 翻转
     applyTransform();
     model_->setViewScale(zoom_);
-    viewport()->update();
+    scheduleThrottledUpdate();   // P0-04：滚轮缩放合帧到 ~60fps（末帧必然绘制）
     e->accept();
 }
 

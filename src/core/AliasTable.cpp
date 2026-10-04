@@ -11,33 +11,80 @@ AliasTable& AliasTable::instance() {
 }
 
 QMap<QString, QString> AliasTable::defaultAliases() {
-    // 对齐用户需求示例：单字母 + 多字母别名。
+    // 对齐 AutoCAD/ZWCAD 肌肉记忆：单字母 + 多字母别名（acad.pgp 兼容）。
+    // 修正：AutoCAD 语义 DT=单行文字(TEXT)、MT=多行文字(MTEXT)；本表据此修正旧 dt→mtext。
     QMap<QString, QString> d;
-    d["l"]   = "line";
-    d["c"]   = "circle";
-    d["a"]   = "arc";
-    d["rec"] = "rect";
-    d["pl"]  = "polyline";
-    d["pli"] = "polyline";
-    d["e"]   = "delete";
-    d["m"]   = "move";
-    d["co"]  = "duplicate";
-    d["cp"]  = "duplicate";
-    d["ro"]  = "rotate";
-    d["tr"]  = "trim";
-    d["ex"]  = "extend";
-    d["mi"]  = "mirror";
-    d["o"]   = "offset";
-    d["f"]   = "fillet";
-    d["sc"]  = "scale";
-    d["z"]   = "zoom";
-    d["la"]  = "layer";
-    d["b"]   = "block";
-    d["x"]   = "explode";
-    d["dt"]  = "mtext";
-    // q → qselect：快速选择命令（Commands.cpp 已 registerExact("qselect", ...)），
-    // 此别名现已生效，命令行输入 q / qselect 均可唤起快速选择。
-    d["q"]   = "qselect";
+    // —— 既有绘图/修改/视图命令别名 ——
+    d["l"]    = "line";
+    d["c"]    = "circle";
+    d["a"]    = "arc";
+    d["rec"]  = "rect";
+    d["pl"]   = "polyline";
+    d["pli"]  = "polyline";
+    d["e"]    = "delete";
+    d["m"]    = "move";
+    d["co"]   = "duplicate";
+    d["cp"]   = "duplicate";
+    d["ro"]   = "rotate";
+    d["tr"]   = "trim";
+    d["ex"]   = "extend";
+    d["mi"]   = "mirror";
+    d["o"]    = "offset";
+    d["f"]    = "fillet";
+    d["sc"]   = "scale";
+    d["z"]    = "zoom";
+    d["la"]   = "layer";
+    d["b"]    = "block";
+    d["x"]    = "explode";
+    d["q"]    = "qselect";
+    // —— 文字（修正 DT=text / MT=mtext，对齐 AutoCAD）——
+    d["dt"]   = "text";       // 单行文字
+    d["tx"]   = "text";
+    d["dtext"]= "text";
+    d["mt"]   = "mtext";      // 多行文字
+    d["t"]    = "mtext";      // AutoCAD T = MTEXT
+    d["ed"]   = "ddedit";     // 文字编辑
+    // —— 本次补齐命令别名（H/PE/MA/PU/OVERKILL/W/I/PR/LT/ME/RE 等）——
+    d["h"]    = "hatch";
+    d["hat"]  = "hatch";
+    d["bh"]   = "bhatch";
+    d["bha"]  = "bhatch";
+    d["pe"]   = "pedit";
+    d["ped"]  = "pedit";
+    d["ma"]   = "matchprop";
+    d["mat"]  = "matchprop";
+    d["pu"]   = "purge";
+    d["pur"]  = "purge";
+    d["ok"]   = "overkill";
+    d["ove"]  = "overkill";
+    d["w"]    = "wblock";
+    d["wbl"]  = "wblock";
+    d["i"]    = "insert";
+    d["ins"]  = "insert";
+    d["pr"]   = "properties";
+    d["pro"]  = "properties";
+    d["ch"]   = "properties"; // AutoCAD CH = 特性
+    d["lt"]   = "linetype";
+    d["lin"]  = "linetype";
+    d["lts"]  = "ltscale";
+    d["me"]   = "measure";
+    d["mea"]  = "measure";
+    d["re"]   = "regen";
+    d["reg"]  = "regen";
+    d["tol"]  = "tol";
+    // —— 选择/编组/过滤/参照 ——
+    d["fi"]   = "filter";
+    d["fli"]  = "filter";
+    d["g"]    = "group";
+    d["grp"]  = "group";
+    d["lay"]  = "layer";
+    d["laym"] = "laymch";
+    d["layiso"] = "layiso";
+    d["xa"]   = "xref";
+    d["xr"]   = "xref";
+    d["xl"]   = "xline";
+    // —— 帮助 ——
+    d["hlp"]  = "help";
     return d;
 }
 

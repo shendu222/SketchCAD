@@ -8,8 +8,10 @@
 #include <QAction>
 #include <QList>
 #include <QSet>
+#include <QTimer>
 #include <memory>
 #include <vector>
+#include <unordered_set>
 #include "core/Element.h"
 #include "core/SketchModel.h"
 #include "core/Vec.h"
@@ -63,6 +65,10 @@ public:
     QRectF boundingRect() const override;
     QPainterPath shape() const override;
     void paint(QPainter* p, const QStyleOptionGraphicsItem* o, QWidget* w) override;
+
+    // 索引登记的包围盒缓存（P0-04：由独立 unordered_map<int,QRectF> 收敛到场景项本体，
+    // 10 万图元省一张 10 万级 map 的节点+桶开销 ≈ 7MB）。与场景项同生命周期。
+    QRectF lastBounds;
 
     // 把一个图元转成绘制路径（样条在这里被展开成三次贝塞尔）。
     // xlineClip：构造线(Xline)专用的裁剪矩形（世界坐标）——无限直线与其求交后只画出可见段，
@@ -159,6 +165,7 @@ public:
 signals:
     void cursorMoved(double x, double y, double z);
     void viewTransformChanged();             // 缩放/平移变化时通知标尺刷新
+    void sceneStatsChanged();                // P0-04：场景项数变化（状态栏数据面板刷新）
     void canvasPointPicked(double x, double y);     // 中心点拾取模式：左键取点（世界坐标）
     void pointPickCancelled();                      // 中心点拾取模式：Esc/右键取消
     // ---- 区域拾取（剖面填充）----
@@ -172,6 +179,12 @@ public slots:
     void onModelChanged();
     void onSelectionChanged(int id);
     void onViewChanged();
+    // ---- P0-04 大图纸支撑 ----
+    int  sceneItemCount() const { return (int)items_.size(); }   // 当前场景项数（状态栏数据面板）
+    int  deferredItemCount() const { return (int)deferredSet_.size(); } // 未建项数（离屏待补）
+    bool memLimited() const { return memLimited_; }             // 内存不足：场景项创建已暂停
+    void processDeferredBuilds(int maxCount = -1);              // 分帧补建离屏场景项（空闲/测试可驱动）
+    void setCullEnabled(bool on);                               // 视口裁剪建项开关（默认开，阈值内不生效）
 protected:
     void drawBackground(QPainter* p, const QRectF& rect) override;
     void drawForeground(QPainter* p, const QRectF& rect) override;
@@ -316,7 +329,6 @@ private:
     // ---- 增量场景同步 + 均匀网格空间索引（渲染/拾取 O(N)→增量/对数级）----
     // id→场景项映射；rebuild 仍保留为全量兜底路径（结构性/批量变更回落）。
     std::unordered_map<int, ElementItem*> items_;     // 图元 id → 场景项（增量同步真相源）
-    std::unordered_map<int, QRectF>       itemBounds_; // id → 上次登记索引的包围盒（差异扫描用）
     SpatialIndex spatial_;                             // 均匀网格空间索引（世界坐标，2^k 单元）
     QSet<int> prevSelected_;                           // 上次选区基线（增量高亮差量用）
     bool incSyncPending_ = false;                     // 本编辑批次已由增量信号处理（避免 modelChanged 再全量重建）
@@ -328,6 +340,34 @@ private:
     void setItemHighlight(int id, bool on);            // 仅改高亮标记，不重建场景
     QRectF elementBoundsForIndex(const Element& e) const;  // 索引用包围盒（BlockRef 展开，对齐 model::boundsOf）
     static double pickDist(const Element& e, const Vec3& w, const SketchModel* m);  // 精确拾取距离（含 BlockRef 展开）
+
+    // ---- P0-04：视口裁剪建项 + 分帧补建 + 内存优雅降级 ----
+    // 10 万图元打开时只为可见区域建 ElementItem（每项 ≈1.2KB，全量建 = 纯内存放大），
+    // 离屏图元只登记空间索引（拾取/框选全走模型几何，不依赖场景项），空闲分帧补建。
+    static constexpr int kCullThreshold = 20000;   // 图元数阈值：小于此值全量建项（小图行为/指标完全不变）
+    static constexpr int kBuildBudget = 1500;      // 单帧最多补建的场景项数（防止单次长阻塞）
+    bool cullEnabled_ = true;                      // 视口裁剪建项开关（自测可关，双跑对照）
+    bool memLimited_ = false;                      // bad_alloc 后置位：停止建项，视图/拾取仍可用
+    std::unordered_set<int> deferredSet_;          // 待建项 id 集（离屏图元；去重真相源）
+    std::vector<int> deferredOrder_;               // 待建项 id 顺序（FIFO，分帧消费）
+    QTimer* deferredTimer_ = nullptr;              // 空闲补建调度（单发 0ms，剩余则续排）
+    void scheduleDeferredBuilds();                 // 启动/续排补建定时器
+    bool buildItemFor(const Element& e);           // 带内存防护的单图元建项（失败返回 false）
+    QRectF visibleWorldRect() const;               // 当前视口的世界坐标矩形（裁剪判据）
+    bool cullActive() const { return cullEnabled_ && (int)model_->elements().size() > kCullThreshold; }
+
+    // ---- P0-04：平移/缩放重绘节流（~60fps 合帧，不产生 0 帧白屏）----
+    QTimer* repaintTimer_ = nullptr;               // 单发定时器：把高频 update 合并到下一帧
+    qint64  lastPaintMs_ = 0;                      // 上次实际绘制时间戳（drawBackground 更新）
+    bool    repaintPending_ = false;               // 已有排队的节流重绘（保证最终帧必然绘制）
+    int     paintCount_ = 0;                       // 实际绘制帧计数（自测「节流后单次重绘」用）
+    void scheduleThrottledUpdate();                // 平移/缩放热路径的 update 替代（16ms 合帧）
+public:
+    int paintCount() const { return paintCount_; } // 自测读取（不参与业务逻辑）
+    // ---- P0-04 测试钩子（自测注入分配失败；生产恒为 false）----
+    static bool failItemAlloc_;                    // 置位后 new ElementItem 抛 std::bad_alloc
+    static bool failIndexAlloc_;                   // 置位后 SpatialIndex::add 抛 std::bad_alloc
+private:
     void updatePreview(const Vec3& cur);
     void showPreview(const Element& tmp, std::vector<Element> guides = {});
     void clearPreview();

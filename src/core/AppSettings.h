@@ -1,0 +1,169 @@
+#pragma once
+#include <QObject>
+#include <QSettings>
+#include <QVariant>
+#include <QString>
+#include <QStringList>
+#include <QVector>
+#include <functional>
+
+// 全局应用设置：应用级「用户习惯」的唯一持久化出口。
+//
+// 边界（与随图存档的 SketchModel 状态严格分离）：
+//   * AppSettings 只放「应用习惯」——窗口几何/面板布局、显示开关默认值、
+//     自动保存参数、最近文件、默认目录、打印设备偏好、语言、用户信息；
+//   * 图形内容（图元数据、图层、块表、捕捉模式等随图属性）一律不进注册表。
+//
+// 落盘位置（Windows）：注册表 HKEY_CURRENT_USER\Software\SketchCAD
+// （QSettings NativeFormat + 空 applicationName ⇒ 仅组织名一层）。
+// 测试可注入自定义 QSettings（如临时 ini）以隔离系统注册表。
+//
+// 通用键值层：
+//   * 所有合法键 + 默认值 + 校验器收敛于 specTable()（唯一数据源），
+//     导出/导入/重置/读取回填全部走同一张表，不存在"一处更新一处漏"；
+//   * value() 读到缺键/非法值一律回落默认（损坏配置不崩溃、不扩散）；
+//   * setValue() 校验 + 幂等 + 发 settingChanged（消费方即时生效，
+//     「选项」对话框的取消回滚也复用同一信号通道）；
+//   * 导出/导入 JSON（企业批量下发同一套默认配置）；window/ 组属本机
+//     状态（几何/布局），不随导出下发。
+namespace SketchCAD {
+
+// 键名常量：与 specTable() 保持一致（编译期常量，供消费方书写）
+namespace SettingKeys {
+inline constexpr const char* kLanguage          = "general/language";
+inline constexpr const char* kRecentFileCount   = "general/recentFileCount";
+inline constexpr const char* kShowGrid          = "display/showGrid";
+inline constexpr const char* kGridSnap          = "display/gridSnap";
+inline constexpr const char* kGridSnapStep      = "display/gridSnapStep";
+inline constexpr const char* kOrtho             = "display/ortho";
+inline constexpr const char* kDynMode           = "display/dynMode";
+inline constexpr const char* kShowLineWeight    = "display/showLineWeight";
+inline constexpr const char* kGpuAcceleration   = "display/gpuAcceleration";
+inline constexpr const char* kOffscreenFallback = "display/offscreenFallback";
+inline constexpr const char* kHighDpiRounding   = "display/highDpiRoundingPolicy";
+inline constexpr const char* kDefaultSaveDir    = "files/defaultSaveDir";
+inline constexpr const char* kDefaultTemplate   = "files/defaultTemplate";
+inline constexpr const char* kLastDir           = "files/lastDir";
+inline constexpr const char* kRecentList        = "files/recentList";
+inline constexpr const char* kAutosaveInterval  = "autosave/intervalMinutes";
+inline constexpr const char* kBackupCount       = "autosave/backupCount";
+inline constexpr const char* kLowDiskMb         = "system/lowDiskThresholdMb";
+inline constexpr const char* kPrinterDevice     = "print/device";
+inline constexpr const char* kPrintDefaultsJson = "print/defaultSettings";
+inline constexpr const char* kUserName          = "user/name";
+inline constexpr const char* kUserCompany       = "user/company";
+inline constexpr const char* kWindowGeometry    = "window/geometry";
+inline constexpr const char* kWindowState       = "window/state";
+} // namespace SettingKeys
+
+class AppSettings : public QObject {
+    Q_OBJECT
+public:
+    // 键规格：键名 + 默认值 + 校验器（返回无效 QVariant 表示非法 → 回落默认）。
+    struct Spec {
+        const char* key;
+            QVariant def;
+        std::function<QVariant(const QVariant&)> validate;
+    };
+
+    // 全部已知键规格（唯一数据源；顺序即「选项」对话框分类的展开依据）
+    static const QVector<Spec>& specTable();
+    static QVariant defaultValue(const QString& key);          // 未知键返回无效 QVariant
+    static bool isKnownKey(const QString& key);
+    static QStringList allKeys();
+    // 校验：合法返回规范化后的值；非法返回无效 QVariant（调用方回落默认）
+    static QVariant validated(const QString& key, const QVariant& v);
+
+    // 默认构造：使用系统原生存储（HKCU\Software\SketchCAD）。
+    // 若传入 injected，则复用该 QSettings 实例（不接管所有权），便于无头测试。
+    explicit AppSettings(QSettings* injected = nullptr, QObject* parent = nullptr);
+
+    ~AppSettings() override;
+
+    // 注入（或换用）底层 QSettings；own=false 表示不接管所有权。
+    void setSettings(QSettings* s, bool own = false);
+
+    // ---- 通用键值层 ----
+    // 读：缺键/非法/存储损坏 → 一律回落默认值（绝不抛异常、绝不崩溃）。
+    QVariant value(const QString& key) const;
+    // 写：校验（非法静默忽略）+ 幂等（同值不重复写、不发信号）+ 立即 sync
+    //（写失败可当场被 syncAndCheck/lastWriteFailed 捕获）+ 发 settingChanged。
+    void setValue(const QString& key, const QVariant& v);
+    // 底层是否显式存过该键（与 value() 的"回落默认"互补）
+    bool contains(const QString& key) const;
+
+    // ---- 导出/导入（企业批量下发同一套默认配置；JSON 文本）----
+    // 窗口几何/布局（window/ 组）属本机状态，不参与导出。
+    QByteArray exportToJsonData() const;
+    bool exportToJson(const QString& path, QString* err = nullptr) const;
+    // 导入：JSON 结构非法 → false（当前值保持不动）；仅接受已知键，未知键忽略
+    //（前向兼容：新版配置文件在旧版程序上导入只落可识别的键，不报错不崩溃）。
+    bool importFromJsonData(const QByteArray& data, QString* err = nullptr);
+    bool importFromJson(const QString& path, QString* err = nullptr);
+
+    // ---- 写入状态（"写入失败必须提示"的接缝）----
+    // 立即 sync 并刷新失败状态；返回 true = 无错误。
+    bool syncAndCheck();
+    bool    lastWriteFailed() const { return writeFailed_; }
+    QString lastError() const { return lastError_; }
+
+    // ---- 重置 ----
+    // 移除全部已知键（回落默认）+ 广播 settingsReset 与逐键 settingChanged。
+    void resetToDefaults();
+
+    // ---- 既有类型化访问器（保持向后兼容；走通用层）----
+    // 0 表示关闭自动保存；合法取值 0/5/10/15/30，默认 10。
+    int  autosaveIntervalMinutes() const;
+    void setAutosaveIntervalMinutes(int minutes);
+    // 便捷判断：间隔 > 0 即视为开启
+    bool autosaveEnabled() const { return autosaveIntervalMinutes() > 0; }
+    // 磁盘剩余告警阈值（MB），默认 100MB。
+    int  lowDiskThresholdMb() const;
+    void setLowDiskThresholdMb(int mb);
+
+    // ---- 类型化便捷访问器（消费方高频键；全部走通用层，不含独立状态）----
+    bool   showGrid() const;           void setShowGrid(bool b);
+    bool   gridSnap() const;           void setGridSnap(bool b);
+    double gridSnapStep() const;       void setGridSnapStep(double mm);   // 吸附/栅格步长 mm >0
+    bool   orthoMode() const;          void setOrthoMode(bool b);
+    bool   dynMode() const;            void setDynMode(bool b);
+    bool   showLineWeight() const;     void setShowLineWeight(bool b);
+    int    recentFileCount() const;    void setRecentFileCount(int n);    // 0..20，默认 10
+    int    backupCount() const;        void setBackupCount(int n);        // 0..9，默认 1
+    QString language() const;          void setLanguage(const QString& l);// zh-CN / en
+    QString defaultSaveDir() const;    void setDefaultSaveDir(const QString& d);
+    QString defaultTemplate() const;   void setDefaultTemplate(const QString& p);
+    QString lastDir() const;           void setLastDir(const QString& d);
+    QStringList recentFiles() const;   void setRecentFiles(const QStringList& l);
+    bool   gpuAcceleration() const;    void setGpuAcceleration(bool b);   // 预留：渲染路径消费
+    bool   offscreenFallback() const;  void setOffscreenFallback(bool b); // 预留：渲染路径消费
+    QString highDpiRoundingPolicy() const; void setHighDpiRoundingPolicy(const QString& p);
+    QString printerName() const;       void setPrinterName(const QString& name);
+    // 打印页面设置快照（PrintSettings::toJson 的 JSON 文本；空 = 未设置）
+    QString printDefaultsJson() const; void setPrintDefaultsJson(const QString& json);
+    QString userName() const;          void setUserName(const QString& n);
+    QString userCompany() const;       void setUserCompany(const QString& c);
+    // 窗口几何/面板布局：QByteArray 以 base64 字符串落注册表（类型稳定往返）
+    QByteArray windowGeometry() const; void setWindowGeometry(const QByteArray& g);
+    QByteArray windowState() const;    void setWindowState(const QByteArray& st);
+
+signals:
+    // 兼容既有订阅（AutoSaveOptionsDialog 流程）
+    void autosaveIntervalChanged(int minutes);
+    void lowDiskThresholdChanged(int mb);
+    // 通用变更：key + 规范化后的新值（消费方按 key 分派；取消回滚复用同一通道）
+    void settingChanged(const QString& key, const QVariant& value);
+    // 重置为默认值（逐键 settingChanged 已同时广播，此信号供整体刷新）
+    void settingsReset();
+
+private:
+    void recordStatus();          // 同步后刷新 writeFailed_/lastError_
+    void emitLegacySignals(const QString& key, const QVariant& v);
+
+    QSettings* s_ = nullptr;
+    bool owns_ = true;
+    bool writeFailed_ = false;
+    QString lastError_;
+};
+
+} // namespace SketchCAD

@@ -101,9 +101,14 @@ bool SketchModel::updateElementQuiet(int id, std::function<void(Element&)> fn) {
 }
 
 // 静默添加：不压撤销栈；调用前需 beginEdit() 一次。
+// P0-04：一次性 reserve —— 10 万图元走逐个 push_back 会触发 log2(N) 次 vector 倍增，
+// 每次 realloc 都同时存在旧块+新块（瞬时峰值 ×1.5），是大图纸打开内存峰值的主因之一。
+// 一次到位后循环内零 realloc，分配失败点收敛到 reserve 一处（失败时原向量完好，
+// 调用方 catch 后模型仍处于可用状态）。
 std::vector<int> SketchModel::addElementsQuiet(const std::vector<Element>& parts) {
     std::vector<int> ids;
     ids.reserve(parts.size());
+    elems_.reserve(elems_.size() + parts.size());
     for (const auto& p : parts) {
         Element ne = p;
         ne.id = nextId_++;
@@ -2782,6 +2787,37 @@ void SketchModel::setLayoutsFromJson(const QJsonObject& root) {
     const QString cur = root.value("currentLayout").toString();
     if (!cur.isEmpty() && findLayout(cur)) currentLayout_ = cur;
     emit layoutsChanged();
+}
+
+// 集中式整图序列化入口：顶层 JSON 与 MainWindow::writeDrawing 的 Json 分支完全一致，
+// 不改动任何既有字段/格式。供「写文件」与「AutoSave 快照」共用，避免两处各写一份。
+QJsonObject SketchModel::toDrawingJson() const {
+    QJsonObject root;
+    root["app"] = QStringLiteral("SketchCAD");
+    root["formatVersion"] = 1;
+    root["scaleRatio"] = scaleRatio();
+    root["ltscale"] = ltscale();
+    QJsonArray arr;
+    for (const auto& e2 : elements()) arr.append(elementToJson(e2));
+    root["elements"] = arr;
+    root["layers"] = layersToJson();
+    root["blocks"] = blocksToJson();
+    root["textStyles"] = textStylesToJson();
+    root["dimStyles"] = dimStylesToJson();
+    root["savedFilters"] = savedFiltersToJson();
+    root["layouts"] = layoutsToJson();
+    root["currentLayout"] = currentLayout();
+    root["units"]  = units().toJson();
+    root["limits"] = limits().toJson();
+    root["snapConfig"] = snapConfig().toJson();
+    root["trackConfig"] = trackConfig().toJson();
+    root["constraints"] = constraintsToJson();
+    root["params"] = paramsToJson();
+    return root;
+}
+
+QByteArray SketchModel::toDrawingBytes() const {
+    return QJsonDocument(toDrawingJson()).toJson(QJsonDocument::Indented);
 }
 
 // 修改绘图比例：把已有图元（不含图框/标题栏）按内容包围盒中心等比缩放。

@@ -3,6 +3,7 @@
 #include "AliasTable.h"
 #include "SketchModel.h"
 #include <QRegularExpression>
+#include <vector>
 
 namespace SketchCAD {
 
@@ -92,6 +93,38 @@ void CommandInterpreter::addHistory(const QString& line) {
     if (history_.size() > 100) history_.removeFirst();
 }
 
+// 编辑距离（Levenshtein）：用于「输错命令名给出最接近命令建议」。
+static int levenshtein(const QString& a, const QString& b) {
+    const int n = a.size(), m = b.size();
+    if (n == 0) return m;
+    if (m == 0) return n;
+    std::vector<int> prev(m + 1), cur(m + 1);
+    for (int j = 0; j <= m; ++j) prev[j] = j;
+    for (int i = 1; i <= n; ++i) {
+        cur[0] = i;
+        for (int j = 1; j <= m; ++j) {
+            int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            int v1 = prev[j] + 1, v2 = cur[j - 1] + 1, v3 = prev[j - 1] + cost;
+            int mn = v1 < v2 ? v1 : v2;
+            if (v3 < mn) mn = v3;
+            cur[j] = mn;
+        }
+        std::swap(prev, cur);
+    }
+    return prev[m];
+}
+
+// 在所有已知命令名中找与 cmd 编辑距离最小者（距离不超过阈值才建议，避免离谱猜测）。
+static QString nearestCommandName(const QString& cmd, const QStringList& names) {
+    int best = (int)1e9; QString bestName;
+    int maxDist = cmd.size() / 2; if (maxDist < 2) maxDist = 2;
+    for (const auto& nm : names) {
+        const int d = levenshtein(cmd, nm);
+        if (d < best) { best = d; bestName = nm; }
+    }
+    return (best <= maxDist) ? bestName : QString();
+}
+
 bool CommandInterpreter::execute(const QString& line) {
     QString s = line.trimmed();
     if (s.isEmpty()) return true;
@@ -127,7 +160,12 @@ bool CommandInterpreter::execute(const QString& line) {
             QString args = (toks.size() > 1) ? toks.mid(1).join(QChar(' ')) : QString();
             ok = it->second(args);
         } else {
-            model_->log("未知命令: " + cmd + "（输入 help 查看）", "warn");
+            // 输错命令名 → 给出最接近的已知命令建议（AutoCAD 风格容错）
+            const QString sug = nearestCommandName(cmd, reg.exactNames() + externalCommandNames());
+            if (!sug.isEmpty())
+                model_->log("未知命令: " + cmd + "（是否想输入 " + sug + "？输入 help 查看全部）", "warn");
+            else
+                model_->log("未知命令: " + cmd + "（输入 help 查看）", "warn");
         }
     } else {
         CommandContext ctx{model_, toks, cmd, this};

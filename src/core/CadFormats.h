@@ -13,15 +13,21 @@
 //
 // 支持的格式：
 //   Json — 本程序原生草图格式（完整往返，含样式/标注/文字）；UTF-8
-//   Dxf  — AutoCAD DXF **R12 (AC1009)**。默认把图元炸开为 LINE/CIRCLE/ARC/POLYLINE/
-//          TEXT/SOLID 基元（最大兼容）；开启 DxfExportOptions 后块/标注/填充按原生
-//          实体导出（INSERT/DIMENSION/HATCH），在 AutoCAD/ZWCAD 中可编辑。
+//   Dxf  — AutoCAD DXF **R12 (AC1009)** 与 **R2000 (AC1015)** 读写（ASCII + 二进制容器）。
+//          默认把图元炸开为 LINE/CIRCLE/ARC/POLYLINE/TEXT/SOLID 基元（最大兼容）；
+//          开启 DxfExportOptions 后块/标注/填充按原生实体导出（INSERT/DIMENSION/HATCH），
+//          在 AutoCAD/ZWCAD 中可编辑。R2000 在 R12 token 流之上注入 AcDb 子类标记(100)/
+//          句柄(5)/owner(330)并改写 $ACADVER=AC1015、追加 OBJECTS 段（见 CadFormats.cpp）。
 //   Step — ISO 10303-21（AP214 二维曲线集：LINE/CIRCLE/TRIMMED_CURVE/POLYLINE/ELLIPSE）；ASCII
 //   Dwg  — 原生 DWG R12 (AC1009) 二进制格式。本项目不引入 ODA/LibreDWG 等第三方
 //          库，手写实现最广泛兼容的 R12 子集：实体炸开为 LINE/CIRCLE/ARC/TEXT/
 //          SOLID/POLYLINE+VERTEX（与 DXF 导出同一套基元展开），封装进原生 R12
 //          二进制容器（文件头 + 图层表 + 实体记录，每记录附 CRC16），可被
 //          AutoCAD / LibreCAD / QCAD / BricsCAD 等读取。详见 CadFormats.cpp。
+//
+//  第三方内核说明（详见 docs/third-party-dxf-license.md）：
+//   libredwg 为 GPL 许可，禁止引入；ODA Drawings SDK 为商业授权且未接入。
+//   故 R2000 采用自研「R12 token 流派生」方案，DWG R2000 二进制（ODA 私有、无公开规范）暂不实现。
 //
 // 编码约定（重要）：
 //   DXF 的编码由文件内 $DWGCODEPAGE 声明，**不是** UTF-8（UTF-8 只有 R2007+ 才支持）。
@@ -33,6 +39,26 @@ namespace SketchCAD {
 namespace cadfmt {
 
 enum class CadFormat { Unknown, Json, Dxf, Step, Dwg };
+
+// DXF 目标版本（导出侧选择；导入侧据此协商是否支持）。
+//   R12   — AC1009（默认，与升级前逐字节一致）
+//   R2000 — AC1015（注入 AcDb 子类标记 / 句柄 / owner + 改写 $ACADVER + OBJECTS 段）
+enum class DxfVersion { R12, R2000 };
+
+// DXF 容器形态：ASCII 文本（默认）或二进制 DXF（带 22 字节哨兵头的紧凑二进制）。
+enum class DxfContainer { Ascii, Binary };
+
+// 版本枚举 → 简短标签（"R12" / "R2000"），用于下拉与日志。
+QString dxfVersionLabel(DxfVersion v);
+// AutoCAD 内部版本串（"AC1009"/"AC1015"/"AC1021"…）→ 人类可读名（"DWG R12"/"DWG 2000"…）。
+QString cadVerToHuman(const QString& acadVer);
+// 该 AutoCAD 版本串 SketchCAD 是否支持读取。
+//   支持：AC1009(R12) / AC1012(R13) / AC1014(R14) / AC1015(R2000) / AC1018(R2000i)
+//   不支持：AC1021(R2004) 及以后（R2007=AC1024 / R2010=AC1027 / R2013=AC1032 / R2018=AC1032…）
+bool isSupportedDxfVersion(const QString& acadVer);
+// 探测字节流头部版本串（ASCII 走文本解码，Binary 走二进制组流）。
+//   无法识别 / 不支持时回落 R12（调用方应再用 isSupportedDxfVersion 判定是否拒绝）。
+DxfVersion detectDxfVersion(const QByteArray& data, bool isBinary = false);
 
 // 扩展名（不带点，大小写不敏感）→ 格式。无法识别返回 CadFormat::Unknown。
 CadFormat formatFromSuffix(const QString& suffix);
@@ -65,6 +91,8 @@ struct DxfExportOptions {
     bool nativeHatch  = false;   // ③ 填充原生：HATCH 边界路径
     int  splineSegments  = 16;   // ④ 样条离散段数/段（POLYLINE 拟合精度）
     int  ellipseSegments = 96;   //    椭圆采样段数（闭合折线）
+    DxfVersion   version   = DxfVersion::R12;     // ⑤ 目标 DXF 版本（默认 R12，逐字节兼容旧档）
+    DxfContainer container = DxfContainer::Ascii; // ⑥ 容器形态（默认 ASCII 文本；Binary=二进制 DXF）
 };
 
 // ---- 序列化（失败返回空并把原因写入 *err）----
@@ -79,6 +107,12 @@ QByteArray toDxf (const std::vector<Element>& elems, QString* err = nullptr,
                   double drawingScale = 1.0, int insunits = 4,
                   const std::vector<BlockDef>* blocks = nullptr,
                   const DxfExportOptions* opts = nullptr);
+// 二进制 DXF 写出：内部生成（R12 或 R2000）文本 DXF 后序列化为带 22 字节哨兵头的二进制容器。
+// opts==nullptr 或 version=R12/container=Ascii 时与 toDxf 等价（仅容器不同）。
+QByteArray toDxfBinary(const std::vector<Element>& elems, QString* err = nullptr,
+                       double drawingScale = 1.0, int insunits = 4,
+                       const std::vector<BlockDef>* blocks = nullptr,
+                       const DxfExportOptions* opts = nullptr);
 QByteArray toDwg (const std::vector<Element>& elems, QString* err = nullptr,
                   double drawingScale = 1.0);
 // 说明：toDwg 输出**原生 R12 (AC1009) 二进制**格式（手写实现，零第三方依赖）：
@@ -117,6 +151,10 @@ struct DxfImportStats {
 };                         //   调用方按 Units.h::lengthUnitFromInsunits 换算到 mm
 bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);
+// 二进制 DXF 回读：校验哨兵头 + 探测版本（不支持返回 false 且不崩溃）；版本兼容后
+// 解码为 token 流复用 fromDxf 的实体分发（R2000 的 100/5/330 标记被自然忽略）。
+bool fromDxfBinary(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
+                   DxfImportStats* stats = nullptr);
 
 // DWG 回读：支持 R12 (AC1009) 原生二进制。成功返回 true（out 追加解析到的图元）。
 // 解析图层表得到图层名，实体记录的图层索引映射回图层名；颜色由 ACI 还原为 RGB。

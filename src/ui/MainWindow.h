@@ -16,6 +16,8 @@
 #include "ui/MTextDialog.h"       // MTEXT 多行文字对话框（双击编辑/菜单入口共用）
 #include "ui/StyleManagerDialog.h" // STYLE 文字样式管理器对话框
 #include "core/Clipboard.h"      // clipboard::Payload（剪贴板粘贴拾取状态成员需要）
+#include "core/CadFormats.h"      // cadfmt::DxfVersion / DxfExportOptions（导出 DXF 版本选择）
+#include "core/AutoSave.h"        // AutoSave::Snapshot（恢复流程的方法签名需要完整类型）
 
 class QDockWidget;
 class QToolBar;
@@ -50,6 +52,8 @@ class GroupManagerDialog;   // 编组管理器（GROUP）
 class QSelectDialog;        // 快速选择（QSELECT）
 class FilterDialog;         // 过滤器（FILTER）
 struct SheetSpec;
+class AppSettings;          // 全局设置（AppSettings.h 仍需在 cpp 中包含）
+class OptionsDialog;        // 统一「选项」对话框（ui/OptionsDialog.h 在 cpp 中包含）
 
 // 主窗口：菜单栏、工具条、三栏 dock 布局、面板联动、文件 IO
 class MainWindow : public QMainWindow {
@@ -102,6 +106,9 @@ private:
 
     PrintSettings currentPrintSettings_;   // 当前打印/出图设置（可由「打印设置」对话框修改并持久化）
 
+    // P0-01：另存为 DXF 时选用的版本（默认 R12，逐字节兼容旧档）；导出菜单与 CLI 各自独立传版本
+    cadfmt::DxfExportOptions dxfSaveOptions_;
+
     // 参数输入条控件
     QWidget*      paramBar_   = nullptr;
     QDoubleSpinBox* sbAngle_  = nullptr;
@@ -121,6 +128,17 @@ private:
     LogPanel* logPanel_;
     CommandLine* cmdLine_;
     StatusBar* statusBar_;
+    // ---- 崩溃不丢稿：自动保存 + 恢复 ----
+    // autoSave_ 持有定时器与快照逻辑（core/AutoSave）；appSettings_ 持配置（HKCU）。
+    // 快照字节提供者 = model_->toDrawingBytes()（与写盘同一序列化入口）。
+    AutoSave*    autoSave_ = nullptr;
+    AppSettings* appSettings_ = nullptr;
+    bool recovering_ = false;   // 恢复流程中：抑制「操作计数」与自动保存，避免刚读档就被覆盖
+
+    // ---- 应用级配置持久化 + 最近文件 ----
+    QMenu* recentMenu_ = nullptr;        // 文件 > 最近打开（动态子菜单）
+    QStringList recentFiles_;            // 最近文件列表（去重置顶；上限 = general/recentFileCount）
+    static bool s_recentPersistEnabled;  // 自测置 false：离屏测试不写注册表
     RulerWidget* hRuler_ = nullptr;   // 顶部水平标尺
     RulerWidget* vRuler_ = nullptr;   // 左侧垂直标尺
     ArrayDialog* activeArrayDialog_ = nullptr;   // 当前打开的阵列对话框（用于视图拾取回填）
@@ -215,7 +233,28 @@ private:
 
     void saveFile();
     void openFile();
+    // ---- 崩溃不丢稿：自动保存 / 恢复 / 设置 ----
+    void setupAutoSave();                       // 构建 autoSave_/appSettings_，接信号，启动定时器
+    void offerCrashRecovery();                  // 启动扫描 .sv$ → 有残留则弹恢复对话框
+    void openAutoSaveOptions();                 // 自动保存设置对话框（间隔/次数/磁盘阈值）
+    void onAutoSaveRecovered(const AutoSave::Snapshot& s);  // 执行恢复
+    void onAutoSaveDiscarded(const AutoSave::Snapshot& s);  // 丢弃单份
+    void onAutoSaveDiscardAll();                // 丢弃全部
+    void closeEvent(QCloseEvent* e) override;   // 正常退出：停定时器 + 清理 .tmp 残留
+
+    // ---- 应用级配置持久化（AppSettings + 选项对话框）----
+    // 崩溃不丢稿专用入口打开在先；其余键的读/写全部走这里，保证只有一条通道。
+    void loadAppSettingsOnStartup();            // 启动载入：几何/布局/显示开关/最近文件（读注册表，不阻塞）
+    void applySettingLive(const QString& key, const QVariant& v);   // settingChanged 统一消费点（含取消回滚）
+    void saveAppSettingsOnClose();              // 关闭保存：几何/布局/显示开关/打印设置 + 写失败提示
+    void openOptionsDialog();                   // 工具 → 选项...
+    // 最近文件（files/recentList + general/recentFileCount 消费方）
+    void pushRecentFile(const QString& path);   // 成功读档/存盘后登记（去重置顶、按上限截断）
+    void rebuildRecentMenu();                   // 重建「最近打开」子菜单
+    QString rememberDialogDir() const;          // 文件对话框起始目录：默认存盘目录 > 上次目录 > 系统
     void exportDxf();
+    // P0-01：弹出版本下拉（R12 / R2000，默认 R12），供「导出 DXF」与「另存为 DXF」共用
+    cadfmt::DxfVersion chooseDxfVersion();
     void changeDrawingScale();      // 修改绘图比例（图形:实际），并按比例缩放已有图元
     void syncTitleBlockScale();     // 把当前比例写进标题栏「比例」栏（tb:field:scale）
     void insertStandardTitleBlock(); // 插入标准标题栏：选文件→取元数据→在图框外追加标题栏（不改动已有图元）
@@ -332,6 +371,15 @@ public:
     void applyNewDrawing(const SheetSpec& spec, double scaleRatio);
     bool writeDrawing(const QString& path, QString* err = nullptr);   // 按扩展名选格式
     bool readDrawing(const QString& path, QString* err = nullptr);
+    // ---- P0-04 大图纸打开 ----
+    // 大文件后台解析开关（> kAsyncLoadBytes 走线程池 + 模态进度对话框）。
+    // 自测置 false 走纯同步路径（离屏环境无交互，模态对话框会阻塞）。
+    static bool s_asyncLoadEnabled;
+    // 带内存防护的实现：任何大批量分配 std::bad_alloc → 「弹窗 + 日志 + 保持程序可用」，
+    // 绝不 terminate。readDrawingImpl 是原同步实现；modelTouched 标记模型是否已被
+    // clear（决定 catch 时是否需要恢复到已知空态）。
+    bool readDrawingImpl(const QString& path, QString* err, bool* modelTouched);
+    double lastOpenMs_ = 0;   // P0-04：最近一次成功打开的耗时（ms；状态栏数据面板）
     // 所有「非即时工具」子模式的工具 ID 汇总（去重）——UI 一致性测试的接缝：
     // 每个 UI 入口（下拉/菜单）的 id 都必须在 ToolRegistry 里有对应工具实现，
     // 否则 setActiveTool(id) 会静默失效（命令点了没反应）。

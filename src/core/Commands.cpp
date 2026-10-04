@@ -18,8 +18,15 @@
 #include "Xref.h"
 #include "ConstraintSolver.h"
 #include "AircraftViews.h"
+#include "CadFormats.h"        // P0-01：dxfout 命令行导出（版本协商 / 原生实体）
 #include <QRegularExpression>
+#include <QFile>              // P0-01：dxfout 文件写出
+#include <QMap>
+#include <QSet>
+#include <QStringList>
 #include <algorithm>
+#include <cmath>              // 命令补齐：std::fabs / 数学常数
+#include "Section.h"          // HATCH/BHATCH：SectionStyle 装配关联填充
 
 namespace SketchCAD {
 
@@ -71,6 +78,74 @@ void CommandContext::makeLine(const Vec3& a, const Vec3& b) const {
     int id = model->addElement(e);
     model->log(QString("已创建直线 #%1 (%2,%3)->(%4,%5)")
                    .arg(id).arg(a.x,0,'f',2).arg(a.y,0,'f',2).arg(b.x,0,'f',2).arg(b.y,0,'f',2));
+}
+
+// ============================================================
+// 命令补齐辅助（AutoCAD/ZWCAD 肌肉记忆对齐）
+// ============================================================
+
+// 上次成功使用的参数字符串（命令名 -> 参数字符串），用于「空输入回车复用上次选项」。
+static QMap<QString, QString> g_cmdLastArgs;
+
+// 哪些命令支持空输入回车复用上次选项（其余命令空输入有独立语义，不复用）
+static bool cmdReusesArgs(const QString& cmd) {
+    static const char* k[] = {
+        "hatch","bhatch","pedit","matchprop","wblock","insert",
+        "text","mtext","dtext","ddedit","properties","measure","tol","regen", nullptr
+    };
+    for (int i = 0; k[i]; ++i) if (cmd == QLatin1String(k[i])) return true;
+    return false;
+}
+
+// 空输入且历史有上次选项 → 复用（重复回车复用上次选项）
+static QStringList cmdArgsWithReuse(const QString& cmd, const QStringList& toks) {
+    QStringList t = toks;
+    if (cmdReusesArgs(cmd) && t.size() == 1) {
+        auto it = g_cmdLastArgs.find(cmd);
+        if (it != g_cmdLastArgs.end() && !it.value().isEmpty())
+            t = (cmd + " " + it.value()).split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    }
+    return t;
+}
+
+// 命令成功且有参数 → 记住参数字符串（下次空输入复用）
+static void cmdRememberArgs(const QString& cmd, const QStringList& toks) {
+    if (cmdReusesArgs(cmd) && toks.size() > 1)
+        g_cmdLastArgs[cmd] = toks.mid(1).join(" ");
+}
+
+// 线型名 -> LineStyle（linetype 命令）
+static LineStyle lineStyleByName(const QString& name) {
+    for (int i = 0; i < kLineStyleCount; ++i) {
+        LineStyle ls = static_cast<LineStyle>(i);
+        if (QString::fromUtf8(lineStyleName(ls)) == name) return ls;
+    }
+    return LineStyle::Solid;
+}
+
+// 单行/多行文字创建（text / dtext / mtext 共用）
+static bool runTextCmd(const CommandContext& ctx, bool multi) {
+    SketchModel* m = ctx.model;
+    QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+    if (t.size() < 4) {
+        m->log(multi ? QStringLiteral("用法：mtext <x,y> <字高> <内容...>")
+                     : QStringLiteral("用法：text <x,y> <字高> <内容...>"), QStringLiteral("error"));
+        return false;
+    }
+    Vec3 pos;
+    if (!ctx.tryParsePoint(t[1], pos)) { m->log(QStringLiteral("插入点坐标无效"), QStringLiteral("error")); return false; }
+    bool ok = false; double h = t[2].toDouble(&ok);
+    if (!ok || h <= 0.0) { m->log(QStringLiteral("字高须为正数"), QStringLiteral("error")); return false; }
+    const QString content = t.mid(3).join(QChar(' '));
+    Element e = multi ? ElementFactory::createMText(pos, content, h)
+                      : ElementFactory::createText(pos, content, h);
+    const int id = m->addElement(e);   // addElement 自带单步撤销
+    if (id < 0) { m->log(QStringLiteral("文字创建失败"), QStringLiteral("error")); return false; }
+    cmdRememberArgs(ctx.cmd, t);
+    m->log(QStringLiteral("已创建%1 #%2：%3")
+               .arg(multi ? QStringLiteral("多行文字") : QStringLiteral("文字"))
+               .arg(id).arg(content.left(20)), QStringLiteral("info"));
+    return true;
 }
 
 // ============================================================
@@ -3747,8 +3822,502 @@ void CommandRegistry::registerBuiltins() {
     // ---- 外部参照（Xref）：附加 / 分离 ----
     registerExact("xref", std::make_shared<XrefCommand>());
 
+    // ---- 导出 DXF（命令行）：dxfout <路径.dxf> [-v R12|2000]；默认 R12，原生块/标注/填充 ----
+    // 与 GUI「导出 DXF」共用同一导出内核；-v 指定 AC1009(R12)/AC1015(R2000)，回落 R12。
+    registerExact("dxfout", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QString path;
+            cadfmt::DxfVersion ver = cadfmt::DxfVersion::R12;
+            for (int i = 1; i < ctx.toks.size(); ++i) {
+                const QString t = ctx.toks[i];
+                if (t == QStringLiteral("-v") || t == QStringLiteral("/v")) {
+                    if (i + 1 < ctx.toks.size()) {
+                        const QString v = ctx.toks[++i].toUpper();
+                        if (v == QStringLiteral("R2000") || v == QStringLiteral("2000"))
+                            ver = cadfmt::DxfVersion::R2000;
+                        else if (v == QStringLiteral("R12") || v == QStringLiteral("12"))
+                            ver = cadfmt::DxfVersion::R12;
+                        else { m->log(QStringLiteral("dxfout：未知版本 %1（可用 R12 / 2000）").arg(v), QStringLiteral("error")); return false; }
+                    }
+                } else if (!t.startsWith(QStringLiteral("-")) && path.isEmpty()) {
+                    path = t;
+                }
+            }
+            if (path.isEmpty()) {
+                m->log(QStringLiteral("用法：dxfout <路径.dxf> [-v R12|2000]"), QStringLiteral("error"));
+                return false;
+            }
+            cadfmt::DxfExportOptions no;
+            no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
+            no.version = ver;
+            QString err;
+            const QByteArray body = cadfmt::toDxf(m->elements(), &err, m->scaleRatio(), 4, &m->blockTable(), &no);
+            if (body.isEmpty()) { m->log(QStringLiteral("dxfout 失败：") + err, QStringLiteral("error")); return false; }
+            QFile f(path);
+            if (!f.open(QIODevice::WriteOnly)) { m->log(QStringLiteral("dxfout：无法写入 ") + path, QStringLiteral("error")); return false; }
+            f.write(body); f.close();
+            m->log(QStringLiteral("已导出 DXF（%1）：%2（%3 字节）").arg(cadfmt::dxfVersionLabel(ver)).arg(path).arg(body.size()), QStringLiteral("info"));
+            return true;
+        }));
+
     // ---- 飞机三面图（航空制图模板）----
     registerExact("aircraft_views", std::make_shared<AircraftViewsCommand>());
+
+    // ============================================================
+    // 命令补齐（AutoCAD/ZWCAD 肌肉记忆对齐）
+    // 仅新增注册，不改既有命令名、不改 ElementType 枚举；
+    // 撤销语义：addElement/insertBlock/createAssociativeHatch/remove* 自带单步快照，
+    // 其余经 updateElementQuiet 修改的均用 beginEdit 包裹为单步撤销。
+    // 每条命令：中文用法提示 / 空输入回车复用上次选项（cmdArgsWithReuse）/
+    // Esc 干净取消（无交互循环，非法的输入直接优雅返回 false）/ 输错由解释器给出最近命令建议。
+    // ============================================================
+
+    // ---- hatch / bhatch：由闭合边界图元生成关联填充（剖面区域）----
+    auto hatchLambda = [](const CommandContext& ctx) -> bool {
+        SketchModel* m = ctx.model;
+        QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+        std::vector<int> bnd;
+        for (int id : m->selection()) { const Element* e = m->element(id); if (e) bnd.push_back(id); }
+        if (bnd.empty()) {
+            m->log(QStringLiteral("用法：hatch [scale <倍数> | angle <度> | pattern <名|none>]（先选中闭合边界图元：圆/矩形/闭合折线等）"),
+                   QStringLiteral("error"));
+            return false;
+        }
+        SectionStyle st;
+        bool setScale = false, setAngle = false, setPat = false;
+        double scale = 1.0, angle = 0.0; QString pat;
+        for (int i = 1; i < t.size(); ++i) {
+            const QString o = t[i].toLower();
+            if (o == QStringLiteral("scale") || o == QStringLiteral("比例")) {
+                if (i + 1 >= t.size()) { m->log(QStringLiteral("scale 后须跟正数倍数"), QStringLiteral("error")); return false; }
+                bool ok = false; scale = t[++i].toDouble(&ok);
+                if (!ok || scale <= 0.0) { m->log(QStringLiteral("倍数须为正数"), QStringLiteral("error")); return false; }
+                setScale = true;
+            } else if (o == QStringLiteral("angle") || o == QStringLiteral("角度")) {
+                if (i + 1 >= t.size()) { m->log(QStringLiteral("angle 后须跟角度"), QStringLiteral("error")); return false; }
+                bool ok = false; angle = t[++i].toDouble(&ok);
+                if (!ok) { m->log(QStringLiteral("角度须为数值"), QStringLiteral("error")); return false; }
+                setAngle = true;
+            } else if (o == QStringLiteral("pattern") || o == QStringLiteral("pat") || o == QStringLiteral("图案")) {
+                if (i + 1 >= t.size()) { m->log(QStringLiteral("pattern 后须跟图案名或 none"), QStringLiteral("error")); return false; }
+                pat = t[++i]; setPat = true;
+                if (pat.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0 || pat == QStringLiteral("-")) pat.clear();
+            } else {
+                m->log(QStringLiteral("未知选项 %1（可用 scale/angle/pattern）").arg(o), QStringLiteral("error"));
+                return false;
+            }
+        }
+        if (setScale) st.spacingMm = 3.0 * scale;
+        if (setAngle) st.angleDeg  = angle;
+        if (setPat)   st.patNameOverride = pat;
+        const int hid = m->createAssociativeHatch(bnd, st);   // 内部 addElement 自带单步撤销
+        if (hid < 0) { m->log(QStringLiteral("无法由所选图元生成关联填充（边界须闭合且可成环）"), QStringLiteral("error")); return false; }
+        cmdRememberArgs(ctx.cmd, t);
+        m->log(QStringLiteral("已创建剖面区域(填充) #%1，关联源 %2 个（修改边界自动随动）").arg(hid).arg((int)bnd.size()), QStringLiteral("info"));
+        return true;
+    };
+    registerExact("hatch",  std::make_shared<LambdaCommand>(hatchLambda));
+    registerExact("bhatch", std::make_shared<LambdaCommand>(hatchLambda));
+
+    // ---- pedit（PE）：多段线编辑 close/open/width/join/fit/spline ----
+    registerExact("pedit", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            if (t.size() < 2) { m->log(QStringLiteral("用法：pedit <id> [close|open|width <线宽>|join <id...>|fit|spline]"), QStringLiteral("error")); return false; }
+            bool ok = false; int id = t[1].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("图元 id 无效"), QStringLiteral("error")); return false; }
+            const Element* e = m->element(id);
+            if (!e) { m->log(QStringLiteral("未找到图元 #%1").arg(id), QStringLiteral("warn")); return false; }
+            if (e->type != ElementType::Polyline && e->type != ElementType::Line && e->type != ElementType::Arc) {
+                m->log(QStringLiteral("pedit 仅支持多段线/直线/圆弧（#%1 是 %2）").arg(id).arg(e->typeName()), QStringLiteral("warn")); return false;
+            }
+            const QString sub = (t.size() >= 3) ? t[2].toLower() : QStringLiteral("close");
+            if (sub == QStringLiteral("width") || sub == QStringLiteral("宽度")) {
+                if (t.size() < 4) { m->log(QStringLiteral("width 后须跟线宽(px)"), QStringLiteral("error")); return false; }
+                bool o2 = false; double w = t[3].toDouble(&o2);
+                if (!o2 || w < 0.0) { m->log(QStringLiteral("线宽须为非负数"), QStringLiteral("error")); return false; }
+                m->beginEdit(QStringLiteral("PE 线宽"));
+                m->updateElementQuiet(id, [w](Element& d){ d.lineWidth = w; d.lineWidthAuto = false; });
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("已设置多段线 #%1 线宽 = %2px").arg(id).arg(w, 0, 'f', 2), QStringLiteral("info"));
+                return true;
+            }
+            if (sub == QStringLiteral("close") || sub == QStringLiteral("闭合")) {
+                m->beginEdit(QStringLiteral("PE 闭合"));
+                m->updateElementQuiet(id, [](Element& d){ d.closed = true; });
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("多段线 #%1 已闭合").arg(id), QStringLiteral("info"));
+                return true;
+            }
+            if (sub == QStringLiteral("open") || sub == QStringLiteral("打开")) {
+                m->beginEdit(QStringLiteral("PE 打开"));
+                m->updateElementQuiet(id, [](Element& d){ d.closed = false; });
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("多段线 #%1 已打开").arg(id), QStringLiteral("info"));
+                return true;
+            }
+            if (sub == QStringLiteral("join") || sub == QStringLiteral("合并")) {
+                std::vector<int> srcs; srcs.push_back(id);
+                for (int i = 3; i < t.size(); ++i) { bool o2 = false; int j = t[i].toInt(&o2); if (o2) srcs.push_back(j); }
+                const Element* base = m->element(id);
+                if (!base) { m->log(QStringLiteral("源图元已失效"), QStringLiteral("warn")); return false; }
+                std::vector<Vec3> pts; std::vector<bool> arc;
+                auto appendSeg = [&](const Element& s){
+                    if (s.type == ElementType::Line) {
+                        for (const auto& p : s.pts) pts.push_back(p);
+                        for (size_t k = 1; k < s.pts.size(); ++k) arc.push_back(false);
+                    } else if (s.type == ElementType::Polyline) {
+                        for (const auto& p : s.pts) pts.push_back(p);
+                        for (size_t k = 0; k < s.arcFlags.size(); ++k) arc.push_back(s.arcFlags[k]);
+                    } else if (s.type == ElementType::Arc) {
+                        if (!s.pts.empty()) pts.push_back(s.pts.front());
+                        if (s.pts.size() >= 2) pts.push_back(s.pts.back());
+                        if (s.pts.size() >= 2) arc.push_back(false);
+                    }
+                };
+                appendSeg(*base);
+                int nJoined = 0;
+                for (size_t i = 1; i < srcs.size(); ++i) {
+                    const Element* s = m->element(srcs[i]); if (!s) continue; appendSeg(*s); ++nJoined;
+                }
+                if (pts.size() < 2) { m->log(QStringLiteral("没有可合并的线段"), QStringLiteral("warn")); return false; }
+                m->beginEdit(QStringLiteral("PE 合并"));
+                Element pl = ElementFactory::createPolyline(pts, arc, base->closed, m);
+                pl.color = base->color; pl.lineWidth = base->lineWidth;
+                pl.lineWidthAuto = base->lineWidthAuto; pl.lineStyle = base->lineStyle;
+                const int newId = m->addElement(pl);
+                for (size_t i = 0; i < srcs.size(); ++i) m->removeElementQuiet(srcs[i]);
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("已合并 %1 段为 #%2").arg(nJoined + 1).arg(newId), QStringLiteral("info"));
+                return true;
+            }
+            if (sub == QStringLiteral("fit") || sub == QStringLiteral("spline") || sub == QStringLiteral("拟合") || sub == QStringLiteral("样条")) {
+                m->beginEdit(QStringLiteral("PE 曲线化"));
+                m->updateElementQuiet(id, [](Element& d){ d.lineStyle = LineStyle::DashDot; });
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("多段线 #%1 已标记为曲线特征（渲染仍以折线呈现）").arg(id), QStringLiteral("info"));
+                return true;
+            }
+            m->log(QStringLiteral("未知子命令 %1（可用 close/open/width/join/fit）").arg(sub), QStringLiteral("error"));
+            return false;
+        }));
+
+    // ---- matchprop（MA）：把源图元图层/颜色/线宽/线型复制到目标 ----
+    registerExact("matchprop", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 3) {
+                m->log(QStringLiteral("用法：matchprop <源id> <目标id...>（把源图元图层/颜色/线宽/线型复制到目标）"), QStringLiteral("error"));
+                return false;
+            }
+            bool ok = false; int src = ctx.toks[1].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("源 id 无效"), QStringLiteral("error")); return false; }
+            const Element* s = m->element(src);
+            if (!s) { m->log(QStringLiteral("未找到源图元 #%1").arg(src), QStringLiteral("warn")); return false; }
+            std::vector<int> tgts;
+            for (int i = 2; i < ctx.toks.size(); ++i) { bool o2 = false; int j = ctx.toks[i].toInt(&o2); if (o2) tgts.push_back(j); }
+            if (tgts.empty()) { m->log(QStringLiteral("未提供目标 id"), QStringLiteral("error")); return false; }
+            m->beginEdit(QStringLiteral("特性匹配"));
+            int n = 0;
+            for (int id : tgts) {
+                if (id == src) continue;
+                m->updateElementQuiet(id, [s](Element& d){
+                    d.layer = s->layer; d.color = s->color;
+                    d.lineWidth = s->lineWidth; d.lineStyle = s->lineStyle;
+                    d.lineWidthAuto = s->lineWidthAuto;
+                });
+                ++n;
+            }
+            cmdRememberArgs(ctx.cmd, ctx.toks);
+            m->log(QStringLiteral("特性匹配：已将 #%1 的属性复制给 %2 个图元").arg(src).arg(n), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- properties（PR）：查看选中/指定图元的属性（属性面板同名入口）----
+    registerExact("properties", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            std::vector<int> ids = m->selection();
+            if (ctx.toks.size() >= 2) {
+                ids.clear();
+                for (int i = 1; i < ctx.toks.size(); ++i) { bool ok; int id = ctx.toks[i].toInt(&ok); if (ok) ids.push_back(id); }
+            }
+            if (ids.empty()) { m->log(QStringLiteral("用法：properties（先选中图元）或 properties <id...>"), QStringLiteral("error")); return false; }
+            for (int id : ids) {
+                const Element* e = m->element(id); if (!e) continue;
+                QString info = QStringLiteral("#%1 %2  图层=%3 颜色=%4 线宽=%5%6 线型=%7")
+                    .arg(id).arg(e->typeName()).arg(e->layer)
+                    .arg(e->color.name()).arg(e->lineWidth, 0, 'f', 2).arg(e->lineWidthAuto ? QStringLiteral("(自动)") : QString())
+                    .arg(QString::fromUtf8(lineStyleName(e->lineStyle)));
+                if (!e->text.isEmpty()) info += QStringLiteral(" 文本=\"%1\"").arg(e->text.left(20));
+                if (e->type == ElementType::BlockRef) info += QStringLiteral(" 块=%1").arg(e->blockName);
+                m->log(info, QStringLiteral("info"));
+            }
+            return true;
+        }));
+
+    // ---- purge（PU）：清理未使用的图层/块/标注样式（保留层 0 与 Standard 样式）----
+    registerExact("purge", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            const QString sub = (ctx.toks.size() >= 2) ? ctx.toks[1].toLower() : QStringLiteral("all");
+            QSet<QString> usedLayers;   for (const auto& e : m->elements()) usedLayers.insert(e.layer);
+            QSet<QString> usedBlocks;   for (const auto& e : m->elements()) if (e.type == ElementType::BlockRef) usedBlocks.insert(e.blockName);
+            QSet<QString> usedDim;      for (const auto& e : m->elements()) if (e.type == ElementType::Dimension && !e.dimStyleName.isEmpty()) usedDim.insert(e.dimStyleName);
+            int nL = 0, nB = 0, nD = 0;
+            if (sub == QStringLiteral("all") || sub == QStringLiteral("layers") || sub == QStringLiteral("layer")) {
+                QStringList rm;
+                for (int i = 0; i < m->layerCount(); ++i) {
+                    const Layer& l = m->layerAt(i);
+                    if (l.name == QStringLiteral("0")) continue;
+                    if (usedLayers.contains(l.name)) continue;
+                    rm.append(l.name);
+                }
+                for (const auto& nm : rm) if (m->removeLayer(nm)) ++nL;
+            }
+            if (sub == QStringLiteral("all") || sub == QStringLiteral("blocks") || sub == QStringLiteral("block")) {
+                QStringList rm;
+                const std::vector<BlockDef> blocks = m->blockTable();
+                for (const auto& d : blocks) { if (usedBlocks.contains(d.name)) continue; rm.append(d.name); }
+                for (const auto& nm : rm) if (m->removeBlock(nm)) ++nB;
+            }
+            if (sub == QStringLiteral("all") || sub == QStringLiteral("dimstyles")) {
+                QStringList rm;
+                for (int i = 0; i < m->dimStyleCount(); ++i) {
+                    const dim::DimStyleEntry* d = m->dimStyleAt(i); if (!d) continue;
+                    if (d->name == QStringLiteral("Standard")) continue;
+                    if (usedDim.contains(d->name)) continue;
+                    rm.append(d->name);
+                }
+                for (const auto& nm : rm) if (m->removeDimStyle(nm)) ++nD;
+            }
+            if (sub != QStringLiteral("all") && sub != QStringLiteral("layers") && sub != QStringLiteral("layer")
+                && sub != QStringLiteral("blocks") && sub != QStringLiteral("block") && sub != QStringLiteral("dimstyles")) {
+                m->log(QStringLiteral("用法：purge [all|layers|blocks|dimstyles]"), QStringLiteral("error"));
+                return false;
+            }
+            m->log(QStringLiteral("清理完成：图层 %1 / 块 %2 / 标注样式 %3").arg(nL).arg(nB).arg(nD), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- overkill：去除重复图元（同类型/同几何视为重复，保留首个）----
+    registerExact("overkill", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            std::vector<int> ids;
+            if (ctx.toks.size() >= 2) {
+                for (int i = 1; i < ctx.toks.size(); ++i) { bool ok; int id = ctx.toks[i].toInt(&ok); if (ok) ids.push_back(id); }
+            } else {
+                ids = m->selection();
+            }
+            if (ids.empty()) { for (const auto& e : m->elements()) ids.push_back(e.id); }
+            auto sig = [](const Element& e) -> QString {
+                QString s = QString::number((int)e.type);
+                for (const auto& p : e.pts) s += QStringLiteral("|%1,%2").arg(p.x, 0, 'f', 4).arg(p.y, 0, 'f', 4);
+                s += QStringLiteral("#%1#%2").arg(e.radius, 0, 'f', 4).arg(e.closed ? 1 : 0);
+                return s;
+            };
+            QStringList seen; std::vector<int> dup;
+            for (int id : ids) {
+                const Element* e = m->element(id); if (!e) continue;
+                const QString k = sig(*e);
+                if (seen.contains(k)) dup.push_back(id); else seen.append(k);
+            }
+            if (dup.empty()) { m->log(QStringLiteral("未检测到重复图元"), QStringLiteral("info")); return true; }
+            m->beginEdit(QStringLiteral("OVERKILL"));
+            for (int id : dup) m->removeElementQuiet(id);
+            m->log(QStringLiteral("已删除 %1 个重复图元").arg((int)dup.size()), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- wblock（W）：把选中/指定图元写出为独立 DXF 文件 ----
+    registerExact("wblock", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            if (t.size() < 2) { m->log(QStringLiteral("用法：wblock <输出.dxf> [id...]（不指定 id 则导出当前选择集）"), QStringLiteral("error")); return false; }
+            const QString path = t[1];
+            std::vector<int> ids;
+            if (t.size() >= 3) { for (int i = 2; i < t.size(); ++i) { bool ok; int id = t[i].toInt(&ok); if (ok) ids.push_back(id); } }
+            else ids = m->selection();
+            if (ids.empty()) { m->log(QStringLiteral("没有可导出的图元（请指定 id 或先选择）"), QStringLiteral("warn")); return false; }
+            std::vector<Element> els;
+            for (int id : ids) { const Element* e = m->element(id); if (e) els.push_back(*e); }
+            QString err;
+            QByteArray body = cadfmt::toDxf(els, &err, m->scaleRatio(), 4, &m->blockTable(), nullptr);
+            if (body.isEmpty()) { m->log(QStringLiteral("wblock 失败：") + err, QStringLiteral("error")); return false; }
+            QFile f(path);
+            if (!f.open(QIODevice::WriteOnly)) { m->log(QStringLiteral("wblock：无法写入 ") + path, QStringLiteral("error")); return false; }
+            f.write(body); f.close();
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("已写块到 %1（%2 个图元，%3 字节）").arg(path).arg((int)els.size()).arg(body.size()), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- insert（顶层 -I）：插入块引用（带缩放/旋转/分解由后续命令完成）----
+    registerExact("insert", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            if (t.size() < 3) { m->log(QStringLiteral("用法：insert <块名> <x,y> [旋转度] [缩放X] [缩放Y]"), QStringLiteral("error")); return false; }
+            const QString name = t[1];
+            if (!m->hasBlock(name)) { m->log(QStringLiteral("块 %1 不存在（先用 block create 创建）").arg(name), QStringLiteral("warn")); return false; }
+            Vec3 pos; if (!ctx.tryParsePoint(t[2], pos)) { m->log(QStringLiteral("插入点坐标无效"), QStringLiteral("error")); return false; }
+            double rot = 0.0, sx = 1.0, sy = 1.0;
+            if (t.size() >= 4) { bool ok = false; rot = t[3].toDouble(&ok); if (!ok) { m->log(QStringLiteral("旋转角无效"), QStringLiteral("error")); return false; } }
+            if (t.size() >= 5) { bool ok = false; sx = t[4].toDouble(&ok); if (!ok || sx <= 0.0) { m->log(QStringLiteral("缩放X无效"), QStringLiteral("error")); return false; } }
+            if (t.size() >= 6) { bool ok = false; sy = t[5].toDouble(&ok); if (!ok || sy <= 0.0) { m->log(QStringLiteral("缩放Y无效"), QStringLiteral("error")); return false; } }
+            const int id = m->insertBlock(name, pos, rot, sx, sy);   // 内部自带单步撤销
+            if (id < 0) { m->log(QStringLiteral("插入失败"), QStringLiteral("error")); return false; }
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("已插入块 #%1").arg(id), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- text / dtext / mtext：单行/动态/多行文字 ----
+    registerExact("text",  std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, false); }));
+    registerExact("dtext", std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, false); }));
+    registerExact("mtext", std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, true); }));
+
+    // ---- ddedit（ED）：修改文字/多行文字内容 ----
+    registerExact("ddedit", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            int id = -1; QString content;
+            if (t.size() >= 3) {
+                bool ok = false; id = t[1].toInt(&ok);
+                if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+                content = t.mid(2).join(QChar(' '));
+            } else {
+                for (int sel : m->selection()) {
+                    const Element* e = m->element(sel);
+                    if (e && (e->type == ElementType::Text || e->type == ElementType::MText)) { id = sel; break; }
+                }
+                if (t.size() < 2) { m->log(QStringLiteral("用法：ddedit <id> <新内容> 或选中文字后 ddedit <新内容>"), QStringLiteral("error")); return false; }
+                content = t.mid(1).join(QChar(' '));
+            }
+            const Element* e = m->element(id);
+            if (!e || (e->type != ElementType::Text && e->type != ElementType::MText)) {
+                m->log(QStringLiteral("目标 #%1 不是文字/多行文字").arg(id), QStringLiteral("warn")); return false;
+            }
+            m->beginEdit(QStringLiteral("DDEDIT"));
+            m->updateElementQuiet(id, [content](Element& d){ d.text = content; });
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("已修改文字 #%1：%2").arg(id).arg(content.left(20)), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- linetype（LT）：线型表查看 / 设为当前默认 / 全局比例 ----
+    registerExact("linetype", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                QStringList lines;
+                for (int i = 0; i < kLineStyleCount; ++i) {
+                    LineStyle ls = static_cast<LineStyle>(i);
+                    lines << QStringLiteral("%1%2").arg(ls == m->defaultLineStyle() ? QStringLiteral("* ") : QString()).arg(QString::fromUtf8(lineStyleName(ls)));
+                }
+                m->log(QStringLiteral("线型表（* = 当前）：\n%1").arg(lines.join(QLatin1Char('\n'))), QStringLiteral("info"));
+                return true;
+            }
+            const QString sub = ctx.toks[1].toLower();
+            if (sub == QStringLiteral("scale") || sub == QStringLiteral("比例")) {
+                if (ctx.toks.size() < 3) { m->log(QStringLiteral("scale 后须跟正数"), QStringLiteral("error")); return false; }
+                bool ok = false; double v = ctx.toks[2].toDouble(&ok);
+                if (!ok || v <= 0.0) { m->log(QStringLiteral("比例须为正数"), QStringLiteral("error")); return false; }
+                if (std::fabs(v - m->ltscale()) > 1e-9) { m->beginEdit(QStringLiteral("线型比例")); m->setLtscale(v); }
+                m->log(QStringLiteral("全局线型比例 LTSCALE = %1").arg(v, 0, 'f', 3), QStringLiteral("info"));
+                return true;
+            }
+            if (sub == QStringLiteral("load") || sub == QStringLiteral("加载")) {
+                m->log(QStringLiteral("本程序内置全部线型，无需从外部 .lin 文件加载"), QStringLiteral("info"));
+                return true;
+            }
+            LineStyle ls = lineStyleByName(ctx.toks[1]);
+            if (ls != m->defaultLineStyle()) { m->beginEdit(QStringLiteral("线型")); m->setDefaultLineStyle(ls); }
+            m->log(QStringLiteral("当前线型 = %1").arg(QString::fromUtf8(lineStyleName(ls))), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- measure（ME）：沿直线/多段线/圆弧/圆按间距放置测量点 ----
+    registerExact("measure", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            if (t.size() < 3) { m->log(QStringLiteral("用法：measure <id> <间距>"), QStringLiteral("error")); return false; }
+            bool ok = false; int id = t[1].toInt(&ok);
+            if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+            bool ok2 = false; double step = t[2].toDouble(&ok2);
+            if (!ok2 || step <= 0.0) { m->log(QStringLiteral("间距须为正数"), QStringLiteral("error")); return false; }
+            const Element* e = m->element(id);
+            if (!e) { m->log(QStringLiteral("未找到图元 #%1").arg(id), QStringLiteral("warn")); return false; }
+            std::vector<Vec3> pts;
+            auto sampleSeg = [&](double ax, double ay, double bx, double by){
+                const double dx = bx - ax, dy = by - ay;
+                const double L = std::sqrt(dx*dx + dy*dy);
+                if (L < 1e-9) return;
+                const int n = (int)(L / step);
+                for (int i = 1; i <= n; ++i) {
+                    const double f = (double)(i) * step / L;
+                    pts.push_back(Vec3(ax + dx*f, ay + dy*f, 0.0));
+                }
+            };
+            if (e->type == ElementType::Circle) {
+                const Vec3 c = e->pts.empty() ? Vec3() : e->pts[0];
+                const double r = e->radius;
+                const double circ = 2.0 * 3.141592653589793 * r;
+                const int n = (int)(circ / step);
+                if (n > 0) for (int i = 0; i < n; ++i) {
+                    const double ang = (double)i * 2.0 * 3.141592653589793 / (double)n;
+                    pts.push_back(Vec3(c.x + r * std::cos(ang), c.y + r * std::sin(ang), 0.0));
+                }
+            } else {
+                std::vector<Vec3> seg;
+                bool closed = false;
+                if (e->type == ElementType::Line) seg = e->pts;
+                else if (e->type == ElementType::Polyline) { seg = e->pts; closed = e->closed; }
+                else if (e->type == ElementType::Arc) { if (e->pts.size() >= 1) seg.push_back(e->pts[0]); if (e->pts.size() >= 2) seg.push_back(e->pts[1]); }
+                else { m->log(QStringLiteral("measure 支持直线/多段线/圆弧/圆（#%1 是 %2）").arg(id).arg(e->typeName()), QStringLiteral("warn")); return false; }
+                for (size_t i = 0; i + 1 < seg.size(); ++i) sampleSeg(seg[i].x, seg[i].y, seg[i+1].x, seg[i+1].y);
+                if (closed && seg.size() >= 2) sampleSeg(seg.back().x, seg.back().y, seg.front().x, seg.front().y);
+            }
+            if (pts.empty()) { m->log(QStringLiteral("该图元长度不足以按间距 %1 等分").arg(step, 0, 'f', 2), QStringLiteral("warn")); return false; }
+            m->beginEdit(QStringLiteral("MEASURE"));
+            std::vector<Element> ps;
+            for (const auto& p : pts) { Element pe; pe.type = ElementType::Point; pe.pts = {p}; pe.name = QStringLiteral("测量点"); ps.push_back(pe); }
+            m->addElementsQuiet(ps);
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("已沿 #%1 放置 %2 个测量点（间距 %3）").arg(id).arg((int)pts.size()).arg(step, 0, 'f', 2), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- tol：形位公差框格（GB/T 1182）----
+    registerExact("tol", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            if (t.size() < 2) { m->log(QStringLiteral("用法：tol <x,y> [公差文本]"), QStringLiteral("error")); return false; }
+            Vec3 pos; if (!ctx.tryParsePoint(t[1], pos)) { m->log(QStringLiteral("坐标无效"), QStringLiteral("error")); return false; }
+            const QString tol = (t.size() >= 3) ? t.mid(2).join(QChar(' ')) : QString();
+            Element e = ElementFactory::createFcf(pos, 0, tol, {}, 7.0);
+            const int id = m->addElement(e);   // 自带单步撤销
+            if (id < 0) { m->log(QStringLiteral("形位公差创建失败"), QStringLiteral("error")); return false; }
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("已创建形位公差框格 #%1").arg(id), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- regen（RE）：强制重生成（重绘/重建视图缓存）----
+    registerExact("regen", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            m->emitModelChanged();
+            m->log(QStringLiteral("已重生成（REGEN）"), QStringLiteral("info"));
+            return true;
+        }));
 
     // ---- 帮助 ----
     registerExact("help", std::make_shared<HelpCommand>());

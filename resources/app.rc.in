@@ -1,0 +1,50 @@
+// ============================================================================
+// 由 CMake configure_file 自动生成 —— 请勿手工编辑。
+// 源模板：resources/app.rc.in
+// 唯一来源：CMakeLists.txt 的 project(SketchCAD VERSION ...) + 下方公司/产品变量
+//
+// 职责：为 SketchCAD.exe 注入
+//   1) 应用图标（logo.ico，多尺寸）
+//   2) 文件属性 VERSIONINFO（任务管理器 → 详细信息 可见）
+//
+// 注意：本文件含中文（公司名/产品名/文件描述），按 UTF-8 解析。
+// MinGW 的 windres 需显式声明代码页，否则按系统 ANSI(GBK) 解析会乱码。
+// ============================================================================
+
+#pragma code_page(65001)
+
+#include <windows.h>
+
+// ---- 1) 应用图标 ----
+// ICON 资源须为 .ico 完整文件（含多尺寸头），不能只取单个 PNG 图层。
+IDI_ICON1 ICON DISCARDABLE "@SKETCHICON_PATH@"
+
+// ---- 2) 文件属性 ----
+// FILEVERSION/PRODUCTVERSION 必须是**逗号分隔**的四段（1,1,0,0）；
+// 点号形式会被 windres 判为 syntax error。
+// 值由 CMake 变量 SKETCHPAD_VERSION_RC 提供，与 version.h 的点号形式同源。
+1 VERSIONINFO
+FILEVERSION     @SKETCHPAD_VERSION_RC@
+PRODUCTVERSION  @SKETCHPAD_PRODUCTVER_RC@
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // 65001 = UTF-16LE。用 Unicode 块，中文才不会在任务管理器里乱码。
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName",      "@SKETCHCOMPANY_NAME@"
+            VALUE "FileDescription",  "@SKETCHFILE_DESC@"
+            VALUE "FileVersion",      "@SKETCHPAD_VERSION@"
+            VALUE "InternalName",     "SketchCAD"
+            VALUE "LegalCopyright",   "@SKETCHCOPYRIGHT@"
+            VALUE "OriginalFilename", "SketchCAD.exe"
+            VALUE "ProductName",      "@SKETCHPRODUCT_NAME@"
+            VALUE "ProductVersion",   "@SKETCHPAD_PRODUCTVER@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        // 0x0804 = 简体中文(Locale)，1200 = Unicode 代码页
+        VALUE "Translation", 0x0804, 1200
+    END
+END

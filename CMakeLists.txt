@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(SketchCAD LANGUAGES CXX)
+# 版本号单一来源（semver）。此处是全项目「版本真相」：
+#   → configure_file 生成 build/version.h（供「关于」对话框等 C++ 侧读取）
+#   → configure_file 生成 build/app.rc（注入 exe 文件属性 VERSIONINFO）
+#   → build.sh package 模式读取本行，拼出 SketchCAD-<版本>-Setup.exe
+# 三者（关于对话框 / exe 属性 / 安装包文件名）因此天然一致，不会各自漂移。
+project(SketchCAD VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,7 +18,7 @@ list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64/lib/cmake")
 set(CMAKE_C_COMPILER   "C:/Qt/Tools/mingw1310_64/bin/gcc.exe")
 set(CMAKE_CXX_COMPILER "C:/Qt/Tools/mingw1310_64/bin/g++.exe")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent)
 
 # ---- DRY：公共核心源文件列表，供所有目标共用 ----
 set(CORE_SOURCES
@@ -78,6 +83,9 @@ set(CORE_SOURCES
     src/core/QSelect.cpp
     src/core/Units.cpp
     src/core/SpatialIndex.cpp
+    src/core/AppSettings.cpp   # 全局设置（自动保存间隔/磁盘阈值，HKCU\Software\SketchCAD）
+    src/core/AutoSave.cpp      # 自动保存核心（定时+操作计数双触发，原子落盘，可恢复）
+    src/core/Diagnostics.cpp   # 诊断：Qt 日志滚动落盘 + Windows 崩溃 mini-dump
 )
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
@@ -133,6 +141,9 @@ set(UI_SOURCES
     src/ui/PrintEngine.cpp
     src/ui/PrintSettingsDialog.cpp
     src/ui/PrintPreviewDialog.cpp
+    src/ui/CrashRecoveryDialog.cpp   # 启动时发现 .sv$ 快照 → 恢复/丢弃
+    src/ui/AutoSaveOptionsDialog.cpp # 自动保存间隔设置（关/5/10/15/30）
+    src/ui/OptionsDialog.cpp        # 统一「选项」对话框（分类树 + 表单，应用/取消/重置）
 )
 
 # ---- 主程序 ----
@@ -142,10 +153,56 @@ add_executable(SketchCAD
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
+
+# ---- 版本宏注入（version.h）----
+# 从 project(... VERSION ...) 生成，供「关于」对话框等 C++ 侧读取，
+# 使界面显示的版本与 exe 属性、安装包名同源于一个数字。
+# 【重要】SketchSelfTest 不链接本头文件：自测不关心版本，保持目标最小化。
+set(SKETCHCAD_COMPANY_NAME  "航空CAD")
+set(SKETCHCAD_PRODUCT_NAME  "SketchCAD 草图设计系统")
+set(SKETCHCAD_COPYRIGHT     "Copyright (C) 2026 航空CAD. All rights reserved.")
+# Windows VERSIONINFO 要求四段式数字版本：semver 是三段，故第四段补 0。
+# 例：1.1.0 → 1.1.0.0（补丁位留给预发布修订，如 1.1.0.1）。
+set(SKETCHPAD_VERSION       "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0")
+set(SKETCHPAD_PRODUCTVER    "${SKETCHPAD_VERSION}")
+# .rc 语法特例：VERSIONINFO 的 FILEVERSION/PRODUCTVERSION 必须写成**逗号分隔**的
+# 四段（1,1,0,0），点号形式会被 windres 判为 syntax error。
+set(SKETCHPAD_VERSION_RC    "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0")
+set(SKETCHPAD_PRODUCTVER_RC "${SKETCHPAD_VERSION_RC}")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h
+    @ONLY)
+
+# ---- Windows 应用图标 + 文件属性（app.rc）----
+# app.rc 由 version.h 同源的模板生成，VERSIONINFO 随 project VERSION 自动同步。
+# 用 target_sources 而非全局 add_custom_command：只作用于 SketchCAD，
+# 自测目标不引入任何 .rc（RC_COMPILER 需 windres，且 rc 会拖入 GUI 资源依赖）。
+if(WIN32)
+    enable_language(RC)
+    set(SKETCHCOMPANY_NAME  "${SKETCHCAD_COMPANY_NAME}")
+    set(SKETCHPRODUCT_NAME  "${SKETCHCAD_PRODUCT_NAME}")
+    set(SKETCHCOPYRIGHT     "${SKETCHCAD_COPYRIGHT}")
+    set(SKETCHFILE_DESC     "SketchCAD 草图设计系统")
+    set(SKETCHICON_PATH     "${CMAKE_CURRENT_SOURCE_DIR}/resources/logo.ico")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc.in
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc
+        @ONLY)
+    target_sources(SketchCAD PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated/app.rc)
+    target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+endif()
+
+# 崩溃转储需要 dbghelp（MiniDumpWriteDump）。仅主程序启用：
+# 自测目标 SketchSelfTest 不定义 SKETCHCAD_ENABLE_CRASHHANDLER、不链 dbghelp，保持纯净无头。
+if(WIN32)
+    target_link_libraries(SketchCAD PRIVATE dbghelp)
+    target_compile_definitions(SketchCAD PRIVATE SKETCHCAD_ENABLE_CRASHHANDLER=1)
+endif()
 
 # ---- 无界面自测（约束求解 / 捕捉 单元测试）----
 # 复用 CORE_SOURCES，不链接 UI；覆盖 21 种约束每类 ≥1 用例 + 8 类捕捉命中 + 冲突检测。
@@ -158,7 +215,7 @@ add_executable(SketchSelfTest
     src/ui/PlotRenderer.cpp
     src/ui/PrintEngine.cpp
 )
-target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(SketchSelfTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -178,7 +235,7 @@ add_executable(SketchBenchmark
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(SketchBenchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -193,7 +250,7 @@ add_executable(PlotStyleSamples
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(PlotStyleSamples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -208,7 +265,7 @@ add_executable(ReadmeShots
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml)
+target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(ReadmeShots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core

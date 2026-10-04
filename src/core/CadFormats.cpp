@@ -16,6 +16,7 @@
 #include <cmath>
 #include <algorithm>
 #include <functional>
+#include <cstring>       // P0-01：memcpy（二进制 DXF 序列化）
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -74,6 +75,10 @@ static QString decodeDxfBytes(const QByteArray& data) {
     if (!u.contains(QChar(0xFFFD))) return u;
     return fromGbk(data);
 }
+
+// ---- P0-01 前向声明：R2000 派生与二进制 DXF 辅助（定义见 tokenizeDxf 之后）----
+static QString transformDxfTextToR2000(const QString& body);
+static QByteArray asciiDxfToBinary(const QByteArray& ascii);
 
 // ----------------------------- 格式判定 -----------------------------
 CadFormat formatFromSuffix(const QString& suffix) {
@@ -223,6 +228,9 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     if (err) err->clear();
     const DxfExportOptions defOpt;                    // 默认值 = 旧炸开行为
     const DxfExportOptions& opt = opts ? *opts : defOpt;
+    // P0-01：导出目标版本 / 容器（默认 R12 + ASCII，旧调用方零影响、逐字节一致）
+    const DxfVersion   reqV = opts ? opts->version   : DxfVersion::R12;
+    const DxfContainer reqC = opts ? opts->container : DxfContainer::Ascii;
 
     // 标注数字要还原成实物尺寸：把绘图比例交给 dim::build
     dim::Style dimSt;
@@ -706,15 +714,23 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // ---- 定编码：先按占位符生成，再依内容是否有非 ASCII 决定 $DWGCODEPAGE 并编码 ----
     // （占位符与代码页名都是 ASCII，替换不会改变"是否含非 ASCII"的判定，故可两步走）
     QString body = L.join("\r\n");
+    // P0-01：R2000 在 R12 token 流之上注入 AcDb 标记/句柄/OBJECTS 段并改写版本串
+    if (reqV == DxfVersion::R2000)
+        body = transformDxfTextToR2000(body.replace(QLatin1String("AC1009"), QLatin1String("AC1015")));
     bool asciiOnly = true;
     for (const QChar& c : body)
         if (c.unicode() > 0x7F) { asciiOnly = false; break; }
+    QByteArray bytes;
     if (asciiOnly) {
         body.replace(QStringLiteral("@@CP@@"), QStringLiteral("ANSI_1252"));
-        return body.toLatin1();
+        bytes = body.toLatin1();
+    } else {
+        body.replace(QStringLiteral("@@CP@@"), QStringLiteral("ANSI_936"));
+        bytes = toGbk(body);
     }
-    body.replace(QStringLiteral("@@CP@@"), QStringLiteral("ANSI_936"));
-    return toGbk(body);
+    // P0-01：二进制 DXF 容器（带哨兵头的紧凑二进制；R12/R2000 共用序列化）
+    if (reqC == DxfContainer::Binary) return asciiDxfToBinary(bytes);
+    return bytes;
 }
 
 // =====================================================================
@@ -1390,6 +1406,291 @@ static LineStyle lineStyleFromDxfName(const QString& n) {
     return LineStyle::Solid;
 }
 
+// =====================================================================
+//  P0-01：R2000 (AC1015) 派生 + 二进制 DXF 容器
+// =====================================================================
+// 设计（详见 docs/formats-r12-r2000-design-analysis.md）：
+//   * R2000 = R12 token 流之上注入 AcDb 子类标记(100) / 句柄(5) / owner(330)，
+//     改写 $ACADVER=AC1015，追加 OBJECTS 段（*MODEL_SPACE / *PAPER_SPACE 记录）。
+//   * 二进制 DXF = 把 (组码,值) token 流序列化为带 22 字节哨兵头的紧凑二进制；
+//     读回解码为 token 流后复用 fromDxf 的实体分发（R2000 的 100/5/330 被自然忽略）。
+//   * R12 写出路径（toDxf 原逻辑）保持不变，保证 opts==nullptr 逐字节一致。
+
+enum class DxfBinType { Str, I16, I32, I64, Dbl, Chunk };
+
+// 组码 → 二进制 DXF 值类型（AutoCAD R2000 二进制组流规范）。
+static DxfBinType dxfBinType(int code) {
+    if (code >= 0   && code <= 9)    return DxfBinType::Str;
+    if (code >= 10  && code <= 59)   return DxfBinType::Dbl;
+    if (code >= 60  && code <= 79)   return DxfBinType::I16;
+    if (code >= 90  && code <= 99)   return DxfBinType::I32;
+    if (code == 100 || code == 102 || code == 105) return DxfBinType::Str;
+    if (code >= 110 && code <= 149)  return DxfBinType::Dbl;
+    if (code >= 160 && code <= 169)  return DxfBinType::I64;
+    if (code >= 170 && code <= 179)  return DxfBinType::I16;
+    if (code >= 210 && code <= 239)  return DxfBinType::Dbl;
+    if (code >= 270 && code <= 279)  return DxfBinType::I16;
+    if (code >= 280 && code <= 289)  return DxfBinType::I16;
+    if (code >= 300 && code <= 309)  return DxfBinType::Str;
+    if (code >= 310 && code <= 319)  return DxfBinType::Chunk;
+    if (code >= 320 && code <= 329)  return DxfBinType::Str;
+    if (code >= 330 && code <= 369)  return DxfBinType::Str;
+    if (code >= 370 && code <= 379)  return DxfBinType::I16;
+    if (code >= 380 && code <= 389)  return DxfBinType::I16;
+    if (code >= 390 && code <= 399)  return DxfBinType::Str;
+    if (code >= 400 && code <= 409)  return DxfBinType::I16;
+    if (code >= 410 && code <= 419)  return DxfBinType::Str;
+    if (code >= 420 && code <= 429)  return DxfBinType::I32;
+    if (code >= 430 && code <= 439)  return DxfBinType::Str;
+    if (code >= 440 && code <= 449)  return DxfBinType::I32;
+    if (code >= 450 && code <= 459)  return DxfBinType::I32;
+    if (code >= 460 && code <= 469)  return DxfBinType::Dbl;
+    if (code >= 470 && code <= 479)  return DxfBinType::Dbl;
+    if (code >= 480 && code <= 481)  return DxfBinType::Str;
+    if (code >= 999 && code <= 1009)  return DxfBinType::Str;
+    if (code >= 1010 && code <= 1059) return DxfBinType::Dbl;
+    if (code == 1070)                return DxfBinType::I16;
+    if (code == 1071)                return DxfBinType::Dbl;
+    return DxfBinType::Str;
+}
+
+// 从 token 流取 $ACADVER 值（如 "AC1015"），缺省返回空串。
+static QString acadVerFromPairs(const std::vector<DxfPair>& tok) {
+    for (size_t i = 0; i + 1 < tok.size(); ++i)
+        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$ACADVER", Qt::CaseInsensitive) == 0)
+            return tok[i + 1].value.trimmed().toUpper();
+    return QString();
+}
+
+// 实体 / 表记录 / 块 → AcDb 子类名（R2000 子类标记 100 的值）。
+static QString acDbSubclass(const QString& type) {
+    const QString t = type.trimmed().toUpper();
+    if (t == "LINE")        return "AcDbLine";
+    if (t == "CIRCLE")      return "AcDbCircle";
+    if (t == "ARC")         return "AcDbArc";
+    if (t == "ELLIPSE")     return "AcDbEllipse";
+    if (t == "SPLINE")      return "AcDbSpline";
+    if (t == "TEXT")        return "AcDbText";
+    if (t == "MTEXT")       return "AcDbMText";
+    if (t == "POINT")       return "AcDbPoint";
+    if (t == "SOLID")       return "AcDbSolid";
+    if (t == "3DFACE")      return "AcDbFace";
+    if (t == "POLYLINE" || t == "LWPOLYLINE") return "AcDbPolyline";
+    if (t == "VERTEX")      return "AcDbVertex";
+    if (t == "SEQEND")      return "AcDbSeqend";
+    if (t == "INSERT")      return "AcDbBlockReference";
+    if (t == "ATTRIB")      return "AcDbAttribute";
+    if (t == "ATTDEF")      return "AcDbAttributeDefinition";
+    if (t == "DIMENSION")   return "AcDbDimension";
+    if (t == "HATCH")       return "AcDbHatch";
+    if (t == "XLINE")       return "AcDbXline";
+    if (t == "RAY")         return "AcDbRay";
+    if (t == "LEADER")      return "AcDbLeader";
+    if (t == "LAYER")       return "AcDbLayerTableRecord";
+    if (t == "LTYPE")       return "AcDbLinetypeTableRecord";
+    if (t == "STYLE" || t == "TEXTSTYLE") return "AcDbTextStyleTableRecord";
+    if (t == "DIMSTYLE")    return "AcDbDimStyleTableRecord";
+    if (t == "APPID")       return "AcDbRegAppTableRecord";
+    if (t == "UCS")         return "AcDbUcsTableRecord";
+    if (t == "VIEW")        return "AcDbViewTableRecord";
+    if (t == "VPORT")       return "AcDbVportTableRecord";
+    if (t == "BLOCK_RECORD") return "AcDbBlockRecord";
+    if (t == "BLOCK")       return "AcDbBlockBegin";
+    if (t == "ENDBLK")      return "AcDbBlockEnd";
+    return "AcDbEntity";
+}
+
+// 文本 DXF → 二进制 DXF（带 22 字节哨兵头）。值字节原样保留（GBK 中文不乱码）。
+static QByteArray asciiDxfToBinary(const QByteArray& ascii) {
+    QByteArray out;
+    out += "AutoCAD Binary DXF\r\n";
+    out += char(0x1A); out += char(0x00);
+    QList<QByteArray> lines = ascii.split('\n');
+    for (int i = 0; i + 1 < lines.size(); i += 2) {
+        QByteArray cl = lines[i];   if (cl.endsWith('\r')) cl.chop(1);
+        QByteArray vl = lines[i + 1]; if (vl.endsWith('\r')) vl.chop(1);
+        bool ok = false; const int code = cl.toInt(&ok);
+        if (!ok) continue;
+        out += char(code & 0xFF); out += char((code >> 8) & 0xFF);   // 组码 int16 LE
+        switch (dxfBinType(code)) {
+            case DxfBinType::Str:   out += vl; out += char(0x00); break;
+            case DxfBinType::Chunk:  out += char(0x00); break;       // 二进制块（本项目不生成）
+            case DxfBinType::I16: {
+                bool o2 = false; const qint16 v = (qint16)vl.toInt(&o2);
+                out += char(v & 0xFF); out += char((v >> 8) & 0xFF); break;
+            }
+            case DxfBinType::I32: {
+                bool o2 = false; const qint32 v = vl.toInt(&o2);
+                for (int b = 0; b < 4; ++b) out += char((v >> (8 * b)) & 0xFF);
+                break;
+            }
+            case DxfBinType::I64: {
+                const qint64 v = vl.toLongLong();
+                for (int b = 0; b < 8; ++b) out += char((quint64(v) >> (8 * b)) & 0xFF);
+                break;
+            }
+            case DxfBinType::Dbl: {
+                bool o2 = false; double d = vl.toDouble(&o2); if (!o2) d = 0.0;
+                quint64 u; std::memcpy(&u, &d, 8);
+                for (int b = 0; b < 8; ++b) out += char((u >> (8 * b)) & 0xFF);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+// 二进制 DXF → 文本 token 流（值字节原样保留）。哨兵头不符返回 false。
+static bool binaryDxfToAscii(const QByteArray& data, QByteArray& out, QString* err) {
+    QByteArray sentinel = "AutoCAD Binary DXF\r\n";
+    sentinel += char(0x1A); sentinel += char(0x00);
+    if (data.size() < sentinel.size() || data.left(sentinel.size()) != sentinel) {
+        if (err) *err = QStringLiteral("不是 AutoCAD 二进制 DXF（缺少哨兵头）");
+        return false;
+    }
+    int pos = sentinel.size();
+    const int N = data.size();
+    QList<QByteArray> L;
+    while (pos + 2 <= N) {
+        const int code = (quint8)data.at(pos) | ((quint8)data.at(pos + 1) << 8);
+        pos += 2;
+        QByteArray val;
+        switch (dxfBinType(code)) {
+            case DxfBinType::Str: {
+                const int start = pos;
+                while (pos < N && data.at(pos) != 0x00) ++pos;
+                val = data.mid(start, pos - start);
+                if (pos < N) ++pos;                       // 跳过结尾 0x00
+                break;
+            }
+            case DxfBinType::Chunk: {
+                if (pos >= N) { if (err) *err = QStringLiteral("二进制 DXF 损坏（Chunk 越界）"); return false; }
+                const int len = (quint8)data.at(pos); ++pos; pos += len; break;
+            }
+            case DxfBinType::I16: {
+                if (pos + 2 > N) { if (err) *err = QStringLiteral("二进制 DXF 损坏（I16 越界）"); return false; }
+                const qint16 v = (qint16)((quint8)data.at(pos) | ((quint8)data.at(pos + 1) << 8));
+                pos += 2; val = QByteArray::number(v); break;
+            }
+            case DxfBinType::I32: {
+                if (pos + 4 > N) { if (err) *err = QStringLiteral("二进制 DXF 损坏（I32 越界）"); return false; }
+                qint32 v = 0; for (int b = 0; b < 4; ++b) v |= ((quint8)data.at(pos + b)) << (8 * b);
+                pos += 4; val = QByteArray::number(v); break;
+            }
+            case DxfBinType::I64: {
+                if (pos + 8 > N) { if (err) *err = QStringLiteral("二进制 DXF 损坏（I64 越界）"); return false; }
+                qint64 v = 0; for (int b = 0; b < 8; ++b) v |= (qint64)(quint8)data.at(pos + b) << (8 * b);
+                pos += 8; val = QByteArray::number(v); break;
+            }
+            case DxfBinType::Dbl: {
+                if (pos + 8 > N) { if (err) *err = QStringLiteral("二进制 DXF 损坏（double 越界）"); return false; }
+                quint64 u = 0; for (int b = 0; b < 8; ++b) u |= (quint64)(quint8)data.at(pos + b) << (8 * b);
+                double d; std::memcpy(&d, &u, 8);
+                val = QByteArray::number(d, 'f', 12);    // 高精度，便于坐标往返
+                pos += 8; break;
+            }
+        }
+        L << QByteArray::number(code) << val;
+    }
+    QByteArray o;
+    for (int k = 0; k < L.size(); ++k) { if (k) o += "\r\n"; o += L.at(k); }
+    out = o;
+    return true;
+}
+
+// 把 R12 文本 DXF 变换为 R2000（AC1015）文本 DXF：注入句柄/AcDb 标记 + OBJECTS 段。
+static QString transformDxfTextToR2000(const QString& body) {
+    std::vector<DxfPair> tok = tokenizeDxf(body);
+    std::vector<DxfPair> out;
+    out.reserve(tok.size() * 2);
+    int handle = 0x1F;
+    const auto nextH = [&]() { return QString::number(++handle, 16).toUpper(); };
+    const QString modelH = nextH();    // *MODEL_SPACE 记录句柄（实体 owner）
+    const QString paperH = nextH();    // *PAPER_SPACE 记录句柄
+    const QString ownerH = modelH;
+    int section = 0;                   // 1 ENTITIES / 2 BLOCKS / 3 TABLES
+    const auto isCommon = [](int c) {  // AcDbEntity 之前的公共组（图层/颜色/线型等）
+        return c == 8 || c == 6 || c == 62 || c == 67 || c == 60 || c == 48
+            || c == 210 || c == 220 || c == 230 || c == 370 || c == 420
+            || c == 430 || c == 440 || c == 410 || c == 390 || c == 284 || c == 285;
+    };
+    const size_t n = tok.size();
+    size_t i = 0;
+    while (i < n) {
+        if (tok[i].code != 0) { out.push_back(tok[i]); ++i; continue; }
+        const QString t = tok[i].value.trimmed().toUpper();
+        if (t == "SECTION") {
+            if (i + 1 < n && tok[i + 1].code == 2) {
+                const QString sec = tok[i + 1].value.trimmed().toUpper();
+                section = (sec == "ENTITIES") ? 1 : (sec == "BLOCKS") ? 2 : (sec == "TABLES") ? 3 : 0;
+            }
+            out.push_back(tok[i]); ++i; continue;
+        }
+        if (t == "ENDSEC" || t == "EOF") { out.push_back(tok[i]); ++i; continue; }
+        if (t == "TABLE")  { section = 3; out.push_back(tok[i]); ++i; continue; }
+        if (t == "ENDTAB") { section = 0; out.push_back(tok[i]); ++i; continue; }
+        // 收集本对象（0 起始到下一个 0 / EOF 为止）的组
+        size_t j = i + 1;
+        while (j < n && tok[j].code != 0) ++j;
+        std::vector<DxfPair> obj(tok.begin() + i, tok.begin() + j);
+        // 注意：obj 已覆盖 tok[i..j-1]（不含下一个 0 类型头），循环末尾 i=j
+        // 已正确落到下一个实体的 0 头；此处不得再 ++j，否则会跳过该 0 头，
+        // 导致除每段首实体外的所有实体类型标记丢失（CIRCLE/POINT/HATCH 等被吞）。
+
+        out.push_back(obj[0]);                      // 0 <类型>
+        const QString h = nextH();
+        out.push_back({5, h});                      // 句柄
+        const bool isEntity = (section == 1 || section == 2
+            || t == "INSERT" || t == "ATTRIB" || t == "ATTDEF" || t == "DIMENSION"
+            || t == "HATCH" || t == "LINE" || t == "CIRCLE" || t == "ARC" || t == "TEXT"
+            || t == "MTEXT" || t == "POINT" || t == "SOLID" || t == "POLYLINE"
+            || t == "LWPOLYLINE" || t == "VERTEX" || t == "SEQEND" || t == "ELLIPSE"
+            || t == "SPLINE" || t == "BLOCK" || t == "ENDBLK" || t == "XLINE"
+            || t == "RAY" || t == "LEADER" || t == "3DFACE");
+        if (section == 3) {                         // 表记录
+            out.push_back({100, "AcDbSymbolTableRecord"});
+            const QString sub = acDbSubclass(t);
+            if (sub != "AcDbEntity") out.push_back({100, sub});
+        } else if (t == "BLOCK") {
+            // P0-01 修复：必须保留原 BLOCK 记录的组（2 块名 / 70 标志 / 10-30 基点 / 8 层），
+            // 否则回读时块名丢失、块定义被丢弃，INSERT 引用悬空。
+            out.push_back({100, "AcDbEntity"});
+            out.push_back({100, "AcDbBlockBegin"});
+            for (size_t k = 1; k < obj.size(); ++k) out.push_back(obj[k]);
+        } else if (t == "ENDBLK") {
+            out.push_back({100, "AcDbBlockEnd"});
+            for (size_t k = 1; k < obj.size(); ++k) out.push_back(obj[k]);
+        } else if (isEntity) {
+            out.push_back({330, ownerH});           // owner → *MODEL_SPACE
+            out.push_back({100, "AcDbEntity"});
+            for (size_t k = 1; k < obj.size(); ++k)  // 先写公共组（图层/颜色/线型）
+                if (isCommon(obj[k].code)) out.push_back(obj[k]);
+            const QString sub = acDbSubclass(t);     // 再写具体子类标记
+            if (sub != "AcDbEntity") out.push_back({100, sub});
+            for (size_t k = 1; k < obj.size(); ++k) { // 其余（几何数据等）
+                const int c = obj[k].code;
+                if (c == 5 || c == 330 || c == 100) continue;
+                if (isCommon(c)) continue;
+                out.push_back(obj[k]);
+            }
+        } else {
+            for (size_t k = 1; k < obj.size(); ++k) out.push_back(obj[k]);
+        }
+        i = j;
+    }
+    // 追加 OBJECTS 段（最小有效集：模型/图纸空间记录），使 owner 句柄可解析
+    out.push_back({0, "SECTION"});  out.push_back({2, "OBJECTS"});
+    out.push_back({0, "BLOCK_RECORD"}); out.push_back({5, modelH});
+    out.push_back({100, "AcDbBlockRecord"}); out.push_back({2, "*MODEL_SPACE"});  out.push_back({70, "0"});
+    out.push_back({0, "BLOCK_RECORD"}); out.push_back({5, paperH});
+    out.push_back({100, "AcDbBlockRecord"}); out.push_back({2, "*PAPER_SPACE"}); out.push_back({70, "0"});
+    out.push_back({0, "ENDSEC"}); out.push_back({0, "EOF"});
+
+    QStringList L;
+    for (const auto& p : out) L << QString::number(p.code) << p.value;
+    return L.join("\r\n");
+}
+
 // ---- 椭圆弧离散（DXF ELLIPSE 参数化：center + cos(t)·长轴 + sin(t)·短轴）----
 // 数学复核：点(t) = c + (a·cos t)·u + (b·sin t)·v，u,v 为长轴/短轴单位向量（v 由 u 旋转 90°）。
 static std::vector<Vec3> sampleEllipseArc(const Vec3& c, const Vec3& mj,
@@ -1763,28 +2064,10 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
     ++st.unknownEntities;
 }
 
-bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
-    if (err) err->clear();
-    DxfImportStats ls;
-    // 先按文件声明的代码页/内容判定解码：我们的写出端中文用 GBK（ANSI_936），
-    // 英文/纯 ASCII 用 ANSI_1252，别家 CAD 也可能给 UTF-8。
-    const std::vector<DxfPair> tok = tokenizeDxf(decodeDxfBytes(data));
-    if (tok.empty()) { if (err) *err = QStringLiteral("文件为空或不是 DXF 文本"); if (stats) *stats = ls; return false; }
-
-    // HEADER $INSUNITS：文件数值的度量口径（AutoCAD 标准码）。缺头/0=无单位按 mm
-    // 解释（不缩放）；其余码由调用方经 Units.h::scaleElementsToUnit 整体换算到 mm。
-    int insunits = 4;
-    for (size_t i = 0; i + 1 < tok.size(); ++i) {
-        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$INSUNITS", Qt::CaseInsensitive) == 0) {
-            if (tok[i + 1].code == 70) insunits = tok[i + 1].value.trimmed().toInt();
-            else for (size_t j = i + 1; j < std::min(tok.size(), i + 4); ++j)
-                if (tok[j].code >= 0 && tok[j].value.trimmed().toInt()) { insunits = tok[j].value.trimmed().toInt(); break; }
-            break;
-        }
-    }
-    ls.insunits = insunits;
-
-    // 扫描整份 token，按 SECTION 把实体分发给 Ctx.handleEntity（ENTITIES 与 BLOCKS 共用）。
+// 扫描 token 流并按 SECTION 分发实体（ENTITIES 与 BLOCKS 共用一套 handleEntity）。
+// 抽出为独立函数，供 fromDxf（ASCII）与 fromDxfBinary（二进制解码后）复用。
+// 返回 false 表示 ENTITIES 段里没有任何可识别图元。
+static bool parseDxfTokens(const std::vector<DxfPair>& tok, std::vector<Element>& out, DxfImportStats& ls) {
     DxfImportCtx C(out, ls);
     size_t i = 0;
     while (i < tok.size()) {
@@ -1836,15 +2119,68 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
     }
 
     if (C.count == 0) {
-        if (err) *err = QStringLiteral("ENTITIES 段里没有可识别的图元");
-        if (stats) *stats = ls;
+        ls.entities = 0; ls.arcsKept = C.arcsKept; ls.arcsDropped = C.arcsDropped;
         return false;
     }
     ls.entities    = C.count;
     ls.arcsKept    = C.arcsKept;
     ls.arcsDropped = C.arcsDropped;
+    return true;
+}
+
+bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
+    if (err) err->clear();
+    DxfImportStats ls;
+    // 先按文件声明的代码页/内容判定解码：我们的写出端中文用 GBK（ANSI_936），
+    // 英文/纯 ASCII 用 ANSI_1252，别家 CAD 也可能给 UTF-8。
+    const std::vector<DxfPair> tok = tokenizeDxf(decodeDxfBytes(data));
+    if (tok.empty()) { if (err) *err = QStringLiteral("文件为空或不是 DXF 文本"); if (stats) *stats = ls; return false; }
+
+    // P0-01 版本协商：探测 $ACADVER，不支持的版本（R2004 及以后）返回明确错误且不崩溃，
+    // 提示用户「另存为 2000 或更早版本」（AC1009/AC1014/AC1015/AC1018 均支持）。
+    const QString av = acadVerFromPairs(tok);
+    if (!av.isEmpty() && !isSupportedDxfVersion(av)) {
+        if (err) *err = QStringLiteral("不支持的文件版本：") + cadVerToHuman(av)
+                        + QStringLiteral("，请另存为 2000 或更早版本");
+        if (stats) *stats = ls;
+        return false;
+    }
+
+    // HEADER $INSUNITS：文件数值的度量口径（AutoCAD 标准码）。缺头/0=无单位按 mm
+    // 解释（不缩放）；其余码由调用方经 Units.h::scaleElementsToUnit 整体换算到 mm。
+    int insunits = 4;
+    for (size_t i = 0; i + 1 < tok.size(); ++i) {
+        if (tok[i].code == 9 && tok[i].value.trimmed().compare("$INSUNITS", Qt::CaseInsensitive) == 0) {
+            if (tok[i + 1].code == 70) insunits = tok[i + 1].value.trimmed().toInt();
+            else for (size_t j = i + 1; j < std::min(tok.size(), i + 4); ++j)
+                if (tok[j].code >= 0 && tok[j].value.trimmed().toInt()) { insunits = tok[j].value.trimmed().toInt(); break; }
+            break;
+        }
+    }
+    ls.insunits = insunits;
+
+    const bool ok = parseDxfTokens(tok, out, ls);
+    if (!ok) { if (err) *err = QStringLiteral("ENTITIES 段里没有可识别的图元"); if (stats) *stats = ls; return false; }
     if (stats) *stats = ls;
     return true;
+}
+
+// 二进制 DXF 回读：校验哨兵头 → 解码为 token 流 → 复用 fromDxf 的版本协商与实体分发。
+// R2000 的 100/5/330 标记在 handleEntity 中被自然忽略，故 ASCII 与二进制共用解析。
+bool fromDxfBinary(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
+    if (err) err->clear();
+    DxfImportStats ls;
+    QByteArray ascii;
+    if (!binaryDxfToAscii(data, ascii, err ? err : nullptr)) { if (stats) *stats = ls; return false; }
+    return fromDxf(ascii, out, err, stats);   // fromDxf 会再次做版本协商与计数校验
+}
+
+// 二进制 DXF 写出：生成（R12 或 R2000）文本 DXF 后序列化为带哨兵头的二进制容器。
+QByteArray toDxfBinary(const std::vector<Element>& elems, QString* err, double drawingScale,
+                       int insunits, const std::vector<BlockDef>* blocks, const DxfExportOptions* opts) {
+    DxfExportOptions o = opts ? *opts : DxfExportOptions{};
+    o.container = DxfContainer::Binary;        // 强制二进制容器；版本沿用 opts（默认 R12）
+    return toDxf(elems, err, drawingScale, insunits, blocks, &o);
 }
 
 // ============================================================================
@@ -1888,6 +2224,52 @@ std::vector<BlockDef> blockTableFromDxf(const QString& path) {
     QString err;
     if (fromDxf(data, dummy, &err, &st)) out = std::move(st.blocks);
     return out;
+}
+
+// =====================================================================
+//  P0-01：DXF 版本协商辅助（导出 API）
+// =====================================================================
+QString dxfVersionLabel(DxfVersion v) {
+    return v == DxfVersion::R2000 ? QStringLiteral("R2000") : QStringLiteral("R12");
+}
+
+// AutoCAD 内部版本串 → 人类可读名（用于打开失败时的清晰提示）
+QString cadVerToHuman(const QString& acadVer) {
+    const QString s = acadVer.trimmed().toUpper();
+    if (s == "AC1009") return QStringLiteral("DWG R12");
+    if (s == "AC1012") return QStringLiteral("DWG R13");
+    if (s == "AC1014") return QStringLiteral("DWG R14");
+    if (s == "AC1015") return QStringLiteral("DWG 2000");
+    if (s == "AC1018") return QStringLiteral("DWG 2000i");
+    if (s == "AC1021") return QStringLiteral("DWG 2004");
+    if (s == "AC1024") return QStringLiteral("DWG 2007");
+    if (s == "AC1027") return QStringLiteral("DWG 2013");
+    if (s == "AC1032") return QStringLiteral("DWG 2018");
+    return QStringLiteral("DWG ") + acadVer;
+}
+
+// 该 AutoCAD 版本串是否支持读取（R12/R13/R14/2000/2000i 支持；R2004+ 拒绝）
+bool isSupportedDxfVersion(const QString& acadVer) {
+    const QString s = acadVer.trimmed().toUpper();
+    return s.isEmpty() || s == "AC1009" || s == "AC1012" || s == "AC1014"
+        || s == "AC1015" || s == "AC1018";
+}
+
+// 探测字节流头部版本串（ASCII 走文本解码，Binary 走二进制组流）；
+// 无法识别 / 不支持时回落 R12（调用方应再用 isSupportedDxfVersion 判定是否拒绝）。
+DxfVersion detectDxfVersion(const QByteArray& data, bool isBinary) {
+    std::vector<DxfPair> tok;
+    if (isBinary) {
+        QByteArray ascii; QString e;
+        if (!binaryDxfToAscii(data, ascii, &e)) return DxfVersion::R12;
+        tok = tokenizeDxf(decodeDxfBytes(ascii));
+    } else {
+        tok = tokenizeDxf(decodeDxfBytes(data));
+    }
+    const QString av = acadVerFromPairs(tok);
+    if (av.isEmpty() || !isSupportedDxfVersion(av)) return DxfVersion::R12;
+    return (av == "AC1015" || av == "AC1014" || av == "AC1018" || av == "AC1012")
+        ? DxfVersion::R2000 : DxfVersion::R12;
 }
 
 } // namespace cadfmt

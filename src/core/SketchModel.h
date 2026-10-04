@@ -494,6 +494,13 @@ public:
     QJsonArray layoutsToJson() const;
     void       setLayoutsFromJson(const QJsonObject& root);
 
+    // ---- 集中式整图序列化入口（DRY，供写文件与自动保存快照共用）----
+    // 顶层 JSON 结构与 MainWindow::writeDrawing 的 Json 分支完全一致，不改动任何既有格式。
+    // toDrawingJson() 返回根对象；toDrawingBytes() 返回 Indented UTF-8 字节（Json 格式）。
+    // 注意：DXF/DWG/STEP 等非 Json 格式仍由 MainWindow 走 cadfmt 展开，此处只覆盖 Json 存档。
+    QJsonObject toDrawingJson() const;
+    QByteArray  toDrawingBytes() const;
+
     // ---- 全局线型比例（LTSCALE，随图存档，不入撤销栈）----
     // 控制所有虚线/点画线/双点画线的线素长度（dashSpecFor 图案整体缩放 LTSCALE 倍）。
     // 渲染（penFor）与打印（makePen）两侧共用 model_->ltscale()，保证屏幕与图纸比例一致。

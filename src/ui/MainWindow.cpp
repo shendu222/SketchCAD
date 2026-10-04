@@ -55,6 +55,13 @@
 #include "ui/PrintSettingsDialog.h"
 #include "ui/PrintPreviewDialog.h"
 #include "ui/PrintEngine.h"
+#include "ui/CrashRecoveryDialog.h"     // 启动恢复对话框（.sv$ 快照）
+#include "ui/AutoSaveOptionsDialog.h"   // 自动保存设置
+#include "core/AutoSave.h"              // 自动保存核心
+#include "core/AppSettings.h"           // 全局设置（HKCU\Software\SketchCAD）
+#include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
+#include "core/Diagnostics.h"           // 日志滚动落盘（供保存失败等记日志）
+#include "version.h"                    // 版本宏（由 CMake project VERSION 生成；关于对话框用）
 #include "core/Section.h"
 #include "core/SheetSpec.h"
 #include "core/Modify.h"
@@ -67,6 +74,13 @@
 #include <QToolButton>
 #include <QShortcut>     // 正交 F8 / 栅格吸附 F9 的全局快捷键
 #include <QComboBox>
+#include <QProgressDialog>   // P0-04：大图纸解析进度（可取消）
+#include <QEventLoop>        // P0-04：模态等待事件循环
+#include <QFutureWatcher>    // P0-04：线程池任务完成通知
+#include <QDateTime>         // P0-04：打开耗时计时
+#include <QtConcurrent/QtConcurrent>   // P0-04：QtConcurrent::run 后台解析
+#include <atomic>            // P0-04：解析取消标志
+#include <new>               // P0-04：std::bad_alloc
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QColorDialog>
@@ -83,6 +97,7 @@
 #include <QDir>
 #include <QPrinter>
 #include <QPrintDialog>
+#include <QPrinterInfo>      // 选项：默认打印设备（可用打印机名列表）
 #include <QMessageBox>
 #include <QPushButton>
 #include <QJsonDocument>
@@ -99,6 +114,7 @@
 #include <QScreen>
 #include <QShowEvent>
 #include <QTimer>
+#include <QCloseEvent>
 #include <cmath>
 
 #ifndef M_PI
@@ -195,6 +211,10 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     statusBar_->setCount(0);
     statusBar_->setPlaneInfo(planeName(model_->plane()));
     statusBar_->setDrawScale(model_->scaleLabel());
+    // P0-04 数据面板：场景项数变化（打开/裁剪补建/批量同步）时刷新「场景项 M / 打开 Xms」
+    connect(view_, &GraphicsView::sceneStatsChanged, this, [this] {
+        statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
+    });
     model_->log(QStringLiteral("航空CAD 草图模块已启动 (C++17 / Qt6)"));
 
     // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「状态栏按钮」与「快捷键」----
@@ -248,6 +268,351 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
                     avail.top() + (avail.height() - h) / 2,
                     w, h);
     }
+
+    setupAutoSave();   // 崩溃不丢稿：配置 + 自动保存 + 恢复（须在 statusBar_ 就绪后）
+
+    // 应用级配置持久化：注册表读入用户习惯（几何/布局/显示开关/最近文件）。
+    // setupAutoSave 已建好 appSettings_；此函数只做读取与回放，不阻塞启动。
+    loadAppSettingsOnStartup();
+}
+
+// ---- 崩溃不丢稿：自动保存 + 恢复 ----
+
+void MainWindow::setupAutoSave() {
+    appSettings_ = new SketchCAD::AppSettings(nullptr, this);
+    autoSave_ = new SketchCAD::AutoSave(this);
+
+    // 快照字节来源与「写盘」同一序列化入口（SketchModel::toDrawingBytes），
+    // 保证恢复出来的内容与当时保存的完全一致。
+    autoSave_->setProvider([this]{ return model_->toDrawingBytes(); });
+    autoSave_->setIntervalMinutes(appSettings_->autosaveIntervalMinutes());
+    autoSave_->setLowDiskThresholdMb(appSettings_->lowDiskThresholdMb());
+    autoSave_->setCurrentDrawing(model_->drawingPath());
+
+    // 状态栏：显示「上次自动保存 HH:MM」；点击手动触发一次
+    statusBar_->setAutosaveEnabled(autoSave_->intervalMinutes() > 0);
+    connect(statusBar_, &StatusBar::manualSaveRequested, this, [this]{
+        if (!autoSave_ || autoSave_->intervalMinutes() <= 0) {
+            QMessageBox::information(this, QStringLiteral("自动保存"),
+                QStringLiteral("自动保存当前处于关闭状态。\n可在「文件 → 自动保存设置...」中开启。"));
+            return;
+        }
+        autoSave_->saveNow();   // saved / saveFailed 信号已接，统一回写状态栏
+    });
+
+    // 每次保存成功：状态栏刷新时间 + 日志留痕
+    connect(autoSave_, &SketchCAD::AutoSave::saved, this, [this](const QString& p){
+        statusBar_->setLastAutosave(autoSave_->lastSaved());
+        model_->log(QStringLiteral("已自动保存：%1").arg(QFileInfo(p).fileName()));
+    });
+
+    // 保存失败：明确对话框 + 日志（禁止静默失败）
+    connect(autoSave_, &SketchCAD::AutoSave::saveFailed, this, [this](const QString& reason){
+        model_->log(QStringLiteral("自动保存失败：%1").arg(reason), QStringLiteral("error"));
+        SketchCAD::Diagnostics::writeLog(QStringLiteral("自动保存失败：%1").arg(reason), "error");
+        QMessageBox::warning(this, QStringLiteral("自动保存失败"),
+            QStringLiteral("自动保存失败：\n%1\n\n图纸仍在内存中，请尽快手动「文件 → 保存...」。").arg(reason));
+    });
+
+    // 磁盘余量提前告警（< 阈值，默认 100MB）
+    connect(autoSave_, &SketchCAD::AutoSave::lowDisk, this, [this](qint64 free, int thr){
+        const QString msg = QStringLiteral("磁盘剩余空间仅 %1 MB，低于阈值 %2 MB。\n"
+                                          "自动保存可能失败，请清理磁盘或更换保存位置。")
+                            .arg(free / 1024 / 1024).arg(thr);
+        model_->log(msg, QStringLiteral("error"));
+        SketchCAD::Diagnostics::writeLog(msg, "warning");
+        QMessageBox::warning(this, QStringLiteral("磁盘空间不足"), msg);
+    });
+
+    // 模型变化 = 一次「用户操作」→ 累计到阈值触发一次保存
+    connect(model_, &SketchModel::modelChanged, this, [this]{
+        if (recovering_) return;      // 恢复读档过程中的联动刷新不算用户操作
+        if (autoSave_) autoSave_->noteOperation();
+    });
+
+    autoSave_->start();
+
+    // 启动扫描：发现残留快照（上次异常退出）则弹恢复对话框
+    QTimer::singleShot(0, this, [this]{ offerCrashRecovery(); });
+}
+
+void MainWindow::offerCrashRecovery() {
+    const QVector<SketchCAD::AutoSave::Snapshot> snaps = SketchCAD::AutoSave::scanSnapshots();
+    if (snaps.isEmpty()) return;
+
+    // 先清掉 .tmp 半写残留（无恢复价值），避免它们长期堆积占空间
+    SketchCAD::AutoSave::cleanupTempFiles();
+
+    auto* dlg = new CrashRecoveryDialog(snaps, this);
+    connect(dlg, &CrashRecoveryDialog::recoverRequested,
+            this, &MainWindow::onAutoSaveRecovered);
+    connect(dlg, &CrashRecoveryDialog::discardRequested,
+            this, &MainWindow::onAutoSaveDiscarded);
+    connect(dlg, &CrashRecoveryDialog::discardAllRequested,
+            this, &MainWindow::onAutoSaveDiscardAll);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->show();
+}
+
+void MainWindow::onAutoSaveRecovered(const SketchCAD::AutoSave::Snapshot& s) {
+    const QString origin = s.originPath.isEmpty() ? QString() : s.originPath;
+
+    // 原路径缺失或已被占用（同路径已有图纸）→ 不静默覆盖，先问用户
+    QString target = origin;
+    if (target.isEmpty() || target == QStringLiteral("(未保存)")) {
+        target = QFileDialog::getSaveFileName(this, QStringLiteral("恢复为"),
+            QString(), QStringLiteral("草图文件 (*.json)"));
+        if (target.isEmpty()) return;   // 用户取消 → 快照保留
+    } else if (QFile::exists(target)) {
+        const auto a = QMessageBox::question(this, QStringLiteral("原文件已存在"),
+            QStringLiteral("原图纸已存在：\n%1\n\n"
+                           "「是」= 用快照覆盖它；「否」= 另存为新文件；「取消」= 不恢复。").arg(target),
+            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Cancel);
+        if (a == QMessageBox::Cancel) return;
+        if (a == QMessageBox::No) {
+            target = QFileDialog::getSaveFileName(this, QStringLiteral("另存为"),
+                target, QStringLiteral("草图文件 (*.json)"));
+            if (target.isEmpty()) return;
+        }
+    }
+
+    QString err;
+    if (!SketchCAD::AutoSave::restoreSnapshot(s.fullPath, target, &err)) {
+        model_->log(QStringLiteral("恢复失败：%1").arg(err), QStringLiteral("error"));
+        SketchCAD::Diagnostics::writeLog(QStringLiteral("恢复失败：%1").arg(err), "error");
+        QMessageBox::critical(this, QStringLiteral("恢复失败"), err);
+        return;
+    }
+
+    // 读档：recovering_ 抑制期间的 modelChanged 不计操作，避免刚恢复就被自动保存覆盖
+    recovering_ = true;
+    readDrawing(target, &err);
+    recovering_ = false;
+    if (autoSave_) autoSave_->setCurrentDrawing(target);
+
+    // 恢复成功后删掉这份快照（避免下次启动重复提示）
+    SketchCAD::AutoSave::discardSnapshot(s.fullPath);
+
+    model_->log(QStringLiteral("已从自动保存恢复：%1").arg(target));
+    SketchCAD::Diagnostics::writeLog(QStringLiteral("已从自动保存恢复：%1").arg(target), "info");
+    QMessageBox::information(this, QStringLiteral("恢复完成"),
+        QStringLiteral("已恢复自动保存的内容：\n%1").arg(target));
+}
+
+void MainWindow::onAutoSaveDiscarded(const SketchCAD::AutoSave::Snapshot& s) {
+    if (SketchCAD::AutoSave::discardSnapshot(s.fullPath))
+        model_->log(QStringLiteral("已丢弃自动保存快照：%1").arg(s.file));
+    else
+        model_->log(QStringLiteral("丢弃快照失败：%1").arg(s.file), QStringLiteral("error"));
+}
+
+void MainWindow::onAutoSaveDiscardAll() {
+    const QVector<SketchCAD::AutoSave::Snapshot> snaps = SketchCAD::AutoSave::scanSnapshots();
+    int n = 0;
+    for (const auto& s : snaps)
+        if (SketchCAD::AutoSave::discardSnapshot(s.fullPath)) ++n;
+    model_->log(QStringLiteral("已丢弃 %1 份自动保存快照").arg(n));
+}
+
+void MainWindow::openAutoSaveOptions() {
+    if (!appSettings_ || !autoSave_) return;
+    AutoSaveOptionsDialog dlg(autoSave_->intervalMinutes(),
+                              autoSave_->operationThreshold(),
+                              autoSave_->lowDiskThresholdMb(), this);
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    // 落地：配置持久化 + 重建定时器 + 状态栏同步
+    appSettings_->setAutosaveIntervalMinutes(dlg.intervalMinutes());
+    appSettings_->setLowDiskThresholdMb(dlg.lowDiskMb());
+    autoSave_->setIntervalMinutes(dlg.intervalMinutes());
+    autoSave_->setOperationThreshold(dlg.opThreshold());
+    autoSave_->setLowDiskThresholdMb(dlg.lowDiskMb());
+    if (autoSave_->intervalMinutes() > 0) autoSave_->start();
+    else autoSave_->stop();
+    statusBar_->setAutosaveEnabled(autoSave_->intervalMinutes() > 0);
+    statusBar_->setLastAutosave(autoSave_->lastSaved());
+
+    model_->log(QStringLiteral("自动保存间隔：%1")
+        .arg(autoSave_->intervalMinutes() > 0
+                 ? QStringLiteral("%1 分钟").arg(autoSave_->intervalMinutes())
+                 : QStringLiteral("关闭")));
+}
+
+// ==================== 应用级配置持久化（AppSettings + 选项对话框） ====================
+
+bool MainWindow::s_recentPersistEnabled = true;   // 自测置 false：离屏测试不写注册表
+
+// 启动载入：把注册表里的「用户习惯」回放到界面。只读取，不写入，不阻塞启动。
+void MainWindow::loadAppSettingsOnStartup() {
+    if (!appSettings_) return;
+    using namespace SettingKeys;
+
+    // 窗口几何与面板布局：恢复成功则跳过首显的居中校正（否则会覆盖用户习惯）
+    bool geometryRestored = false;
+    const QByteArray geo = appSettings_->windowGeometry();
+    if (!geo.isEmpty()) geometryRestored = restoreGeometry(geo);
+    const QByteArray dockState = appSettings_->windowState();
+    if (!dockState.isEmpty()) restoreState(dockState);
+    if (geometryRestored) firstShow_ = false;
+
+    // 显示开关 → 模型（单一状态源）；菜单勾选/状态栏按钮经既有 *Changed 信号自动同步。
+    // 逐键走 applySettingLive，与「选项」对话框的预览/回滚共用同一条分派逻辑。
+    applySettingLive(QLatin1String(kShowGrid),       appSettings_->value(QLatin1String(kShowGrid)));
+    applySettingLive(QLatin1String(kGridSnap),       appSettings_->value(QLatin1String(kGridSnap)));
+    applySettingLive(QLatin1String(kGridSnapStep),   appSettings_->value(QLatin1String(kGridSnapStep)));
+    applySettingLive(QLatin1String(kOrtho),          appSettings_->value(QLatin1String(kOrtho)));
+    applySettingLive(QLatin1String(kDynMode),        appSettings_->value(QLatin1String(kDynMode)));
+    applySettingLive(QLatin1String(kShowLineWeight), appSettings_->value(QLatin1String(kShowLineWeight)));
+
+    // 自动保存参数已由 setupAutoSave 从 AppSettings 读入，无需重复。
+
+    // 上次退出时的打印页面设置快照 → 本次「打印设置/预览/导出 PDF」的起始值
+    //（AppSettings 校验层已保证该键是合法 JSON 或空串，损坏数据不会到达这里）
+    const QString pj = appSettings_->printDefaultsJson();
+    if (!pj.isEmpty()) {
+        const QJsonDocument pdoc = QJsonDocument::fromJson(pj.toUtf8());
+        if (pdoc.isObject()) currentPrintSettings_.fromJson(pdoc.object());
+    }
+
+    // 最近文件
+    recentFiles_ = appSettings_->recentFiles();
+    rebuildRecentMenu();
+
+    // 之后所有设置变更（对话框应用/取消回滚/导入）都走这一条统一消费点
+    connect(appSettings_, &AppSettings::settingChanged,
+            this, &MainWindow::applySettingLive);
+}
+
+// settingChanged 统一消费点：对话框「应用」即时预览、「取消」回滚、启动回放共用。
+// 每个分支把值写入它的真实归宿（模型/自动保存/最近文件），不另存第二份状态。
+void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
+    if (!model_) return;
+    using namespace SettingKeys;
+    if (key == QLatin1String(kShowGrid)) {
+        model_->setShowGrid(v.toBool());
+    } else if (key == QLatin1String(kGridSnap)) {
+        model_->setGridSnap(v.toBool());
+    } else if (key == QLatin1String(kGridSnapStep)) {
+        model_->setGridSnapStep(v.toDouble());
+    } else if (key == QLatin1String(kOrtho)) {
+        model_->setOrthoMode(v.toBool());
+    } else if (key == QLatin1String(kDynMode)) {
+        model_->setDynMode(v.toBool());
+    } else if (key == QLatin1String(kShowLineWeight)) {
+        model_->setShowLineWeight(v.toBool());
+    } else if (key == QLatin1String(kAutosaveInterval)) {
+        if (!autoSave_) return;
+        autoSave_->setIntervalMinutes(v.toInt());
+        if (v.toInt() > 0) autoSave_->start(); else autoSave_->stop();
+        statusBar_->setAutosaveEnabled(v.toInt() > 0);
+    } else if (key == QLatin1String(kLowDiskMb)) {
+        if (autoSave_) autoSave_->setLowDiskThresholdMb(v.toInt());
+    } else if (key == QLatin1String(kRecentFileCount)) {
+        while (recentFiles_.size() > v.toInt()) recentFiles_.removeLast();
+        rebuildRecentMenu();
+    } else if (key == QLatin1String(kRecentList)) {
+        recentFiles_ = v.toStringList();
+        rebuildRecentMenu();
+    }
+    // 其余键（目录/打印设备/用户信息/语言/GPU 预留）由消费点在各自使用时机读取，
+    // 无需即时动作。
+}
+
+// 关闭保存：窗口几何/面板布局/显示开关/打印设置 → AppSettings；写失败必须提示。
+void MainWindow::saveAppSettingsOnClose() {
+    if (!appSettings_) return;
+    using namespace SettingKeys;
+
+    appSettings_->setWindowGeometry(saveGeometry());
+    appSettings_->setWindowState(saveState());
+    // 显示开关从模型（单一状态源）抄回配置
+    appSettings_->setShowGrid(model_->showGrid());
+    appSettings_->setGridSnap(model_->gridSnap());
+    appSettings_->setGridSnapStep(model_->gridSnapStep());
+    appSettings_->setOrthoMode(model_->orthoMode());
+    appSettings_->setDynMode(model_->dynMode());
+    appSettings_->setShowLineWeight(model_->showLineWeight());
+    // 最近文件与上次目录
+    appSettings_->setRecentFiles(recentFiles_);
+    // 打印页面设置快照（下次启动作为「打印设置」对话框的起始值）
+    appSettings_->setPrintDefaultsJson(
+        QString::fromUtf8(QJsonDocument(currentPrintSettings_.toJson()).toJson(QJsonDocument::Compact)));
+
+    if (!appSettings_->syncAndCheck()) {
+        // 写入失败必须提示（禁止静默失败）：明确告知 + 日志留痕
+        const QString msg = QStringLiteral("应用配置写入失败：%1\n窗口位置、面板布局等本次改动可能无法在下一次启动时恢复。")
+                                .arg(appSettings_->lastError());
+        SketchCAD::Diagnostics::writeLog(msg, "error");
+        QMessageBox::warning(this, QStringLiteral("配置写入失败"), msg);
+    }
+}
+
+void MainWindow::openOptionsDialog() {
+    if (!appSettings_) return;
+    OptionsDialog dlg(appSettings_, this);
+    dlg.exec();
+    // 应用/取消的写失败提示由对话框负责；此处仅补日志留痕
+    if (appSettings_->lastWriteFailed())
+        model_->log(QStringLiteral("配置写入失败：%1").arg(appSettings_->lastError()),
+                    QStringLiteral("error"));
+}
+
+// ---- 最近文件 ----
+
+void MainWindow::pushRecentFile(const QString& path) {
+    if (path.isEmpty()) return;
+    recentFiles_.removeAll(path);
+    recentFiles_.prepend(path);
+    const int maxN = appSettings_ ? appSettings_->recentFileCount() : 10;
+    while (recentFiles_.size() > qMax(0, maxN)) recentFiles_.removeLast();
+    if (s_recentPersistEnabled && appSettings_)
+        appSettings_->setRecentFiles(recentFiles_);   // 触发 settingChanged → rebuildRecentMenu
+    else
+        rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu() {
+    if (!recentMenu_) return;
+    recentMenu_->clear();
+    const int maxN = appSettings_ ? appSettings_->recentFileCount() : 10;
+    if (recentFiles_.isEmpty() || maxN <= 0) {
+        QAction* a = recentMenu_->addAction(QStringLiteral("（空）"));
+        a->setEnabled(false);
+        return;
+    }
+    int shown = 0;
+    for (const QString& p : recentFiles_) {
+        if (shown >= maxN) break;
+        QAction* a = recentMenu_->addAction(QFileInfo(p).fileName());
+        a->setStatusTip(p);
+        a->setToolTip(p);
+        connect(a, &QAction::triggered, this, [this, p] { readDrawing(p, nullptr); });
+        ++shown;
+    }
+    recentMenu_->addSeparator();
+    recentMenu_->addAction(QStringLiteral("清除最近文件历史"), this, [this] {
+        recentFiles_.clear();
+        if (s_recentPersistEnabled && appSettings_)
+            appSettings_->setRecentFiles(recentFiles_);   // 信号触发重建
+        else
+            rebuildRecentMenu();
+    });
+}
+
+// 文件对话框起始目录：默认存盘目录 > 上次目录 > 系统默认（空串）
+QString MainWindow::rememberDialogDir() const {
+    if (!appSettings_) return QString();
+    const QString d = appSettings_->defaultSaveDir();
+    return d.isEmpty() ? appSettings_->lastDir() : d;
+}
+
+void MainWindow::closeEvent(QCloseEvent* e) {
+    // 记住用户习惯：几何/布局/显示开关/最近文件/打印设置（写失败会弹窗提示）
+    saveAppSettingsOnClose();
+    // 正常退出：停定时器 + 清理 .tmp 半写残留（正式 .sv$ 保留，供下次恢复）
+    if (autoSave_) autoSave_->stop();
+    SketchCAD::AutoSave::cleanupTempFiles();
+    e->accept();
 }
 
 // 把窗口几何校正到"所在屏幕可用区域"内：外框(含标题栏)完全落进可用区域并整体居中，
@@ -335,6 +700,28 @@ void MainWindow::buildMenu() {
         return a;
     };
 
+    // 命令补齐：菜单/工具条与命令行共用同一 CommandInterpreter 处理器（菜单项直接走 interp_->execute，与命令行同一 handler）。
+    // 文字类命令需参数，菜单点击时以对话框收集后交给解释器（同一 handler）。
+    auto dlgText = [this](bool multi) {
+        bool ok = false;
+        QString pos = QInputDialog::getText(this, multi ? QStringLiteral("多行文字") : QStringLiteral("单行文字"),
+                                            QStringLiteral("插入点 x,y："), QLineEdit::Normal, QStringLiteral("0,0"), &ok);
+        if (!ok || pos.isEmpty()) return;
+        bool ok2 = false;
+        double h = QInputDialog::getDouble(this, QStringLiteral("字高"), QStringLiteral("字高(mm)："), 3.5, 0.1, 1000.0, 2, &ok2);
+        if (!ok2) return;
+        bool ok3 = false;
+        QString content = QInputDialog::getText(this, QStringLiteral("内容"), QStringLiteral("文字内容："), QLineEdit::Normal, QString(), &ok3);
+        if (!ok3) return;
+        interp_->execute(QStringLiteral("%1 %2 %3 %4")
+                             .arg(multi ? QStringLiteral("mtext") : QStringLiteral("text")).arg(pos).arg(h, 0, 'f', 2).arg(content));
+    };
+    auto dlgDdedit = [this]() {
+        bool ok = false;
+        QString content = QInputDialog::getText(this, QStringLiteral("编辑文字"), QStringLiteral("新内容："), QLineEdit::Normal, QString(), &ok);
+        if (ok && !content.isEmpty()) interp_->execute(QStringLiteral("ddedit ") + content);
+    };
+
     QMenu* f = new QMenu(QStringLiteral("文件(&F)"), this);
     f->setObjectName("menuFile");
     mk(f, QStringLiteral("新建"),        QKeySequence::New,  [this] {
@@ -366,10 +753,19 @@ void MainWindow::buildMenu() {
     mk(f, QStringLiteral("捕捉设置..."), QKeySequence(), [this] {
             openSnapSettings();
         });
+    // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）
+    mk(f, QStringLiteral("自动保存设置..."), QKeySequence(), [this] {
+            openAutoSaveOptions();
+        });
     mk(f, QStringLiteral("打开..."),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
     mk(f, QStringLiteral("保存..."),      QKeySequence::Save, [this] { saveFile(); })
         ->setIcon(icons::make("save"));
+    // 最近打开：动态子菜单（条目数 = 选项里的「最近文件数」，列表随成功读档更新）
+    recentMenu_ = new QMenu(QStringLiteral("最近打开(&R)"), f);
+    recentMenu_->setObjectName("menuRecent");
+    f->addMenu(recentMenu_);
+    rebuildRecentMenu();
     f->addSeparator();
     mk(f, QStringLiteral("导出 DXF..."),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
         ->setIcon(icons::make("export"));
@@ -913,6 +1309,14 @@ void MainWindow::buildMenu() {
         buildBlockMenu(blk);
     }
 
+    // ---- 命令补齐：修改类命令（与命令行共用 interp_->execute）----
+    mk(mod, QStringLiteral("多段线编辑(&P)..."), QKeySequence(), [this] { interp_->execute("pedit"); });
+    mk(mod, QStringLiteral("特性匹配(&M)"),       QKeySequence(), [this] { interp_->execute("matchprop"); });
+    mk(mod, QStringLiteral("删除重复对象(&O)"),   QKeySequence(), [this] { interp_->execute("overkill"); });
+    mk(mod, QStringLiteral("写块(&W)..."),        QKeySequence(), [this] { interp_->execute("wblock"); });
+    mk(mod, QStringLiteral("插入块(&I)..."),      QKeySequence(), [this] { interp_->execute("insert"); });
+    mk(mod, QStringLiteral("清理(&U)"),           QKeySequence(), [this] { interp_->execute("purge"); });
+
     e->addSeparator();
     // 挂到【编辑】菜单下（不再作为顶级菜单），保持「编辑类功能一个入口」
     e->addMenu(mod);
@@ -998,6 +1402,14 @@ void MainWindow::buildMenu() {
     QMenu* s = new QMenu(QStringLiteral("绘图(&D)"), this);
     s->setObjectName("menuDraw");
     buildSketchMenu(s);
+    // ---- 命令补齐：绘图类命令（与命令行共用 interp_->execute）----
+    mk(s, QStringLiteral("图案填充(&H)..."), QKeySequence(), [this] { interp_->execute("hatch"); });
+    mk(s, QStringLiteral("边界填充(&B)..."), QKeySequence(), [this] { interp_->execute("bhatch"); });
+    mk(s, QStringLiteral("单行文字(&T)..."), QKeySequence(), [this, dlgText] { dlgText(false); });
+    mk(s, QStringLiteral("多行文字(&M)..."), QKeySequence(), [this, dlgText] { dlgText(true); });
+    mk(s, QStringLiteral("编辑文字(&E)..."), QKeySequence(), [this, dlgDdedit] { dlgDdedit(); });
+    mk(s, QStringLiteral("定距等分(&D)..."), QKeySequence(), [this] { interp_->execute("measure"); });
+    mk(s, QStringLiteral("形位公差(&G)..."), QKeySequence(), [this] { interp_->execute("tol"); });
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
@@ -1057,6 +1469,7 @@ void MainWindow::buildMenu() {
         model_->log(QStringLiteral("已恢复全部面板"));
     });
     v->addMenu(panels);
+    mk(v, QStringLiteral("重生成(&R)"), QKeySequence("F5"), [this] { interp_->execute("regen"); });
     bar->addMenu(v);
 
     // ---- 脚本（二次开发宿主）----
@@ -1178,11 +1591,35 @@ void MainWindow::buildMenu() {
     refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
     bar->addMenu(plug);
 
+    // ---- 工具（统一「选项」入口：应用级配置持久化 + 分类树表单）----
+    QMenu* tools = new QMenu(QStringLiteral("工具(&T)"), this);
+    tools->setObjectName("menuTools");
+    mk(tools, QStringLiteral("选项..."), QKeySequence(), [this] { openOptionsDialog(); });
+    // ---- 命令补齐：格式/工具类命令（与命令行共用 interp_->execute）----
+    mk(tools, QStringLiteral("线型(&L)..."), QKeySequence(), [this] { interp_->execute("linetype"); });
+    mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); });
+    bar->addMenu(tools);
+
     QMenu* h = new QMenu(QStringLiteral("帮助(&H)"), this);
     h->setObjectName("menuHelp");
     mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); });
     mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
-        model_->log(QStringLiteral("航空CAD 草图模块 v1.0 — C++17 / Qt6 实现")); });
+        // 版本号来自 version.h（CMake project VERSION 生成的宏），
+        // 与 exe 文件属性（app.rc）、安装包名（installer.iss）同源于同一个版本号，
+        // 三者天然一致，不会出现「关于显示 1.1.0、属性却是 1.0.0」的商用事故。
+        model_->log(QStringLiteral("航空CAD 草图模块 v%1 — C++17 / Qt6 实现")
+                        .arg(QString::fromLatin1(SKETCHCAD_VERSION)));
+        QMessageBox::about(this, QStringLiteral("关于 SketchCAD"),
+            QStringLiteral(
+                "<h3>SketchCAD 草图设计系统</h3>"
+                "<p><b>版本</b>：%1（文件属性 %2）</p>"
+                "<p><b>版权所有</b>：%3</p>"
+                "<p>基于 C++17 / Qt 6 构建，核心几何与约束求解为自研实现。</p>"
+                "<p>本软件为专有商业软件，详见安装目录内 LICENSE.txt。</p>")
+                .arg(QString::fromLatin1(SKETCHCAD_VERSION),
+                     QString::fromLatin1(SKETCHPAD_VERSION),
+                     QString::fromUtf8(SKETCHCAD_COPYRIGHT)));
+    });
     bar->addMenu(h);
 }
 
@@ -1415,8 +1852,16 @@ void MainWindow::exportPdfLayoutsDirect() {
 
 void MainWindow::printDirect() {
     QPrinter printer(QPrinter::HighResolution);
+    // 选项里配置的默认打印设备：存在才使用，否则回落系统默认
+    if (appSettings_ && !appSettings_->printerName().isEmpty()) {
+        if (QPrinterInfo::availablePrinterNames().contains(appSettings_->printerName()))
+            printer.setPrinterName(appSettings_->printerName());
+    }
     QPrintDialog dlg(&printer, this);
     if (dlg.exec() != QDialog::Accepted) return;
+    // 记住本次实际使用的设备（用户习惯，供下次直接打印与选项回显）
+    if (appSettings_ && !printer.printerName().isEmpty())
+        appSettings_->setPrinterName(printer.printerName());
     if (!PrintEngine::print(model_, currentPrintSettings_, &printer))
         model_->log(QStringLiteral("打印失败"), "warn");
     else
@@ -3006,7 +3451,7 @@ namespace {
 QStringList saveNameFilters() {
     return {
         QStringLiteral("草图文件 (*.json)"),
-        QStringLiteral("AutoCAD DXF 图形交换 (*.dxf)"),
+        QStringLiteral("AutoCAD DXF (R12/R2000) 图形交换 (*.dxf)"),
         QStringLiteral("STEP 三维交换 (*.step *.stp)"),
         QStringLiteral("AutoCAD DWG 图形 (*.dwg)"),
     };
@@ -3034,6 +3479,9 @@ void MainWindow::saveFile() {
     dlg.selectNameFilter(saveNameFilters().first());
     dlg.setDefaultSuffix(QStringLiteral("json"));
     dlg.selectFile(QStringLiteral("sketch.json"));
+    // 起始目录习惯：默认存盘目录 > 上次目录 > 系统默认
+    const QString startDir = rememberDialogDir();
+    if (!startDir.isEmpty()) dlg.setDirectory(startDir);
     connect(&dlg, &QFileDialog::filterSelected, &dlg, [&dlg](const QString& f) {
         const QString sfx = suffixOfFilter(f);
         if (!sfx.isEmpty()) dlg.setDefaultSuffix(sfx);      // 切格式时自动带上对应扩展名
@@ -3049,8 +3497,12 @@ void MainWindow::saveFile() {
         if (fmt == cadfmt::CadFormat::Unknown) fmt = cadfmt::CadFormat::Json;
         fn += QLatin1Char('.') + cadfmt::defaultSuffix(fmt);
     }
+    if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
 
     // DWG：已实现原生 R12 (AC1009) 二进制写出（见 CadFormats::toDwg），直接落盘即可。
+    // DXF：弹出版本下拉（R12 默认 / R2000），写入 dxfSaveOptions_ 供 writeDrawing 采用。
+    if (fmt == cadfmt::CadFormat::Dxf)
+        dxfSaveOptions_.version = chooseDxfVersion();
     writeDrawing(fn, nullptr);
 }
 
@@ -3083,29 +3535,6 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     cadfmt::CadFormat fmt = cadfmt::formatFromPath(path);
     if (fmt == cadfmt::CadFormat::Unknown) fmt = cadfmt::CadFormat::Json;
 
-    // 草图 JSON 的完整内容（也是 STEP/DXF 之外的兜底格式）
-    QJsonObject root;
-    root["app"] = QStringLiteral("SketchCAD");
-    root["formatVersion"] = 1;
-    root["scaleRatio"] = model_->scaleRatio();         // 比例随图存档，打开时恢复
-    root["ltscale"] = model_->ltscale();               // 全局线型比例随图存档，打开时恢复
-    QJsonArray arr;
-    for (const auto& e2 : model_->elements()) arr.append(elementToJson(e2));
-    root["elements"] = arr;
-    root["layers"] = model_->layersToJson();   // 图层表随图存档（旧文件无此字段则读回时回退单层"0"）
-    root["blocks"] = model_->blocksToJson();   // 块表随图存档（旧文件无此字段则读回时无块定义）
-    root["textStyles"] = model_->textStylesToJson();   // 文字样式表随图存档（旧文件无此字段则回落单一默认 "Standard"）
-    root["dimStyles"] = model_->dimStylesToJson();     // 标注样式表随图存档（旧文件无此字段则回落单一默认 "Standard"）
-    root["savedFilters"] = model_->savedFiltersToJson(); // 命名过滤器随图存档（检索配置，不入撤销栈）
-    root["layouts"] = model_->layoutsToJson();           // 布局表随图存档（旧文件无此键 → 空表回落模型空间打印）
-    root["currentLayout"] = model_->currentLayout();     // 当前布局名（空 = 模型空间）
-    root["units"]  = model_->units().toJson();   // 单位口径随图存档（旧文件无此键 → 回落 mm/度/2 位）
-    root["limits"] = model_->limits().toJson();  // 图纸界限随图存档（旧文件无此键 → 回落 A3/不检查）
-    root["snapConfig"] = model_->snapConfig().toJson();  // 捕捉全局配置随图存档（旧文件无此键 → 回落默认）
-    root["trackConfig"] = model_->trackConfig().toJson(); // 追踪全局配置随图存档（旧文件无此键 → 回落默认）
-    root["constraints"] = model_->constraintsToJson();    // 显式几何约束随图存档（旧文件无此键 → 空表）
-    root["params"] = model_->paramsToJson();              // 命名设计变量表随图存档（旧文件无此键 → 空表，Request M 新增）
-
     // 导出用图元：DXF/DWG/STEP 都不认识 BlockRef，导出前把块引用展开为其真实子图元，
     // 保证"导出物即所见"（几何不丢；块引用实例的层级关系仅在本程序 JSON 中保留）。
     std::vector<Element> exp;
@@ -3126,7 +3555,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     case cadfmt::CadFormat::Dxf: {
         // 原生导出：块/标注/填充以原生实体写出（AutoCAD/ZWCAD 打开后标注与填充可编辑、
         // 块不展开）。DWG/STEP 仍走预炸开的 exp（R12 二进制容器与 STEP 无块/标注语义）。
-        cadfmt::DxfExportOptions no;
+        // P0-01：版本由 dxfSaveOptions_ 携带（默认 R12，逐字节兼容旧档；另存为 DXF 时弹框选）
+        cadfmt::DxfExportOptions no = dxfSaveOptions_;
         no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
         // $INSUNITS 携带当前单位口径（AutoCAD 标准码），跨单位交换的语义锚点
         out = cadfmt::toDxf(model_->elements(), &e, ds, insunitsCode(model_->units().length),
@@ -3146,7 +3576,7 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     case cadfmt::CadFormat::Json:
     default:
         fmt = cadfmt::CadFormat::Json;
-        out = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        out = model_->toDrawingBytes();   // 集中式整图序列化入口（与 AutoSave 快照同源）
         break;
     }
     if (out.isEmpty()) {
@@ -3165,6 +3595,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     f.close();
     // 登记图纸路径：外部参照的「相对路径」以此为解析基准
     model_->setDrawingPath(path);
+    // 自动保存的「原路径」随之更新（换名/另存为后，下次恢复写回新位置）
+    if (autoSave_) autoSave_->setCurrentDrawing(path);
     if (err) *err = e;
     model_->log(QStringLiteral("已保存：%1（%2，%3 字节）%4")
                     .arg(path).arg(cadfmt::formatName(fmt)).arg(out.size()).arg(e));
@@ -3173,14 +3605,74 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
 
 // 打开：草图 JSON 完整往返；DXF 读回图元几何（标注/样条已按几何炸开）
 void MainWindow::openFile() {
-    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("打开图纸"), QString(),
+    // 起始目录习惯：默认存盘目录 > 上次目录 > 系统默认
+    const QString startDir = rememberDialogDir();
+    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("打开图纸"), startDir,
         QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
     if (fn.isEmpty()) return;
+    if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
     readDrawing(fn, nullptr);
 }
 
+// ==================== P0-04：大图纸打开（后台解析 + 内存优雅降级） ====================
+
+bool MainWindow::s_asyncLoadEnabled = true;   // 大文件后台解析开关（自测可关）
+
+namespace {
+// 大于此字节数的文件走线程池解析 + 模态进度对话框（4MB ≈ 3~5 万图元文本）。
+constexpr qint64 kAsyncLoadBytes = 4LL * 1024 * 1024;
+
+// 执行一个可能耗时的解析步骤 fn（签名 void()）：
+//   小文件（或 s_asyncLoadEnabled=false）：同步直接执行，GUI 冻结时间与旧版一致；
+//   大文件：QtConcurrent 线程池执行 + 模态 QProgressDialog（GUI 保持响应，可点「取消」）。
+// cancelFlag 在用户点取消时置位（供 worker 内部协作中断）；返回 true = 用户已取消。
+template <class F>
+bool runParseStep(QWidget* parent, F&& fn, const QString& label, std::atomic<bool>* cancelFlag) {
+    if (!MainWindow::s_asyncLoadEnabled) { fn(); return false; }   // 同步路径（自测）
+    QProgressDialog prog(label, QStringLiteral("取消"), 0, 0, parent);
+    prog.setWindowTitle(QStringLiteral("打开图纸"));
+    prog.setWindowModality(Qt::WindowModal);
+    prog.setMinimumDuration(0);
+    prog.setValue(0);                        // 0..0 = busy 转圈（解析总量未知）
+    QObject::connect(&prog, &QProgressDialog::canceled, parent,
+                     [cancelFlag]() { if (cancelFlag) cancelFlag->store(true); });
+    QFutureWatcher<void> watcher;
+    QEventLoop loop;
+    QObject::connect(&watcher, &QFutureWatcher<void>::finished, &loop, &QEventLoop::quit);
+    watcher.setFuture(QtConcurrent::run(std::forward<F>(fn)));
+    loop.exec();                             // 等待解析完成（期间 GUI 事件正常分发）
+    return prog.wasCanceled();
+}
+} // namespace
+
 // 读盘的实作（与文件对话框解耦，便于离屏测试直接驱动）。
+// P0-04 外壳：任何大批量分配 std::bad_alloc → 「弹窗 + 日志 + 保持程序可用」，绝不 terminate。
+// 外壳统一记录打开耗时（成功时刷新状态栏数据面板）。
 bool MainWindow::readDrawing(const QString& path, QString* err) {
+    bool modelTouched = false;               // 模型是否已被 clear（决定失败时如何恢复）
+    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+    try {
+        const bool ok = readDrawingImpl(path, err, &modelTouched);
+        if (ok) {
+            lastOpenMs_ = (double)(QDateTime::currentMSecsSinceEpoch() - t0);
+            statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
+            pushRecentFile(path);   // 成功读档 → 最近文件去重置顶（上限内的持久化在函数内部）
+        }
+        return ok;
+    } catch (const std::bad_alloc&) {
+        if (modelTouched) {
+            model_->clear();   // 恢复到已知空态（clear 发 modelChanged → 视图自动清空场景项）
+        }
+        model_->log(QStringLiteral("内存不足，已停止加载：") + path, "error");
+        QMessageBox::warning(this, QStringLiteral("打开图纸"),
+            QStringLiteral("内存不足，已停止加载。\n\n文件过大或系统可用内存不足，当前图纸未被改动（或已恢复为空图），程序仍可正常使用。"));
+        if (err) *err = QStringLiteral("内存不足，已停止加载");
+        return false;
+    }
+}
+
+// 读盘实作（原同步实现；P0-04 增加后台解析与取消支持）。
+bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelTouched) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = QStringLiteral("无法读取 ") + path;
@@ -3188,6 +3680,7 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         return false;
     }
     const QByteArray raw = f.readAll();
+    const bool bigFile = raw.size() > kAsyncLoadBytes;   // 大文件 → 后台解析 + 进度对话框
     const cadfmt::CadFormat fmt = cadfmt::formatFromPath(path);
 
     if (fmt == cadfmt::CadFormat::Step) {
@@ -3200,7 +3693,18 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         std::vector<Element> imported;
         QString e;
         cadfmt::DxfImportStats st;
-        if (!cadfmt::fromDxf(raw, imported, &e, &st)) {
+        bool parseOk = false;
+        std::atomic<bool> cancelFlag{false};
+        const bool canceled = runParseStep(this, [&]() {
+            parseOk = cadfmt::fromDxf(raw, imported, &e, &st);   // 后台线程：纯数据解析，不碰 model/scene
+        }, bigFile ? QStringLiteral("正在解析 DXF（后台）…") : QStringLiteral("正在解析 DXF…"),
+           bigFile ? &cancelFlag : nullptr);
+        if (canceled) {
+            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            if (err) *err = QStringLiteral("已取消");
+            return false;                    // 解析阶段取消：模型未被改动，原图纸完好
+        }
+        if (!parseOk) {
             if (err) *err = e;
             model_->log(QStringLiteral("DXF 解析失败：") + e, "error");
             return false;
@@ -3211,6 +3715,7 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         const bool rescaled = lengthFactorToMm(srcUnit) != 1.0;
         if (rescaled)
             scaleElementsToUnit(imported, srcUnit);
+        *modelTouched = true;   // P0-04：此后模型可能被改动（内存失败需恢复空态）
         model_->clear();
         // 块定义须先于 BlockRef 图元注册：INSERT 引用按名解析，缺定义则渲染为空。
         for (const auto& b : st.blocks) model_->addBlockDef(b);
@@ -3257,11 +3762,23 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         std::vector<Element> imported;
         QString e;
         cadfmt::DxfImportStats st;
-        if (!cadfmt::fromDwg(raw, imported, &e, &st)) {
+        bool parseOk = false;
+        std::atomic<bool> cancelFlag{false};
+        const bool canceled = runParseStep(this, [&]() {
+            parseOk = cadfmt::fromDwg(raw, imported, &e, &st);   // 后台线程：纯数据解析
+        }, bigFile ? QStringLiteral("正在解析 DWG（后台）…") : QStringLiteral("正在解析 DWG…"),
+           bigFile ? &cancelFlag : nullptr);
+        if (canceled) {
+            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            if (err) *err = QStringLiteral("已取消");
+            return false;
+        }
+        if (!parseOk) {
             if (err) *err = e;
             model_->log(QStringLiteral("DWG 解析失败：") + e, "error");
             return false;
         }
+        *modelTouched = true;
         model_->clear();
         model_->beginEdit(QStringLiteral("导入 DWG"));
         model_->addElementsQuiet(imported);
@@ -3284,17 +3801,42 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         return true;
     }
 
-    const QJsonDocument d = QJsonDocument::fromJson(raw);
-    if (!d.isObject()) {
+    // P0-04：JSON 解析（fromJson + 逐图元 elementFromJson）对大文件走后台线程；
+    // worker 只产出 loaded 与 parsedRoot（纯数据值语义），循环内响应取消。
+    // 小文件同步执行（行为与旧版一致）。
+    std::vector<Element> loaded;
+    QJsonObject parsedRoot;
+    bool jsonOk = false;
+    {
+        std::atomic<bool> cancelFlag{false};
+        const bool canceled = runParseStep(this, [&]() {
+            const QJsonDocument doc = QJsonDocument::fromJson(raw);
+            if (!doc.isObject()) return;
+            parsedRoot = doc.object();
+            const QJsonArray arr = parsedRoot["elements"].toArray();
+            loaded.reserve(arr.size());
+            for (const auto& v : arr) {
+                if (cancelFlag.load(std::memory_order_relaxed)) { loaded.clear(); return; }
+                loaded.push_back(elementFromJson(v.toObject()));
+            }
+            jsonOk = true;
+        }, bigFile ? QStringLiteral("正在解析图纸（后台）…") : QStringLiteral("正在解析图纸…"),
+           bigFile ? &cancelFlag : nullptr);
+        if (canceled) {
+            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            if (err) *err = QStringLiteral("已取消");
+            return false;   // 解析阶段取消：模型未被改动，原图纸完好
+        }
+    }
+    if (!jsonOk) {
         if (err) *err = QStringLiteral("不是有效的草图文件");
         model_->log(QStringLiteral("打开失败：不是有效的草图文件"), "error");
         return false;
     }
+    const QJsonObject root = parsedRoot;
+    *modelTouched = true;   // P0-04：此后模型可能被改动（内存失败需恢复空态）
     model_->clear();
-    const QJsonObject root = d.object();
     model_->beginEdit(QStringLiteral("打开草图"));
-    std::vector<Element> loaded;
-    for (const auto& v : root["elements"].toArray()) loaded.push_back(elementFromJson(v.toObject()));
     model_->addElementsQuiet(loaded);
     // 读回图层表（若有）。必须在 addElementsQuiet 之后、setScaleRatioValue 之前：
     // 图层表不依赖比例；若文件无 layers 字段则回退为单层"0"，不影响旧图兼容。
@@ -4032,15 +4574,29 @@ void MainWindow::openCleanup() {
     dlg.exec();
 }
 
+// P0-01：DXF 导出版本选择（R12 默认，R2000 可编辑性更好）。返回用户选择的版本。
+cadfmt::DxfVersion MainWindow::chooseDxfVersion() {
+    QStringList items;
+    items << QStringLiteral("R12 (AC1009) —— 兼容性最佳，所有 CAD 均可打开")
+          << QStringLiteral("R2000 (AC1015) —— 原生实体带 AcDb 标记/句柄，可编辑性更好");
+    bool ok = false;
+    QString sel = QInputDialog::getItem(this, QStringLiteral("选择 DXF 版本"),
+                                        QStringLiteral("导出 DXF 时使用的 AutoCAD 版本："),
+                                        items, 0, false, &ok);
+    if (!ok || sel.startsWith(QStringLiteral("R12"))) return cadfmt::DxfVersion::R12;
+    return cadfmt::DxfVersion::R2000;
+}
+
 void MainWindow::exportDxf() {
     const QString fn = QFileDialog::getSaveFileName(this, QStringLiteral("导出 DXF"),
                                                     QStringLiteral("sketch.dxf"),
                                                     QStringLiteral("DXF (*.dxf)"));
     if (fn.isEmpty()) return;
     QString err;
-    // 原生导出：块/标注/填充以原生实体写出（AutoCAD/ZWCAD 打开后可编辑、块不展开）
+    // P0-01：导出版本由用户在下拉框选择（默认 R12，逐字节兼容旧档）
     cadfmt::DxfExportOptions no;
     no.nativeBlocks = no.nativeDims = no.nativeHatch = true;
+    no.version = chooseDxfVersion();
     const QByteArray body = cadfmt::toDxf(model_->elements(), &err, model_->scaleRatio(),
                                           4, &model_->blockTable(), &no);
     if (body.isEmpty()) { model_->log(QStringLiteral("导出失败：") + err, "error"); return; }
@@ -4146,10 +4702,15 @@ void MainWindow::applyWorkspaceVisibility() {
     // 工具条可见性（内置 + 自定义，均按 objectName 判定）
     for (QToolBar* tb : findChildren<QToolBar*>())
         tb->setVisible(cm.toolbarVisible(tb->objectName()));
-    // 菜单可见性（按顶级菜单 objectName 判定）
+    // 菜单可见性（按顶级菜单 objectName 判定）。
+    // ⚠️ 必须作用于菜单栏上的 QAction，而不是 QMenu 本体：
+    // 对 QMenu 调 setVisible(true) 会把它当作弹出窗口立即弹出（多个菜单级联堆叠
+    // 在窗口左上角）——启动时 initCui→applyCui 逐个「弹出」全部顶级菜单，正是
+    // 启动界面菜单堆叠/重叠凌乱的根因。改控 QAction 可见性：只增删菜单栏入口，
+    // 菜单本体保持隐藏、仅在用户点击时弹出（启动时默认隐藏、需要时才显示）。
     for (QAction* a : menuBar()->actions())
         if (QMenu* m = a->menu())
-            m->setVisible(cm.menuVisible(m->objectName()));
+            a->setVisible(cm.menuVisible(m->objectName()));
 }
 
 void MainWindow::openAliasFile() {
@@ -4220,12 +4781,14 @@ void MainWindow::saveCurrentAsWorkspaceDialog() {
     id = id.trimmed().toLower();
 
     // 以当前实际可见的 UI 作为该工作空间的可见集（精确快照）
+    // 菜单口径与 applyWorkspaceVisibility 一致：读菜单栏 QAction 的可见性
+    // （QMenu 本体平时始终隐藏，只有被点击才弹出，不能作为快照依据）
     QStringList tbs, menus;
     for (QToolBar* tb : findChildren<QToolBar*>())
         if (tb->isVisible()) tbs << tb->objectName();
     for (QAction* a : menuBar()->actions())
         if (QMenu* m = a->menu())
-            if (m->isVisible()) menus << m->objectName();
+            if (a->isVisible()) menus << m->objectName();
 
     CuiManager::instance().addWorkspace(id, id, tbs, menus);
     CuiManager::instance().setCurrentWorkspace(id);

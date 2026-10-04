@@ -4,8 +4,9 @@ namespace SketchCAD {
 
 // 计算覆盖包围盒 b 的全部网格单元。对退化（零面积）包围盒取中心点所在单元；
 // 对极端细长图元（如裁剪前的无限线）做单元数上限保护，避免登记爆炸。
-std::vector<SpatialIndex::Cell> SpatialIndex::cellsFor(const QRectF& b) const {
-    std::vector<Cell> out;
+// 返回 SmallVec（≤8 个单元内联）——覆盖单元数极少是常态，消除高频临时堆分配。
+SmallVec<SpatialIndex::Cell, 8> SpatialIndex::cellsFor(const QRectF& b) const {
+    SmallVec<Cell, 8> out;
     const QRectF n = b.normalized();
     const long x0 = (long)std::floor(n.left()   / cellSize_);
     const long y0 = (long)std::floor(n.top()    / cellSize_);
@@ -34,21 +35,29 @@ std::vector<SpatialIndex::Cell> SpatialIndex::cellsFor(const QRectF& b) const {
 }
 
 void SpatialIndex::add(int id, const QRectF& b) {
-    const auto cls = cellsFor(b);
-    for (const auto& c : cls) cells_[c].push_back(id);
-    idCells_[id] = cls;
+    // P0-04：大批量登记处捕获 bad_alloc —— 内存不足时禁用索引整体回落全量扫描
+    // （useIndex 双跑对照路径已存在，拾取结果集语义不变），绝不向上抛出导致 terminate。
+    try {
+        const auto cls = cellsFor(b);
+        for (const auto& c : cls) cells_[c].push_back(id);
+        idCells_[id].clear();
+        for (const auto& c : cls) idCells_[id].push_back(c);
+    } catch (const std::bad_alloc&) {
+        clear();
+        enabled_ = false;   // 查询全部返回空 → 调用方回落全量扫描（hitTestAll 的 useIdx 分支）
+        throw;              // 仍向调用方报告失败，由其决定整体降级与提示
+    }
 }
 
 void SpatialIndex::remove(int id) {
     auto it = idCells_.find(id);
     if (it == idCells_.end()) return;
-    for (const auto& c : it->second) {
+    it->second.each([&](const Cell& c) {
         auto cit = cells_.find(c);
-        if (cit == cells_.end()) continue;
-        auto& v = cit->second;
-        v.erase(std::remove(v.begin(), v.end(), id), v.end());
-        if (v.empty()) cells_.erase(cit);
-    }
+        if (cit == cells_.end()) return;
+        cit->second.eraseValue(id);
+        if (cit->second.empty()) cells_.erase(cit);
+    });
     idCells_.erase(it);
 }
 
@@ -66,9 +75,9 @@ std::vector<int> SpatialIndex::queryRect(const QRectF& rect) const {
     for (const auto& c : cls) {
         auto it = cells_.find(c);
         if (it == cells_.end()) continue;
-        for (int id : it->second) {
+        it->second.each([&](int id) {
             if (seen.insert(id).second) out.push_back(id);
-        }
+        });
     }
     return out;
 }

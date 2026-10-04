@@ -51,6 +51,7 @@
 - [4. 核心特性](#4-核心特性)
 - [5. 软件架构](#5-软件架构)
 - [6. 快速上手](#6-快速上手)
+- [6.1 安装 · 升级 · 许可](#61-安装--升级--许可)
 - [7. 命令行速查](#7-命令行速查)
 - [8. 参数化模板](#8-参数化模板)
 - [9. 批量编辑三件套](#9-批量编辑三件套)
@@ -196,6 +197,7 @@ graph TD
 ./build.sh                  # → build/SketchCAD.exe
 ./build.sh test             # 构建并运行核心自测（403/0）
 ./build.sh dist             # 用 windeployqt 打包独立运行的 dist/
+./build.sh package          # 构建商业安装包 → dist/SketchCAD-<版本>-Setup.exe
 
 # 手动 CMake
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -210,6 +212,91 @@ cmake --build build
 3. 靠近已有图元端点 / 中点 / 圆心 / 象限点会自动吸附（智能捕捉）；
 4. 选中图元在**属性面板**改参数，关联图元按约束自动跟随；
 5. 右键拖拽平移，滚轮缩放；多级撤销 / 重做随时可用。
+
+---
+
+## 6.1 安装 · 升级 · 许可
+
+### 安装包产物
+
+`./build.sh package` 一条命令产出（均在 `dist/`）：
+
+| 产物 | 说明 |
+| --- | --- |
+| `SketchCAD-<版本>-Setup.exe` | 商业安装包（含 Qt 运行时，目标机无需装 Qt/编译器） |
+| `checksums.sha256` | 安装包 SHA-256，用于分发完整性校验 |
+
+`<版本>` 取自 `CMakeLists.txt` 的 `project(SketchCAD VERSION x.y.z)`，是全项目
+**版本号唯一来源** —— 「关于」对话框、exe 文件属性、安装包文件名三者同源，
+不会出现版本号各说各话。
+
+校验：
+
+```bash
+cd dist && sha256sum -c checksums.sha256
+```
+
+### 安装向导
+
+1. **许可协议**（必须选择「我接受」才能继续）；
+2. **目标目录**（默认 `C:\Program Files\SketchCAD`，可改）；
+3. **附加任务**（可选）：桌面快捷方式、`.json`/`.dxf` 文件关联 —— 两者**默认不勾选**；
+4. 开始安装 → 可选「立即启动」。
+
+> 文件关联为可选项：CAD 图纸常由其它 CAD 软件打开，抢关联属侵入行为，
+> 故默认关闭、由用户主动选择；**卸载时会自动还原注册表**。
+
+### 静默安装（企业批量部署）
+
+```cmd
+REM 默认路径
+SketchCAD-1.1.0-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+
+REM 指定安装目录
+SketchCAD-1.1.0-Setup.exe /VERYSILENT /DIR="D:\Apps\SketchCAD" /NORESTART
+
+REM 同时关联图纸文件类型
+SketchCAD-1.1.0-Setup.exe /VERYSILENT /TASKS="fileassoc,desktopicon" /NORESTART
+```
+
+`/VERYSILENT` 会自动接受许可协议，故企业分发前应确保已按合同获得授权。
+
+### 升级
+
+直接运行新版本安装包即可**就地升级**：
+
+- 安装器会先运行旧版卸载程序，再安装新版；
+- 同一 `AppId`，因此识别为「升级」而非并存，不会出现两个版本打架；
+- **用户配置与数据全部保留**，因为它们本就不在安装目录内：
+
+| 数据 | 位置 |
+| --- | --- |
+| 自动保存快照 / 崩溃转储 / 诊断日志 | `%LOCALAPPDATA%\SketchCAD\{autosave,crashes,logs}` |
+| 全局配置（自动保存间隔等） | 注册表 `HKCU\Software\SketchCAD` |
+
+### 卸载
+
+`控制面板 → 程序和功能 → SketchCAD 草图设计系统 → 卸载`，
+或直接运行安装目录下的 `unins000.exe`。
+
+卸载会删除程序文件、开始菜单/桌面快捷方式、文件关联注册表项
+（若本次安装时勾选过）与卸载注册表项。
+
+**卸载不删除 `%LOCALAPPDATA%\SketchCAD` 下的用户数据** —— 那里可能有尚未
+保存的图纸自动保存快照，删除等于丢稿。如需彻底清理，卸载后手动删除该目录
+与 `HKCU\Software\SketchCAD` 注册表项（卸载程序会提示具体位置）。
+
+### 许可协议
+
+SketchCAD 是**专有商业软件**，非开源、非免费。核心条款摘要
+（完整文本见 [LICENSE.txt](LICENSE.txt)）：
+
+- 支付费用后获得**非排他、不可转让**的使用许可，可安装于约定台数的计算机；
+- 生成的**图纸与设计成果归您所有**，可自由商用，无需额外付费或开源；
+- 禁止反向工程、再分发、转售、去除授权保护；
+- 内含 Qt 6（LGPL v3 动态链接）、zlib 等第三方组件，
+  **无强传染性 copyleft 义务**，声明见安装目录 `third-party-notices/`；
+- R2000 DXF 读写为自研实现，未使用 GPL 许可的 libredwg。
 
 ---
 

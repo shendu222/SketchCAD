@@ -9,9 +9,11 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QScreen>
+#include <QSettings>
 #include <QTextStream>
 #include <QTimer>
 #include <QWidget>
+#include "core/Diagnostics.h"   // 崩溃不丢稿：日志滚动 + 崩溃转储
 #include "ui/MainWindow.h"
 
 namespace {
@@ -105,7 +107,38 @@ CoverImage loadCoverImage(QString* usedPath = nullptr) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // ---- 高 DPI 策略早期读取（必须在 QApplication 构造之前）----
+    // Qt6 中高 DPI 缩放恒启用（AA_EnableHighDpiScaling 已弃用），启动前唯一可配置的
+    // 是缩放舍入策略。这里用独立 QSettings 读 display/highDpiRoundingPolicy（与
+    // AppSettings 同一注册表路径 HKCU\Software\SketchCAD）：注册表单键读取，不阻塞
+    // 启动；非法值一律回落 Round（与 AppSettings 校验表一致）。真正的用户偏好读写
+    // 在「选项」对话框（display/highDpiRoundingPolicy）。
+    {
+        const QSettings pre(QSettings::NativeFormat, QSettings::UserScope,
+                            QStringLiteral("SketchCAD"), QString());
+        const QString pol = pre.value(QLatin1String("display/highDpiRoundingPolicy"),
+                                      QStringLiteral("Round")).toString();
+        using P = Qt::HighDpiScaleFactorRoundingPolicy;
+        P p = P::Round;
+        if (pol == QLatin1String("PassThrough"))          p = P::PassThrough;
+        else if (pol == QLatin1String("Floor"))           p = P::Floor;
+        else if (pol == QLatin1String("Ceil"))            p = P::Ceil;
+        else if (pol == QLatin1String("RoundPreferFloor"))p = P::RoundPreferFloor;
+        QGuiApplication::setHighDpiScaleFactorRoundingPolicy(p);
+    }
+
     QApplication app(argc, argv);
+
+    // ---- 崩溃不丢稿：诊断子系统（Qt 日志滚动落盘 + Windows 崩溃 mini-dump）----
+    // 必须在 QApplication 构造之后、主窗口构造之前安装：消息处理器依赖事件循环上下文，
+    // 崩溃过滤器则要抢在任何窗口初始化失败之前。
+    SketchCAD::Diagnostics::init(QStringLiteral("SketchCAD"));
+    SketchCAD::Diagnostics::writeLog(QStringLiteral("SketchCAD 启动"), "info");
+
+    // 退出钩子：正常退出时收尾（MainWindow::closeEvent 已停自动保存并清理 .tmp）
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, []{
+        SketchCAD::Diagnostics::writeLog(QStringLiteral("SketchCAD 正常退出"), "info");
+    });
 
     // ---- 启动画面 ----
     // 不用 QSplashScreen：其窗口初始几何由平台决定（不同桌面/缩放策略下会落到屏幕左上角），
