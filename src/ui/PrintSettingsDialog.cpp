@@ -21,6 +21,9 @@
 #include <QMessageBox>
 #include <QPageSize>
 #include <QFile>
+#include <QScrollArea>
+#include <QDialogButtonBox>
+#include <cmath>
 
 namespace SketchCAD {
 
@@ -481,6 +484,44 @@ void PrintSettingsDialog::onEditViewport() {
                                              0.01, 1000, 3, &ok);
     if (!ok) return;
     s_.viewports[row].scale = sc;
+    // 视口旋转角（消费 PlotViewport::rotationDeg；0 = 不旋转）
+    const double rot = QInputDialog::getDouble(this, QStringLiteral("视口旋转"),
+                                               QStringLiteral("视口内容旋转角（度，逆时针；0 = 不旋转）:"),
+                                               s_.viewports[row].rotationDeg, -360.0, 360.0, 2, &ok);
+    if (ok) s_.viewports[row].rotationDeg = rot;
+    // per-viewport 冻结：勾选的图层仅在该视口出图中隐藏（模型空间与其他视口正常）
+    if (model_ && model_->layerCount() > 0) {
+        QDialog dlg(this);
+        dlg.setWindowTitle(QStringLiteral("视口冻结图层 - %1").arg(s_.viewports[row].name));
+        auto* lay = new QVBoxLayout(&dlg);
+        lay->addWidget(new QLabel(QStringLiteral("勾选 = 该视口内不输出（其他视口与模型空间不受影响）："), &dlg));
+        auto* area = new QScrollArea(&dlg);
+        auto* box = new QWidget(&dlg);
+        auto* grid = new QVBoxLayout(box);
+        grid->setContentsMargins(2, 2, 2, 2);
+        QList<QCheckBox*> boxes;
+        for (int i = 0; i < model_->layerCount(); ++i) {
+            const QString ln = model_->layerAt(i).name;
+            auto* cb = new QCheckBox(ln, box);
+            cb->setChecked(s_.viewports[row].frozenLayers.contains(ln));
+            grid->addWidget(cb);
+            boxes.append(cb);
+        }
+        box->setLayout(grid);
+        area->setWidget(box);
+        area->setWidgetResizable(true);
+        area->setMinimumSize(260, 200);
+        lay->addWidget(area);
+        auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        connect(btns, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        lay->addWidget(btns);
+        if (dlg.exec() == QDialog::Accepted) {
+            s_.viewports[row].frozenLayers.clear();
+            for (const QCheckBox* cb : boxes)
+                if (cb->isChecked()) s_.viewports[row].frozenLayers.append(cb->text());
+        }
+    }
     syncViewportList();
 }
 
@@ -505,7 +546,10 @@ void PrintSettingsDialog::syncViewportList() {
             ? QStringLiteral("整体图形范围")
             : QStringLiteral("rect(%1,%2,%3×%4)").arg(vp.modelRect.x(),0,'g',2)
                 .arg(vp.modelRect.y(),0,'g',2).arg(vp.modelRect.width(),0,'g',2).arg(vp.modelRect.height(),0,'g',2);
-        vpList_->addItem(QStringLiteral("%1: %2 比例%3").arg(vp.name).arg(rect).arg(vp.scale));
+        QString tail;
+        if (std::fabs(vp.rotationDeg) > 1e-9) tail += QStringLiteral(" 旋转%1°").arg(vp.rotationDeg, 0, 'g', 3);
+        if (!vp.frozenLayers.isEmpty()) tail += QStringLiteral(" 冻结%1层").arg(vp.frozenLayers.size());
+        vpList_->addItem(QStringLiteral("%1: %2 比例%3%4").arg(vp.name).arg(rect).arg(vp.scale).arg(tail));
     }
 }
 

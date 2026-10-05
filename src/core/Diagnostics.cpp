@@ -181,4 +181,55 @@ void Diagnostics::shutdown() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 会话标记（异常退出检测）
+// ---------------------------------------------------------------------------
+namespace {
+    bool g_lastAbnormal = false;   // beginSession 检测结果缓存，UI 稍后消费
+}
+
+QString Diagnostics::sessionMarkerPath() {
+    // 根目录（logs 的上级），与 logs/crashes 同级
+    ensureDirs();
+    const QString root = g_logDir.left(g_logDir.lastIndexOf(QChar('/')));
+    return root + QStringLiteral("/session.marker");
+}
+
+bool Diagnostics::writeSessionMarker(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) return false;
+    f.write(QDateTime::currentDateTime().toString(Qt::ISODate).toUtf8());
+    return true;
+}
+
+bool Diagnostics::isAbnormalExit(const QString& path) {
+    return QFile::exists(path);
+}
+
+bool Diagnostics::clearSessionMarker(const QString& path) {
+    return QFile::remove(path);
+}
+
+bool Diagnostics::beginSession() {
+    const QString marker = sessionMarkerPath();
+    g_lastAbnormal = isAbnormalExit(marker);
+    writeSessionMarker(marker);
+    if (g_lastAbnormal)
+        writeLog(QStringLiteral("检测到上次会话未正常退出（session.marker 残留）"), "warning");
+    return g_lastAbnormal;
+}
+
+void Diagnostics::endSession() {
+    clearSessionMarker(sessionMarkerPath());
+    g_lastAbnormal = false;
+}
+
+bool Diagnostics::lastSessionAbnormal() {
+    return g_lastAbnormal;
+}
+
+void Diagnostics::acknowledgeAbnormalSession() {
+    g_lastAbnormal = false;
+}
+
 } // namespace SketchCAD

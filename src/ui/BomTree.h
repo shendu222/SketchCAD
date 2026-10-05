@@ -9,6 +9,8 @@ class BomTree : public QTreeWidget {
     Q_OBJECT
 public:
     explicit BomTree(SketchModel* m, QWidget* parent = nullptr);
+    // 多文档切换重绑：换绑活动文档并立即按新模型重建（面板不自连接，信号由 ModelMediator 统一订阅）
+    void setModel(SketchModel* m) { model_ = m; onModelChanged(); }
     void refresh();
 public slots:
     void onModelChanged();

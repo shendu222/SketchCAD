@@ -113,12 +113,21 @@ LayerPanel::LayerPanel(SketchModel* model, QWidget* parent)
     connect(renameBtn_, &QPushButton::clicked, this, &LayerPanel::onRenameLayer);
     connect(assignBtn_, &QPushButton::clicked, this, &LayerPanel::onAssignSelection);
 
-    // 模型变化即刷新面板：图层表增删/改名/样式/可见性、图元层归属或可见性变化都反映到列表
-    connect(model_, &SketchModel::layersChanged, this, &LayerPanel::refresh);
-    connect(model_, &SketchModel::modelChanged,  this, &LayerPanel::refresh);
-    connect(model_, &SketchModel::currentLayerChanged, this, &LayerPanel::onCurrentLayerChanged);
-    connect(model_, &SketchModel::selectionChanged, this, [this](int) { assignBtn_->setEnabled(model_->hasSelection()); });
+    // 模型信号订阅收口到 setModel（构造期与多文档切换共用同一条接线）
+    setModel(model_);
+}
 
+// 多文档切换重绑：断开旧模型的连接 → 换绑 → 重新连接 → 按新模型重建
+void LayerPanel::setModel(SketchModel* model) {
+    for (const auto& c : modelConns_) disconnect(c);
+    modelConns_.clear();
+    model_ = model;
+    if (model_) {
+        modelConns_ << connect(model_, &SketchModel::layersChanged, this, &LayerPanel::refresh);
+        modelConns_ << connect(model_, &SketchModel::modelChanged,  this, &LayerPanel::refresh);
+        modelConns_ << connect(model_, &SketchModel::currentLayerChanged, this, &LayerPanel::onCurrentLayerChanged);
+        modelConns_ << connect(model_, &SketchModel::selectionChanged, this, [this](int) { assignBtn_->setEnabled(model_->hasSelection()); });
+    }
     refresh();
 }
 

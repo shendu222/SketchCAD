@@ -24,11 +24,15 @@ public:
     // 用户确认后的投影法（GB/T 14665-2012 第7章），默认第一角
     ProjectionMethod selectedProjection() const { return projection_; }
 
+    // 用户确认后的标题栏样式：标准（GB/T 10609.1，默认）/ 无（仅图框）
+    TitleBlockStyle titleBlockStyle() const { return tbStyle_; }
+
 private:
     SheetFormat fmt_ = SheetFormat::A3;
     bool         landscape_ = true;
     double       scaleRatio_ = 1.0;   // 绘图比例（1:1 = 1.0）
     ProjectionMethod projection_ = ProjectionMethod::FirstAngle;
+    TitleBlockStyle  tbStyle_ = TitleBlockStyle::Standard;
 };
 
 } // namespace SketchCAD

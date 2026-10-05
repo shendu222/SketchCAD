@@ -32,6 +32,9 @@ namespace SketchCAD {
 namespace SettingKeys {
 inline constexpr const char* kLanguage          = "general/language";
 inline constexpr const char* kRecentFileCount   = "general/recentFileCount";
+// 撤销栈深度上限（步）。属"应用习惯"（用户愿为历史付出多少内存），与图纸内容无关：
+// **它本身不入撤销栈**——否则"改栈深"会成为一步可撤销操作，语义自我指涉。
+inline constexpr const char* kUndoDepth         = "general/undoDepth";
 inline constexpr const char* kShowGrid          = "display/showGrid";
 inline constexpr const char* kGridSnap          = "display/gridSnap";
 inline constexpr const char* kGridSnapStep      = "display/gridSnapStep";
@@ -45,6 +48,20 @@ inline constexpr const char* kDefaultSaveDir    = "files/defaultSaveDir";
 inline constexpr const char* kDefaultTemplate   = "files/defaultTemplate";
 inline constexpr const char* kLastDir           = "files/lastDir";
 inline constexpr const char* kRecentList        = "files/recentList";
+// 最近文件富条目（RecentFiles 持久化文本：JSON 数组 [{p,t,pin},...]，含打开时间与固定标记）。
+// 取代 kRecentList（旧键保留只读：仅作为首次升级时的一次性迁移来源）。
+inline constexpr const char* kRecentEntries     = "files/recentEntries";
+// 命令行最近命令历史（QStringList，重启后预填 ↑↓ 历史，AutoCAD 习惯）。
+inline constexpr const char* kRecentCommands    = "commandLine/recentCommands";
+// 命令面板最近使用（QStringList，命令名 ≤10 条，重启后面板最近使用置顶）。
+inline constexpr const char* kRecentPalette     = "commandLine/recentPalette";
+// 空闲态右键行为：true = AutoCAD 约定（重复上一命令）；false = 既有上下文菜单。
+inline constexpr const char* kRightClickIdleRepeat = "interaction/rightClickIdleRepeat";
+// 隐私：匿名遥测总开关（默认 false = 关闭；首启动有一次性明示文案）。
+// 诊断包导出与遥测无关——诊断包只在用户主动点击时生成本地文件，零网络外发。
+inline constexpr const char* kTelemetryEnabled  = "privacy/telemetryEnabled";
+// 隐私明示文案是否已展示过（首启动一次性）。
+inline constexpr const char* kFirstRunNotice    = "privacy/firstRunNoticeShown";
 inline constexpr const char* kAutosaveInterval  = "autosave/intervalMinutes";
 inline constexpr const char* kBackupCount       = "autosave/backupCount";
 inline constexpr const char* kLowDiskMb         = "system/lowDiskThresholdMb";
@@ -129,6 +146,7 @@ public:
     bool   dynMode() const;            void setDynMode(bool b);
     bool   showLineWeight() const;     void setShowLineWeight(bool b);
     int    recentFileCount() const;    void setRecentFileCount(int n);    // 0..20，默认 10
+    int    undoDepth() const;          void setUndoDepth(int n);           // 1..1000，默认 100
     int    backupCount() const;        void setBackupCount(int n);        // 0..9，默认 1
     QString language() const;          void setLanguage(const QString& l);// zh-CN / en
     QString defaultSaveDir() const;    void setDefaultSaveDir(const QString& d);
@@ -137,6 +155,9 @@ public:
     QStringList recentFiles() const;   void setRecentFiles(const QStringList& l);
     bool   gpuAcceleration() const;    void setGpuAcceleration(bool b);   // 预留：渲染路径消费
     bool   offscreenFallback() const;  void setOffscreenFallback(bool b); // 预留：渲染路径消费
+    // 隐私：遥测开关（默认 false）与首启动明示标记
+    bool   telemetryEnabled() const;   void setTelemetryEnabled(bool b);
+    bool   firstRunNoticeShown() const; void setFirstRunNoticeShown(bool b);
     QString highDpiRoundingPolicy() const; void setHighDpiRoundingPolicy(const QString& p);
     QString printerName() const;       void setPrinterName(const QString& name);
     // 打印页面设置快照（PrintSettings::toJson 的 JSON 文本；空 = 未设置）

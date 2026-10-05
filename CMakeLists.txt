@@ -18,11 +18,12 @@ list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64/lib/cmake")
 set(CMAKE_C_COMPILER   "C:/Qt/Tools/mingw1310_64/bin/gcc.exe")
 set(CMAKE_CXX_COMPILER "C:/Qt/Tools/mingw1310_64/bin/g++.exe")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent LinguistTools)
 
 # ---- DRY：公共核心源文件列表，供所有目标共用 ----
 set(CORE_SOURCES
     src/core/Element.cpp
+    src/core/ElementValidate.cpp   # 鲁棒性守卫层：读档前图元只读校验/丢弃/修复（不动几何算法）
     src/core/ElementFactory.cpp
     src/core/ScriptApi.h
     src/core/ScriptApi.cpp
@@ -40,6 +41,7 @@ set(CORE_SOURCES
     src/core/Snap.cpp
     src/core/SketchModel.cpp
     src/core/CommandInterpreter.cpp
+    src/core/CommandCatalog.cpp    # 命令元数据目录 + 面板纯逻辑 + 快捷键审计（纯数据层，可无头直测）
     src/core/MacroScript.cpp
     src/core/AliasTable.cpp
     src/core/CuiManager.cpp
@@ -80,17 +82,23 @@ set(CORE_SOURCES
     src/core/PlotStyle.cpp
     src/core/Layout.cpp
     src/core/TextStyle.cpp
+    src/core/TextMetrics.cpp   # 文字度量单一数据源（屏幕/打印/取景三处同源）
     src/core/QSelect.cpp
     src/core/Units.cpp
     src/core/SpatialIndex.cpp
     src/core/AppSettings.cpp   # 全局设置（自动保存间隔/磁盘阈值，HKCU\Software\SketchCAD）
+    src/core/I18n.cpp          # 界面语言单一入口（语言解析 + QTranslator 装载，自测直测）
     src/core/AutoSave.cpp      # 自动保存核心（定时+操作计数双触发，原子落盘，可恢复）
-    src/core/Diagnostics.cpp   # 诊断：Qt 日志滚动落盘 + Windows 崩溃 mini-dump
+    src/core/RecentFiles.cpp   # 最近文件 MRU（路径+时间+pin，复用 AppSettings 存储，可离线直测）
+    src/core/Diagnostics.cpp   # 诊断：Qt 日志滚动落盘 + Windows 崩溃 mini-dump + 会话标记
+    src/core/DiagBundle.cpp    # 诊断包：Stored-ZIP 写入器 + 打包编排（纯 core 可无头直测）
+    src/core/Telemetry.cpp     # 遥测出口（默认关闭零外发；开关+出口双门闩）
 )
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
     src/ui/ElementPath.cpp
     src/ui/ModelMediator.cpp
+    src/ui/DocTab.cpp               # 多文档标签：DocSession/DocManager（纯会话核心，可离线直测）
     src/ui/tools/ToolContext.cpp
     src/ui/tools/ToolManager.cpp
     src/ui/tools/Tools.cpp
@@ -109,6 +117,8 @@ set(UI_SOURCES
     src/ui/LayerPanel.cpp
     src/ui/LogPanel.cpp
     src/ui/CommandLine.cpp
+    src/ui/CommandPalette.cpp      # 命令面板对话框（Ctrl+Shift+P；过滤逻辑在 CommandCatalog）
+    src/ui/DiagnosticsDialog.cpp   # 诊断包导出对话框（异常退出提示 / 帮助菜单共用）
     src/ui/StatusBar.cpp
     src/ui/NewDrawingDialog.cpp
     src/ui/PaperSizeDialog.cpp
@@ -141,6 +151,7 @@ set(UI_SOURCES
     src/ui/PrintEngine.cpp
     src/ui/PrintSettingsDialog.cpp
     src/ui/PrintPreviewDialog.cpp
+    src/ui/PublishDialog.cpp        # 发布（PUBLISH）：勾选布局批量出图
     src/ui/CrashRecoveryDialog.cpp   # 启动时发现 .sv$ 快照 → 恢复/丢弃
     src/ui/AutoSaveOptionsDialog.cpp # 自动保存间隔设置（关/5/10/15/30）
     src/ui/OptionsDialog.cpp        # 统一「选项」对话框（分类树 + 表单，应用/取消/重置）
@@ -204,6 +215,22 @@ if(WIN32)
     target_compile_definitions(SketchCAD PRIVATE SKETCHCAD_ENABLE_CRASHHANDLER=1)
 endif()
 
+# ===================== 国际化（Qt Linguist：ts → qm → 资源内嵌）=====================
+# 中文为源语言：sketchcad_en.ts 存英文译文（lupdate 从 tr() 抽取中文源串），
+# lrelease 编译成 .qm 后经 qt_add_resources 内嵌为 ：/i18n/sketchcad_en.qm
+# —— 部署零附件（exe 自含），测试则走 exe 同目录磁盘文件兜底（I18n 双路装载）。
+set(SKETCHCAD_TS ${CMAKE_CURRENT_SOURCE_DIR}/resources/translations/sketchcad_en.ts)
+set(SKETCHCAD_QM ${CMAKE_CURRENT_BINARY_DIR}/sketchcad_en.qm)
+add_custom_command(OUTPUT ${SKETCHCAD_QM}
+    COMMAND Qt6::lrelease -silent ${SKETCHCAD_TS} -qm ${SKETCHCAD_QM}
+    DEPENDS ${SKETCHCAD_TS}
+    COMMENT "lrelease: sketchcad_en.ts -> sketchcad_en.qm")
+add_custom_target(sketchcad_i18n ALL DEPENDS ${SKETCHCAD_QM})
+add_dependencies(SketchCAD sketchcad_i18n)
+# 生成于 build 根的绝对路径文件进 qrc 必须显式给资源内别名（Qt6 硬性要求）
+set_source_files_properties(${SKETCHCAD_QM} PROPERTIES QT_RESOURCE_ALIAS "sketchcad_en.qm")
+qt_add_resources(SketchCAD "sketchcad_i18n_qm" PREFIX "/i18n" FILES ${SKETCHCAD_QM})
+
 # ---- 无界面自测（约束求解 / 捕捉 单元测试）----
 # 复用 CORE_SOURCES，不链接 UI；覆盖 21 种约束每类 ≥1 用例 + 8 类捕捉命中 + 冲突检测。
 # 附加批量出图引擎（COM 无关层）与打印三件套，供 t_comAutomation 无头直测。
@@ -214,6 +241,8 @@ add_executable(SketchSelfTest
     src/ui/ElementPath.cpp
     src/ui/PlotRenderer.cpp
     src/ui/PrintEngine.cpp
+    src/ui/DocTab.cpp               # 多文档会话核心（仅依赖 core，供 t_multidoc 离线直测）
+    src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
 )
 target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
 target_include_directories(SketchSelfTest PRIVATE

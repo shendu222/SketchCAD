@@ -17,14 +17,34 @@ CommandLine::CommandLine(SketchModel* m, CommandInterpreter* ci, QWidget* p)
 
     // 分段式命令提示：监听模型的 commandPromptChanged / commandOptionsChanged 信号，
     // 实时把「提示 + 选项 [C/闭合 U/放弃]」组合到占位文本，作为动态输入提示。
-    connect(model_, &SketchModel::commandPromptChanged, this, [this](const QString& prompt) {
+    // 连接登记进 modelConns_（多文档切换时由 setModel 统一迁移）。
+    modelConns_ << connect(model_, &SketchModel::commandPromptChanged, this, [this](const QString& prompt) {
         lastPrompt_ = prompt;
         updatePlaceholder();
     });
-    connect(model_, &SketchModel::commandOptionsChanged, this, [this](const QStringList& opts) {
+    modelConns_ << connect(model_, &SketchModel::commandOptionsChanged, this, [this](const QStringList& opts) {
         lastOptions_ = opts;
         updatePlaceholder();
     });
+}
+
+// 多文档切换重绑：断开旧模型连接 → 换绑 → 重新连接 → 重置历史游标与占位提示
+void CommandLine::setModel(SketchModel* m) {
+    for (const auto& c : modelConns_) disconnect(c);
+    modelConns_.clear();
+    model_ = m;
+    if (model_) {
+        modelConns_ << connect(model_, &SketchModel::commandPromptChanged, this, [this](const QString& prompt) {
+            lastPrompt_ = prompt;
+            updatePlaceholder();
+        });
+        modelConns_ << connect(model_, &SketchModel::commandOptionsChanged, this, [this](const QStringList& opts) {
+            lastOptions_ = opts;
+            updatePlaceholder();
+        });
+    }
+    histIdx_ = interp_ ? interp_->history().size() : 0;
+    updatePlaceholder();
 }
 
 void CommandLine::updatePlaceholder() {
@@ -35,20 +55,25 @@ void CommandLine::updatePlaceholder() {
     setPlaceholderText(ph);
 }
 
+void CommandLine::repeatLastCommand() {
+    const QString lc = interp_->lastCommand();
+    if (lc.isEmpty()) return;
+    model_->log(QStringLiteral("重复命令: ") + lc, "cmd");
+    interp_->addHistory(lc);
+    histIdx_ = interp_->history().size();
+    if (!interp_->execute(lc)) model_->log(QStringLiteral("命令执行失败"), "error");
+    clear();
+}
+
 void CommandLine::onReturn() {
     const QString cmd = this->text().trimmed();
 
     // 空输入：重复上一成功执行的命令（对应 AutoCAD 空格/回车重复）。
     if (cmd.isEmpty()) {
-        const QString lc = interp_->lastCommand();
-        if (!lc.isEmpty()) {
-            model_->log(QStringLiteral("重复命令: ") + lc, "cmd");
-            interp_->addHistory(lc);
-            histIdx_ = interp_->history().size();
-            bool ok = interp_->execute(lc);
-            if (!ok) model_->log(QStringLiteral("命令执行失败"), "error");
-        }
-        clear();
+        if (!interp_->lastCommand().isEmpty())
+            repeatLastCommand();
+        else
+            clear();
         return;
     }
 
@@ -65,9 +90,10 @@ void CommandLine::onReturn() {
             clear();
             return;
         }
-        // 2) 坐标点
+        // 2) 坐标点（UCS 感知）：绝对 x,y / 相对 @dx,dy / 极坐标 d<a / 相对极坐标 @d<a，
+        //    解析出的局部坐标经 model->toWorld 转世界系（唯一换算入口）。
         Vec3 pt;
-        if (CommandInterpreter::tryParsePoint(cmd, pt)) {
+        if (model_->parsePointToWorld(cmd, model_->lastInputPointWorld(), pt)) {
             model_->log(">> " + cmd + QStringLiteral("  [坐标输入]"), "cmd");
             emit pointEntered(pt);
             clear();
@@ -87,17 +113,11 @@ void CommandLine::onReturn() {
 void CommandLine::keyPressEvent(QKeyEvent* e) {
     // 空格在空输入时等价于回车：重复上一命令（避免插入空格字符）
     if (e->key() == Qt::Key_Space && text().trimmed().isEmpty()) {
-        const QString lc = interp_->lastCommand();
-        if (!lc.isEmpty()) {
-            model_->log(QStringLiteral("重复命令: ") + lc, "cmd");
-            interp_->addHistory(lc);
-            histIdx_ = interp_->history().size();
-            bool ok = interp_->execute(lc);
-            if (!ok) model_->log(QStringLiteral("命令执行失败"), "error");
-            clear();
-            e->accept();
-            return;
-        }
+        if (!interp_->lastCommand().isEmpty())
+            repeatLastCommand();
+        clear();
+        e->accept();
+        return;
     }
 
     const QStringList& h = interp_->history();

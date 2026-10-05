@@ -26,6 +26,12 @@ QJsonObject PlotViewport::toJson() const {
         o["paperW"] = paperRect.width();
         o["paperH"] = paperRect.height();
     }
+    // per-viewport 冻结：空集不写键 → 旧版读回为空（零冻结，行为不变）
+    if (!frozenLayers.isEmpty()) {
+        QJsonArray fl;
+        for (const QString& l : frozenLayers) fl.append(l);
+        o["frozenLayers"] = fl;
+    }
     return o;
 }
 
@@ -48,6 +54,13 @@ PlotViewport PlotViewport::fromJson(const QJsonObject& o) {
         vp.paperRect = QRectF(px, py, pw, ph);
     } else {
         vp.paperRect = QRectF();
+    }
+    // per-viewport 冻结：缺键（旧档）→ 空冻结集（渲染结果与改造前一致）
+    vp.frozenLayers.clear();
+    const QJsonArray fl = o.value("frozenLayers").toArray();
+    for (const auto& v : fl) {
+        const QString s = v.toString();
+        if (!s.isEmpty()) vp.frozenLayers.append(s);
     }
     return vp;
 }
@@ -72,6 +85,8 @@ QJsonObject PrintSettings::toJson() const {
     o["drawBorder"] = drawBorder;
     o["monochrome"] = monochrome;     // 新增：黑白出图总开关（缺省 false → 旧档不变）
     o["plotStyle"]  = plotStyle.toJson();
+    // 打印戳记：仅开启时写键（关闭/旧档缺键 → 默认关闭，出图逐字节不变）
+    if (stamp.enabled) o["stamp"] = stamp.toJson();
     QJsonArray vps;
     for (const auto& vp : viewports) vps.append(vp.toJson());
     o["viewports"] = vps;
@@ -94,6 +109,7 @@ void PrintSettings::fromJson(const QJsonObject& o) {
     drawBorder = o.value("drawBorder").toBool(true);
     monochrome = o.value("monochrome").toBool(false);   // 缺 key → false（旧档行为不变）
     plotStyle.fromJson(o.value("plotStyle").toObject());
+    stamp.fromJson(o.value("stamp").toObject());        // 缺 key → 空对象 → 全默认（关闭）
     viewports.clear();
     const QJsonArray vps = o.value("viewports").toArray();
     for (const auto& v : vps) viewports.append(PlotViewport::fromJson(v.toObject()));
@@ -111,6 +127,39 @@ PlotStyleTable PrintSettings::effectivePlotStyle() const {
     if (monochrome && plotStyle.empty())
         return PlotStyleTable::gbPreset(currentLineWidthGroup());
     return plotStyle;
+}
+
+// ============================================================================
+// PlotStamp：缺键逐项回落默认（enabled 缺 → false，旧行为不变）
+// ============================================================================
+
+QJsonObject PlotStamp::toJson() const {
+    QJsonObject o;
+    o["enabled"]    = enabled;
+    o["drawingName"]= showDrawingName;
+    o["date"]       = showDate;
+    o["time"]       = showTime;
+    o["layoutName"] = showLayoutName;
+    o["scale"]      = showScale;
+    o["fileName"]   = showFileName;
+    o["fontFamily"] = fontFamily;
+    o["textHeightMm"] = textHeightMm;
+    o["position"]   = position;
+    return o;
+}
+
+void PlotStamp::fromJson(const QJsonObject& o) {
+    if (o.isEmpty()) return;      // 缺键 → 保持默认（关闭）
+    enabled          = o.value("enabled").toBool(false);
+    showDrawingName  = o.value("drawingName").toBool(true);
+    showDate         = o.value("date").toBool(true);
+    showTime         = o.value("time").toBool(true);
+    showLayoutName   = o.value("layoutName").toBool(true);
+    showScale        = o.value("scale").toBool(true);
+    showFileName     = o.value("fileName").toBool(true);
+    fontFamily       = o.value("fontFamily").toString();
+    textHeightMm     = o.value("textHeightMm").toDouble(2.5);
+    position         = o.value("position").toInt(3);
 }
 
 // ============================================================================

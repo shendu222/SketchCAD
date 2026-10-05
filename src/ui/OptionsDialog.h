@@ -45,6 +45,7 @@ private:
     QWidget* buildAutosavePage();
     QWidget* buildPrintPage();
     QWidget* buildUserPage();
+    QWidget* buildPrivacyPage();
     void addPage(const QString& title, QWidget* page);
 
     void loadWidgets();                 // 控件 <- AppSettings 当前值
@@ -68,6 +69,7 @@ private:
     // 常规
     QComboBox* langBox_ = nullptr;
     QSpinBox* recentSpin_ = nullptr;
+    QSpinBox* undoDepthSpin_ = nullptr;
     // 显示
     QCheckBox* chkGrid_ = nullptr;
     QCheckBox* chkSnap_ = nullptr;
@@ -89,6 +91,8 @@ private:
     // 用户
     QLineEdit* userNameEdit_ = nullptr;
     QLineEdit* companyEdit_ = nullptr;
+    // 隐私
+    QCheckBox* chkTelemetry_ = nullptr;
 };
 
 } // namespace SketchCAD

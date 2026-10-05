@@ -145,6 +145,23 @@ class ModifyCommand : public ICommand { public: bool execute(const CommandContex
 
 // ---- 视图 ----
 class PlaneCommand : public ICommand { public: bool execute(const CommandContext&) override; };
+
+// ---- 用户坐标系（UCS）----
+// 单一类按 ctx.toks[1] 分派（与 PlaneCommand 同层）：
+//   ucs                     显示当前 UCS 与用法
+//   ucs world | w           切回世界坐标系
+//   ucs view                对齐视图（平面视图下视图系=世界系）
+//   ucs 3p <p1> <p2> [p3]   三点定义：原点 p1、X 正向 p1→p2（p3 兼容占位）
+//   ucs object <id>         对象定义：取图元前两点（原点 + X 正向）
+//   ucs z <x,y> <角°>       Z 轴定义：原点 + 绕世界 Z 旋转角
+//   ucs origin <x,y> [角°]  平移原点（可选旋转）
+//   ucs save <名>           当前 UCS 存为命名
+//   ucs set|restore <名>    切换到命名 UCS
+//   ucs delete <名>         删除命名 UCS（WORLD 不可删）
+//   ucs list | ?            列出命名 UCS 与当前 UCS
+//   ucs coords wcs|ucs      坐标读数显示模式切换（世界/用户）
+//   ucs <名>                直接切换到已存在的命名 UCS（便捷形式）
+class UcsCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 class GridCommand  : public ICommand { public: bool execute(const CommandContext&) override; };
 class ZoomCommand  : public ICommand { public: bool execute(const CommandContext&) override; };
 

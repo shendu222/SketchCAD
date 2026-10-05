@@ -16,7 +16,9 @@
 #include <QKeyEvent>
 #include <QApplication>
 #include <QMenu>
+#include <QLineEdit>
 #include <QStringList>
+#include <functional>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -37,6 +39,7 @@
 #include <algorithm>
 #include "core/ElementFactory.h"
 #include "core/TextStyle.h"
+#include "core/TextMetrics.h"     // 文字度量单一数据源：屏幕/打印/取景三处同源
 #include "core/CommandPrompt.h"   // 选项关键字匹配（C/闭合、U/放弃）
 #include "core/ConstraintSolver.h"   // 过约束/冲突诊断（需求④）：diagnose 重算冲突集合
 #include "core/ShapeSelect.h"        // 栏选/圈围/圈交判定（fence/wp/cp）
@@ -686,11 +689,17 @@ void ElementItem::paintFcf(QPainter* p, const Element& e) const {
 void ElementItem::paintText(QPainter* p, const Element& e) const {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const double z = viewZoom();
-    const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)
+    // 样式驱动字体参数（STYLE 表 + 图元字段 合并），字高取合并后的真实值(mm)
+    const ResolvedTextStyle rs = resolveTextStyle(e, model);
+    const double th = rs.height;
     const bool isM = (e.type == ElementType::MText);
 
-    // 样式驱动字体参数（STYLE 表 + 图元字段 合并）
-    const ResolvedTextStyle rs = resolveTextStyle(e, model);
+    // 字段（FIELD）占位解析：%<CODE>% → 当前值（纯文本无占位则原样返回）
+    const QString display = resolveFields(e.text, model);
+
+    // 三处同源：用 TextMetrics 统一布局(mm)，再乘 z 映射到设备像素（与打印/取景一致）。
+    const double mw = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
+    const TextLayout lay = TextMetrics::layout(rs, display, th, mw, isM ? e.lineSpacing : 1.0);
 
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
@@ -707,40 +716,25 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
         p->shear(std::tan(rs.obliquingAngle * M_PI / 180.0), 0.0);
 
     const QFontMetricsF fm(f);
-
-    // 字段（FIELD）占位解析：%<CODE>% → 当前值（纯文本无占位则原样返回）
-    const QString display = resolveFields(e.text, model);
-
-    // 折行：MText 且指定了 mtextWidth 时按宽度自动折行，否则仅按显式 '\n' 分段
-    QStringList lines;
-    if (isM && e.mtextWidth > 0.1)
-        lines = wrapText(display, e.mtextWidth, f);
-    else
-        lines = display.split('\n');
-
-    const double lineHpx = th * z * (isM ? e.lineSpacing : 1.0);
+    const double hh = fm.height();                        // 设备像素（用于垂直居中）
+    const double lineHpx = lay.lineHeightMm * z;          // 单行高度(设备px)
     const int    align   = isM ? e.textAlign : 1;          // Text 维持原「中上」锚定
     const int    hA = align % 3, vA = align / 3;           // 0左/1中/右 ; 0上/1中/2下
-    double maxW = 0;
-    QVector<double> widths(lines.size());
-    for (int i = 0; i < lines.size(); ++i) {
-        widths[i] = fm.horizontalAdvance(lines[i]);
-        if (widths[i] > maxW) maxW = widths[i];
-    }
-    const double totalH = lines.size() * lineHpx;
-    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalH / 2.0 : totalH;  // 区块上沿(局部 y 向上)
+    const double maxWpx = lay.widthMm * z;
+    const double totalHpx = lay.heightMm * z;
+    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
 
     p->setPen(e.color);
     p->setBrush(Qt::NoBrush);
-    const double hh = fm.height();
-    for (int i = 0; i < lines.size(); ++i) {
+    for (int i = 0; i < lay.lines.size(); ++i) {
+        const double wpx = lay.lines[i].widthMm * z;
         const double yc = startYv - (i + 0.5) * lineHpx;    // 行中心（局部 y 向上）
         double x0;
         if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -(maxW - widths[i]) / 2;
-        else              x0 = -(maxW - widths[i]);
-        const QRectF box(x0, yc - hh / 2, widths[i], hh);
-        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lines[i]);
+        else if (hA == 1) x0 = -(maxWpx - wpx) / 2;
+        else              x0 = -(maxWpx - wpx);
+        const QRectF box(x0, yc - hh / 2, wpx, hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
     }
     p->restore();
 }
@@ -761,10 +755,14 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / z, -1.0 / z);                          // 抵消视图 Y 轴翻转 → 局部 y 向下为正
 
-    // ---- 网格线：列边界累加 colWidths（缺项/非正回落 30mm）----
+    // 样式驱动字体参数（STYLE 表 + 图元字段 合并）
+    const ResolvedTextStyle rs = resolveTextStyle(e, model);
+
+    // ---- 列宽：显式 colWidths 优先，否则按真实度量自适应（与打印/取景同源）----
+    const QVector<double> colW = TextMetrics::tableColumnWidths(e, model);
     QVector<double> xs(static_cast<int>(C) + 1);
     xs[0] = 0.0;
-    for (int c = 0; c < C; ++c) xs[c + 1] = xs[c] + e.tableColWidth(c);
+    for (int c = 0; c < C; ++c) xs[c + 1] = xs[c] + (c < colW.size() ? colW[c] : e.tableColWidth(c));
     const double totalW = xs[C];
     const double totalH = R * rh;
 
@@ -785,19 +783,34 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
     // ---- 单元格文字：字段占位渲染期求值（与 Text/MText 同一 resolveFields 通路）----
     QFont f = p->font();
     f.setPixelSize(std::max(6, (int)std::lround(th * z)));
+    if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+    f.setBold(rs.bold);
+    f.setItalic(rs.italic);
+    f.setStretch((int)std::lround(rs.widthFactor * 100));
     p->setFont(f);
     const QFontMetricsF fm(f);
     const double pad = 1.0 * z;                           // 单元格内边距 1mm
     const double hh = fm.height();
     const int hA = std::clamp(e.textAlign, 0, 2);         // 0=左 1=中 2=右
     p->setPen(e.color);
+    // 单元格文字样式（字高/字体/宽度因子）用于真实度量与溢出省略
+    ResolvedTextStyle crs;
+    crs.fontFamily  = rs.fontFamily;
+    crs.widthFactor = rs.widthFactor;
+    crs.bold        = rs.bold;
+    crs.italic      = rs.italic;
+    crs.height      = th;
     for (int r = 0; r < R; ++r) {
         for (int c = 0; c < C; ++c) {
             const QString raw = e.tableCell(r, c);
             if (raw.trimmed().isEmpty()) continue;
-            const QString display = resolveFields(raw, model);
-            const double tw = fm.horizontalAdvance(display);
+            QString display = resolveFields(raw, model);
             const double cellL = xs[c] + pad, cellR = xs[c + 1] - pad;
+            const double avail = cellR - cellL;
+            // 单元格溢出省略：内容超出可用宽度则尾部加 …
+            if (TextMetrics::lineWidthMm(crs, display, th) > avail)
+                display = TextMetrics::elideToWidthMm(crs, display, th, avail);
+            const double tw = fm.horizontalAdvance(display);
             double x0;
             if (hA == 0)      x0 = cellL;                                  // 左对齐
             else if (hA == 1) x0 = (cellL + cellR - tw) / 2.0;             // 居中（明细表惯例）
@@ -853,6 +866,9 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     connect(model_, &SketchModel::elementUpdated, this, &GraphicsView::onElementUpdated);
     connect(model_, &SketchModel::viewChanged, this, &GraphicsView::onViewChanged);
     connect(model_, &SketchModel::planeChanged, this, &GraphicsView::onModelChanged);
+    // UCS 变化：网格/坐标轴/极轴/正交引导线随 UCS 重绘（setCurrentUcs 另发 viewChanged，
+    // 此处覆盖仅切读数模式 setCoordDisplayUcs 的重绘需求）
+    connect(model_, &SketchModel::ucsChanged, this, [this]() { viewport()->update(); });
     connect(model_, &SketchModel::activeToolChanged, this, &GraphicsView::onActiveToolChanged);
     connect(model_, &SketchModel::currentLayerChanged, this, [this]() { viewport()->update(); });
     // 线宽显示开关（LWDISPLAY）：同步到渲染态，并刷新全部图元的线宽呈现。
@@ -1507,6 +1523,7 @@ void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
     p->fillRect(rect, QColor(245, 247, 250));
 
     if (model_->showGrid()) {
+        const Ucs& ucs = model_->currentUcs();
         // 一次 setPen + 一次 drawLines 画完一层网格。
         // 旧写法在循环里逐条 setPen，一屏几百条线就是几百次换笔，是鼠标移动时卡顿的主因。
         auto grid = [&](double step, const QColor& col, double px) {
@@ -1521,9 +1538,42 @@ void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
             p->setPen(pen);
             p->drawLines(ls);
         };
-        if (1.0 * zoom_ >= 3.0)       { grid(1.0,  GRID_MINOR, 1.0); grid(10.0,  GRID_MAJOR, 1.0); }
-        else if (10.0 * zoom_ >= 3.0) { grid(10.0, GRID_MINOR, 1.0); grid(100.0, GRID_MAJOR, 1.0); }
-        else                          { grid(100.0, GRID_MAJOR, 1.0); }
+        // 网格按当前 UCS 方向对齐：UCS=世界时走原有轴对齐快路（零回归）；
+        // UCS 平移/旋转时在 UCS 局部系内生成网格线（可见区域四角转局部系取包围盒保证覆盖），
+        // 经 painter 变换（translate 到 UCS 原点 + rotate 到 UCS 角）映射回世界系。
+        if (!ucs.isWorld()) {
+            auto gridU = [&](double step, const QColor& col, double px) {
+                if (step * zoom_ < 3.0) return;
+                const Vec3 c1 = ucs.toUcs(Vec3(rect.left(),  rect.top(),    0));
+                const Vec3 c2 = ucs.toUcs(Vec3(rect.right(), rect.top(),    0));
+                const Vec3 c3 = ucs.toUcs(Vec3(rect.right(), rect.bottom(), 0));
+                const Vec3 c4 = ucs.toUcs(Vec3(rect.left(),  rect.bottom(), 0));
+                const double minX = std::min({c1.x, c2.x, c3.x, c4.x});
+                const double maxX = std::max({c1.x, c2.x, c3.x, c4.x});
+                const double minY = std::min({c1.y, c2.y, c3.y, c4.y});
+                const double maxY = std::max({c1.y, c2.y, c3.y, c4.y});
+                QVector<QLineF> ls;
+                for (double x = std::floor(minX / step) * step; x <= maxX; x += step)
+                    ls << QLineF(x, minY, x, maxY);
+                for (double y = std::floor(minY / step) * step; y <= maxY; y += step)
+                    ls << QLineF(minX, y, maxX, y);
+                QPen pen(col, px);
+                pen.setCosmetic(true);
+                p->setPen(pen);
+                p->save();
+                p->translate(ucs.origin.x, ucs.origin.y);
+                p->rotate(math::rad2deg(ucs.angleRad));
+                p->drawLines(ls);
+                p->restore();
+            };
+            if (1.0 * zoom_ >= 3.0)       { gridU(1.0,  GRID_MINOR, 1.0); gridU(10.0,  GRID_MAJOR, 1.0); }
+            else if (10.0 * zoom_ >= 3.0) { gridU(10.0, GRID_MINOR, 1.0); gridU(100.0, GRID_MAJOR, 1.0); }
+            else                          { gridU(100.0, GRID_MAJOR, 1.0); }
+        } else {
+            if (1.0 * zoom_ >= 3.0)       { grid(1.0,  GRID_MINOR, 1.0); grid(10.0,  GRID_MAJOR, 1.0); }
+            else if (10.0 * zoom_ >= 3.0) { grid(10.0, GRID_MINOR, 1.0); grid(100.0, GRID_MAJOR, 1.0); }
+            else                          { grid(100.0, GRID_MAJOR, 1.0); }
+        }
     }
 
     drawAxes(p);
@@ -1532,6 +1582,15 @@ void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
 void GraphicsView::drawAxes(QPainter* p) const {
     const double L    = 58.0 / zoom_;   // 坐标系指示器保持屏幕恒定尺寸
     const double head = 8.0 / zoom_;
+
+    // 坐标系图标随当前 UCS 摆放：UCS=世界时变换为恒等（行为不变）；
+    // UCS 平移/旋转时图标落在 UCS 原点、按 UCS 角旋转（AutoCAD UCS 图标语义）。
+    const Ucs& ucs = model_->currentUcs();
+    p->save();
+    if (!ucs.isWorld()) {
+        p->translate(ucs.origin.x, ucs.origin.y);
+        p->rotate(math::rad2deg(ucs.angleRad));
+    }
 
     QPen ax(AXIS_X); ax.setCosmetic(true); ax.setWidthF(1.6);
     QPen ay(AXIS_Y); ay.setCosmetic(true); ay.setWidthF(1.6);
@@ -1559,6 +1618,7 @@ void GraphicsView::drawAxes(QPainter* p) const {
     drawPixelText(p, QPointF(L + 5.0 / zoom_, 0),          "X", AXIS_X, 12, true);
     drawPixelText(p, QPointF(5.0 / zoom_, L + 2.0 / zoom_), "Y", AXIS_Y, 12, true);
     drawPixelText(p, QPointF(4.0 / zoom_, -4.0 / zoom_),    "O", QColor(70, 74, 84), 11, false);
+    p->restore();
 }
 
 void GraphicsView::drawPixelText(QPainter* p, const QPointF& scenePos, const QString& s,
@@ -1615,7 +1675,8 @@ Vec3 GraphicsView::snapWorld(const Vec3& w) {
             }
         }
         trackNow_ = snap::track(w, tc, hasDir ? &lastDir : nullptr, polarBase,
-                                model_->trackPoints(), otrackAnchors_, worldTol());
+                                model_->trackPoints(), otrackAnchors_, worldTol(),
+                                model_->currentUcs().angleRad);
     }
 
     // ---- 落点优先级：OSNAP（显式几何特征）> 追踪（对齐引导）> 自由点 ----
@@ -1625,12 +1686,14 @@ Vec3 GraphicsView::snapWorld(const Vec3& w) {
 
     // ---- 输入约束（正交/栅格吸附）：强制性，优先级**高于** OSNAP ----
     // 正交开启后即便 OSNAP 命中斜向点也必须投影回水平/垂直（画不出斜线）；
+    // 「水平/垂直」按当前 UCS 轴方向计算（UCS=世界时即既有行为）；
     // 基准点取最近已放置点，首点无基准时正交不生效（仅栅格吸附生效）。
     const Vec3* base = nullptr;
     Vec3 baseBuf;
     if (!pendingPts_.empty()) { baseBuf = pendingPts_.back(); base = &baseBuf; }
     inputNow_ = snap::applyInputConstraints(result, base, model_->orthoMode(),
-                                            model_->gridSnap(), model_->gridSnapStep());
+                                            model_->gridSnap(), model_->gridSnapStep(),
+                                            model_->currentUcs().angleRad);
     return inputNow_.point;
 }
 
@@ -1778,6 +1841,49 @@ void GraphicsView::showSnapOverrideMenu(const QPoint& globalPos) {
     connect(tk, &QAction::triggered, this, [this]() { addTrackPointAtCursor(); });
     QAction* tkc = menu.addAction(QStringLiteral("清除全部临时追踪点"));
     connect(tkc, &QAction::triggered, this, [this]() { clearTrackPoints(); });
+    menu.exec(globalPos);
+}
+
+// Ctrl+右键：捕捉/追踪快捷开关菜单（AutoCAD 捕捉追踪覆盖约定）。
+// 勾选项直写 model_ 单一状态源（正交 F8、栅格捕捉、极轴追踪、对象捕捉追踪），
+// 与快捷键/状态栏/命令 ortho/snap 三入口同源互斥（SketchModel 广播信号同步）。
+void GraphicsView::showTrackingQuickMenu(const QPoint& globalPos) {
+    QMenu menu(this);
+    menu.setTitle(QStringLiteral("捕捉与追踪"));
+
+    auto addToggle = [&](const QString& label, bool checked,
+                         std::function<void(bool)> apply) {
+        QAction* a = menu.addAction(label);
+        a->setCheckable(true);
+        a->setChecked(checked);
+        connect(a, &QAction::triggered, this, [apply](bool on) { apply(on); });
+        return a;
+    };
+
+    addToggle(QStringLiteral("正交 (F8)"), model_->orthoMode(),
+              [this](bool on) { model_->setOrthoMode(on); });
+    addToggle(QStringLiteral("栅格捕捉"), model_->gridSnap(),
+              [this](bool on) { model_->setGridSnap(on); });
+
+    snap::TrackConfig tc = model_->trackConfig();
+    addToggle(QStringLiteral("极轴追踪"), tc.polar,
+              [this](bool on) {
+                  snap::TrackConfig c = model_->trackConfig();
+                  c.polar = on;
+                  model_->setTrackConfig(c);
+              });
+    addToggle(QStringLiteral("对象捕捉追踪"), tc.objectTrack,
+              [this](bool on) {
+                  snap::TrackConfig c = model_->trackConfig();
+                  c.objectTrack = on;
+                  model_->setTrackConfig(c);
+              });
+
+    menu.addSeparator();
+    QAction* osnap = menu.addAction(QStringLiteral("捕捉设置 (Shift+右键 = 临时覆盖)"));
+    connect(osnap, &QAction::triggered, this, [this]() {
+        showSnapOverrideMenu(QCursor::pos());
+    });
     menu.exec(globalPos);
 }
 
@@ -2030,6 +2136,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         }
 
         // ③ 极轴射线：从最近已放置点沿各极轴角方向（橙色虚线；含相对上一段方向的偏移）
+        // 极轴角以当前 UCS X 轴为 0° 基准（与追踪吸附使用同一 polarAngles 入口，所见即所得）
         if (tc.polar && !pendingPts_.empty()) {
             const Vec3 base = pendingPts_.back();
             const Vec3* ld = nullptr;
@@ -2038,7 +2145,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                 lastDir = (pendingPts_.back() - pendingPts_[pendingPts_.size() - 2]).normalized();
                 ld = &lastDir;
             }
-            const auto angs = snap::polarAngles(tc, ld);
+            const auto angs = snap::polarAngles(tc, ld, model_->currentUcs().angleRad * 180.0 / M_PI);
             p->save();
             QPen pp(QColor(220, 140, 0, 170));
             pp.setStyle(Qt::DashLine); pp.setWidthF(1.0 / zoom_); pp.setCosmetic(true);
@@ -2051,15 +2158,18 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             p->restore();
         }
 
-        // ⑤ 正交引导线：从基点出发的水平/垂直双向虚线（正交开启时提示方向已被锁定）
+        // ⑤ 正交引导线：从基点出发沿 UCS X/Y 轴的双向虚线（正交开启时提示方向已被锁定）
         if (model_->orthoMode() && !pendingPts_.empty()) {
             const Vec3 base = pendingPts_.back();
+            const Ucs& ucs = model_->currentUcs();
             p->save();
             QPen op(QColor(90, 100, 120, 150));
             op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
             p->setPen(op);
-            p->drawLine(QPointF(base.x - R, base.y), QPointF(base.x + R, base.y));
-            p->drawLine(QPointF(base.x, base.y - R), QPointF(base.x, base.y + R));
+            p->drawLine(QPointF(base.x - R * ucs.xAxis().x, base.y - R * ucs.xAxis().y),
+                        QPointF(base.x + R * ucs.xAxis().x, base.y + R * ucs.xAxis().y));
+            p->drawLine(QPointF(base.x - R * ucs.yAxis().x, base.y - R * ucs.yAxis().y),
+                        QPointF(base.x + R * ucs.yAxis().x, base.y + R * ucs.yAxis().y));
             p->restore();
         }
 
@@ -2094,8 +2204,17 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     f.setPixelSize(12);
     p->setFont(f);
     p->setPen(QColor(108, 116, 132));
-    p->drawText(10, 18, QString("工作平面 %1     坐标系 X→ Y↑（标准笛卡尔）     当前线宽 %2     拾取容差 %3px")
+    // HUD 首行：工作平面 + 当前 UCS（世界系显示 WCS，命名/临时 UCS 显示名称/原点/旋转角）
+    const Ucs& ucsHud = model_->currentUcs();
+    const QString ucsTxt = ucsHud.isWorld()
+        ? QStringLiteral("坐标系 WCS（世界系）")
+        : QString("UCS %1 @(%2, %3) 旋转 %4°")
+              .arg(ucsHud.name)
+              .arg(ucsHud.origin.x, 0, 'f', 1).arg(ucsHud.origin.y, 0, 'f', 1)
+              .arg(math::rad2deg(ucsHud.angleRad), 0, 'f', 1);
+    p->drawText(10, 18, QString("工作平面 %1     %2     当前线宽 %3     拾取容差 %4px")
                             .arg(planeName(model_->plane()))
+                            .arg(ucsTxt)
                             .arg(lineWidthName(model_->defaultWidth()))
                             .arg((int)PICK_TOL_PX));
     if (drawToolActive_) {
@@ -2675,6 +2794,9 @@ void GraphicsView::injectPoint(const Vec3& p) {
     keyboardInputActive_ = true;
     handlePress(p, &fakeEvent);
     keyboardInputActive_ = false;
+
+    // 记录键盘点输入基准点：后续命令行相对坐标（@dx,dy / @d<a）以此为基准（UCS 局部系下偏移）。
+    model_->setLastInputPointWorld(p);
 
     // 在注入点处更新预览
     if (drawing_) updatePreview(p);
@@ -3366,7 +3488,13 @@ void GraphicsView::handleRightButton() {
         model_->log(QStringLiteral("已退出绘制工具，回到选择状态"));
         return;
     }
-    // 选择/空闲态：右键弹出上下文菜单（取代此前的无操作）
+    // 选择/空闲态：行为可配置（interaction/rightClickIdleRepeat，默认 AutoCAD 约定）。
+    //   true  = 重复上一命令（经主窗口执行，保持 CommandInterpreter 单一入口）；
+    //   false = 既有行为：弹出上下文菜单。
+    if (model_->rightClickIdleRepeat()) {
+        emit repeatLastCommandRequested();
+        return;
+    }
     showContextMenu(QCursor::pos());
 }
 
@@ -3456,10 +3584,42 @@ void GraphicsView::ensureDynBox() {
     lay->addWidget(dynAng_);
     connect(dynLen_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
     connect(dynAng_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
+    // Tab 字段切换：QLineEdit 默认把 Tab 当焦点遍历交还主窗口，这里接管，
+    // 在「距离/角度」两输入框间循环（Shift+Tab 反向）。
+    dynLen_->installEventFilter(this);
+    dynAng_->installEventFilter(this);
     dynBox_->hide();
 }
 
+// DYN 输入框事件过滤：Tab/Backtab 在 dynLen_/dynAng_ 间切换焦点并吃掉事件。
+bool GraphicsView::eventFilter(QObject* obj, QEvent* ev) {
+    if (ev->type() == QEvent::KeyPress && dynBox_ && dynBox_->isVisible()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (obj == dynLen_ && ke->key() == Qt::Key_Tab) {
+            dynAng_->setFocus(Qt::TabFocusReason);
+            dynAng_->selectAll();
+            ke->accept();
+            return true;
+        }
+        if (obj == dynAng_ && (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab)) {
+            dynLen_->setFocus(ke->key() == Qt::Key_Tab ? Qt::TabFocusReason
+                                                       : Qt::BacktabFocusReason);
+            dynLen_->selectAll();
+            ke->accept();
+            return true;
+        }
+        if (obj == dynLen_ && ke->key() == Qt::Key_Backtab) {
+            dynAng_->setFocus(Qt::BacktabFocusReason);
+            dynAng_->selectAll();
+            ke->accept();
+            return true;
+        }
+    }
+    return QGraphicsView::eventFilter(obj, ev);
+}
+
 // 按最近采集点 → 光标的极坐标刷新预填值，并把输入框放到光标右下方。
+// 角度按当前 UCS X 轴为 0° 基准显示（与 commitDynInput 的解释口径一致）。
 void GraphicsView::updateDynBox(const QPoint& vp) {
     ensureDynBox();
     if (pendingPts_.empty()) { dynBox_->hide(); return; }
@@ -3467,7 +3627,9 @@ void GraphicsView::updateDynBox(const QPoint& vp) {
     const double dx = lastMouseWorld_.x - last.x;
     const double dy = lastMouseWorld_.y - last.y;
     const double len = std::hypot(dx, dy);
-    const double ang = qRadiansToDegrees(std::atan2(dy, dx));
+    // 世界系方向角 → 减去 UCS 旋转角得到 UCS 局部角
+    const double ang = qRadiansToDegrees(std::atan2(dy, dx))
+                       - math::rad2deg(model_->currentUcs().angleRad);
     // 焦点在输入框时暂停预填，避免覆盖用户正在键入的值
     if (!dynLen_->hasFocus() && !dynAng_->hasFocus()) {
         dynLen_->setText(QString::number(len, 'f', 2));
@@ -3488,6 +3650,7 @@ void GraphicsView::hideDynBox() {
 
 // Enter：以「上一点 + 极坐标(距离, 角度°)」计算世界点，注入为拾取点。
 // 复用 injectPoint 点击管线（追加采集点/更新预览/点数满足自动收尾）。
+// 角度基准 = 当前 UCS 的 X 轴正向（DYN 输入口径与命令行极坐标一致），经 UCS 基向量换算到世界系。
 void GraphicsView::commitDynInput() {
     if (pendingPts_.empty()) return;
     bool okL = false, okA = false;
@@ -3497,7 +3660,9 @@ void GraphicsView::commitDynInput() {
     if (!okA) ang = 0.0;
     const Vec3& last = pendingPts_.back();
     const double rad = qDegreesToRadians(ang);
-    const Vec3 pt(last.x + len * std::cos(rad), last.y + len * std::sin(rad), last.z);
+    const Ucs& ucs = model_->currentUcs();
+    const Vec3 pt = last + ucs.xAxis() * (len * std::cos(rad))
+                        + ucs.yAxis() * (len * std::sin(rad));
     hideDynBox();
     model_->log(QString(">> 距离=%1 角度=%2  [DYN 输入]")
                     .arg(len, 0, 'f', 2).arg(ang, 0, 'f', 1), "cmd");
@@ -4310,6 +4475,13 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
             e->accept();
             return;
         }
+        // Ctrl+右键：捕捉/追踪快捷开关菜单（正交/极轴/对象追踪/栅格捕捉，AutoCAD 约定）。
+        // 任何时刻均可用（开关全局输入约束不受「是否绘制中」限制）；不触发平移。
+        if (e->modifiers() & Qt::ControlModifier) {
+            showTrackingQuickMenu(mapToGlobal(e->position().toPoint()));
+            e->accept();
+            return;
+        }
         // 右键按下：先进入平移预备态，移动则平移视图，未移动（单击）则保留原「结束/取消」语义
         panning_ = true;
         panRight_ = true;
@@ -4357,7 +4529,9 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
     const QPoint vp = e->position().toPoint();
     const Vec3 w = toVec3(mapToScene(vp));
     lastMouseWorld_ = w;            // 记录最近鼠标世界坐标，供捕捉快捷键切换后即时刷新
-    emit cursorMoved(w.x, w.y, 0.0);
+    // 坐标读数按当前显示模式（WCS=世界 / UCS=用户系）换算后上报状态栏
+    const Vec3 disp = model_->displayCoord(w);
+    emit cursorMoved(disp.x, disp.y, disp.z);
     // DYN 动态输入：绘制命令期已有采集点时，光标跟随显示「距离/角度」输入框
     if (drawToolActive_ && model_->dynMode() && !pendingPts_.empty())
         updateDynBox(vp);
@@ -4598,16 +4772,38 @@ void GraphicsView::mouseDoubleClickEvent(QMouseEvent* e) {
         e->accept();
         return;
     }
-    // 双击文字图元（Text/MText）→ 打开多行文字编辑框；双击表格（Table）→ 打开表格编辑器
+    // 双击图元（AutoCAD 约定）：
+    //   文字/多行文字/表格 → 就地编辑内容（既有）
+    //   标注/引线/形位公差 → 就地编辑覆盖文本（editTextRequested，主窗口侧分发）
+    //   块引用            → 进入在位编辑（BEDIT，blockEditRequested）
+    //   其它图元          → 打开属性面板（requestShowProperties）
     if (e->button() == Qt::LeftButton) {
         const int id = hitTest(e->position().toPoint());
         if (id >= 0) {
             const Element* el = model_->element(id);
-            if (el && (el->type == ElementType::Text || el->type == ElementType::MText ||
-                       el->type == ElementType::Table)) {
-                emit editTextRequested(id);
-                e->accept();
-                return;
+            if (el) {
+                switch (el->type) {
+                case ElementType::Text:
+                case ElementType::MText:
+                case ElementType::Table:
+                    emit editTextRequested(id);
+                    e->accept();
+                    return;
+                case ElementType::Dimension:
+                case ElementType::MLeader:
+                case ElementType::Fcf:
+                    emit editTextRequested(id);   // 主窗口 editElementText 分发到标注文本编辑
+                    e->accept();
+                    return;
+                case ElementType::BlockRef:
+                    emit blockEditRequested(id);
+                    e->accept();
+                    return;
+                default:
+                    emit requestShowProperties();
+                    e->accept();
+                    return;
+                }
             }
         }
     }

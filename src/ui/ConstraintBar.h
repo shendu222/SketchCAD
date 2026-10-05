@@ -16,6 +16,9 @@ class ConstraintBar : public QWidget {
 public:
     explicit ConstraintBar(SketchModel* m, QWidget* parent = nullptr);
 
+    // 多文档切换重绑：换绑活动文档并按新模型的约束表重建
+    void setModel(SketchModel* m) { model_ = m; refresh(); }
+
 public slots:
     void refresh();   // 选中变化 / 约束表变化 / 几何变化 时刷新列表与告警
 

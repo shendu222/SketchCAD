@@ -22,6 +22,9 @@ class ScriptApi : public QObject {
 public:
     explicit ScriptApi(SketchModel* model, CommandInterpreter* interp, QObject* parent = nullptr);
 
+    // 多文档切换重绑：换绑当前活动文档的模型（解释器共享，不随文档换）
+    void setModel(SketchModel* model) { model_ = model; }
+
     // ---- 图元创建（返回新图元 id；失败返回 -1）----
     Q_INVOKABLE int     addLine(double x1, double y1, double x2, double y2);
     Q_INVOKABLE int     addCircle(double cx, double cy, double r);

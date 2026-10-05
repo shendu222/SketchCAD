@@ -37,6 +37,23 @@ public:
 
     // 确保日志/崩溃目录已创建（幂等）。公开以便崩溃过滤器在极早期调用。
     static void ensureDirs();
+
+    // ---- 会话标记（异常退出检测）----
+    // 机制：启动时写标记文件 → 正常退出删除 → 残留 = 上次未正常退出
+    //（崩溃 / 被任务管理器杀死 / 断电）。标记内容只是时间戳，无敏感信息。
+    // 路径注入版本供无头自测在临时目录验证；begin/endSession 用真实路径。
+    static QString sessionMarkerPath();              // %LOCALAPPDATA%/SketchCAD/session.marker
+    static bool writeSessionMarker(const QString& path);
+    static bool isAbnormalExit(const QString& path); // 标记残留 = 上次异常退出
+    static bool clearSessionMarker(const QString& path);
+
+    // 便捷包装（真实路径）：启动时调用 beginSession（返回是否检测到上次异常
+    // 退出并缓存）；aboutToQuit 调 endSession。lastSessionAbnormal 供 UI 稍后
+    // 查询（showAbnormalExitNotice），acknowledgeAbnormalSession 消费后不再提示。
+    static bool beginSession();
+    static void endSession();
+    static bool lastSessionAbnormal();
+    static void acknowledgeAbnormalSession();
 };
 
 } // namespace SketchCAD

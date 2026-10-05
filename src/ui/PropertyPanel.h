@@ -20,6 +20,8 @@ class PropertyPanel : public QWidget {
     Q_OBJECT
 public:
     explicit PropertyPanel(SketchModel* m, QWidget* parent = nullptr);
+    // 多文档切换重绑：换绑活动文档，清掉旧文档的选中 id 并按新模型重建
+    void setModel(SketchModel* m) { model_ = m; curId_ = -1; onModelChanged(); }
     void load(int id);
 public slots:
     void onSelectionChanged(int id);

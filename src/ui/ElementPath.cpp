@@ -11,6 +11,7 @@
 #include "core/DimStyle.h"
 #include "core/Gdt.h"       // buildMLeader / buildFcf：多重引线与形位公差框格路径
 #include "core/TextStyle.h"
+#include "core/TextMetrics.h"   // 文字度量单一数据源：屏幕/打印/取景三处同源
 #include "core/SketchModel.h"
 
 #include <QFont>
@@ -379,47 +380,21 @@ QRectF rawBounds(const Element& e, const SketchModel* model) {
             grow(g.textPos);
         }
     }
-    // 文本 / 多行文字：按文字尺寸展开包围盒（世界 mm，与视图缩放无关），保证选中/拾取命中整段文字而非仅锚点。
-    // 在固定参考像素尺寸(1000)下度量字宽/字高，再按 (文字高度mm / 1000) 换算回世界 mm。
+    // 文本 / 多行文字：三处同源——与屏幕渲染、打印渲染统一调用 TextMetrics::elementBoundsMm。
     if ((e.type == ElementType::Text || e.type == ElementType::MText)
         && !e.pts.empty() && !e.text.isEmpty()) {
-        const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)，存于 radius 字段
-        QFont tf;
-        tf.setPixelSize(1000);
-        const QFontMetricsF fm(tf);
-        const double lineHmm = th * (e.type == ElementType::MText ? e.lineSpacing : 1.0);
-        // 宽度因子：图元 widthFactor × 样式 widthFactor
-        double wf = e.widthFactor > 0 ? e.widthFactor : 1.0;
-        if (model && !e.styleName.isEmpty()) {
-            if (const TextStyle* ts = model->findTextStyle(e.styleName)) wf *= ts->widthFactor;
+        const QRectF b = TextMetrics::elementBoundsMm(e, model);
+        if (!b.isNull()) {
+            grow(Vec3(b.left(),  b.bottom(), 0));
+            grow(Vec3(b.right(), b.top(),    0));
         }
-        // 自动换行（仅 MText 且指定了 mtextWidth）或仅按显式换行折行
-        QStringList lines;
-        if (e.type == ElementType::MText && e.mtextWidth > 0.1)
-            lines = wrapText(e.text, e.mtextWidth, tf);
-        else
-            lines = e.text.split('\n');
-        double maxWmm = 0;
-        for (const auto& ln : lines) {
-            const double w = fm.horizontalAdvance(ln) / 1000.0 * th * wf;
-            if (w > maxWmm) maxWmm = w;
-        }
-        const double totalHmm = lines.size() * lineHmm;
-        // 9 点对齐 → 区块相对锚点的偏移（局部 y 向上）
-        const int align = (e.type == ElementType::MText) ? e.textAlign : 1; // Text 维持原「中上」锚定
-        const int hA = align % 3, vA = align / 3;
-        const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHmm / 2.0 : totalHmm;
-        const double yTop = startYv, yBot = startYv - totalHmm;
-        double xL, xR;
-        if (hA == 0)      { xL = 0;          xR = maxWmm; }
-        else if (hA == 1) { xL = -maxWmm/2;  xR = maxWmm/2; }
-        else              { xL = -maxWmm;    xR = 0; }
-        grow(Vec3(e.pts[0].x + xL, e.pts[0].y + yBot, 0));
-        grow(Vec3(e.pts[0].x + xR, e.pts[0].y + yTop, 0));
     }
-    // 表格：包围盒 = 左上锚点 + (总宽, rows×rowHeight)，行向下增长（世界 Y 向上 → y 减小方向）
+    // 表格：包围盒 = 左上锚点 + (列宽之和, rows×rowHeight)，列宽与屏幕/打印同源（显式优先，否则自适应）。
     if (e.type == ElementType::Table && !e.pts.empty()) {
-        const double W = e.tableWidthMm();
+        const QVector<double> colW = TextMetrics::tableColumnWidths(e, model);
+        double W = 0;
+        for (double w : colW) W += w;
+        if (W <= 0) W = e.tableWidthMm();
         const double H = std::max(1, e.tableRows) * std::max(0.5, e.rowHeight);
         grow(Vec3(e.pts[0].x,      e.pts[0].y - H, 0));
         grow(Vec3(e.pts[0].x + W,  e.pts[0].y,     0));

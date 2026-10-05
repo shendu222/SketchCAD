@@ -87,4 +87,8 @@ ScriptResult ScriptHost::runFile(const QString& language, const QString& filePat
     return runCode(language, code);
 }
 
+void ScriptHost::setModel(SketchModel* model) {
+    if (api_) api_->setModel(model);   // 引擎经 api() 反向访问模型，换绑 api 即全局生效
+}
+
 } // namespace SketchCAD

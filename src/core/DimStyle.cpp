@@ -1,6 +1,8 @@
 #include "DimStyle.h"
 #include "Geometry.h"
 #include "SketchModel.h"
+#include "TextStyle.h"      // ResolvedTextStyle
+#include "TextMetrics.h"    // 标注文字宽度：真实度量（有 GUI）/ 无头确定性估算
 #include <cmath>
 #include <algorithm>
 
@@ -403,8 +405,10 @@ static Geom buildRadial(const Element& e, const Style& st, bool diameter) {
         g.textPos = (C + Pout) * 0.5 + rd.perp() * (st.textGap + st.textHeight * 0.5);
     } else {
         const Vec3 knee = C + u * (R + 4.0 * st.arrowLen);
-        const double shelf = std::max(st.textHeight * 2.0,
-                                      st.textHeight * 0.62 * (g.label.size() + g.tolLabel.size()));
+        // 标注文字宽度改用真实度量（无头降级为确定性估算，系数 0.62 与旧一致）。
+        ResolvedTextStyle rs; rs.height = st.textHeight;
+        const double textW = TextMetrics::lineWidthMm(rs, g.label + g.tolLabel, st.textHeight);
+        const double shelf = std::max(st.textHeight * 2.0, textW);
         const double sx = (u.x >= 0) ? 1.0 : -1.0;
         const Vec3 tail = knee + Vec3(shelf * sx, 0, 0);
         g.line.push_back({Pout, knee});

@@ -1,6 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QString>
+#include <QList>
 #include <QListWidget>
 #include <QComboBox>
 #include <QLabel>
@@ -23,6 +24,11 @@ class LayerPanel : public QWidget {
 public:
     explicit LayerPanel(SketchModel* model, QWidget* parent = nullptr);
 
+    // 多文档切换重绑：断开旧模型的连接 → 换绑 → 重新连接 → 按新模型重建。
+    // （本面板在构造期自连接模型信号，与其余面板"由 ModelMediator 统一订阅"不同，
+    //   故 setModel 需要自行管理连接的生命周期。）
+    void setModel(SketchModel* model);
+
     // 依据模型重建列表与样式控件（图层表变化 / 图元变化 / 选择变化时调用）
     void refresh();
 
@@ -42,6 +48,7 @@ private slots:
 
 private:
     SketchModel* model_;
+    QList<QMetaObject::Connection> modelConns_;   // 自连接的模型信号（setModel 迁移用）
     QListWidget*  list_;
     QPushButton*  colorBtn_;
     QComboBox*    lineStyleCombo_;

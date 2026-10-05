@@ -14,7 +14,18 @@
 #include <QTimer>
 #include <QWidget>
 #include "core/Diagnostics.h"   // 崩溃不丢稿：日志滚动 + 崩溃转储
+#include "core/I18n.h"         // 国际化：语言解析 + QTranslator 装载
 #include "ui/MainWindow.h"
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -107,12 +118,40 @@ CoverImage loadCoverImage(QString* usedPath = nullptr) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // ---- Per-Monitor V2 DPI 感知声明（必须在任何窗口创建之前）----
+    // Qt6 高 DPI 缩放恒启用（AA_EnableHighDpiScaling 已弃用，设置反而触发弃用警告），
+    // 这里补声明 Windows Per-Monitor V2：多显示器不同缩放率下窗口跨屏拖动即时重排，
+    // 125%/150%/200% 混合缩放不再出现"图像拉伸/模糊"。
+    // 动态加载 user32（Win10 1703+），失败回落 shcore 的 SetProcessDpiAwareness(2)，
+    // 两者都失败则保持系统默认（进程未声明感知 = 由 DWM 位图拉伸）。
+    // 不依赖 <winuser.h> 的常量声明：PER_MONITOR_AWARE_V2 的句柄值就是 (void*)-4。
+#ifdef Q_OS_WIN
+    {
+        using SetDpiCtxFn  = BOOL(WINAPI*)(void*);   // DPI_AWARENESS_CONTEXT 即句柄指针
+        using SetDpiAwareFn = HRESULT(WINAPI*)(int);
+        const HMODULE user32 = ::GetModuleHandleW(L"user32.dll");
+        if (user32) {
+            const auto setCtx = reinterpret_cast<SetDpiCtxFn>(
+                reinterpret_cast<void*>(::GetProcAddress(user32, "SetProcessDpiAwarenessContext")));
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (DPI_AWARENESS_CONTEXT)-4
+            if (setCtx && setCtx(reinterpret_cast<void*>(-4))) {
+                // Per-Monitor V2 生效
+            } else if (const HMODULE shcore = ::LoadLibraryW(L"shcore.dll")) {
+                const auto setDpi = reinterpret_cast<SetDpiAwareFn>(
+                    reinterpret_cast<void*>(::GetProcAddress(shcore, "SetProcessDpiAwareness")));
+                if (setDpi) setDpi(2 /*PROCESS_PER_MONITOR_DPI_AWARE*/);
+            }
+        }
+    }
+#endif
+
     // ---- 高 DPI 策略早期读取（必须在 QApplication 构造之前）----
     // Qt6 中高 DPI 缩放恒启用（AA_EnableHighDpiScaling 已弃用），启动前唯一可配置的
     // 是缩放舍入策略。这里用独立 QSettings 读 display/highDpiRoundingPolicy（与
     // AppSettings 同一注册表路径 HKCU\Software\SketchCAD）：注册表单键读取，不阻塞
     // 启动；非法值一律回落 Round（与 AppSettings 校验表一致）。真正的用户偏好读写
     // 在「选项」对话框（display/highDpiRoundingPolicy）。
+    QString preferredLang;   // 界面语言原始值：""(缺省)=跟随系统 / zh-CN / en
     {
         const QSettings pre(QSettings::NativeFormat, QSettings::UserScope,
                             QStringLiteral("SketchCAD"), QString());
@@ -125,18 +164,29 @@ int main(int argc, char** argv) {
         else if (pol == QLatin1String("Ceil"))            p = P::Ceil;
         else if (pol == QLatin1String("RoundPreferFloor"))p = P::RoundPreferFloor;
         QGuiApplication::setHighDpiScaleFactorRoundingPolicy(p);
+        // 语言同样走注册表单键早期读取（general/language，AppSettings 同路径）：
+        // 空/缺键 = 跟随系统（中文系统直接用源语言，零感知）
+        preferredLang = pre.value(QLatin1String("general/language"), QString()).toString();
     }
 
     QApplication app(argc, argv);
+
+    // ---- 界面语言装载（必须在 QApplication 之后：installTranslator 需要应用实例）----
+    // 主窗口/对话框构造中的 tr() 由此取到译文；zh-CN 为源语言不装翻译器。
+    SketchCAD::I18n::installTranslator(SketchCAD::I18n::resolveLanguage(preferredLang));
 
     // ---- 崩溃不丢稿：诊断子系统（Qt 日志滚动落盘 + Windows 崩溃 mini-dump）----
     // 必须在 QApplication 构造之后、主窗口构造之前安装：消息处理器依赖事件循环上下文，
     // 崩溃过滤器则要抢在任何窗口初始化失败之前。
     SketchCAD::Diagnostics::init(QStringLiteral("SketchCAD"));
     SketchCAD::Diagnostics::writeLog(QStringLiteral("SketchCAD 启动"), "info");
+    // 会话标记：启动即写 → 正常退出删除 → 残留 = 上次异常退出（主窗口启动后弹提示）。
+    // 检测结果缓存在 Diagnostics 内，MainWindow::showAbnormalExitNotice 稍后消费。
+    SketchCAD::Diagnostics::beginSession();
 
     // 退出钩子：正常退出时收尾（MainWindow::closeEvent 已停自动保存并清理 .tmp）
     QObject::connect(&app, &QCoreApplication::aboutToQuit, []{
+        SketchCAD::Diagnostics::endSession();   // 清会话标记 → 下次启动不误报异常退出
         SketchCAD::Diagnostics::writeLog(QStringLiteral("SketchCAD 正常退出"), "info");
     });
 

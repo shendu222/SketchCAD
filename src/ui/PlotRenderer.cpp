@@ -9,6 +9,7 @@
 #include "core/SheetSpec.h"        // standardTextHeightMm / currentSheetFormat
 #include <QPainterPath>
 #include "core/TextStyle.h"         // resolveTextStyle / resolveFields / wrapText
+#include "core/TextMetrics.h"     // 文字度量单一数据源：屏幕/打印/取景三处同源
 #include <QPen>
 #include <QBrush>
 #include <QPixmap>
@@ -128,6 +129,7 @@ struct Ctx {
     QRectF clip;                  // 世界坐标裁剪矩形（Xline 用）
     const PlotStyleTable* style = nullptr;
     double ltscale = 1.0;         // 全局线型比例（LTSCALE），随图元虚线长度缩放
+    const QStringList* frozenLayers = nullptr;  // per-viewport 冻结（nullptr = 不冻结）
 };
 
 void paintHatch(QPainter* p, const Element& e, Ctx& c);
@@ -140,6 +142,9 @@ void paintTable(QPainter* p, const Element& e, Ctx& c);
 
 void paintOne(QPainter* p, const Element& e, Ctx& c) {
     if (e.type == ElementType::Constraint) return;   // 求解约束标记不打印
+    // per-viewport 冻结：该视口内冻结层零输出（模型空间与其他视口不受影响）；
+    // 块引用展开后逐子图元走 paintOne，冻结语义对块内同层子图元同样生效
+    if (c.frozenLayers && c.frozenLayers->contains(e.layer)) return;
     // 图层动态语义：冻结层或关闭打印层 → 打印零输出（命中零、重算零、打印零）
     if (c.model) {
         const Layer* L = c.model->findLayer(e.layer);
@@ -402,11 +407,15 @@ void paintGdt(QPainter* p, const Element& e, Ctx& c) {
 void paintText(QPainter* p, const Element& e, Ctx& c) {
     if (e.pts.empty() || e.text.isEmpty()) return;
     const ResolvedPlotStyle rs = c.style->resolve(e);
-    const double th = e.radius > 0.1 ? e.radius : 3.5;   // 文字高度(mm)
+    const ResolvedTextStyle ts = resolveTextStyle(e, c.model);
+    const double th = ts.height;                            // 文字高度(mm)：样式×图元合并
     const bool isM = (e.type == ElementType::MText);
 
-    // 样式驱动字体参数（STYLE 表 + 图元字段 合并）
-    const ResolvedTextStyle ts = resolveTextStyle(e, c.model);
+    // 字段（FIELD）占位解析
+    const QString display = resolveFields(e.text, c.model);
+    // 三处同源：用 TextMetrics 统一布局(mm)，再乘 scaleDev 映射到设备像素。
+    const double mw = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
+    const TextLayout lay = TextMetrics::layout(ts, display, th, mw, isM ? e.lineSpacing : 1.0);
 
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
@@ -421,37 +430,24 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
         p->shear(std::tan(ts.obliquingAngle * M_PI / 180.0), 0.0);
     p->setFont(f);
     const QFontMetricsF fm(f);
-
-    // 字段（FIELD）占位解析 + 折行
-    const QString display = resolveFields(e.text, c.model);
-    QStringList lines;
-    if (isM && e.mtextWidth > 0.1)
-        lines = wrapText(display, e.mtextWidth, f);
-    else
-        lines = display.split('\n');
-
-    const double lineHpx = th * c.scaleDev * (isM ? e.lineSpacing : 1.0);
+    const double hh = fm.height();
+    const double lineHpx = lay.lineHeightMm * c.scaleDev;
     const int    align   = isM ? e.textAlign : 1;
     const int    hA = align % 3, vA = align / 3;
-    double maxW = 0;
-    QVector<double> widths(lines.size());
-    for (int i = 0; i < lines.size(); ++i) {
-        widths[i] = fm.horizontalAdvance(lines[i]);
-        if (widths[i] > maxW) maxW = widths[i];
-    }
-    const double totalH = lines.size() * lineHpx;
-    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalH / 2.0 : totalH;
-    const double hh = fm.height();
+    const double maxWpx = lay.widthMm * c.scaleDev;
+    const double totalHpx = lay.heightMm * c.scaleDev;
+    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
     p->setPen(rs.color);
     p->setBrush(Qt::NoBrush);
-    for (int i = 0; i < lines.size(); ++i) {
+    for (int i = 0; i < lay.lines.size(); ++i) {
+        const double wpx = lay.lines[i].widthMm * c.scaleDev;
         const double yc = startYv - (i + 0.5) * lineHpx;
         double x0;
         if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -(maxW - widths[i]) / 2;
-        else              x0 = -(maxW - widths[i]);
-        const QRectF box(x0, yc - hh / 2, widths[i], hh);
-        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lines[i]);
+        else if (hA == 1) x0 = -(maxWpx - wpx) / 2;
+        else              x0 = -(maxWpx - wpx);
+        const QRectF box(x0, yc - hh / 2, wpx, hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
     }
     p->restore();
 }
@@ -461,6 +457,7 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
 void paintTable(QPainter* p, const Element& e, Ctx& c) {
     if (e.pts.empty()) return;
     const ResolvedPlotStyle rs = c.style->resolve(e);
+    const ResolvedTextStyle ts = resolveTextStyle(e, c.model);
     const int    R  = std::max(1, e.tableRows);
     const int    C  = std::max(1, e.tableCols);
     const double rh = std::max(0.5, e.rowHeight);
@@ -470,9 +467,11 @@ void paintTable(QPainter* p, const Element& e, Ctx& c) {
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);       // 抵消世界→设备变换的 Y 翻转
 
+    // 列宽：显式 colWidths 优先，否则按真实度量自适应（与屏幕/取景同源）。
+    const QVector<double> colW = TextMetrics::tableColumnWidths(e, c.model);
     QVector<double> xs(static_cast<int>(C) + 1);
     xs[0] = 0.0;
-    for (int i = 0; i < C; ++i) xs[i + 1] = xs[i] + e.tableColWidth(i);
+    for (int i = 0; i < C; ++i) xs[i + 1] = xs[i] + (i < colW.size() ? colW[i] : e.tableColWidth(i));
     const double totalW = xs[C];
     const double totalH = R * rh;
 
@@ -491,19 +490,32 @@ void paintTable(QPainter* p, const Element& e, Ctx& c) {
     // 单元格文字（字段占位打印时求值为快照）
     QFont f = p->font();
     f.setPixelSize(std::max(6, (int)std::lround(th * c.scaleDev)));
+    if (!ts.fontFamily.isEmpty()) f.setFamily(ts.fontFamily);
+    f.setBold(ts.bold);
+    f.setItalic(ts.italic);
+    f.setStretch((int)std::lround(ts.widthFactor * 100));
     p->setFont(f);
     const QFontMetricsF fm(f);
     const double pad = 1.0;                              // 内边距 1mm（逻辑坐标）
     const double hh = fm.height();
     const int hA = std::clamp(e.textAlign, 0, 2);
     p->setPen(rs.color);
+    ResolvedTextStyle crs;
+    crs.fontFamily  = ts.fontFamily;
+    crs.widthFactor = ts.widthFactor;
+    crs.bold        = ts.bold;
+    crs.italic      = ts.italic;
+    crs.height      = th;
     for (int r = 0; r < R; ++r) {
         for (int i = 0; i < C; ++i) {
             const QString raw = e.tableCell(r, i);
             if (raw.trimmed().isEmpty()) continue;
-            const QString display = resolveFields(raw, c.model);
-            const double tw = fm.horizontalAdvance(display);
+            QString display = resolveFields(raw, c.model);
             const double cellL = xs[i] + pad, cellR = xs[i + 1] - pad;
+            const double avail = cellR - cellL;
+            if (TextMetrics::lineWidthMm(crs, display, th) > avail)
+                display = TextMetrics::elideToWidthMm(crs, display, th, avail);
+            const double tw = fm.horizontalAdvance(display);
             double x0;
             if (hA == 0)      x0 = cellL;
             else if (hA == 1) x0 = (cellL + cellR - tw) / 2.0;
@@ -520,10 +532,11 @@ void paintTable(QPainter* p, const Element& e, Ctx& c) {
 
 void PlotRenderer::renderModel(QPainter* p, SketchModel* model, double scaleDev,
                               const QRectF& clipWorld, const PlotStyleTable& style,
-                              double lineWidthScale) {
+                              double lineWidthScale, const QStringList* frozenLayers) {
     if (!p || !model) return;
     Ctx c{ scaleDev, lineWidthScale, model, clipWorld, &style };
     c.ltscale = model->ltscale();   // 注入全局线型比例（与渲染侧同源）
+    c.frozenLayers = frozenLayers;  // per-viewport 冻结（nullptr = 历史行为）
     for (const auto& e : model->elements())
         paintOne(p, e, c);
 }

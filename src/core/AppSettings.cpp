@@ -11,6 +11,7 @@ namespace SketchCAD {
 
 using SettingKeys::kLanguage;
 using SettingKeys::kRecentFileCount;
+using SettingKeys::kUndoDepth;
 using SettingKeys::kShowGrid;
 using SettingKeys::kGridSnap;
 using SettingKeys::kGridSnapStep;
@@ -29,6 +30,12 @@ using SettingKeys::kBackupCount;
 using SettingKeys::kLowDiskMb;
 using SettingKeys::kPrinterDevice;
 using SettingKeys::kPrintDefaultsJson;
+using SettingKeys::kRecentEntries;
+using SettingKeys::kRecentCommands;
+using SettingKeys::kRecentPalette;
+using SettingKeys::kRightClickIdleRepeat;
+using SettingKeys::kTelemetryEnabled;
+using SettingKeys::kFirstRunNotice;
 using SettingKeys::kUserName;
 using SettingKeys::kUserCompany;
 using SettingKeys::kWindowGeometry;
@@ -123,6 +130,16 @@ QVariant printJsonVal(const QVariant& v) {
     return QVariant(s);
 }
 
+// files/recentEntries：空串=未设置；非空必须能解析为 JSON 数组（RecentFiles 持久化文本）
+QVariant recentEntriesVal(const QVariant& v) {
+    if (!isType(v, QMetaType::QString)) return QVariant();
+    const QString s = v.toString();
+    if (s.isEmpty()) return QVariant(s);
+    const QJsonDocument doc = QJsonDocument::fromJson(s.toUtf8());
+    if (doc.isNull() || !doc.isArray()) return QVariant();   // 损坏数据一律回落默认（空串）
+    return QVariant(s);
+}
+
 // window/geometry|state：base64 文本（QByteArray 经注册表往返类型不稳，显式编码）
 QVariant base64Val(const QVariant& v) {
     if (!isType(v, QMetaType::QString)) return QVariant();
@@ -140,9 +157,15 @@ QVariant base64Val(const QVariant& v) {
 const QVector<AppSettings::Spec>& AppSettings::specTable() {
     static const QVector<Spec> table = {
         // ---- general ----
-        { kLanguage, QStringLiteral("zh-CN"),
-          [](const QVariant& v) { return stringWhitelistVal(v, { QLatin1String("zh-CN"), QLatin1String("en") }); } },
+        // 界面语言："" = 跟随系统（QLocale 中文系统→源语言 zh-CN，否则 en）；
+        // zh-CN 为源语言不装翻译器，en 装 sketchcad_en.qm。缺键默认跟随系统，
+        // 对既有中文用户零感知（系统即中文）。
+        { kLanguage, QStringLiteral(""),
+          [](const QVariant& v) { return stringWhitelistVal(v, { QLatin1String(""), QLatin1String("zh-CN"), QLatin1String("en") }); } },
         { kRecentFileCount, 10, [](const QVariant& v) { return intRangeVal(v, 0, 20); } },
+        // 撤销栈深度（步）：上下限与 SketchModel 的 kUndoDepthMin/Max/Default 保持一致。
+        // 下限为 1（0 步=关掉撤销，会让 Ctrl+Z 变成"什么都没发生"，比留 1 步更难理解）。
+        { kUndoDepth, 100, [](const QVariant& v) { return intRangeVal(v, 1, 1000); } },
         // ---- display ----
         { kShowGrid, true,  boolVal },
         { kGridSnap, false, boolVal },
@@ -163,6 +186,22 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         { kDefaultTemplate, QString(), stringVal },
         { kLastDir,         QString(), stringVal },
         { kRecentList, QStringList(), stringListVal },
+        { kRecentEntries, QString(), recentEntriesVal },
+        // ---- commandLine ----
+        // 命令行最近命令（重启后预填 ↑↓ 历史）；上限在写入方裁剪（≤50 条），
+        // 校验器只保证类型与元素非空。
+        { kRecentCommands, QStringList(), stringListVal },
+        // 命令面板最近使用（命令名列表，≤10 条由写入方裁剪）。
+        { kRecentPalette, QStringList(), stringListVal },
+        // ---- interaction ----
+        // 空闲态（select 且无进行中手势）右键行为：true = AutoCAD 约定（重复上一命令），
+        // false = 既有上下文菜单。默认取 AutoCAD 值（用户任务约定）。
+        { kRightClickIdleRepeat, true, boolVal },
+        // ---- privacy ----
+        // 遥测默认关闭（用户任务硬边界：默认不得有任何网络外发）；
+        // 诊断包导出不依赖此键——只在用户主动点击时生成本地 ZIP。
+        { kTelemetryEnabled, false, boolVal },
+        { kFirstRunNotice,   false, boolVal },
         // ---- autosave（沿用既有键名，旧版注册表数据无缝继承）----
         { kAutosaveInterval, 10,
           [](const QVariant& v) {
@@ -423,6 +462,9 @@ void AppSettings::setShowLineWeight(bool b) { setValue(QLatin1String(kShowLineWe
 int AppSettings::recentFileCount() const { return value(QLatin1String(kRecentFileCount)).toInt(); }
 void AppSettings::setRecentFileCount(int n) { setValue(QLatin1String(kRecentFileCount), n); }
 
+int AppSettings::undoDepth() const { return value(QLatin1String(kUndoDepth)).toInt(); }
+void AppSettings::setUndoDepth(int n) { setValue(QLatin1String(kUndoDepth), n); }
+
 int AppSettings::backupCount() const { return value(QLatin1String(kBackupCount)).toInt(); }
 void AppSettings::setBackupCount(int n) { setValue(QLatin1String(kBackupCount), n); }
 
@@ -446,6 +488,11 @@ void AppSettings::setGpuAcceleration(bool b) { setValue(QLatin1String(kGpuAccele
 
 bool AppSettings::offscreenFallback() const { return value(QLatin1String(kOffscreenFallback)).toBool(); }
 void AppSettings::setOffscreenFallback(bool b) { setValue(QLatin1String(kOffscreenFallback), b); }
+
+bool AppSettings::telemetryEnabled() const { return value(QLatin1String(kTelemetryEnabled)).toBool(); }
+void AppSettings::setTelemetryEnabled(bool b) { setValue(QLatin1String(kTelemetryEnabled), b); }
+bool AppSettings::firstRunNoticeShown() const { return value(QLatin1String(kFirstRunNotice)).toBool(); }
+void AppSettings::setFirstRunNoticeShown(bool b) { setValue(QLatin1String(kFirstRunNotice), b); }
 
 QString AppSettings::highDpiRoundingPolicy() const { return value(QLatin1String(kHighDpiRounding)).toString(); }
 void AppSettings::setHighDpiRoundingPolicy(const QString& p) { setValue(QLatin1String(kHighDpiRounding), p); }

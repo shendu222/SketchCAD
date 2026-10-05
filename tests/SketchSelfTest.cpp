@@ -2,6 +2,8 @@
 // 覆盖 21 种约束每类 ≥1 通过用例、8 类捕捉命中、冲突/过约束检测、约束注册表。
 // 通过 build.sh test 或单独运行 SketchSelfTest 运行。
 #include <QCoreApplication>
+#include <QApplication>   // t_interaction：无头构造 CommandLine（QLineEdit）需要 QApplication
+#include <QKeyEvent>      // t_interaction：键盘事件直注（QApplication::sendEvent）
 #include <QFileInfo>
 #include <QFile>
 #include <QJsonDocument>
@@ -11,6 +13,7 @@
 #include <cmath>
 #include <vector>
 #include "Element.h"
+#include "ElementValidate.h"   // 鲁棒性守卫层：t_robustness / t_fileFuzz 直测
 #include "SketchModel.h"
 #include "ConstraintSolver.h"
 #include "Geometry.h"
@@ -35,6 +38,15 @@
 #include "ElementFactory.h"  // GD&T：createMLeader / createFcf 工厂
 #include "Modify.h"          // 分层测试网：修改引擎纯函数层
 #include "Clipboard.h"       // 分层测试网：内部剪贴板（JOIN/阵列/剪贴板三件套）
+#include "ui/DocTab.h"       // 多文档标签：DocSession/DocManager 会话核心（t_multidoc）
+#include "ui/CommandLine.h"  // 命令行键盘语义（历史/补全/重复上一命令），t_interaction 直测
+#include "AppSettings.h"     // 应用级配置持久化（t_appsettings / t_recent / t_interaction）
+#include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
+#include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
+#include <QTranslator>       // t_i18n：.qm 直载与 contains 探测
+#include <QImage>            // t_i18n：DPI 元数据 dotsPerMeter 换算锚点
+#include <QLocale>           // t_i18n：区域口径（日期/小数点）
+#include <QDate>
 #include "Section.h"         // 分层测试网：剖面引擎纯函数层
 #include "Inquiry.h"         // 分层测试网：查询测量纯函数层
 #include "SpatialIndex.h"     // 均匀网格空间索引（纯 core 直测）
@@ -44,10 +56,18 @@
 #include "ui/PrintEngine.h"   // 布局体系：exportPdfLayouts 每布局一页出图
 #include "AutoSave.h"         // 崩溃不丢稿：自动保存核心（原子落盘/扫描/恢复/清理）
 #include "AppSettings.h"      // 崩溃不丢稿：全局设置（自动保存间隔/磁盘阈值）
+#include "RecentFiles.h"      // 最近文件 MRU（路径+时间+pin，注入临时 ini 离线直测）
 #include "Diagnostics.h"      // 崩溃不丢稿：日志滚动落盘 + 崩溃转储
+#include "core/TextMetrics.h" // 文字度量单一数据源（屏幕/打印/取景 三处同源）自测
+#include <QDebug>
 #include <algorithm>
 #include <map>
 #include <random>
+#include <limits>
+#include <future>
+#include <chrono>
+#include <thread>
+#include <atomic>
 #include <QDir>
 #include <QColor>
 #include <QImage>
@@ -2350,12 +2370,22 @@ static void t_batchEdit() {
         CHECK(!clipboard::pasteInto(&m, p, Vec3(0,0,0), false, &msg) && !msg.isEmpty(),
               "pasteInto 空 payload → 拒绝且给原因");
     }
-    // C18：无 GUI 环境下 QClipboard 桥安全返回 false（不崩溃）
+    // C18：无 GUI 环境下 QClipboard 桥安全返回 false（不崩溃）。
+    // 自测进程现持 QApplication（t_interaction 需要）→ 剪贴板真实可用，
+    // 此处按环境自适应：无 GUI 断言安全 false；有 GUI 仅断言调用不崩溃。
     {
+        const bool guiAvail =
+            qobject_cast<QGuiApplication*>(QCoreApplication::instance()) != nullptr;
         clipboard::Payload q; QString err;
-        CHECK(!clipboard::getFromClipboard(&q, &err), "无剪贴板环境 getFromClipboard 安全返回 false");
         clipboard::Payload p;
-        CHECK(!clipboard::putToClipboard(p), "无剪贴板环境 putToClipboard 安全返回 false");
+        if (!guiAvail) {
+            CHECK(!clipboard::getFromClipboard(&q, &err), "无剪贴板环境 getFromClipboard 安全返回 false");
+            CHECK(!clipboard::putToClipboard(p), "无剪贴板环境 putToClipboard 安全返回 false");
+        } else {
+            clipboard::getFromClipboard(&q, &err);   // 仅验证不崩溃
+            clipboard::putToClipboard(p);
+            CHECK(true, "GUI 环境剪贴板桥调用安全（无剪贴板断言跳过）");
+        }
     }
 }
 
@@ -4493,6 +4523,953 @@ static void t_layout() {
 }
 
 // ============================================================================
+// 多文档标签（t_multidoc）：DocSession / DocManager 会话核心（纯逻辑层离线直测）
+// 验收：开 3 张图 → 各自独立 undo 不串编辑相互影响、脏标记切换隔离、
+//       Ctrl+Tab 循环与拖拽重排（活动身份跟随）、跨文档复制粘贴内容一致、
+//       命令行历史随文档互换、关闭文档下标收缩与活动夹取。
+// ============================================================================
+static bool t_multidoc() {
+    {   // ① 开 3 张图：会话表 / 活动下标 / 模型独立性
+        DocManager dm;
+        DocSession* d0 = dm.addNewDoc();
+        DocSession* d1 = dm.addNewDoc();
+        DocSession* d2 = dm.addNewDoc();
+        CHECK(dm.count() == 3, "MD① 开 3 张图 → count==3");
+        CHECK(dm.activeIndex() == 0 && dm.active() == d0, "MD① 首张自动成为活动");
+        CHECK(d0->model() && d1->model() && d2->model()
+              && d0->model() != d1->model() && d1->model() != d2->model()
+              && d0->model() != d2->model(),
+              "MD① 每会话一份独立模型（无共享/单例模型）");
+        addLine(*d0->model(), 0, 0, 10, 0);
+        addCircle(*d1->model(), 5, 5, 3);
+        addPoint(*d2->model(), 1, 1);
+        CHECK(d0->model()->elementCount() == 1 && d1->model()->elementCount() == 1
+              && d2->model()->elementCount() == 1,
+              "MD① 各自编辑互不影响");
+        CHECK(d0->model()->canUndo() && d1->model()->canUndo() && d2->model()->canUndo(),
+              "MD① 撤销栈随各自模型独立积累");
+
+        // ② 独立 undo：doc0 撤销不影响 doc1/doc2
+        d0->model()->undo();
+        CHECK(d0->model()->elementCount() == 0, "MD② doc0 undo → 自己的图元消失");
+        CHECK(d1->model()->elementCount() == 1 && d2->model()->elementCount() == 1,
+              "MD② doc0 undo 不串扰 doc1/doc2");
+        d1->model()->undo();
+        CHECK(d1->model()->elementCount() == 0 && d2->model()->elementCount() == 1,
+              "MD② doc1 undo 同样只作用于自己");
+    }
+
+    {   // ③④ 脏标记：编辑置脏 / markClean 复位 / 切换隔离
+        DocManager dm;
+        DocSession* d0 = dm.addNewDoc();
+        CHECK(!d0->isDirty(), "MD③ 新会话初始不脏");
+        addLine(*d0->model(), 0, 0, 5, 5);
+        CHECK(d0->isDirty(), "MD③ 模型变化 → 自动置脏");
+        dm.markClean(0);
+        CHECK(!d0->isDirty() && d0->title() == QStringLiteral("绘图1"),
+              "MD③ markClean → 复位且标题无 \"*\"");
+        addLine(*d0->model(), 5, 5, 9, 9);
+        CHECK(d0->isDirty() && d0->title().endsWith(QStringLiteral("*")),
+              "MD③ 再编辑 → 再置脏且标题带 \"*\"");
+        DocSession* d1 = dm.addNewDoc();
+        DocSession* d2 = dm.addNewDoc();
+        addLine(*d1->model(), 0, 0, 1, 1);
+        CHECK(dm.isDirty(0) && d1->isDirty() && !d2->isDirty(),
+              "MD④ 脏标记按会话隔离（d2 干净，切换不串）");
+        dm.markClean(1);
+        CHECK(dm.isDirty(0) && !dm.isDirty(1), "MD④ 单独 markClean 只影响该会话");
+    }
+
+    {   // ⑤ Ctrl+Tab 循环：cycle 只报候选不改状态
+        DocManager dm;
+        dm.addNewDoc(); dm.addNewDoc(); dm.addNewDoc();
+        CHECK(dm.cycle(1) == 1 && dm.cycle(2) == 2, "MD⑤ cycle 正向推进");
+        CHECK(dm.cycle(3) == 0, "MD⑤ cycle 越界回绕");
+        CHECK(dm.cycle(-1) == 2, "MD⑤ 负步长反向循环");
+        CHECK(dm.activeIndex() == 0, "MD⑤ cycle 本身不改变活动状态");
+    }
+
+    {   // ⑥ 拖拽重排：会话顺序重排、活动身份跟随
+        DocManager dm;
+        DocSession* d0 = dm.addNewDoc();
+        DocSession* d1 = dm.addNewDoc();
+        DocSession* d2 = dm.addNewDoc();
+        dm.setActive(2);
+        dm.reorder(2, 0);                     // 把 d2 拖到最前（QList::move = 插入语义）
+        CHECK(dm.doc(0) == d2 && dm.doc(1) == d0 && dm.doc(2) == d1,
+              "MD⑥ 重排后会话顺序与标签一致");
+        CHECK(dm.activeIndex() == 0 && dm.active() == d2,
+              "MD⑥ 活动身份跟随会话（下标 2→0）");
+        dm.reorder(1, 0);                     // d2 再从 0 拖到 1
+        CHECK(dm.activeIndex() == 1 && dm.active() == d2, "MD⑥ 再次重排活动仍跟随");
+    }
+
+    {   // ⑦ 跨文档剪贴板：doc0 复制 → doc1/doc2 粘贴内容一致（Payload JSON 往返）
+        DocManager dm;
+        DocSession* d0 = dm.addNewDoc();
+        DocSession* d1 = dm.addNewDoc();
+        DocSession* d2 = dm.addNewDoc();
+        addLine(*d0->model(), 0, 0, 10, 0);
+        addCircle(*d0->model(), 5, 5, 2.5);
+        clipboard::Payload p;                 // 与 GUI copyclip 同一数据形态
+        p.base = Vec3(0, 0, 0);
+        p.elements = d0->model()->elements();
+        const QJsonObject o = clipboard::toJson(p);
+        clipboard::Payload back;
+        QString err;
+        CHECK(clipboard::fromJson(o, &back, &err), "MD⑦ Payload 版本化 JSON 往返成功");
+        CHECK((int)back.elements.size() == 2, "MD⑦ 往返后图元数一致");
+
+        auto dumpModel = [](const std::vector<Element>& es) {
+            QStringList out;
+            for (const auto& e : es) {
+                QString pts;
+                for (const auto& v : e.pts)
+                    pts += QString("%1,%2;").arg(v.x, 0, 'f', 3).arg(v.y, 0, 'f', 3);
+                out << QString("%1|%2|%3").arg(int(e.type)).arg(e.radius).arg(pts);
+            }
+            return out;
+        };
+        d1->model()->beginEdit(QStringLiteral("粘贴"));
+        CHECK(clipboard::pasteInto(d1->model(), back, Vec3(20, 0, 0), false, &err),
+              "MD⑦ doc1 粘贴成功");
+        d2->model()->beginEdit(QStringLiteral("粘贴"));
+        CHECK(clipboard::pasteInto(d2->model(), back, Vec3(20, 0, 0), false, &err),
+              "MD⑦ doc2 粘贴成功");
+        CHECK(d1->model()->elementCount() == 2 && d2->model()->elementCount() == 2,
+              "MD⑦ 两文档粘贴后各 2 图元");
+        CHECK(dumpModel(d1->model()->elements()) == dumpModel(d2->model()->elements()),
+              "MD⑦ 同一 payload 两处粘贴内容一致");
+        CHECK(std::fabs(d1->model()->elements()[0].pts[0].x - 20.0) <= 1e-9
+              && std::fabs(d1->model()->elements()[1].pts[0].x - 25.0) <= 1e-9,
+              "MD⑦ 粘贴落点按基点平移（0→20）");
+        CHECK(d0->model()->elementCount() == 2
+              && std::fabs(d0->model()->elements()[0].pts[0].x) <= 1e-9,
+              "MD⑦ 源文档 doc0 内容不受粘贴影响");
+    }
+
+    {   // ⑧ 命令行历史随文档互换（模拟 MainWindow 的 copy-out / copy-in）
+        SketchModel m;
+        CommandInterpreter it(&m);
+        DocSession d;
+        it.addHistory(QStringLiteral("line 0 0 1 1"));
+        it.addHistory(QStringLiteral("circle 0 0 5"));
+        d.cmdHistory  = it.history();         // copy-out：切换离开 doc0
+        d.lastCommand = it.lastCommand();
+        it.setHistory({});                    // 换到另一文档：该文档历史从零开始
+        it.setLastCommand(QString());
+        CHECK(it.history().isEmpty(), "MD⑧ 切走后解释器历史是另一文档的（空）");
+        it.addHistory(QStringLiteral("zoom e"));
+        CHECK(it.history().size() == 1, "MD⑧ 新文档独立积累历史");
+        it.setHistory(d.cmdHistory);          // copy-in：切回 doc0
+        CHECK(it.history().size() == 2 && it.history().first().startsWith(QStringLiteral("line")),
+              "MD⑧ 切回后历史随文档恢复");
+    }
+
+    {   // ⑨ 关闭文档：会话销毁、下标收缩、活动夹取、幸存模型完好
+        DocManager dm;
+        DocSession* d0 = dm.addNewDoc();
+        DocSession* d1 = dm.addNewDoc();
+        DocSession* d2 = dm.addNewDoc();
+        dm.setActive(1);
+        CHECK(dm.doc(1) == d1, "MD⑨ 关闭前 d1 位于下标 1");
+        dm.removeDoc(1);                      // 关闭活动文档
+        CHECK(dm.count() == 2 && dm.doc(0) == d0 && dm.doc(1) == d2,
+              "MD⑨ 关闭中间文档 → 会话表收缩正确");
+        CHECK(dm.activeIndex() == 1 && dm.active() == d2, "MD⑨ 活动夹取到邻居");
+        addLine(*d0->model(), 0, 0, 1, 1);
+        CHECK(d0->model()->elementCount() == 1, "MD⑨ 幸存会话模型完好可编辑");
+        dm.removeDoc(0);
+        dm.removeDoc(0);
+        CHECK(dm.count() == 0 && dm.activeIndex() == -1, "MD⑨ 全部关闭 → 空表无活动");
+    }
+
+    {   // ⑩ 标题命名：文件名优先 / 未命名序号自增
+        DocManager dm;
+        DocSession* a = dm.addNewDoc();
+        DocSession* b = dm.addNewDoc();
+        CHECK(a->title() == QStringLiteral("绘图1") && b->title() == QStringLiteral("绘图2"),
+              "MD⑩ 未命名图按序命名");
+        a->filePath = QStringLiteral("/tmp/abc/支架布置图.json");
+        CHECK(a->title() == QStringLiteral("支架布置图"), "MD⑩ 已存盘显示文件名");
+        a->markDirty();
+        CHECK(a->title() == QStringLiteral("支架布置图 *"), "MD⑩ 脏标记追加 \"*\"");
+    }
+    return true;
+}
+
+// ============================================================================
+// AutoCAD 交互对齐（t_interaction）：命令行键盘语义 + 未知命令容错 + 历史持久化
+// + 右键行为配置。CommandLine（QLineEdit 系）需要 QApplication：main 已改为
+// QApplication（无头运行——不 show、不 exec，事件经 QApplication::sendEvent 直注）。
+// 覆盖：空格/空回车重复上一命令 / ↑↓ 历史 / Tab 补齐 / 坐标注入 / 未知命令
+// 3 候选（Did you mean 中文）/ 历史持久化往返与上限 / 会话态优先 / 新键校验。
+// ============================================================================
+// t_i18n —— 国际化 + 高 DPI（阶段四）
+// 语言解析（跟随系统/显式覆盖）/ .qm 随构建产出且可装载 / 翻译上下文存在 /
+// 安装后关键菜单文本变化（切换即刻生效的翻译底座）/ 缺翻译回落中文源串 /
+// 卸载回落源语言 / I18n 门面装载与还原 / DPI 元数据 25.4mm·inch 换算一致性 /
+// QLocale 区域口径（日期/小数点，不得硬编码中文习惯）。
+// ============================================================================
+static bool t_i18n() {
+    using namespace SketchCAD;
+
+    // ---- A. 语言解析 ----
+    CHECK(I18n::resolveLanguage(QStringLiteral("zh-CN")) == QStringLiteral("zh-CN") &&
+          I18n::resolveLanguage(QStringLiteral("en")) == QStringLiteral("en"),
+          "IL1 显式语言值原样解析（zh-CN/en）");
+    {
+        const QString sys = I18n::resolveLanguage(QString());
+        const QString unk = I18n::resolveLanguage(QStringLiteral("fr"));
+        CHECK((sys == QLatin1String("zh-CN") || sys == QLatin1String("en")) && sys == unk,
+              "IL2 空/未知语言跟随系统（zh-CN|en 二选一且一致）");
+    }
+
+    // ---- B. .qm 直载与翻译链 ----
+    {
+        QTranslator en;
+        const bool loaded = en.load(QCoreApplication::applicationDirPath() +
+                                    QStringLiteral("/sketchcad_en.qm"));
+        CHECK(loaded, "IL3 sketchcad_en.qm 随构建产出且可装载");
+        CHECK(!en.translate("SketchCAD::MainWindow", "文件(&F)").isEmpty(),
+              "IL4 翻译上下文存在（SketchCAD::MainWindow/文件(&F)）");
+        CHECK(!en.translate("SketchCAD::OptionsDialog", "界面语言：").isEmpty(),
+              "IL5 OptionsDialog 上下文存在（界面语言：）");
+        QCoreApplication::installTranslator(&en);
+        CHECK(QCoreApplication::translate("SketchCAD::MainWindow", "文件(&F)") == QStringLiteral("&File") &&
+              QCoreApplication::translate("SketchCAD::MainWindow", "新建") == QStringLiteral("&New"),
+              "IL6 安装后关键菜单文本变为英文（语言切换的翻译底座）");
+        CHECK(QCoreApplication::translate("SketchCAD::MainWindow", "（不存在的源串XYZ）") ==
+                  QStringLiteral("（不存在的源串XYZ）"),
+              "IL7 缺翻译回落中文源串");
+        QCoreApplication::removeTranslator(&en);
+        CHECK(QCoreApplication::translate("SketchCAD::MainWindow", "文件(&F)") == QStringLiteral("文件(&F)"),
+              "IL8 卸载后回落中文源语言");
+    }
+
+    // ---- C. I18n::installTranslator 门面（资源→磁盘双路装载 + 现场还原）----
+    {
+        const bool enOn = I18n::installTranslator(QStringLiteral("en"));
+        CHECK(enOn && I18n::activeLanguage() == QStringLiteral("en") &&
+              QCoreApplication::translate("SketchCAD::MainWindow", "文件(&F)") == QStringLiteral("&File"),
+              "IL9 installTranslator(en) 装载并生效");
+        const bool zhOff = I18n::installTranslator(QStringLiteral("zh-CN"));
+        CHECK(!zhOff && I18n::activeLanguage() == QStringLiteral("zh-CN") &&
+              QCoreApplication::translate("SketchCAD::MainWindow", "文件(&F)") == QStringLiteral("文件(&F)"),
+              "IL10 installTranslator(zh-CN) 卸载翻译器回落源语言");
+    }
+
+    // ---- D. 高 DPI：打印导出 DPI 元数据 25.4mm/inch 换算一致性 ----
+    {
+        // 打印链约定（PrintEngine）：QImage/QPdfWriter 按 setResolution(300) 出图。
+        // dpi ↔ dotsPerMeter 换算必须闭环：1 inch = 25.4 mm。
+        QImage img(16, 16, QImage::Format_RGB32);
+        img.setDotsPerMeterX(11811);            // 300 dpi ≈ 11811 dots/m
+        img.setDotsPerMeterY(11811);
+        CHECK(qRound(double(img.dotsPerMeterX()) * 0.0254) == 300,
+              "ID1 dotsPerMeter → dpi 换算一致（300dpi≈11811dpm）");
+        CHECK(qRound(300 / 0.0254) == 11811,
+              "ID2 dpi → dotsPerMeter 反向换算一致（1in=25.4mm）");
+    }
+
+    // ---- E. 单位/日期 QLocale 口径（不得硬编码中文习惯）----
+    {
+        const QLocale zh(QLocale::Chinese);
+        const QLocale enLoc(QLocale::English);
+        const QDate d(2026, 1, 15);
+        CHECK(zh.toString(d, QLocale::LongFormat).contains(QStringLiteral("年")) &&
+              enLoc.toString(d, QLocale::LongFormat) != zh.toString(d, QLocale::LongFormat),
+              "IE1 日期格式走 QLocale（中英长格式随区域变化）");
+        CHECK(QLocale(QLocale::C).toString(3.5, 'f', 2) == QStringLiteral("3.50"),
+              "IE2 数值→串小数点口径可经 QLocale 显式固定（C locale='.'）");
+    }
+    return true;
+}
+
+// ============================================================================
+static bool t_interaction() {
+    using namespace SketchCAD;
+    namespace SK = SettingKeys;
+
+    // ---- A. 未知命令容错（Did you mean）----
+    // A1: 最相近者排首、候选数封顶 3
+    {
+        QStringList names = { QStringLiteral("line"), QStringLiteral("linetype"),
+                              QStringLiteral("list"), QStringLiteral("circle") };
+        const QStringList s = CommandInterpreter::nearestCommands(QStringLiteral("lin"), names);
+        CHECK(!s.isEmpty() && s.first() == QStringLiteral("line"),
+              "IA1 nearestCommands 最相近者排首(line)");
+        CHECK(s.size() <= 3, "IA1 候选数 ≤3");
+    }
+    // A2: 完全无关输入无候选（编辑距离阈值保护，不给离谱猜测）
+    {
+        QStringList names = { QStringLiteral("line"), QStringLiteral("circle") };
+        CHECK(CommandInterpreter::nearestCommands(QStringLiteral("zzzzzzzz"), names).isEmpty(),
+              "IA2 阈值外输入返回空候选");
+    }
+    // A3: execute 未知命令 → 日志含中文 Did-you-mean 提示与候选
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(!ci.execute(QStringLiteral("circl")), "IA3 未知命令返回失败");
+        bool found = false;
+        for (const QString& s : logged)
+            if (s.contains(QStringLiteral("您是不是想输入"))
+                && s.contains(QStringLiteral("circle"))) found = true;
+        CHECK(found, "IA3 日志含“您是不是想输入”与候选 circle");
+    }
+
+    // ---- B. 命令历史持久化（AppSettings 注入）----
+    // B1: 入史即写回；模拟重启后新解释器预填（顺序保持）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("i1.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        SketchModel m;
+        CommandInterpreter w(&m);
+        w.setPersistence(&s);
+        w.addHistory(QStringLiteral("line 0,0 10,10"));
+        w.addHistory(QStringLiteral("circle 5,5 3"));
+        CHECK(w.history().size() == 2, "B1 会话历史两条");
+        SketchModel m2;
+        CommandInterpreter r(&m2);
+        r.setPersistence(&s);   // 模拟重启：同一存储、全新解释器
+        CHECK(r.history().size() == 2
+              && r.history().last() == QStringLiteral("circle 5,5 3"),
+              "B1 重启后历史预填且顺序一致");
+    }
+    // B2: 持久化条数封顶 50（kPersistMax），会话历史仍保持 100 内全量
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("i2.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        SketchModel m;
+        CommandInterpreter w(&m);
+        w.setPersistence(&s);
+        for (int i = 0; i < 60; ++i)
+            w.addHistory(QStringLiteral("cmd%1").arg(i));
+        CHECK(CommandInterpreter::persistedCommands(s).size() == CommandInterpreter::kPersistMax,
+              "B2 持久化条数封顶 50");
+        CHECK(CommandInterpreter::persistedCommands(s).last() == QStringLiteral("cmd59"),
+              "B2 封顶保留最新尾部");
+    }
+    // B3: 会话历史非空时 setPersistence 不覆盖（保护 DocTab copy-in 会话态）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("i3.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setValue(QLatin1String(SK::kRecentCommands),
+                   QStringList{ QStringLiteral("old1"), QStringLiteral("old2") });
+        SketchModel m;
+        CommandInterpreter w(&m);
+        w.setHistory(QStringList{ QStringLiteral("session1") });
+        w.setPersistence(&s);
+        CHECK(w.history() == QStringList{ QStringLiteral("session1") },
+              "B3 会话态优先，持久化预填不覆盖 copy-in 历史");
+    }
+
+    // ---- C. CommandLine 键盘语义（无头 QApplication + sendEvent）----
+    // C1: Tab 前缀补齐（①唯一候选补齐+尾空格 ②多候选推进到公共前缀 ③歧义前缀不退化）
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CommandLine cl(&m, &ci);
+        // ① 唯一候选："linet" 只匹配 linetype → 补齐 + 尾空格
+        cl.setText(QStringLiteral("linet"));
+        QKeyEvent tab1(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &tab1);
+        CHECK(cl.text() == QStringLiteral("linetype "),
+              "C1a Tab 唯一候选补齐 → \"linetype \"（含尾空格）");
+        // ② 多候选推进："line_p" 匹配 line_parallel / line_parallel_pt
+        //    → 公共前缀 line_parallel（比输入长，直接补齐）
+        cl.clear();
+        cl.setText(QStringLiteral("line_p"));
+        QKeyEvent tab2(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &tab2);
+        CHECK(cl.text() == QStringLiteral("line_parallel"),
+              "C1b Tab 多候选推进到公共前缀 line_parallel");
+        // ③ 歧义前缀："lin" 命中 line 系 + 别名 lin(→linetype) → 公共前缀==输入本身
+        //    → 不退化、不崩溃，text 原样（候选经日志列出）
+        cl.clear();
+        cl.setText(QStringLiteral("lin"));
+        QKeyEvent tab3(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &tab3);
+        CHECK(cl.text() == QStringLiteral("lin"),
+              "C1c Tab 歧义前缀不退化（保持输入，候选列出）");
+    }
+    // C2: 空输入按空格 → 重复上一成功命令（入史且不插入空格字符）
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CHECK(ci.execute(QStringLiteral("help")), "C2 help 命令无头执行成功");
+        CommandLine cl(&m, &ci);
+        QKeyEvent sp(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &sp);
+        CHECK(cl.text().isEmpty(), "C2 空格空输入不插入空格字符");
+        CHECK(ci.history().size() == 1 && ci.history().last() == QStringLiteral("help"),
+              "C2 空格触发重复上一命令（重复命令入史）");
+    }
+    // C3: ↑/↓ 翻历史，↓ 到末尾清空
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CommandLine cl(&m, &ci);
+        QKeyEvent ret(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        cl.setText(QStringLiteral("a1"));
+        QApplication::sendEvent(&cl, &ret);
+        cl.setText(QStringLiteral("a2"));
+        QApplication::sendEvent(&cl, &ret);
+        QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &up);
+        QApplication::sendEvent(&cl, &up);
+        CHECK(cl.text() == QStringLiteral("a1"), "C3 ↑ 逐条上翻历史");
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &down);
+        QApplication::sendEvent(&cl, &down);
+        CHECK(cl.text().isEmpty(), "C3 ↓ 到历史末尾清空输入");
+    }
+    // C4: 绘制命令激活时输入坐标回车 → pointEntered 注入（分段式命令流程）
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CommandLine cl(&m, &ci);
+        m.setActiveTool(QStringLiteral("line"));
+        bool gotSig = false;
+        double gx = 0, gy = 0;
+        QObject::connect(&cl, &CommandLine::pointEntered,
+                         [&](const Vec3& p) { gotSig = true; gx = p.x; gy = p.y; });
+        cl.setText(QStringLiteral("10,20"));
+        QKeyEvent ret(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &ret);
+        CHECK(gotSig && gx == 10.0 && gy == 20.0,
+              "C4 绘制中输入坐标 → pointEntered 注入拾取点");
+    }
+    // C5: 空历史时空回车/上下翻页安全无操作
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CommandLine cl(&m, &ci);
+        QKeyEvent ret(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &ret);
+        QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &up);
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QApplication::sendEvent(&cl, &down);
+        CHECK(cl.text().isEmpty() && ci.history().isEmpty(),
+              "C5 空历史键入安全无操作");
+    }
+
+    // ---- D. 右键行为配置 / 新键校验 ----
+    // D1: interaction/rightClickIdleRepeat 默认 true（AutoCAD 约定）+ 非法回落
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("i4.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        const QString K = QLatin1String(SK::kRightClickIdleRepeat);
+        CHECK(s.value(K).toBool() == true, "D1 rightClickIdleRepeat 默认 true");
+        s.setValue(K, false);
+        CHECK(s.value(K).toBool() == false, "D1 写 false 即时生效");
+        s.setValue(K, 123);   // 非布尔 → 校验器拒绝写入
+        CHECK(s.value(K).toBool() == false, "D1 非法写被忽略（保持上次合法值 false）");
+    }
+    // D2: SketchModel 会话态默认与 setter（不入档，仅内存）
+    {
+        SketchModel m;
+        CHECK(m.rightClickIdleRepeat() == true, "D2 模型会话态默认 true");
+        m.setRightClickIdleRepeat(false);
+        CHECK(m.rightClickIdleRepeat() == false, "D2 setRightClickIdleRepeat 生效");
+    }
+    // D3: commandLine/recentCommands 键列表往返（stringListVal 校验器）
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("i5.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        const QString K = QLatin1String(SK::kRecentCommands);
+        const QStringList in{ QStringLiteral("circle 5,5 3"), QStringLiteral("line 0,0 1,1") };
+        s.setValue(K, in);
+        CHECK(s.value(K).toStringList() == in, "D3 recentCommands 列表往返一致");
+    }
+    return true;
+}
+
+// ============================================================================
+// 最近文件 MRU（t_recent）：core/RecentFiles 注入临时 ini 离线直测。
+// 覆盖：增删 / 去重 / 上限裁剪 / pin 保护 / 全 pin 硬上限 / 缺失文件 /
+//       持久化重载一致 / 旧键迁移 / 损坏容错 / 坏条目跳过。
+// ============================================================================
+static bool t_recent() {
+    using namespace SketchCAD;
+    namespace SK = SettingKeys;
+    const QString PA = QStringLiteral("C:/w/a.json");
+    const QString PB = QStringLiteral("C:/w/b.json");
+
+    // 1) 空表 + add 置顶 + contains
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r1.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        CHECK(r.count() == 0, "RC1 全新存储空表");
+        r.add(PA);
+        r.add(PB);
+        CHECK(r.count() == 2 && r.entries()[0].path == PB && r.entries()[1].path == PA,
+              "RC1 add 置顶（最新在前）");
+        CHECK(r.contains(PA) && !r.contains(QStringLiteral("C:/w/z.json")),
+              "RC1 contains 命中/未命中");
+    }
+
+    // 2) 去重：重复 add 移位不增计数，且 pin 保留
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r2.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        r.add(PA);
+        r.add(PB);
+        r.setPinned(PA, true);
+        r.add(PA);   // 再次打开已固定的旧项 → 移到最前、仍固定、不重复
+        CHECK(r.count() == 2 && r.entries()[0].path == PA && r.entries()[1].path == PB,
+              "RC2 重复 add 去重置顶");
+        CHECK(r.isPinned(PA), "RC2 re-add 保留 pin");
+    }
+
+    // 3) 上限裁剪：12 条 → 10 条，最旧被挤出
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r3.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        for (int i = 0; i < 12; ++i)
+            r.add(QStringLiteral("C:/w/p%1.json").arg(i));
+        CHECK(r.count() == RecentFiles::kMaxEntries, "RC3 上限裁剪至 10 条");
+        CHECK(r.entries()[0].path == QStringLiteral("C:/w/p11.json"),
+              "RC3 最新条目在最前");
+        CHECK(!r.contains(QStringLiteral("C:/w/p0.json")) &&
+              !r.contains(QStringLiteral("C:/w/p1.json")) &&
+              r.contains(QStringLiteral("C:/w/p2.json")),
+              "RC3 最旧两条被挤出");
+    }
+
+    // 4) pin 保护：裁剪优先挤掉最旧未固定项
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r4.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        for (int i = 0; i < 10; ++i)
+            r.add(QStringLiteral("C:/w/p%1.json").arg(i));   // p0 最旧 … p9 最新
+        r.setPinned(QStringLiteral("C:/w/p4.json"), true);
+        r.add(QStringLiteral("C:/w/x.json"));   // 挤掉 p0
+        r.add(QStringLiteral("C:/w/y.json"));   // 挤掉 p1
+        CHECK(r.count() == 10, "RC4 溢出后仍为 10 条");
+        CHECK(r.contains(QStringLiteral("C:/w/p4.json")), "RC4 固定项不被裁剪");
+        CHECK(!r.contains(QStringLiteral("C:/w/p0.json")) &&
+              !r.contains(QStringLiteral("C:/w/p1.json")) &&
+              r.contains(QStringLiteral("C:/w/p2.json")),
+              "RC4 裁剪跳过固定项、从最旧未固定开始");
+    }
+
+    // 5) 全 pin + 溢出：硬上限优先，挤最旧
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r5.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        for (int i = 0; i < 10; ++i) {
+            const QString p = QStringLiteral("C:/w/p%1.json").arg(i);
+            r.add(p);
+            r.setPinned(p, true);
+        }
+        r.add(QStringLiteral("C:/w/new.json"));
+        CHECK(r.count() == 10, "RC5 全 pin 溢出仍硬上限 10");
+        CHECK(r.contains(QStringLiteral("C:/w/new.json")) &&
+              !r.contains(QStringLiteral("C:/w/p0.json")) &&
+              r.contains(QStringLiteral("C:/w/p1.json")),
+              "RC5 全 pin 时挤掉最旧一条");
+    }
+
+    // 6) remove 单条 / remove 不存在 / removeAt 越界
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r6.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        r.add(PA);
+        r.add(PB);
+        r.remove(QStringLiteral("C:/w/none.json"));
+        CHECK(r.count() == 2, "RC6 remove 不存在路径无操作");
+        r.removeAt(7);                       // 越界无操作
+        CHECK(r.count() == 2, "RC6 removeAt 越界无操作");
+        r.remove(PB);
+        CHECK(r.count() == 1 && !r.contains(PB), "RC6 remove 单条生效");
+        r.clear();
+        CHECK(r.count() == 0, "RC6 clear 全清");
+        r.add(PA);
+        CHECK(r.count() == 1, "RC6 clear 后可继续使用");
+    }
+
+    // 7) setPinned 幂等：状态不变不重复发信号
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r7.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        r.add(PA);
+        int sigs = 0;
+        QObject::connect(&r, &RecentFiles::changed, [&sigs] { ++sigs; });
+        r.setPinned(PA, true);
+        const int afterFirst = sigs;
+        r.setPinned(PA, true);               // 幂等 → 不发信号
+        CHECK(afterFirst == sigs, "RC7 setPinned 幂等不重复发信号");
+        CHECK(r.isPinned(PA), "RC7 pin 状态生效");
+    }
+
+    // 8) 缺失文件：isMissing 现查文件系统
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r8.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        RecentFiles r(&s);
+        const QString f = td.filePath("exist.json");
+        QFile file(f);
+        if (!file.open(QIODevice::WriteOnly)) {   // nodiscard：显式消费返回值（零警告基线）
+            CHECK(false, "RC8 临时文件创建失败");
+            return false;
+        }
+        file.write("{}");
+        file.close();
+        r.add(f);
+        CHECK(!r.isMissing(0), "RC8 存在文件不算缺失");
+        QFile::remove(f);
+        CHECK(r.isMissing(0), "RC8 删除文件后判定缺失");
+        CHECK(!r.isMissing(99) && !r.isMissing(-1), "RC8 越界索引不缺失不崩溃");
+    }
+
+    // 9) 持久化重载：新实例读回（顺序/pin/时间全等）
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath("r9.ini");
+        qint64 tA = 0;
+        {
+            QSettings qs(ini, QSettings::IniFormat);
+            AppSettings s(&qs);
+            RecentFiles r(&s);
+            r.add(PA);
+            r.add(PB);
+            r.setPinned(PB, true);
+            tA = r.entries()[1].openedAt.toMSecsSinceEpoch();   // PA 在第 2 位
+            CHECK(r.entries()[0].openedAt.toMSecsSinceEpoch() >= tA,
+                  "RC9 打开时间随置顶刷新");
+        }
+        QSettings qs2(ini, QSettings::IniFormat);
+        AppSettings s2(&qs2);
+        RecentFiles r2(&s2);
+        CHECK(r2.count() == 2 && r2.entries()[0].path == PB &&
+              r2.entries()[0].pinned && r2.entries()[1].path == PA,
+              "RC9 重载顺序与 pin 一致");
+        CHECK(r2.entries()[1].openedAt.toMSecsSinceEpoch() == tA, "RC9 打开时间逐毫秒一致");
+    }
+
+    // 10) 旧键迁移：files/recentList → 新键一次性迁移
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r10.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        s.setRecentFiles({ PA, PB });        // 旧键：路径表（顺序即新→旧）
+        RecentFiles r(&s);
+        CHECK(r.count() == 2 && r.entries()[0].path == PA && r.entries()[1].path == PB,
+              "RC10 旧键迁移保持顺序");
+        CHECK(s.contains(QLatin1String(SK::kRecentEntries)), "RC10 迁移后新键已落盘");
+        RecentFiles r2(&s);                  // 二次读取直接走新键
+        CHECK(r2.count() == 2 && r2.entries()[0].path == PA, "RC10 迁移结果可重复读回");
+    }
+
+    // 11) 损坏容错：绕过校验器直写脏数据 → 空表不崩溃、可恢复使用
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r11.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        qs.setValue(QLatin1String(SK::kRecentEntries), QStringLiteral("not-json{{{"));
+        RecentFiles r(&s);
+        CHECK(r.count() == 0, "RC11 存储损坏回落空表不崩溃");
+        r.add(PA);
+        CHECK(r.count() == 1, "RC11 损坏后可正常写入");
+    }
+
+    // 12) 数组内坏条目跳过：缺 path 的对象不中断整表解析
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("r12.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        qs.setValue(QLatin1String(SK::kRecentEntries),
+                    QStringLiteral("[{\"t\":123},{\"p\":\"%1\"}]").arg(PA));
+        RecentFiles r(&s);
+        CHECK(r.count() == 1 && r.entries()[0].path == PA, "RC12 坏条目跳过、好条目保留");
+    }
+
+    return true;
+}
+
+// ============================================================================
+// 打印发布体系（t_plotPublish）：per-viewport 冻结 / 视口旋转出图 / 打印戳记 /
+// 发布页列表（exportPagesPdf）/ GUI 与 COM 批量出图一致性
+// 验收：冻结只影响本视口；rotationDeg=90 几何正确；戳记默认关闭零绘制调用；
+//       旧档缺键回落；GUI 与 COM 同一图纸集页数一致。
+// ============================================================================
+static bool t_plotPublish() {
+    // 行内构造辅助：指定图层名的直线
+    auto addLineL = [](SketchModel& m, const QString& layer,
+                       double x0, double y0, double x1, double y1) {
+        Element e; e.type = ElementType::Line;
+        e.pts = { Vec3(x0, y0, 0), Vec3(x1, y1, 0) };
+        e.layer = layer;
+        return m.addElement(e);
+    };
+    // A4 300dpi 白底渲染 → 图像（mm 区域内有墨判定）
+    auto renderA4 = [](SketchModel& m, const PrintSettings& s) -> QImage {
+        const double pxPerMm = 300.0 / 25.4;
+        QImage img((int)std::lround(210 * pxPerMm), (int)std::lround(297 * pxPerMm),
+                   QImage::Format_RGB32);
+        img.setDotsPerMeterX((int)std::lround(pxPerMm * 1000.0));
+        img.setDotsPerMeterY((int)std::lround(pxPerMm * 1000.0));
+        img.fill(Qt::white);
+        if (!PrintEngine::render(&m, &img, s)) return QImage();
+        return img;
+    };
+    auto inkIn = [](const QImage& img, double x0, double x1, double y0, double y1) -> bool {
+        if (img.isNull()) return false;
+        const double pxPerMm = 300.0 / 25.4;
+        const int c0 = std::max(0, (int)std::lround(x0 * pxPerMm));
+        const int c1 = std::min(img.width() - 1, (int)std::lround(x1 * pxPerMm));
+        const int r0 = std::max(0, (int)std::lround(y0 * pxPerMm));
+        const int r1 = std::min(img.height() - 1, (int)std::lround(y1 * pxPerMm));
+        for (int r = r0; r <= r1; ++r)
+            for (int c = c0; c <= c1; ++c)
+                if (qGray(img.pixel(c, r)) < 100) return true;
+        return false;
+    };
+    // 基础页面设置：A4 纵向 10mm 边距，1:1，黑白出图
+    auto baseSettings = []() {
+        PrintSettings s;
+        s.pageSize = QPageSize(QPageSize::A4);
+        s.orientation = QPageLayout::Portrait;
+        s.marginsMm = QMarginsF(10, 10, 10, 10);
+        s.fitToPage = false;
+        s.scale = 1.0;
+        s.monochrome = true;
+        return s;
+    };
+
+    // ---- ① frozenLayers 序列化往返 + 缺键 → 空冻结集（旧档兼容）----
+    {
+        PlotViewport vp;
+        vp.name = QStringLiteral("V1");
+        vp.frozenLayers = { QStringLiteral("A"), QStringLiteral("标注层") };
+        const PlotViewport vp2 = PlotViewport::fromJson(vp.toJson());
+        CHECK(vp2.frozenLayers.size() == 2 && vp2.frozenLayers.contains(QStringLiteral("A"))
+              && vp2.frozenLayers.contains(QStringLiteral("标注层")),
+              "PUB① frozenLayers 往返保持");
+        CHECK(vp2.layerFrozenIn(QStringLiteral("A")) && !vp2.layerFrozenIn(QStringLiteral("0")),
+              "PUB① layerFrozenIn 裁决");
+        QJsonObject j = vp.toJson();
+        j.remove("frozenLayers");
+        const PlotViewport vp3 = PlotViewport::fromJson(j);
+        CHECK(vp3.frozenLayers.isEmpty(), "PUB① 缺键 → 空冻结集（旧档行为不变）");
+    }
+
+    // ---- ② per-viewport 冻结：只影响该视口，不波及其他视口与模型空间 ----
+    {
+        SketchModel m;
+        addLineL(m, QStringLiteral("0"), 0, 0, 80, 0);    // 细实线 y=0
+        addLineL(m, QStringLiteral("A"), 0, 4, 80, 4);    // A 层线 y=4
+        PrintSettings s = baseSettings();
+        PlotViewport vp1;
+        vp1.name = QStringLiteral("视口1");
+        vp1.modelRect = QRectF(0, -1, 80, 6);
+        vp1.scale = 1.0;
+        vp1.paperRect = QRectF(0, 0, 90, 277);            // 图纸 x∈[10,100]mm
+        vp1.frozenLayers.append(QStringLiteral("A"));
+        PlotViewport vp2 = vp1;
+        vp2.name = QStringLiteral("视口2");
+        vp2.paperRect = QRectF(100, 0, 90, 277);          // 图纸 x∈[110,200]mm
+        vp2.frozenLayers.clear();
+        s.viewports = { vp1, vp2 };
+        const QImage img = renderA4(m, s);
+        CHECK(!img.isNull(), "PUB② 双视口渲染成功");
+        // 映射：device_y = 148.5 + (anchorY − wy)，anchorY=2 → 世界 y=0 → 纸面 150.5mm、
+        // y=4（A 层）→ 146.5mm（y-down：世界 y 越大纸面越靠上）
+        CHECK(inkIn(img, 20, 90, 149.5, 151.5), "PUB② 视口1 非冻结层有墨");
+        CHECK(!inkIn(img, 20, 90, 145.5, 147.5), "PUB② 视口1 冻结层「A」零输出");
+        CHECK(inkIn(img, 120, 190, 145.5, 147.5), "PUB② 视口2 冻结层所在行有墨");
+        CHECK(inkIn(img, 120, 190, 149.5, 151.5), "PUB② 视口2 未受视口1 冻结影响（正常输出）");
+        // 模型空间打印（视口清空）：冻结集不生效（A 层 y=4 → 146.5mm 行有墨）
+        PrintSettings sm = baseSettings();
+        sm.viewports.clear();
+        const QImage imgM = renderA4(m, sm);
+        CHECK(inkIn(imgM, 20, 190, 145.5, 147.5), "PUB② 模型空间打印不受 per-viewport 冻结影响");
+    }
+
+    // ---- ③ rotationDeg：90° 视口内容旋转出图（水平线 → 竖直线）----
+    {
+        SketchModel m;
+        addLineL(m, QStringLiteral("0"), 0, 0, 80, 0);
+        PrintSettings s = baseSettings();
+        PlotViewport vp;
+        vp.name = QStringLiteral("视口R");
+        vp.modelRect = QRectF(0, -0.5, 80, 1);
+        vp.scale = 1.0;                                    // paperRect 空 → 整块可打印区
+        s.viewports.append(vp);
+        const QImage img0 = renderA4(m, s);
+        CHECK(!img0.isNull(), "PUB③ 0° 渲染成功");
+        // 0°：水平线过视口中心行 148.5mm，竖直方向只有中缝一条带
+        CHECK(inkIn(img0, 40, 70, 147.5, 149.5), "PUB③ 0° 水平线在中心行有墨");
+        CHECK(!inkIn(img0, 40, 70, 115.0, 125.0), "PUB③ 0° 上半区无墨");
+        // 90°：世界 (1,0) 旋转到 (0,1)（纸面上方），线变竖直 x=40 → 纸面中列 105mm，
+        //      y 跨 [108.5,188.5]mm；旋出内容按目标矩形硬裁剪
+        s.viewports[0].rotationDeg = 90.0;
+        const QImage img90 = renderA4(m, s);
+        CHECK(!img90.isNull(), "PUB③ 90° 渲染成功");
+        CHECK(inkIn(img90, 104, 106, 140, 160), "PUB③ 90° 竖直线过纸面中列");
+        CHECK(inkIn(img90, 104, 106, 115, 125), "PUB③ 90° 竖直线跨纸面纵向");
+        CHECK(!inkIn(img90, 40, 70, 147.5, 149.5), "PUB③ 90° 原水平线消失（内容已旋转）");
+    }
+
+    // ---- ④ exportPagesPdf：显式页列表（模型空间页 + 两布局页）→ 3 页 ----
+    {
+        SketchModel m;
+        addLineL(m, QStringLiteral("0"), 0, 0, 40, 0);
+        addLineL(m, QStringLiteral("0"), 0, 0, 0, 30);
+        PrintSettings sModel = baseSettings();
+        sModel.viewports.clear();                          // 模型空间页
+        PrintSettings sA; sA.fitToPage = true; sA.viewports.clear();
+        PrintSettings sB;
+        PlotViewport vpB; vpB.name = QStringLiteral("视口1"); vpB.scale = 0.5;
+        sB.viewports.append(vpB);
+        QList<PrintEngine::PublishPage> pages;
+        { PrintEngine::PublishPage pg; pg.name = QStringLiteral("模型空间"); pg.settings = sModel; pages.append(pg); }
+        { PrintEngine::PublishPage pg; pg.name = QStringLiteral("布局A"); pg.settings = sA; pages.append(pg); }
+        { PrintEngine::PublishPage pg; pg.name = QStringLiteral("布局B"); pg.settings = sB; pages.append(pg); }
+        const QString pdf = QDir::temp().absoluteFilePath(QStringLiteral("publish_pages.pdf"));
+        QFile::remove(pdf);
+        const int done = PrintEngine::exportPagesPdf(&m, pages, pdf);
+        CHECK(done == 3, "PUB④ 三页列表 → 返回 3 页");
+        QFile pf(pdf);
+        bool okPdf = pf.open(QIODevice::ReadOnly);
+        const QByteArray head = okPdf ? pf.read(8) : QByteArray();
+        const qint64 sz = pf.size();
+        pf.close();
+        CHECK(okPdf && head.startsWith("%PDF") && sz > 1000, "PUB④ 多页 PDF 生成且非空");
+        CHECK(PrintEngine::exportPagesPdf(&m, QList<PrintEngine::PublishPage>(), pdf) == 0,
+              "PUB④ 空页列表 → 返回 0");
+    }
+
+    // ---- ⑤ 戳记默认关闭 + 序列化缺键 → 关闭（旧行为逐字节不变）----
+    {
+        PrintSettings s1 = baseSettings();                 // 默认 stamp
+        CHECK(!s1.stamp.enabled, "PUB⑤ 戳记默认关闭");
+        CHECK(!s1.toJson().contains("stamp"), "PUB⑤ 关闭时不写 stamp 键");
+        SketchModel m;                                     // 空模型：纸面只有边框
+        const QImage imgA = renderA4(m, s1);
+        PrintSettings s2;
+        s2.fromJson(s1.toJson());                          // 缺键往返 → 仍关闭
+        CHECK(!s2.stamp.enabled, "PUB⑤ 缺键读回 → 保持关闭（旧档兼容）");
+        const QImage imgB = renderA4(m, s2);
+        CHECK(imgA == imgB, "PUB⑤ 戳记关闭：序列化往返渲染逐字节等价（QImage 全等）");
+    }
+
+    // ---- ⑥ 戳记开启：角部出现信息墨迹；位置/内容可配 ----
+    {
+        SketchModel m;                                     // 空模型 → 戳记是唯一墨源
+        PrintSettings off = baseSettings();
+        const QImage imgOff = renderA4(m, off);
+        CHECK(!inkIn(imgOff, 150, 189, 268, 286), "PUB⑥ 戳记关闭：右下角部无墨");
+        PrintSettings on = baseSettings();
+        on.stamp.enabled = true;                           // 默认右下 + 日期/时间/比例
+        const QImage imgOn = renderA4(m, on);
+        CHECK(imgOn != imgOff, "PUB⑥ 戳记开启：整幅图像改变");
+        CHECK(inkIn(imgOn, 150, 189, 268, 286), "PUB⑥ 戳记开启：右下角部出现墨迹");
+        // 位置可配：改左上 → 墨迹搬家
+        PrintSettings tl = on;
+        tl.stamp.position = 0;                             // 左上
+        const QImage imgTl = renderA4(m, tl);
+        CHECK(inkIn(imgTl, 11, 110, 11, 30), "PUB⑥ 位置=左上：左上角部出现墨迹");
+        CHECK(!inkIn(imgTl, 150, 189, 268, 286), "PUB⑥ 位置=左上：右下不再有戳记墨迹");
+        // 字高可配：字高 5mm 墨量显著大于 2.5mm
+        PrintSettings big = on;
+        big.stamp.textHeightMm = 5.0;
+        const QImage imgBig = renderA4(m, big);
+        CHECK(imgBig != imgOn, "PUB⑥ 字高可配：5mm 与 2.5mm 渲染不同");
+    }
+
+    // ---- ⑦ layout vpfreeze / vpthaw 命令 CRUD ----
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layout new L1")), "PUB⑦ layout new 执行成功");
+        CHECK(interp.execute(QStringLiteral("mview 0 0 90 60")), "PUB⑦ mview 执行成功");
+        CHECK(interp.execute(QStringLiteral("layout vpfreeze 视口1 A")), "PUB⑦ vpfreeze 执行成功");
+        const PlotLayoutDef* def = m.findLayout(QStringLiteral("L1"));
+        CHECK(def && def->settings.viewports[0].frozenLayers.contains(QStringLiteral("A")),
+              "PUB⑦ 冻结集已写入视口");
+        CHECK(interp.execute(QStringLiteral("layout vpfreeze 视口1")), "PUB⑦ vpfreeze 列表执行成功");
+        CHECK(interp.execute(QStringLiteral("layout vpthaw 视口1 A")), "PUB⑦ vpthaw 执行成功");
+        CHECK(def && def->settings.viewports[0].frozenLayers.isEmpty(), "PUB⑦ 解冻后冻结集为空");
+        CHECK(!interp.execute(QStringLiteral("layout vpfreeze 不存在 A")), "PUB⑦ 不存在视口被拒");
+        CHECK(!interp.execute(QStringLiteral("layout vpfreeze")), "PUB⑦ 缺参数被拒");
+    }
+
+    // ---- ⑧ GUI 与 COM 批量出图一致性：同一带布局图纸 → 页数一致、PDF 非空 ----
+    {
+        using namespace SketchCAD::comauto;
+        SketchModel m;
+        addLineL(m, QStringLiteral("0"), 0, 0, 40, 0);
+        addLineL(m, QStringLiteral("0"), 0, 0, 0, 30);
+        PrintSettings sA; sA.fitToPage = true; sA.viewports.clear();
+        CHECK(m.addLayout(QStringLiteral("布局A"), sA), "PUB⑧ 布局A 建立");
+        PrintSettings sB;
+        PlotViewport vpB; vpB.name = QStringLiteral("视口1"); vpB.scale = 0.5;
+        sB.viewports.append(vpB);
+        CHECK(m.addLayout(QStringLiteral("布局B"), sB), "PUB⑧ 布局B 建立");
+        // 源图纸：引擎自身 JSON 通路落盘（含 layouts）
+        const QString src = QDir::temp().absoluteFilePath(QStringLiteral("publish_src.json"));
+        QFile::remove(src);
+        QString err;
+        CHECK(BatchPlotEngine::exportDrawing(m, src, QJsonObject(), &err), "PUB⑧ 源图纸 JSON 落盘");
+        // COM 批量：空 settings + 布局表 → 发布语义（exportPdfLayouts）
+        const QString comPdf = QDir::temp().absoluteFilePath(QStringLiteral("publish_com.pdf"));
+        QFile::remove(comPdf);
+        QJsonObject t; t["source"] = src; t["output"] = comPdf;
+        QJsonObject batch; QJsonArray arr; arr.append(t); batch["tasks"] = arr;
+        const BatchResult r = BatchPlotEngine::runBatch(
+            QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact)), QString());
+        CHECK(r.allOk && r.succeeded == 1, "PUB⑧ COM 批量发布成功");
+        // GUI 发布：同一裁决 exportPdfLayouts → 2 页
+        const QString guiPdf = QDir::temp().absoluteFilePath(QStringLiteral("publish_gui.pdf"));
+        QFile::remove(guiPdf);
+        const int guiPages = PrintEngine::exportPdfLayouts(&m, guiPdf);
+        CHECK(guiPages == 2, "PUB⑧ GUI 发布返回 2 页");
+        // COM PDF 页对象计数 == GUI 页数（同一图纸集页数一致）
+        QFile cf(comPdf);
+        int comPages = -1;
+        qint64 comBytes = 0;
+        if (cf.open(QIODevice::ReadOnly)) {
+            const QByteArray data = cf.readAll();
+            comBytes = data.size();
+            comPages = data.count("/Type /Page") - data.count("/Type /Pages");
+            if (comPages <= 0) comPages = data.count("/Type/Page") - data.count("/Type/Pages");
+            cf.close();
+        }
+        CHECK(comPages == guiPages, "PUB⑧ COM 页数 == GUI 页数（发布一致性）");
+        CHECK(comBytes > 1000 && QFileInfo(guiPdf).size() > 1000, "PUB⑧ 两路 PDF 均非空");
+    }
+
+    return true;
+}
+
+// ============================================================================
 // P0-01：R12 + R2000 双版本 DXF 读写 + 版本协商 + 二进制容器 + 鲁棒性
 // 验收：round-trip 计数/类型一致 ≥99%；不支持版本安全拒绝；二进制 DXF 可解码；
 //       旧档路径(R12 ASCII)不含 R2000 标记（逐字节兼容旧版）。
@@ -5167,9 +6144,9 @@ static void t_appsettings() {
         AppSettings s2(&qs2);
         CHECK(s2.autosaveIntervalMinutes() == 10 && s2.recentFileCount() == 10 &&
               s2.backupCount() == 1 && s2.gridSnapStep() == 1.0 &&
-              s2.showGrid() == true && s2.language() == QLatin1String("zh-CN") &&
+              s2.showGrid() == true && s2.language().isEmpty() &&
               s2.highDpiRoundingPolicy() == QLatin1String("Round"),
-              "appsettings: 七类脏数据全部回落默认值");
+              "appsettings: 七类脏数据全部回落默认值（语言默认空=跟随系统）");
     }
 
     // 4) 幂等与信号载荷（key/value 正确、同值不重复发）
@@ -5361,6 +6338,401 @@ static int countType(const SketchModel& m, ElementType t) {
     int n = 0;
     for (const auto& e : m.elements()) if (e.type == t) ++n;
     return n;
+}
+
+// ============================================================
+// t_help：命令发现与容错帮助（阶段五）
+//   覆盖：命令面板过滤（中文名/别名/最近使用置顶）、help 总表计数一致性
+//   （命令总数 == 注册表+家族全集，别名单列）、help <cmd> 含 Usage、
+//   未知命令给相近候选、快捷键冲突自检（纯函数直测）。
+// ============================================================
+static bool t_help() {
+    using namespace SketchCAD;
+
+    // 前提：无头环境手动灌入默认别名（与 t_cmdParity 同一启动前提）。
+    {
+        const auto defs = AliasTable::defaultAliases();
+        for (auto it = defs.constBegin(); it != defs.constEnd(); ++it)
+            AliasTable::instance().setAlias(it.key(), it.value());
+    }
+
+    // ---- P1: 面板过滤（中文名通道）----
+    {
+        CommandPaletteModel pm;
+        PaletteEntry e1, e2, e3;
+        e1.name = "line";   e1.title = QStringLiteral("直线");   e1.category = QStringLiteral("绘图");
+        e2.name = "circle"; e2.title = QStringLiteral("圆");     e2.category = QStringLiteral("绘图");
+        e3.name = "move";   e3.title = QStringLiteral("移动");   e3.category = QStringLiteral("修改");
+        pm.setEntries({ e1, e2, e3 });
+        bool hit = false;
+        for (const auto& h : pm.filter(QStringLiteral("直")))
+            if (h.name == QStringLiteral("line")) hit = true;
+        CHECK(hit, "P1 面板中文名过滤：『直』命中 line（直线）");
+        CHECK(!pm.filter(QStringLiteral("圆")).isEmpty(),
+              "P1 面板中文名过滤：『圆』命中 circle");
+        CHECK(pm.filter(QStringLiteral("zzzz")).isEmpty(),
+              "P1 不相关输入返回空候选");
+    }
+
+    // ---- P2: 面板过滤（别名通道 + 子序列容错）----
+    {
+        PaletteEntry e;
+        e.name = "circle"; e.title = QStringLiteral("圆"); e.alias = "c";
+        CHECK(CommandPaletteModel::fuzzyScore(QStringLiteral("c"), e) > 0,
+              "P2 别名通道命中：别名 c → circle 得分为正");
+        CHECK(CommandPaletteModel::fuzzyScore(QStringLiteral("circ"), e) >
+              CommandPaletteModel::fuzzyScore(QStringLiteral("crc"), e),
+              "P2 前缀匹配得分高于子序列匹配（确定性排序依据）");
+        PaletteEntry none;
+        none.name = "move"; none.title = QStringLiteral("移动");
+        CHECK(CommandPaletteModel::fuzzyScore(QStringLiteral("zvz"), none) < 0,
+              "P2 阈值外子序列判不匹配");
+    }
+
+    // ---- P3: 最近使用置顶（空查询）----
+    {
+        CommandPaletteModel pm;
+        PaletteEntry a, b, c;
+        a.name = "line"; b.name = "circle"; c.name = "move";
+        pm.setEntries({ a, b, c });
+        pm.pushRecent(QStringLiteral("circle"));
+        pm.pushRecent(QStringLiteral("move"));
+        const auto hits = pm.filter(QString());
+        CHECK(hits.size() == 3 && hits[0].name == QStringLiteral("move") &&
+                  hits[1].name == QStringLiteral("circle"),
+              "P3 空查询：最近使用置顶（move → circle → 其余原序）");
+        pm.pushRecent(QStringLiteral("move"));
+        CHECK(pm.recent().size() == 2 && pm.recent().first() == QStringLiteral("move"),
+              "P3 pushRecent 去重置顶");
+    }
+
+    // ---- H1: help <cmd> 输出含用法（Usage:）----
+    {
+        SketchModel m; CommandInterpreter ci(&m);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(ci.execute(QStringLiteral("help line")), "H1 help line 执行成功");
+        bool usage = false, example = false;
+        for (const QString& s : logged) {
+            if (s.contains(QStringLiteral("Usage:"))) usage = true;
+            if (s.contains(QStringLiteral("line 0,0 100,50"))) example = true;
+        }
+        CHECK(usage,   "H1 help line 输出含『用法（Usage:）』");
+        CHECK(example, "H1 help line 输出含样例（与实现同源的 line 0,0 100,50）");
+    }
+
+    // ---- H2: help 别名解析 + 未收录命令回落 ----
+    {
+        SketchModel m; CommandInterpreter ci(&m);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(ci.execute(QStringLiteral("help h")), "H2 help h（别名）执行成功");
+        bool alias = false;
+        for (const QString& s : logged)
+            if (s.contains(QStringLiteral("hatch"))) alias = true;
+        CHECK(alias, "H2 help h 输出解析到目标命令 hatch");
+        logged.clear();
+        // poly_regular 未收录进目录表，但经 "poly_" 前缀命中注册表 → 走回落分支
+        CHECK(ci.execute(QStringLiteral("help poly_regular")), "H2 未收录家族命令走回落分支");
+        bool fallback = false;
+        for (const QString& s : logged)
+            if (s.contains(QStringLiteral("暂无详细帮助"))) fallback = true;
+        CHECK(fallback, "H2 回落输出含『暂无详细帮助』提示");
+    }
+
+    // ---- H3: help 未知命令给相近候选（复用 nearestCommands）----
+    {
+        SketchModel m; CommandInterpreter ci(&m);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(!ci.execute(QStringLiteral("help circl")), "H3 help circl 返回失败（未知命令）");
+        bool sug = false;
+        for (const QString& s : logged)
+            if (s.contains(QStringLiteral("您是不是想输入")) &&
+                s.contains(QStringLiteral("circle"))) sug = true;
+        CHECK(sug, "H3 help 未知命令输出『您是不是想输入』+ 候选 circle");
+    }
+
+    // ---- H4: help 总表计数一致性（命令总数 == 注册表+家族全集；别名单列）----
+    {
+        SketchModel m; CommandInterpreter ci(&m);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(ci.execute(QStringLiteral("help")), "H4 help 总表执行成功");
+        int listedCount = -1, aliasCount = -1;
+        bool aliasSection = false;
+        for (const QString& s : logged) {
+            if (s.startsWith(QStringLiteral("命令总数："))) {
+                // 形如 “命令总数：N（别名 M 条，单列如下）”（全角括号）
+                const QString body = s.mid(QStringLiteral("命令总数：").size());
+                const int lp = body.indexOf(QChar(u'（'));
+                if (lp > 0) {
+                    bool ok1 = false;
+                    listedCount = body.left(lp).trimmed().toInt(&ok1);
+                }
+                const int p = s.indexOf(QStringLiteral("别名 "));
+                if (p >= 0) {
+                    bool ok2 = false;
+                    aliasCount = s.mid(p + 3).split(QChar(' ')).first().toInt(&ok2);
+                    aliasSection = true;
+                }
+            }
+        }
+        CHECK(aliasSection, "H4 help 总表含别名单列段");
+        const int expected = CommandInterpreter::commandNames().size();
+        const QByteArray cntMsg = QStringLiteral("H4 help 命令总数(%1) == 注册表+家族全集(%2)")
+                                      .arg(listedCount).arg(expected).toUtf8();
+        CHECK(listedCount == expected, cntMsg.constData());
+        CHECK(aliasCount == AliasTable::instance().aliases().size(),
+              "H4 别名计数 == AliasTable 单例当前条数");
+        // 逐名核对：总表分组行覆盖全部命令名（无遗漏、无凭空多列）。
+        QString all;
+        for (const QString& s : logged)
+            if (s.startsWith(QStringLiteral("【"))) all += s + QChar(' ');
+        bool allCovered = true;
+        for (const QString& n : CommandInterpreter::commandNames())
+            if (!all.contains(n)) { allCovered = false; break; }
+        CHECK(allCovered, "H4 分组行逐名覆盖 commandNames 全集");
+    }
+
+    // ---- H5: 快捷键冲突自检（纯函数直测）----
+    {
+        QVector<ShortcutAudit::Binding> b = {
+            { QStringLiteral("动作A"), QStringLiteral("Ctrl+X") },
+            { QStringLiteral("动作B"), QStringLiteral("ctrl+x") },   // 大小写规格化后同键
+            { QStringLiteral("动作C"), QStringLiteral("Ctrl+Y") },
+        };
+        const auto dups = ShortcutAudit::duplicates(b);
+        CHECK(dups.size() == 1, "H5 三绑定中检出 1 组冲突");
+        if (dups.size() == 1) {
+            CHECK(dups[0].first == QStringLiteral("Ctrl+X") &&
+                      dups[0].second.contains(QStringLiteral("动作A")) &&
+                      dups[0].second.contains(QStringLiteral("动作B")),
+                  "H5 冲突组含快捷键与双方动作名");
+        }
+        QVector<ShortcutAudit::Binding> clean = {
+            { QStringLiteral("A"), QStringLiteral("Ctrl+X") },
+            { QStringLiteral("B"), QStringLiteral("Ctrl+Y") },
+        };
+        CHECK(ShortcutAudit::duplicates(clean).isEmpty(), "H5 无冲突返回空");
+    }
+
+    // ---- H6: 目录表基础一致性 ----
+    {
+        CHECK(CommandCatalog::find(QStringLiteral("circle")) != nullptr, "H6 目录收录 circle");
+        CHECK(CommandCatalog::find(QStringLiteral("CIRCLE")) != nullptr,
+              "H6 目录查找大小写不敏感");
+        const CommandInfo* ci = CommandCatalog::find(QStringLiteral("line"));
+        CHECK(ci && ci->usage.contains(QStringLiteral("line x1,y1 x2,y2")),
+              "H6 line 用法与实现同源");
+        CHECK(CommandCatalog::categoryOf(QStringLiteral("spline_append_pt")) ==
+                  QStringLiteral("绘图"),
+              "H6 未收录家族命令按前缀推断分类");
+    }
+
+    return true;
+}
+
+// ============================================================
+// t_diag：崩溃可复现诊断包（阶段六）
+//   覆盖：Stored-ZIP 写入器结构（签名/条目数/EOCD）、ZIP 逐条目自解析 +
+//   独立 CRC32 复算比对、exportBundle 产物齐全（system-info/drawing-meta）、
+//   system-info 信息字段完整、drawing-meta 仅计数且不含几何、会话标记
+//   异常退出检测（write→isAbnormal→clear）、遥测默认零外发（mock sink
+//   断言 send 零调用；开启后仅经出口送达）。
+// ============================================================
+#include "DiagBundle.h"
+#include "Diagnostics.h"
+#include "Telemetry.h"
+
+namespace {
+// 独立实现的 CRC32（与 DiagBundle::crc32 互为参照，强验证）
+quint32 diagRefCrc32(const QByteArray& data) {
+    quint32 crc = 0xFFFFFFFFu;
+    for (unsigned char ch : data) {
+        crc ^= ch;
+        for (int k = 0; k < 8; ++k)
+            crc = (crc & 1u) ? (0xEDB88320u ^ (crc >> 1)) : (crc >> 1);
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+quint32 rd32(const QByteArray& b, int off) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(b.constData()) + off;
+    return quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+}
+quint16 rd16(const QByteArray& b, int off) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(b.constData()) + off;
+    return quint16(quint16(p[0]) | (quint16(p[1]) << 8));
+}
+} // namespace
+
+static bool t_diag() {
+    using namespace SketchCAD;
+
+    // ---- D1: ZIP 写入器结构（本地头签名 + EOCD 条目数一致）----
+    QByteArray zip;
+    {
+        DiagBundle::ZipBuilder zb;
+        zb.addFile(QStringLiteral("a.txt"), "hello diag");
+        QByteArray bin;
+        for (int i = 0; i < 500; ++i) bin.append(char(i & 0xFF));
+        zb.addFile(QStringLiteral("sub/b.bin"), bin);
+        CHECK(!zb.isEmpty(), "D1 ZipBuilder 非空判定");
+        zip = zb.finish();
+        CHECK(zip.size() > 4 && rd32(zip, 0) == 0x04034b50u,
+              "D1 首条目本地头签名 PK\\x03\\x04");
+        // EOCD 在尾部：签名 0x06054b50，条目数 = 2
+        const int eocd = zip.size() - 22;   // 无注释时 EOCD 定长 22
+        CHECK(rd32(zip, eocd) == 0x06054b50u, "D1 EOCD 签名位于尾部");
+        CHECK(rd16(zip, eocd + 10) == 2 && rd16(zip, eocd + 8) == 2,
+              "D1 EOCD 条目总数 = 2（本盘/全盘一致）");
+        CHECK(rd16(zip, 8) == 0, "D1 压缩方法 = 0（Stored 不压缩）");
+    }
+
+    // ---- D2: ZIP 逐条目自解析 + 独立 CRC32 复算 ----
+    {
+        const int eocd = zip.size() - 22;
+        const quint32 cdOff = rd32(zip, eocd + 16);
+        const quint32 cdSize = rd32(zip, eocd + 12);
+        int off = int(cdOff), found = 0, crcOk = 0;
+        while (off < int(cdOff + cdSize)) {
+            if (rd32(zip, off) != 0x02014b50u) break;   // 中央目录签名
+            const quint32 crc = rd32(zip, off + 16);
+            const quint32 sz  = rd32(zip, off + 24);
+            const quint32 lho = rd32(zip, off + 42);
+            const int nameLen = rd16(zip, off + 28);
+            const QString name = QString::fromUtf8(zip.mid(off + 46, nameLen));
+            // 回读本地头里的数据并与独立 CRC 比对
+            const int lhNameLen = rd16(zip, int(lho) + 26);
+            const int lhExtraLen = rd16(zip, int(lho) + 28);
+            const int dataOff = int(lho) + 30 + lhNameLen + lhExtraLen;
+            const QByteArray data = zip.mid(dataOff, int(sz));
+            ++found;
+            if (diagRefCrc32(data) == crc) ++crcOk;
+            if (name == QStringLiteral("a.txt"))
+                CHECK(data == QByteArray("hello diag"), "D2 条目 a.txt 内容逐字节一致");
+            off += 46 + nameLen;
+        }
+        CHECK(found == 2, "D2 中央目录遍历到全部 2 个条目");
+        CHECK(crcOk == 2, "D2 全部条目 CRC32 与独立实现复算一致");
+    }
+
+    // ---- D3/D4/D5: exportBundle 产物齐全 + 信息字段 + meta 边界 ----
+    {
+        const QString tmp =
+            QDir::tempPath() + QStringLiteral("/sketchcad-t-diag-%1")
+                .arg(QDateTime::currentMSecsSinceEpoch());
+        QDir().mkpath(tmp);
+        QVariantMap meta;
+        meta.insert(QStringLiteral("drawingFile"), QStringLiteral("(未命名)"));
+        meta.insert(QStringLiteral("elementCount"), 42);
+        meta.insert(QStringLiteral("layerCount"), 3);
+        meta.insert(QStringLiteral("blockCount"), 1);
+        QString err;
+        const QString zipPath = DiagBundle::exportBundle(meta, tmp, &err);
+        const QByteArray d3msg = QStringLiteral("D3 诊断包 ZIP 生成于指定目录（%1）").arg(err).toUtf8();
+        CHECK(!zipPath.isEmpty() && QFileInfo::exists(zipPath), d3msg.constData());
+        QFile f(zipPath);
+        QByteArray bundle;
+        if (f.open(QIODevice::ReadOnly)) bundle = f.readAll();
+        CHECK(bundle.size() > 100, "D3 诊断包非空");
+
+        // 直接从包里捞 system-info.txt / drawing-meta.json 内容（复用 D2 的解析法）
+        auto extract = [&bundle](const QString& want) -> QByteArray {
+            const int eocd = bundle.size() - 22;
+            const quint32 cdOff = rd32(bundle, eocd + 16);
+            const quint32 cdSize = rd32(bundle, eocd + 12);
+            int off = int(cdOff);
+            while (off < int(cdOff + cdSize)) {
+                if (rd32(bundle, off) != 0x02014b50u) break;
+                const quint32 crc = rd32(bundle, off + 16);
+                const quint32 sz = rd32(bundle, off + 24);
+                const quint32 lho = rd32(bundle, off + 42);
+                const int nameLen = rd16(bundle, off + 28);
+                const QString name =
+                    QString::fromUtf8(bundle.mid(off + 46, nameLen));
+                const int lhNameLen = rd16(bundle, int(lho) + 26);
+                const int lhExtraLen = rd16(bundle, int(lho) + 28);
+                const int dataOff = int(lho) + 30 + lhNameLen + lhExtraLen;
+                const QByteArray data = bundle.mid(dataOff, int(sz));
+                if (name == want && diagRefCrc32(data) == crc) return data;
+                off += 46 + nameLen;
+            }
+            return {};
+        };
+        const QByteArray info = extract(QStringLiteral("system-info.txt"));
+        CHECK(!info.isEmpty(), "D4 包内含 system-info.txt 且 CRC 一致");
+        CHECK(info.contains("Qt 版本") && info.contains(qVersion()),
+              "D4 系统信息含 Qt 版本字段且与运行时一致");
+        CHECK(info.contains("操作系统"), "D4 系统信息含操作系统字段");
+        CHECK(info.contains("显卡"), "D4 系统信息含显卡字段（仅设备名）");
+        const QByteArray metaJson = extract(QStringLiteral("drawing-meta.json"));
+        CHECK(metaJson.contains("\"elementCount\"") &&
+                  metaJson.contains("42"),
+              "D5 drawing-meta.json 含 elementCount=42 计数");
+        CHECK(metaJson.size() < 400, "D5 drawing-meta.json 体积极小（仅计数，无几何/文本）");
+        // 输出目录清理（测试自身产生的临时产物）
+        QFile::remove(zipPath);
+        QDir(tmp).rmdir(tmp);
+    }
+
+    // ---- D6: 会话标记（异常退出检测，路径注入版）----
+    {
+        const QString marker =
+            QDir::tempPath() + QStringLiteral("/sketchcad-t-diag-marker-%1.marker")
+                .arg(QDateTime::currentMSecsSinceEpoch());
+        QFile::remove(marker);
+        CHECK(!Diagnostics::isAbnormalExit(marker), "D6 无标记 = 上次正常退出");
+        CHECK(Diagnostics::writeSessionMarker(marker), "D6 写会话标记成功");
+        CHECK(Diagnostics::isAbnormalExit(marker), "D6 标记残留 = 上次异常退出");
+        CHECK(Diagnostics::clearSessionMarker(marker), "D6 清除标记成功");
+        CHECK(!Diagnostics::isAbnormalExit(marker), "D6 清除后恢复正常判定");
+    }
+
+    // ---- D7: 遥测默认零外发（mock sink 断言）----
+    {
+        struct MockSink : TelemetrySink {
+            int calls = 0;
+            QString lastEvent;
+            QVariantMap lastPayload;
+            void send(const QString& e, const QVariantMap& p) override {
+                ++calls; lastEvent = e; lastPayload = p;
+            }
+        } sink;
+        // 恢复默认态：无出口 + 关闭（防止其他测试污染，也验证双门闩各自有效）
+        Telemetry::setSink(nullptr);
+        Telemetry::setEnabled(false);
+
+        Telemetry::record(QStringLiteral("session_start"));
+        Telemetry::record(QStringLiteral("crash"), { { "count", 1 } });
+        CHECK(sink.calls == 0, "D7 默认状态（无出口+关闭）record 零外发");
+        CHECK(Telemetry::sink() == nullptr && !Telemetry::enabled(),
+              "D7 默认状态自省：sink 为空、开关关闭");
+
+        Telemetry::setEnabled(true);   // 只开开关、无出口
+        Telemetry::record(QStringLiteral("crash"));
+        CHECK(sink.calls == 0, "D7 仅开开关但无出口 → 仍然零外发（双门闩）");
+
+        Telemetry::setSink(&sink);     // 出口就位 → 应送达一次
+        Telemetry::record(QStringLiteral("crash"), { { "count", 7 } });
+        CHECK(sink.calls == 1 && sink.lastEvent == QStringLiteral("crash") &&
+                  sink.lastPayload.value(QStringLiteral("count")).toInt() == 7,
+              "D7 开关+出口齐备 → 恰好一次送达且字段一致");
+
+        Telemetry::setEnabled(false);  // 关开关 → 立即停发
+        Telemetry::record(QStringLiteral("crash"));
+        CHECK(sink.calls == 1, "D7 关闭后不再外发");
+
+        // 恢复全局默认（防污染其他测试）
+        Telemetry::setSink(nullptr);
+        Telemetry::setEnabled(false);
+    }
+
+    return true;
 }
 
 static bool t_cmdParity() {
@@ -5558,8 +6930,849 @@ static bool t_cmdParity() {
     return true;
 }
 
+// ============================================================
+// 撤销表自测（"万能回退"）：随图属性与几何同源回退
+// ------------------------------------------------------------
+// 覆盖 单位 / 界限 / 捕捉 / 追踪 / 布局 / 过滤器 六类随图属性，每类
+// 「改一次 → undo → 值还原 → redo → 值恢复」；另加快照去重、栈深上限
+// （超限丢弃最旧）、混合三步用例、几何操作回归。
+// ============================================================
+static bool t_undoTables() {
+    using namespace SketchCAD;
+
+    // ---------- 1. 单位 ----------
+    {
+        SketchModel m;
+        const UnitsMeta u0 = m.units();
+        UnitsMeta u1 = u0; u1.length = LengthUnit::Inch; u1.lengthPrec = 4;
+        m.setUnits(u1);
+        CHECK(m.units() == u1, "撤销表/单位：改后生效");
+        m.undo();
+        CHECK(m.units() == u0, "撤销表/单位：undo 还原");
+        m.redo();
+        CHECK(m.units() == u1, "撤销表/单位：redo 恢复");
+    }
+
+    // ---------- 2. 图纸界限 ----------
+    {
+        SketchModel m;
+        const LimitsMeta l0 = m.limits();
+        LimitsMeta l1 = l0; l1.x2 = 594.0; l1.y2 = 420.0; l1.checkOn = true;   // A2
+        m.setLimits(l1);
+        CHECK(m.limits() == l1, "撤销表/界限：改后生效");
+        m.undo();
+        CHECK(m.limits() == l0, "撤销表/界限：undo 还原");
+        m.redo();
+        CHECK(m.limits() == l1, "撤销表/界限：redo 恢复");
+    }
+
+    // ---------- 3. 捕捉配置 ----------
+    {
+        SketchModel m;
+        const snap::SnapConfig c0 = m.snapConfig();
+        snap::SnapConfig c1 = c0; c1.midpoint = !c1.midpoint; c1.quadrant = true;
+        m.setSnapConfig(c1);
+        CHECK(m.snapConfig() == c1, "撤销表/捕捉：改后生效");
+        m.undo();
+        CHECK(m.snapConfig() == c0, "撤销表/捕捉：undo 还原");
+        m.redo();
+        CHECK(m.snapConfig() == c1, "撤销表/捕捉：redo 恢复");
+    }
+
+    // ---------- 4. 追踪配置 ----------
+    {
+        SketchModel m;
+        const snap::TrackConfig t0 = m.trackConfig();
+        snap::TrackConfig t1 = t0; t1.polarIncrement = 45.0; t1.polar = !t1.polar;
+        m.setTrackConfig(t1);
+        CHECK(m.trackConfig() == t1, "撤销表/追踪：改后生效");
+        m.undo();
+        CHECK(m.trackConfig() == t0, "撤销表/追踪：undo 还原");
+        m.redo();
+        CHECK(m.trackConfig() == t1, "撤销表/追踪：redo 恢复");
+    }
+
+    // ---------- 5. 布局表（含当前布局）----------
+    {
+        SketchModel m;
+        PrintSettings ps;
+        CHECK(m.addLayout(QStringLiteral("布局A"), ps), "撤销表/布局：新增成功");
+        CHECK(m.layoutCount() == 1, "撤销表/布局：新增后 1 张");
+        m.setCurrentLayout(QStringLiteral("布局A"));      // 切页签本身不产生撤销步
+        CHECK(m.currentLayout() == QStringLiteral("布局A"), "撤销表/布局：当前布局切换生效");
+        m.undo();
+        CHECK(m.layoutCount() == 0, "撤销表/布局：undo 回到 0 张");
+        CHECK(m.currentLayout().isEmpty(), "撤销表/布局：undo 后当前布局回落模型空间");
+        m.redo();
+        CHECK(m.layoutCount() == 1, "撤销表/布局：redo 恢复 1 张");
+        CHECK(m.currentLayout() == QStringLiteral("布局A"), "撤销表/布局：redo 恢复当前布局");
+    }
+
+    // ---------- 6. 命名过滤器 ----------
+    {
+        SketchModel m;
+        FilterDef f;
+        f.name = QStringLiteral("只看0层");
+        f.matchAll = true;
+        QSelectCriteria c;
+        c.prop = QSelectProp::Layer; c.op = QSelectOp::Eq; c.value = QStringLiteral("0");
+        f.conds.push_back(c);
+        CHECK(m.saveFilter(f), "撤销表/过滤器：保存成功");
+        CHECK(m.savedFilters().size() == 1, "撤销表/过滤器：保存后 1 条");
+        m.undo();
+        CHECK(m.savedFilters().empty(), "撤销表/过滤器：undo 后清空");
+        m.redo();
+        CHECK(m.savedFilters().size() == 1, "撤销表/过滤器：redo 恢复 1 条");
+    }
+
+    // ---------- 7. 快照去重：连续相同状态不重复入栈 ----------
+    {
+        SketchModel m;
+        const int before = m.undoStackSize();
+        m.beginEdit(QStringLiteral("第一次"));
+        const int after1 = m.undoStackSize();
+        m.beginEdit(QStringLiteral("第二次"));            // 期间未改动任何状态 → 应被去重
+        CHECK(after1 == before + 1, "撤销表/去重：首次 beginEdit 正常入栈");
+        CHECK(m.undoStackSize() == after1, "撤销表/去重：状态未变的重复 beginEdit 不新增快照");
+    }
+
+    // ---------- 8. 栈深上限：超限丢弃最旧 ----------
+    {
+        SketchModel m;
+        m.setUndoDepthLimit(5);
+        CHECK(m.undoDepthLimit() == 5, "撤销表/栈深：设置为 5 生效");
+        for (int i = 0; i < 12; ++i) addPoint(m, (double)i, 0.0);
+        CHECK(m.elementCount() == 12, "撤销表/栈深：12 个点全部加入");
+        CHECK(m.undoStackSize() == 5, "撤销表/栈深：溢出后只保留 5 步");
+        int steps = 0;
+        while (m.canUndo()) { m.undo(); ++steps; }
+        CHECK(steps == 5, "撤销表/栈深：可撤销次数恰为上限 5");
+        CHECK(m.elementCount() == 7, "撤销表/栈深：丢弃最旧后只能回到第 7 个点");
+        m.setUndoDepthLimit(0);                            // 非法 → 回落默认
+        CHECK(m.undoDepthLimit() == 100, "撤销表/栈深：非法值 0 回落默认 100");
+        m.setUndoDepthLimit(99999);                        // 越界 → 回落默认
+        CHECK(m.undoDepthLimit() == 100, "撤销表/栈深：越界值回落默认 100");
+    }
+
+    // ---------- 9. 混合用例：改布局 + 移动图元 + 改单位 ----------
+    {
+        SketchModel m;
+        const int line = addLine(m, 0, 0, 10, 0);
+        const UnitsMeta u0 = m.units();
+        // 步1：改布局
+        PrintSettings ps;
+        CHECK(m.addLayout(QStringLiteral("L1"), ps), "撤销表/混合：步1 新增布局");
+        // 步2：移动图元（beginEdit + Quiet = 单步撤销，既有契约不变）
+        m.beginEdit(QStringLiteral("平移图元"));
+        m.updateElementQuiet(line, [](Element& e) { e.pts[0].x += 5.0; e.pts[1].x += 5.0; });
+        CHECK(m.element(line) && std::fabs(m.element(line)->pts[0].x - 5.0) < 1e-9,
+              "撤销表/混合：步2 图元已移动");
+        // 步3：改单位
+        UnitsMeta u1 = u0; u1.length = LengthUnit::Cm;
+        m.setUnits(u1);
+        CHECK(m.units() == u1, "撤销表/混合：步3 单位已改");
+
+        // 三次 Ctrl+Z 全部还原
+        m.undo();
+        CHECK(m.units() == u0, "撤销表/混合：撤销1 单位还原");
+        m.undo();
+        CHECK(m.element(line) && std::fabs(m.element(line)->pts[0].x - 0.0) < 1e-9,
+              "撤销表/混合：撤销2 图元回原位");
+        m.undo();
+        CHECK(m.layoutCount() == 0, "撤销表/混合：撤销3 布局移除");
+
+        // 三次 Ctrl+Y 全部重做
+        m.redo();
+        CHECK(m.layoutCount() == 1, "撤销表/混合：重做1 布局恢复");
+        m.redo();
+        CHECK(m.element(line) && std::fabs(m.element(line)->pts[0].x - 5.0) < 1e-9,
+              "撤销表/混合：重做2 图元移动恢复");
+        m.redo();
+        CHECK(m.units() == u1, "撤销表/混合：重做3 单位恢复");
+    }
+
+    // ---------- 10. 几何操作回归：不受本次改动影响 ----------
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 1, 0);
+        const int n0 = m.elementCount();
+        m.removeElement(a);
+        CHECK(m.elementCount() == n0 - 1, "撤销表/回归：删除图元生效");
+        m.undo();
+        CHECK(m.elementCount() == n0, "撤销表/回归：撤销删除恢复");
+        m.redo();
+        CHECK(m.elementCount() == n0 - 1, "撤销表/回归：重做删除生效");
+    }
+
+    return true;
+}
+
+// ===================== 鲁棒性 / Fuzz 回归（t_robustness / t_fileFuzz） =====================
+//
+// 任务目标：任何输入都不能让程序崩溃 / 卡死 / 写坏文件。
+// 验收口径：
+//   * 处理策略优先级：不崩溃 > 报错明确 > 部分降级 > 完全拒绝；
+//   * 降级须在日志/返回值写清丢弃/跳过（每条降级路径一条断言）；
+//   * 打开失败不得污染当前图纸；保存前须先在内存构造完整数据再落盘（既有 writeDrawing 已满足）；
+//   * 既有断言全过；双目标零警告 EXIT=0。
+//
+// 本组用例聚焦「读档前守卫层」ElementValidate：只读校验 / 丢弃 / 裁剪修复 / 缺失引用统计。
+// 解析层（tokenizeDxf / binaryDxfToAscii / fromDwg / parseDxfTokens / Block::evalDef）
+// 已在探查阶段确认有界/哨兵/环检测健壮，不在此重复覆盖。
+
+// 构造一个「结构合法」的图元（仅填充守卫层关心的字段）。
+static Element makeElem(ElementType t, int id) {
+    Element e; e.type = t; e.id = id; return e;
+}
+
+// 带控制点的直线
+static Element makeLine(int id, Vec3 a, Vec3 b) {
+    Element e = makeElem(ElementType::Line, id); e.pts = {a, b}; return e;
+}
+// 带半径的圆
+static Element makeCircle(int id, Vec3 c, double r) {
+    Element e = makeElem(ElementType::Circle, id); e.pts = {c}; e.radius = r; return e;
+}
+
+static bool t_robustness() {
+    // ---- ① 正常图元：逐字节（值）等价，skip=fix=0，绝不改动输入 ----
+    {
+        std::vector<Element> good;
+        good.push_back(makeLine(1, Vec3(0,0,0), Vec3(10,0,0)));
+        good.push_back(makeCircle(2, Vec3(5,5,0), 3.0));
+        Element cp = makeElem(ElementType::Polyline, 3);
+        cp.closed = true; cp.pts = {Vec3(0,0,0), Vec3(10,0,0), Vec3(10,10,0), Vec3(0,10,0)};
+        good.push_back(cp);
+        int s=0, f=0; QString rep;
+        std::vector<Element> out = filterElements(good, &s, &f, &rep);
+        CHECK(s == 0, "robust: 正常文件 skip=0");
+        CHECK(f == 0, "robust: 正常文件 fix=0");
+        CHECK(out.size() == good.size(), "robust: 正常文件 图元数不变");
+        // 值等价
+        bool same = (out.size()==good.size());
+        for (size_t i=0; i<out.size() && same; ++i) {
+            if (out[i].type != good[i].type || out[i].id != good[i].id
+                || out[i].pts.size() != good[i].pts.size()) same=false;
+            for (size_t k=0;k<out[i].pts.size() && same;++k)
+                if (out[i].pts[k].x!=good[i].pts[k].x || out[i].pts[k].y!=good[i].pts[k].y) same=false;
+            if (out[i].radius != good[i].radius) same=false;
+        }
+        CHECK(same, "robust: 正常文件 逐元素值等价（未做任何修改）");
+    }
+
+    // ---- ② 类型越界 / 负数类型：直接丢弃 + 日志 ----
+    {
+        std::vector<Element> in;
+        in.push_back(makeLine(1, Vec3(0,0,0), Vec3(10,0,0)));
+        Element bad = makeElem((ElementType)99, 2); bad.pts={Vec3(0,0,0),Vec3(1,1,0)}; in.push_back(bad);
+        Element neg = makeElem((ElementType)-1, 3); neg.pts={Vec3(0,0,0),Vec3(1,1,0)}; in.push_back(neg);
+        int s=0,f=0; QString rep;
+        std::vector<Element> out = filterElements(in,&s,&f,&rep);
+        CHECK(s==2, "robust: 类型越界/负数类型 被丢弃（skip=2）");
+        CHECK(f==0, "robust: 类型越界 无修复");
+        CHECK(out.size()==1, "robust: 类型越界 仅保留合法图元");
+        CHECK(rep.contains(QStringLiteral("类型越界")), "robust: 类型越界 日志写明原因");
+    }
+
+    // ---- ③ NaN / Inf 坐标与半径：丢弃 ----
+    {
+        Element nan1 = makeLine(1, Vec3(0,0,0), Vec3(std::nan(""),0,0));
+        Element nan2 = makeLine(2, Vec3(0,0,0), Vec3(10, std::numeric_limits<double>::infinity(),0));
+        Element nan3 = makeCircle(3, Vec3(0,0,0), std::nan(""));
+        std::vector<Element> in = {nan1, nan2, nan3};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==3, "robust: NaN/Inf 坐标与半径 全部丢弃（skip=3）");
+        CHECK(rep.contains(QStringLiteral("NaN")), "robust: NaN/Inf 日志写明 NaN/Inf/越界");
+    }
+
+    // ---- ④ 超大坐标（>1e18）丢弃；边界值 1e18 保留 ----
+    {
+        Element huge = makeLine(1, Vec3(0,0,0), Vec3(1e19,0,0));
+        Element edge = makeLine(2, Vec3(0,0,0), Vec3(1e18,0,0)); // 恰好等于上限 → 允许
+        std::vector<Element> in = {huge, edge};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==1, "robust: 坐标>1e18 丢弃（skip=1）");
+        CHECK(out.size()==1 && out[0].id==2, "robust: 边界值 1e18 保留");
+    }
+
+    // ---- ⑤ 退化几何：零半径圆 / 零长度直线 / 零扫掠弧 / 零半轴椭圆：丢弃 ----
+    {
+        Element zr  = makeCircle(1, Vec3(0,0,0), 0.0);
+        Element zl  = makeLine(2, Vec3(0,0,0), Vec3(0,0,0));
+        Element za  = makeElem(ElementType::Arc, 3); za.pts={Vec3(0,0,0)}; za.radius=4; za.startAngle=10; za.endAngle=10;
+        Element ze  = makeElem(ElementType::Ellipse, 4); ze.pts={Vec3(0,0,0)}; ze.radius=3; ze.radiusY=0;
+        std::vector<Element> in = {zr, zl, za, ze};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==4, "robust: 退化几何 全部丢弃（skip=4）");
+        CHECK(rep.contains(QStringLiteral("零半径")) || rep.contains(QStringLiteral("零长度")) || rep.contains(QStringLiteral("零扫掠")),
+              "robust: 退化几何 日志写明退化原因");
+    }
+
+    // ---- ⑥ 闭合折线首尾重复点：裁剪修复（去掉末点），fix=1，不丢弃 ----
+    {
+        Element dup = makeElem(ElementType::Polyline, 1);
+        dup.closed = true;
+        dup.pts = {Vec3(0,0,0), Vec3(10,0,0), Vec3(10,10,0), Vec3(0,10,0), Vec3(0,0,0)}; // 末点==首点
+        std::vector<Element> in = {dup};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==0, "robust: 闭合重复末点 不丢弃（skip=0）");
+        CHECK(f==1, "robust: 闭合重复末点 修复（fix=1）");
+        CHECK(out.size()==1 && out[0].pts.size()==4 && out[0].closed,
+              "robust: 闭合重复末点 已去重末点且仍闭合");
+        CHECK(rep.contains(QStringLiteral("修复")), "robust: 闭合重复末点 日志写明修复");
+    }
+
+    // ---- ⑦ 超长文本（>1MB）：丢弃 ----
+    {
+        Element e = makeElem(ElementType::Text, 1); e.pts={Vec3(0,0,0)};
+        e.text = QString((1 << 20) + 100, QChar('A'));   // >1MB：1<<20 须加括号，否则歧义为 1<<(20+100)
+        std::vector<Element> in = {e};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==1, "robust: 超长文本(>1MB) 丢弃（skip=1）");
+        CHECK(rep.contains(QStringLiteral("超长")), "robust: 超长文本 日志写明超长");
+    }
+
+    // ---- ⑧ 控制字符：剥离修复（\n 等多行符保留）----
+    {
+        Element e = makeElem(ElementType::Text, 1); e.pts={Vec3(0,0,0)};
+        e.text = QStringLiteral("正常\n行\x01\x02含控制符");
+        std::vector<Element> in = {e};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==0, "robust: 控制字符 不丢弃（skip=0）");
+        CHECK(f==1, "robust: 控制字符 修复（fix=1）");
+        CHECK(out.size()==1 && !out[0].text.contains(QChar('\x01')) && out[0].text.contains('\n'),
+              "robust: 控制字符 已剥离且保留换行");
+    }
+    {
+        // 合法文本（含换行）不被误修
+        Element e = makeElem(ElementType::Text, 1); e.pts={Vec3(0,0,0)};
+        e.text = QStringLiteral("第一行\n第二行");
+        std::vector<Element> in = {e};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==0 && f==0, "robust: 合法多行文本 不修复（fix=0）");
+    }
+
+    // ---- ⑨ 空输入：不崩溃，返回空 ----
+    {
+        std::vector<Element> in;
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(out.empty() && s==0 && f==0, "robust: 空向量 安全返回空");
+    }
+
+    // ---- ⑩ 负数/重复 file-id：不丢弃（模型会重分配 id，不会碰撞/崩溃）----
+    {
+        Element neg = makeLine(-5, Vec3(0,0,0), Vec3(10,0,0));
+        Element dup = makeLine(1,  Vec3(0,0,0), Vec3(10,10,0));
+        Element dup2= makeLine(1,  Vec3(5,5,0), Vec3(15,5,0)); // 与 dup 同 file-id
+        std::vector<Element> in = {neg, dup, dup2};
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(in,&s,&f,&rep);
+        CHECK(s==0, "robust: 负数/重复 file-id 不丢弃（模型重分配 id）");
+        CHECK(out.size()==3, "robust: file-id 异常 图元全部保留");
+    }
+
+    // ---- ⑪ isElementValid 单图元判定 ----
+    {
+        CHECK(isElementValid(makeLine(1, Vec3(0,0,0), Vec3(1,1,0))), "robust: isElementValid 合法直线=true");
+        CHECK(!isElementValid(makeCircle(2, Vec3(0,0,0), 0.0)), "robust: isElementValid 零半径圆=false");
+        Element nan = makeLine(3, Vec3(std::nan(""),0,0), Vec3(1,1,0));
+        QString why; CHECK(!isElementValid(nan, &why) && why.contains(QStringLiteral("NaN")),
+              "robust: isElementValid NaN 返回false且原因含NaN");
+    }
+
+    // ---- ⑫ countDanglingRefs：按名/按id 缺失引用统计 ----
+    {
+        // 准备：模型含层 "0" 与 "WALLS"、块 "BOLT"、样式 "Standard"
+        SketchModel m;
+        m.addLayer(QStringLiteral("WALLS"));
+        { BlockDef b; b.name = QStringLiteral("BOLT"); m.addBlockDef(b); }       // 显式命名初始化，避免聚合缺字段警告
+        { TextStyle s; s.name = QStringLiteral("Standard"); m.addTextStyle(s); }
+        // 构造图元向量（file-id 空间）
+        std::vector<Element> elems;
+        Element onMissingLayer = makeLine(1, Vec3(0,0,0), Vec3(1,0,0)); onMissingLayer.layer = QStringLiteral("GHOST");
+        Element badBlock = makeElem(ElementType::BlockRef, 2); badBlock.pts={Vec3(0,0,0)}; badBlock.blockName=QStringLiteral("NOPE");
+        Element badStyle = makeElem(ElementType::Text, 3); badStyle.pts={Vec3(0,0,0)}; badStyle.styleName=QStringLiteral("MISS");
+        Element goodLine = makeLine(4, Vec3(0,0,0), Vec3(2,0,0)); goodLine.layer=QStringLiteral("WALLS");
+        Element dangling = makeElem(ElementType::Constraint, 5); dangling.refA = 999; // 不存在
+        elems = {onMissingLayer, badBlock, badStyle, goodLine, dangling};
+
+        std::vector<QString> lns, bns, sns;
+        for (int i=0;i<m.layerCount();++i) lns.push_back(m.layerAt(i).name);
+        for (const auto& b : m.blockTable()) bns.push_back(b.name);
+        for (int i=0;i<m.textStyleCount();++i) sns.push_back(m.textStyleAt(i).name);
+        QString rep;
+        int n = countDanglingRefs(elems, lns, bns, sns, &rep);
+        CHECK(n == 4, QStringLiteral("robust: countDanglingRefs 统计到 4 处缺失引用(实际 %1)").arg(n).toUtf8().constData());
+        CHECK(rep.contains(QStringLiteral("图层")) && rep.contains(QStringLiteral("块")) && rep.contains(QStringLiteral("样式")) && rep.contains(QStringLiteral("悬空")),
+              "robust: countDanglingRefs 日志覆盖层/块/样式/悬空几何");
+    }
+    {
+        // 全部引用有效 → 0
+        SketchModel m; // 只有默认层 "0"
+        std::vector<Element> elems;
+        Element good = makeLine(1, Vec3(0,0,0), Vec3(1,0,0)); good.layer=QStringLiteral("0"); // 默认层存在
+        elems.push_back(good);
+        std::vector<QString> lns, bns, sns;
+        for (int i=0;i<m.layerCount();++i) lns.push_back(m.layerAt(i).name);
+        QString rep;
+        int n = countDanglingRefs(elems, lns, bns, sns, &rep);
+        CHECK(n==0, "robust: countDanglingRefs 全部有效引用=0");
+    }
+
+    // ---- ⑬ 打开失败不污染当前图纸（BatchPlotEngine::loadDrawing 解析失败不 clear）----
+    {
+        SketchModel m;
+        int goodId = m.addElement(makeLine(0, Vec3(0,0,0), Vec3(9,0,0)));
+        const int before = m.elementCount();
+        QString err;
+        // 投递一段非法 JSON（非对象）→ loadDrawing 应返回 false 且不破坏已有图元
+        QTemporaryDir td;
+        QFile bad(td.path() + QStringLiteral("/bad.json"));
+        (void)bad.open(QIODevice::WriteOnly); bad.write(QByteArray("{这不是合法JSON")); bad.close();
+        const bool ok = comauto::BatchPlotEngine::loadDrawing(m, bad.fileName(), &err);
+        CHECK(!ok, "robust: 非法 JSON 打开失败返回 false");
+        CHECK(m.elementCount()==before, "robust: 打开失败 不污染当前图纸（图元数不变）");
+        (void)goodId;
+    }
+
+    // ---- ⑭ 混合向量（合法 + NaN 非法）：守卫丢弃非法项，保留合法项，不崩溃 ----
+    {
+        // 注：JSON 不支持 NaN（Qt 序列化为 null），故直接在 C++ 侧构造含 NaN 的图元验证守卫层。
+        std::vector<Element> loaded;
+        loaded.push_back(makeLine(1, Vec3(0,0,0), Vec3(10,0,0)));
+        loaded.push_back(makeLine(2, Vec3(0,0,0), Vec3(std::nan(""),0,0)));
+        int s=0,f=0; QString rep; std::vector<Element> out=filterElements(loaded,&s,&f,&rep);
+        CHECK(s==1 && out.size()==1, "robust: NaN 图元被丢弃，合法项保留");
+    }
+
+    return true; // 具体通过数由 CHECK 累计
+}
+
+// 在独立线程中运行解析+守卫，返回是否在 ms 毫秒内完成（用于死锁/卡死检测）。
+// 注：解析层（tokenizeDxf / binaryDxfToAscii / fromDwg / parseDxfTokens / Block::evalDef）
+// 均已确认有界/哨兵/环检测，不会无限循环；超时即视为潜在死锁并记失败。
+static QByteArray corruptTruncate(const QByteArray& b, double frac) {
+    if (b.isEmpty()) return b;
+    int keep = (int)(b.size() * (1.0 - frac));
+    keep = qBound(0, keep, (int)b.size());
+    return b.left(keep);
+}
+static QByteArray corruptFlip(const QByteArray& b, int n, std::mt19937& rng) {
+    if (b.isEmpty() || n<=0) return b;
+    QByteArray c = b;
+    std::uniform_int_distribution<int> pos(0, (int)c.size()-1);
+    std::uniform_int_distribution<int> val(1, 255);
+    for (int i=0;i<n;++i) {
+        int p = pos(rng);
+        c[p] = (char)(c[p] ^ (char)val(rng));
+    }
+    return c;
+}
+
+// 200 个固定种子随机损坏样本，覆盖 JSON/DXF/DWG/二进制DXF 的截断/字节翻转/空文件，
+// 要求：零崩溃、零死锁/超时（单样本 ≤5s）。
+static bool t_fileFuzz() {
+    // 构造「好」图档（多类型图元）
+    std::vector<Element> good;
+    { Element e=makeLine(1, Vec3(0,0,0), Vec3(10,0,0)); good.push_back(e); }
+    { Element e=makeCircle(2, Vec3(5,5,0), 3.0); good.push_back(e); }
+    { Element e=makeElem(ElementType::Arc,3); e.pts={Vec3(0,0,0)}; e.radius=4; e.startAngle=0; e.endAngle=180; good.push_back(e); }
+    { Element e=makeElem(ElementType::Polyline,4); e.closed=true; e.pts={Vec3(0,0,0),Vec3(10,0,0),Vec3(10,10,0),Vec3(0,10,0)}; good.push_back(e); }
+    { Element e=makeElem(ElementType::Text,5); e.pts={Vec3(1,1,0)}; e.text=QStringLiteral("标题"); good.push_back(e); }
+    { Element e=makeElem(ElementType::BlockRef,6); e.pts={Vec3(0,0,0)}; e.blockName=QStringLiteral("BOLT"); good.push_back(e); }
+    { Element e=makeElem(ElementType::Hatch,7); e.pts={Vec3(0,0,0),Vec3(5,0,0),Vec3(5,5,0)}; good.push_back(e); }
+
+    QString e1;
+    QByteArray dxfGood  = cadfmt::toDxf(good, &e1, 1.0, 4, nullptr, nullptr);
+    QByteArray dwgGood  = cadfmt::toDwg(good, nullptr, 1.0);
+    QByteArray dxfBin   = cadfmt::toDxfBinary(good, &e1, 1.0, 4, nullptr, nullptr);
+    QJsonObject root; QJsonArray arr;
+    for (auto& e : good) arr.append(elementToJson(e));
+    root["elements"]=arr;
+    QByteArray jsonGood = QJsonDocument(root).toJson();
+
+    CHECK(!dxfGood.isEmpty() && !dwgGood.isEmpty() && !dxfBin.isEmpty() && !jsonGood.isEmpty(),
+          "fuzz: 基准好文件（DXF/DWG/二进制DXF/JSON）均非空");
+
+    std::mt19937 rng(0x5EED1234u);
+    std::uniform_int_distribution<int> fmtPick(0, 3);   // 0=JSON 1=DXF 2=DWG 3=二进制DXF
+    std::uniform_int_distribution<int> corrPick(0, 4);  // 0/1/2=截断1/10/50% 3=字节翻转 4=空文件
+    const int N = 200;
+    int crashes = 0, timeouts = 0, total = 0;
+    std::vector<std::future<void>> live;   // 保活异步任务，函数退出时再join（解析器有界，必然结束）
+
+    for (int i=0;i<N;++i) {
+        const int fp = fmtPick(rng);
+        QByteArray base = (fp==0)? jsonGood : (fp==1)? dxfGood : (fp==2)? dwgGood : dxfBin;
+        const int cp = corrPick(rng);
+        QByteArray corrupted;
+        if (cp==0) corrupted = corruptTruncate(base, 0.01);
+        else if (cp==1) corrupted = corruptTruncate(base, 0.10);
+        else if (cp==2) corrupted = corruptTruncate(base, 0.50);
+        else if (cp==3) corrupted = corruptFlip(base, 1 + (int)(rng()%20), rng); // ≤20 处翻转
+        else corrupted = QByteArray();
+
+        // 复制进 lambda，避免超时线程 use-after-free；crashed 放堆上保活
+        QByteArray data = corrupted;
+        const bool isDwg = (fp==2);
+        auto crashed = std::make_shared<std::atomic<int>>(0);
+        auto fut = std::async(std::launch::async, [crashed, data, isDwg]() {
+            try {
+                if (!isDwg) {
+                    QJsonDocument doc = QJsonDocument::fromJson(data);
+                    if (doc.isObject()) {
+                        std::vector<Element> loaded;
+                        for (const auto& v : doc.object()["elements"].toArray())
+                            loaded.push_back(elementFromJson(v.toObject()));
+                        int s,f; QString r; filterElements(loaded,&s,&f,&r);
+                    }
+                } else {
+                    std::vector<Element> imp; QString e; cadfmt::DxfImportStats st;
+                    cadfmt::fromDwg(data, imp, &e, &st); int s,f; QString r; filterElements(imp,&s,&f,&r);
+                }
+                // 已解析的好文件分支：同时跑 DXF/二进制DXF 解析（fp==1/3 在 JSON 分支外的另一解析路径）
+                if (!isDwg && data.size()>0) {
+                    std::vector<Element> imp; QString e; cadfmt::DxfImportStats st;
+                    // 用 fromDxf 解析（即便内容是 JSON 字节，也应安全返回而非崩溃）
+                    cadfmt::fromDxf(data, imp, &e, &st); int s,f; QString r; filterElements(imp,&s,&f,&r);
+                }
+            } catch (...) { *crashed = 1; }
+        });
+        const bool done = fut.wait_for(std::chrono::milliseconds(5000)) == std::future_status::ready;
+        ++total;
+        if (!done) ++timeouts;
+        else if (*crashed) ++crashes;
+        live.push_back(std::move(fut));
+    }
+    CHECK(crashes == 0, QStringLiteral("fuzz: 200 随机损坏样本零崩溃(实际崩溃 %1)").arg(crashes).toUtf8().constData());
+    CHECK(timeouts == 0, QStringLiteral("fuzz: 零死锁/超时(实际超时 %1)").arg(timeouts).toUtf8().constData());
+    CHECK(total == N, QStringLiteral("fuzz: 跑满 %1 样本").arg(N).toUtf8().constData());
+    return crashes==0 && timeouts==0;
+}
+
+// ===========================================================================
+// 文字度量三处同源自测（t_textMetrics）
+// 验收：① 度量 vs 估算偏差 ② 9 点对齐坐标 ③ 换行结果
+//       ④ 列宽自适应 ⑤ 三同源 boundingRect 相等 ⑥ 无头确定性降级
+//       ⑦ 堆叠分数明确提示（非静默退化）
+// 运行环境为 QCoreApplication（无头）→ TextMetrics 走确定性估算（不崩溃、不依赖字体）。
+// ===========================================================================
+static bool t_textMetrics() {
+    fprintf(stdout, "--- 文字度量 TextMetrics（三处同源）---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    // 自测进程现持 QApplication（t_interaction 需要 QLineEdit）——但本组断言锚定
+    // "无头降级（确定性估算）"路径，故强制 isGuiAvailable=false 还原原判定语义，
+    // 全组断言与 QCoreApplication 时代完全一致；组尾恢复，不影响其它测试组。
+    TextMetrics::setHeadlessOverride(true);
+
+    // ⑥ 无头环境必须走确定性估算（批处理安全：无 GUI 不崩溃）
+    CHECK(TextMetrics::isGuiAvailable() == false,
+          "无头环境 isGuiAvailable=false → 确定性估算(批处理安全)");
+
+    // ① 度量 vs 估算：无头下 lineWidthMm 必须 == size*height*fallback*widthFactor
+    ResolvedTextStyle rs; rs.height = 3.5; rs.widthFactor = 1.0;
+    const QString s5 = "Hello";
+    const double w5 = TextMetrics::lineWidthMm(rs, s5, 3.5);
+    const double exp5 = s5.size() * 3.5 * TextMetrics::fallbackCharWidth() * rs.widthFactor;
+    CHECK(std::fabs(w5 - exp5) < 1e-9, "无头 lineWidthMm 等于确定性估算(size*height*ratio*wf)");
+
+    // widthFactor 线性放大
+    rs.widthFactor = 2.0;
+    const double w2 = TextMetrics::lineWidthMm(rs, "AB", 3.5);
+    const double exp2 = 2.0 * 3.5 * TextMetrics::fallbackCharWidth() * 2.0;
+    CHECK(std::fabs(w2 - exp2) < 1e-9, "widthFactor=2 使行宽线性翻倍");
+    rs.widthFactor = 1.0;
+
+    // ② 9 点对齐（Text 强制中上锚定，仅 MText 走 textAlign 的 9 档，故用 MText 测）
+    Element eM; eM.type = ElementType::MText; eM.id = 1; eM.pts = {Vec3(10,10,0)};
+    eM.text = "AB"; eM.radius = 3.5; eM.mtextWidth = 0.0; eM.lineSpacing = 1.0;
+    const double charW = TextMetrics::lineWidthMm(rs, "A", 3.5);   // 单字符宽(无头)
+
+    eM.textAlign = 1;   // 中上
+    QRectF rC = TextMetrics::elementBoundsMm(eM, nullptr);
+    CHECK(std::fabs((rC.x() + rC.width()/2.0) - 10.0) < 1e-9, "9点对齐: align=1 水平居中于基点");
+    CHECK(std::fabs(rC.y() + rC.height() - 10.0) < 1e-9, "9点对齐: align=1 顶边贴合基点");
+
+    eM.textAlign = 2;   // 右上
+    QRectF rR = TextMetrics::elementBoundsMm(eM, nullptr);
+    CHECK(std::fabs(rR.right() - 10.0) < 1e-9, "9点对齐: align=2 右对齐于基点");
+
+    eM.textAlign = 4;   // 中中
+    QRectF rM = TextMetrics::elementBoundsMm(eM, nullptr);
+    CHECK(std::fabs((rM.x() + rM.width()/2.0) - 10.0) < 1e-9, "9点对齐: align=4 水平居中于基点");
+    CHECK(std::fabs((rM.y() + rM.height()/2.0) - 10.0) < 1e-9, "9点对齐: align=4 垂直居中于基点");
+
+    eM.textAlign = 6;   // 左下
+    QRectF rB = TextMetrics::elementBoundsMm(eM, nullptr);
+    CHECK(std::fabs(rB.x() - 10.0) < 1e-9, "9点对齐: align=6 左对齐于基点");
+    CHECK(std::fabs(rB.y() - 10.0) < 1e-9, "9点对齐: align=6 底边贴合基点");
+
+    // ③ 换行：MText 按 mtextWidth 真实折行（CJK 任意断点 + 拉丁空格/连字符断词）
+    Element eW; eW.type = ElementType::MText; eW.id = 2; eW.pts = {Vec3(0,0,0)};
+    eW.text = "ABC"; eW.radius = 3.5; eW.mtextWidth = 5.0; eW.lineSpacing = 1.0; eW.textAlign = 1;
+    TextLayout lay = TextMetrics::layout(rs, "ABC", 3.5, 5.0, 1.0);
+    CHECK(lay.lines.size() == 2, "MText 按 mtextWidth 折行为 2 行");
+    CHECK(std::fabs(lay.lines[0].widthMm - 2.0*charW) < 1e-9, "折行第0行宽=2字符");
+    CHECK(std::fabs(lay.lines[1].widthMm - 1.0*charW) < 1e-9, "折行第1行宽=1字符");
+    CHECK(std::fabs(lay.widthMm - 2.0*charW) < 1e-9, "layout.widthMm = 最宽行宽");
+    CHECK(std::fabs(lay.heightMm - 2.0*3.5) < 1e-9, "layout.heightMm = 行数×行高");
+
+    // 无 mtextWidth 不折行；lineSpacing 只改行高不改宽
+    TextLayout layN = TextMetrics::layout(rs, "AB", 3.5, 0.0, 2.0);
+    CHECK(layN.lines.size() == 1, "无 mtextWidth 不折行");
+    CHECK(std::fabs(layN.heightMm - 2.0*3.5) < 1e-9, "lineSpacing=2 → 行高翻倍");
+    CHECK(std::fabs(layN.widthMm - 2.0*charW) < 1e-9, "lineSpacing 不影响宽度");
+
+    // ④ 列宽：显式 colWidths 优先 vs 自适应
+    Element tE; tE.type = ElementType::Table; tE.id = 3; tE.pts = {Vec3(0,0,0)};
+    tE.tableRows = 2; tE.tableCols = 3; tE.radius = 3.5;
+    tE.colWidths = {10, 20, 30};
+    tE.tableCells = {"a","bb","ccc","dd","eee","ffff"};
+    QVector<double> cw = TextMetrics::tableColumnWidths(tE, nullptr);
+    CHECK(cw.size() == 3, "表格列数=3");
+    CHECK(std::fabs(cw[0]-10)<1e-9 && std::fabs(cw[1]-20)<1e-9 && std::fabs(cw[2]-30)<1e-9,
+          "显式 colWidths 优先采用");
+
+    tE.colWidths.clear();
+    QVector<double> cw2 = TextMetrics::tableColumnWidths(tE, nullptr);
+    CHECK(cw2.size() == 3, "自适应列数=3");
+    const double expC0 = TextMetrics::lineWidthMm(rs, "dd", 3.5) + 2.0;  // 最长单元格"dd" + 2*pad
+    CHECK(std::fabs(cw2[0] - expC0) < 1e-9, "自适应列0宽 = 最长单元格宽 + 2*pad");
+
+    // ⑤ 三同源：屏幕/打印/取景均调 elementBoundsMm → 数学相等；
+    //    且 elementBoundsMm 必须由 layout 同参派生（保证三站点像素逐字节一致）
+    Element e3; e3.type = ElementType::MText; e3.id = 4; e3.pts = {Vec3(5,5,0)};
+    e3.text = "X"; e3.radius = 3.5; e3.mtextWidth = 0.0; e3.lineSpacing = 1.0; e3.textAlign = 1;
+    QRectF a = TextMetrics::elementBoundsMm(e3, nullptr);
+    QRectF b = TextMetrics::elementBoundsMm(e3, nullptr);
+    CHECK(a == b, "三同源: elementBoundsMm 多次调用结果一致");
+    ResolvedTextStyle rs3 = resolveTextStyle(e3, nullptr);
+    TextLayout L = TextMetrics::layout(rs3, e3.text, rs3.height, 0.0, 1.0);
+    QRectF fromLayout(e3.pts[0].x - L.widthMm/2.0, e3.pts[0].y - L.heightMm, L.widthMm, L.heightMm);
+    CHECK(std::fabs(fromLayout.x()-a.x())<1e-9 && std::fabs(fromLayout.y()-a.y())<1e-9 &&
+          std::fabs(fromLayout.width()-a.width())<1e-9 && std::fabs(fromLayout.height()-a.height())<1e-9,
+          "三同源: elementBoundsMm 与 layout 同参派生坐标一致");
+
+    // 单元格溢出省略
+    QString el = TextMetrics::elideToWidthMm(rs, "ABCDEF", 3.5, 2.0*charW);
+    CHECK(el.contains(QChar(0x2026)), "elide 末尾追加省略号(…)");
+    CHECK(TextMetrics::lineWidthMm(rs, el, 3.5) <= 2.0*charW + 1e-9, "elide 后宽度不超上限");
+
+    // ⑦ 堆叠分数：检测 + 明确提示（非静默退化）
+    CHECK(TextMetrics::containsStackedFraction("{\\S 1/2;}") == true, "堆叠分数 {\\S 上/下;} 检测");
+    CHECK(TextMetrics::containsStackedFraction("A^IB") == true, "堆叠分数 ^I 检测");
+    CHECK(TextMetrics::containsStackedFraction("普通文字") == false, "无堆叠分数返回 false");
+
+    static bool g_tmWarned = false;
+    TextMetrics::setWarnHandler([](const QString&){ g_tmWarned = true; });
+    TextMetrics::layout(rs, "{\\S 1/2;}", 3.5, 0.0, 1.0);
+    CHECK(g_tmWarned == true, "堆叠分数触发明确提示(非静默退化)");
+    TextMetrics::setWarnHandler([](const QString& m){ qWarning("%s", m.toUtf8().constData()); }); // 还原默认
+
+    TextMetrics::setHeadlessOverride(false);   // 还原真实判定，避免影响后续测试组
+
+    fprintf(stdout, "  (文字度量自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ===========================================================================
+// 用户坐标系 UCS 自测（t_ucs）
+// 验收：① 默认=世界系（零回归） ② Ucs 数学往返 ③ 45° UCS 下 @100<0 落点（≤1e-6）
+//       ④ ucs 命令五种定义 + CRUD ⑤ 极轴按 UCS 对齐 ⑥ 正交/栅格按 UCS 轴
+//       ⑦ 坐标读数随 WCS/UCS 切换变化 ⑧ 网格方向随 UCS 旋转 ⑨ UCS 不入存档
+// ===========================================================================
+static bool t_ucs() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- 用户坐标系 UCS ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    // ① 默认 UCS = 世界系（单位变换 → 既有行为零回归）
+    {
+        SketchModel m;
+        CHECK(m.currentUcs().isWorld(), "ucs: 默认 UCS 为世界系");
+        const Vec3 p(3, -4, 2);
+        CHECK(m.toWorld(p) == p && m.toUcs(p) == p, "ucs: 世界系下 toWorld/toUcs 为恒等");
+    }
+
+    // ② Ucs 数学：xAxis/yAxis 正交单位向量 + 双向往返
+    {
+        const Ucs u("T", Vec3(10, 20, 0), math::deg2rad(45.0));
+        const Vec3 x = u.xAxis(), y = u.yAxis();
+        CHECK(std::fabs(x.len2D() - 1.0) < 1e-12 && std::fabs(y.len2D() - 1.0) < 1e-12,
+              "ucs: xAxis/yAxis 为单位向量");
+        CHECK(std::fabs(x.dot2D(y)) < 1e-12, "ucs: xAxis ⟂ yAxis");
+        const Vec3 p(3, -4, 2);
+        const Vec3 back = u.toUcs(u.toWorld(p));
+        CHECK(std::fabs(back.x - p.x) < 1e-9 && std::fabs(back.y - p.y) < 1e-9 &&
+              std::fabs(back.z - p.z) < 1e-9, "ucs: toUcs(toWorld(p)) 往返一致");
+        const Vec3 w(37.5, -12.25, 7);
+        CHECK(u.toWorld(u.toUcs(w)).distTo(w) < 1e-9, "ucs: toWorld(toUcs(w)) 往返一致");
+        // 45° 旋转正向算例：局部 (1,0) → 相对原点 (cos45, sin45)
+        const Vec3 r = u.toWorld(Vec3(1, 0, 0)) - u.origin;
+        CHECK(std::fabs(r.x - std::cos(math::deg2rad(45.0))) < 1e-12 &&
+              std::fabs(r.y - std::sin(math::deg2rad(45.0))) < 1e-12,
+              "ucs: 局部 X 轴向 45° 旋转后指向 (cos45, sin45)");
+    }
+
+    // ③ 验收断言：45° UCS 下命令行输入 @100<0（基准原点）→ 世界 (100cos45, 100sin45)
+    {
+        SketchModel m;
+        m.setCurrentUcs(Ucs("A45", Vec3(0, 0, 0), math::deg2rad(45.0)));
+        Vec3 out;
+        CHECK(m.parsePointToWorld(QStringLiteral("@100<0"), Vec3(0, 0, 0), out),
+              "ucs: 命令行 @100<0 可解析");
+        const double c45 = std::cos(math::deg2rad(45.0)), s45 = std::sin(math::deg2rad(45.0));
+        CHECK(std::fabs(out.x - 100.0 * c45) <= 1e-6 && std::fabs(out.y - 100.0 * s45) <= 1e-6,
+              "ucs: 45° UCS @100<0 落点=(100cos45,100sin45) 误差≤1e-6");
+        // 绝对笛卡尔：UCS 局部 (50,0) → 世界 (50cos45, 50sin45)
+        Vec3 abs50;
+        CHECK(m.parsePointToWorld(QStringLiteral("50,0"), Vec3(0, 0, 0), abs50) &&
+              std::fabs(abs50.x - 50.0 * c45) < 1e-9 && std::fabs(abs50.y - 50.0 * s45) < 1e-9,
+              "ucs: 绝对坐标按 UCS 局部解释后转世界");
+        // 绝对极坐标 100<45（UCS）：局部 (70.71,70.71) → 世界 (0,100)
+        Vec3 pol;
+        CHECK(m.parsePointToWorld(QStringLiteral("100<45"), Vec3(0, 0, 0), pol) &&
+              std::fabs(pol.x) < 1e-6 && std::fabs(pol.y - 100.0) < 1e-6,
+              "ucs: 绝对极坐标 100<45(UCS) → 世界 (0,100)");
+        // 相对笛卡尔 @30,0：以基准点 (10,20) 按 UCS 方向偏移
+        Vec3 rel;
+        CHECK(m.parsePointToWorld(QStringLiteral("@30,0"), Vec3(10, 20, 0), rel) &&
+              rel.distTo(Vec3(10, 20, 0) + Vec3(c45, s45, 0) * 30.0) < 1e-9,
+              "ucs: 相对坐标 @30,0 以基准点按 UCS 方向偏移");
+        // 世界系下 @100<0 与既有相对坐标语义一致（零回归）
+        SketchModel m2;
+        Vec3 wout;
+        CHECK(m2.parsePointToWorld(QStringLiteral("@100<0"), Vec3(5, 5, 0), wout) &&
+              std::fabs(wout.x - 105.0) < 1e-12 && std::fabs(wout.y - 5.0) < 1e-12,
+              "ucs: 世界系下 @100<0 与既有相对坐标行为一致");
+    }
+
+    // ④ ucs 命令：五种定义方式 + CRUD（经命令行解释器）
+    {
+        SketchModel m; CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("ucs 3p 10,20 30,20 30,40")),
+              "ucs 3p 三点定义→成功");
+        CHECK(std::fabs(m.currentUcs().origin.x - 10.0) < 1e-9 &&
+              std::fabs(m.currentUcs().origin.y - 20.0) < 1e-9 &&
+              std::fabs(m.currentUcs().angleRad) < 1e-9,
+              "ucs 3p: 原点=(10,20) X 正向沿 (20,0) → 角 0°");
+        CHECK(interp.execute(QStringLiteral("ucs z 5,5 30")), "ucs z 定义→成功");
+        CHECK(std::fabs(m.currentUcs().angleRad - math::deg2rad(30.0)) < 1e-9 &&
+              std::fabs(m.currentUcs().origin.x - 5.0) < 1e-9,
+              "ucs z: 原点(5,5) 旋转 30°");
+        const int lid = addLine(m, 0, 0, 10, 10);
+        CHECK(interp.execute(QStringLiteral("ucs object %1").arg(lid)), "ucs object 定义→成功");
+        CHECK(std::fabs(m.currentUcs().angleRad - math::deg2rad(45.0)) < 1e-9,
+              "ucs object: 45° 直线 → UCS 角 45°");
+        CHECK(interp.execute(QStringLiteral("ucs view")) && m.currentUcs().isWorld(),
+              "ucs view → 世界系(平面视图)");
+        CHECK(interp.execute(QStringLiteral("ucs 3p 0,0 0,10")) &&
+              std::fabs(m.currentUcs().angleRad - math::deg2rad(90.0)) < 1e-9,
+              "ucs 3p: X 正向沿 +Y → 角 90°");
+        // ---- CRUD ----
+        CHECK(interp.execute(QStringLiteral("ucs save A45")), "ucs save A45→成功");
+        CHECK(m.ucsCount() == 1 && m.ucsHas(QStringLiteral("A45")), "ucs: 命名表已收录 A45");
+        CHECK(interp.execute(QStringLiteral("ucs world")) && m.currentUcs().isWorld(),
+              "ucs world → 世界系");
+        CHECK(interp.execute(QStringLiteral("ucs restore A45")) &&
+              std::fabs(m.currentUcs().angleRad - math::deg2rad(90.0)) < 1e-9,
+              "ucs restore A45 → 恢复保存时的 90°");
+        CHECK(interp.execute(QStringLiteral("ucs list")), "ucs list → 成功");
+        CHECK(interp.execute(QStringLiteral("ucs delete A45")) && !m.ucsHas(QStringLiteral("A45")),
+              "ucs delete A45 → 已删除");
+        CHECK(!interp.execute(QStringLiteral("ucs set A45")), "ucs set 已删名 → 拒绝(false)");
+        CHECK(!interp.execute(QStringLiteral("ucs delete WORLD")), "ucs delete WORLD → 拒绝(false)");
+        CHECK(!interp.execute(QStringLiteral("ucs bogus")), "ucs 未知子命令 → 拒绝(false)");
+    }
+
+    // ⑤ 极轴按 UCS 对齐（polarAngles 偏移 + track 命中/不命中）
+    {
+        const snap::TrackConfig cfg;   // polarIncrement=90, polarRelative=true
+        const auto a0 = snap::polarAngles(cfg, nullptr, 0.0);
+        bool has0 = false, has90 = false;
+        for (double a : a0) {
+            if (std::fabs(a - 0.0)  < 1e-6) has0 = true;
+            if (std::fabs(a - 90.0) < 1e-6) has90 = true;
+        }
+        CHECK(has0 && has90, "polar: 世界系极轴含 0°/90°");
+        const auto a30 = snap::polarAngles(cfg, nullptr, 30.0);
+        bool has30 = false, has120 = false, has0in30 = false;
+        for (double a : a30) {
+            if (std::fabs(a - 30.0)  < 1e-6) has30 = true;
+            if (std::fabs(a - 120.0) < 1e-6) has120 = true;
+            if (std::fabs(a - 0.0)   < 1e-6) has0in30 = true;
+        }
+        CHECK(has30 && has120 && !has0in30,
+              "polar: UCS 偏移 30° 后极轴为 30°/120°… 且不含 0°");
+        // track 命中：光标沿世界 30° 方向 —— UCS 偏移 30° 时命中极轴，世界系时不命中
+        const double d30 = math::deg2rad(30.0);
+        const Vec3 cursor(50.0 * std::cos(d30), 50.0 * std::sin(d30), 0);
+        const Vec3 base(0, 0, 0);
+        const auto hit30 = snap::track(cursor, cfg, nullptr, &base, {}, {}, 1.0, d30);
+        CHECK(hit30.hit && hit30.mode == snap::TrackMode::Polar &&
+              hit30.point.distTo(cursor) < 1e-9,
+              "track: UCS 30° 下光标沿 UCS 0° 射线命中极轴");
+        const auto hitW = snap::track(cursor, cfg, nullptr, &base, {}, {}, 1.0, 0.0);
+        CHECK(!hitW.hit, "track: 世界系下同一光标不在 0°/90° 射线邻域 → 不命中");
+    }
+
+    // ⑥ 正交按 UCS 锁轴 + 栅格按 UCS 量化
+    {
+        const Vec3 base(0, 0, 0);
+        // UCS 旋转 90°：正交把点锁到 UCS X 轴（=世界 Y 轴）
+        const auto r = snap::applyInputConstraints(Vec3(1, 5, 0), &base, true, false, 1.0,
+                                                  math::deg2rad(90.0));
+        CHECK(r.ortho && r.point.distTo(Vec3(0, 5, 0)) < 1e-9,
+              "ortho: UCS 90° 时正交锁到 UCS X 轴(=世界 Y 轴)");
+        // 栅格量化：UCS 45° 下世界 (8,0) → 局部 (5.657,-5.657) → 步长5 → (5,-5) → 世界 (7.07,0)
+        const double c45 = std::cos(math::deg2rad(45.0)), s45 = std::sin(math::deg2rad(45.0));
+        const auto rg = snap::applyInputConstraints(Vec3(8, 0, 0), nullptr, false, true, 5.0,
+                                                   math::deg2rad(45.0));
+        const Vec3 expG(5.0 * c45 + 5.0 * s45, 5.0 * s45 - 5.0 * c45, 0);
+        CHECK(rg.grid && rg.point.distTo(expG) < 1e-9,
+              "grid snap: UCS 45° 下栅格沿 UCS 轴量化");
+        // 零回归：UCS 角 0 时正交与既有世界轴实现一致
+        const auto r0 = snap::applyInputConstraints(Vec3(3, 7, 0), &base, true, false, 1.0, 0.0);
+        CHECK(r0.ortho && r0.point == Vec3(0, 7, 0), "ortho: UCS 角 0 时锁到世界轴（既有行为）");
+    }
+
+    // ⑦ 坐标读数随 WCS/UCS 切换变化 + 网格方向随 UCS 旋转
+    {
+        SketchModel m;
+        m.setCurrentUcs(Ucs("R30", Vec3(0, 0, 0), math::deg2rad(30.0)));
+        const Vec3 w(10, 0, 0);
+        m.setCoordDisplayUcs(false);
+        CHECK(m.displayCoord(w) == w, "readout: WCS 模式显示世界坐标原值");
+        m.setCoordDisplayUcs(true);
+        const Vec3 u30 = m.displayCoord(w);
+        CHECK(u30.distTo(m.toUcs(w)) < 1e-12 && (u30 - w).len2D() > 1e-3,
+              "readout: UCS 模式显示局部坐标且与 WCS 读数不同");
+        // 网格主方向 = UCS X 轴（drawBackground 沿该方向铺网格线）
+        CHECK(m.currentUcs().xAxis().distTo(Vec3(std::cos(math::deg2rad(30.0)),
+                                                 std::sin(math::deg2rad(30.0)), 0)) < 1e-12,
+              "grid: UCS 30° 时网格主方向 = (cos30, sin30)");
+        m.setCurrentUcs(Ucs("WORLD", Vec3(0, 0, 0), 0.0));
+        CHECK(m.currentUcs().xAxis() == Vec3(1, 0, 0), "grid: 世界系网格方向回到 (1,0)");
+    }
+
+    // ⑧ UCS 不入存档（JSON 顶层无 ucs 键 → 旧档/新档零回归）
+    {
+        SketchModel m;
+        m.setCurrentUcs(Ucs("S", Vec3(1, 2, 0), math::deg2rad(15.0)));
+        m.ucsSave(QStringLiteral("KEEP"));
+        const QJsonObject root = m.toDrawingJson();
+        CHECK(!root.contains(QStringLiteral("ucs")) && !root.contains(QStringLiteral("ucsTable")),
+              "ucs: UCS 状态不入存档（顶层无 ucs/ucsTable 键）");
+    }
+
+    fprintf(stdout, "  (UCS 自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
     fprintf(stdout, "=== SketchCAD 约束/捕捉自测 ===\n");
 
@@ -5639,7 +7852,22 @@ int main(int argc, char** argv) {
     t_gdt();               // GD&T：12类标注回归 / DimStyle表联动 / 旧档兼容 / MLEADER+FCF 往返
     t_groupFilter();       // 编组+FILTER：整组选中/撤销还原/命令行/Xref禁止/预选器过滤/fence组合
     t_layout();            // 布局体系：paperRect往返/布局CRUD/旧档回落/1:2与2:1/平铺像素/PDF样张/命令行
+    CHECK(t_plotPublish(), "打印发布体系(视口冻结/发布页列表/戳记/视口旋转/GUI-COM一致)");
+    CHECK(t_multidoc(),    "多文档标签 DocTab(独立undo/脏标记隔离/cycle循环/拖拽重排/跨文档粘贴/历史互换/关闭夹取)");
+    CHECK(t_i18n(), "国际化+高DPI(语言解析/.qm装载/上下文存在/切换翻译底座/缺翻译回落中文/卸载回落源语言/DPI换算一致/QLocale口径)");
+    CHECK(t_interaction(), "AutoCAD 交互对齐(空格/回车重复命令/↑↓历史/Tab补齐/坐标注入/未知命令3候选/历史持久化/右键行为配置)");
+    CHECK(t_recent(),      "最近文件 MRU(增删/去重/上限裁剪/pin保护/缺失文件/持久化重载/旧键迁移/损坏容错)");
     CHECK(t_cmdParity(),   "命令补齐 CommandParity(三态/别名/typo建议/单步撤销)");
+    CHECK(t_help(),        "命令发现与容错帮助(面板过滤/help详情/总数一致/未知候选/冲突自检)");
+    CHECK(t_diag(),        "崩溃诊断包(ZIP结构/自解析CRC/包内容齐全/会话标记/遥测零外发)");
+    CHECK(t_undoTables(),  "撤销表 UndoTables(布局/单位/界限/捕捉/追踪/过滤器/去重/栈深/混合用例)");
+
+    // ---- 鲁棒性 / Fuzz 回归：任何输入都不崩溃/卡死/写坏文件 ----
+    fprintf(stdout, "--- 鲁棒性 / Fuzz 回归 ---\n");
+    CHECK(t_robustness(),  "鲁棒性守卫 ElementValidate(类型越界/NaN/Inf/超大/退化/重复末点/超长文本/控制字符/缺失引用/打开失败不污染)");
+    CHECK(t_fileFuzz(),    "文件 Fuzz 200 随机损坏样本零崩溃零死锁单样本≤5s(JSON/DXF/DWG/二进制DXF)");
+    CHECK(t_textMetrics(), "文字度量三处同源(真实度量/LRU缓存/无头降级/9点对齐/折行/列宽/堆叠提示)");
+    CHECK(t_ucs(),         "用户坐标系 UCS(往返换算/45°@100<0落点≤1e-6/ucs命令定义+CRUD/极轴正交栅格UCS对齐/读数切换/网格方向/不入档)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");

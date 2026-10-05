@@ -45,6 +45,9 @@ public:
     bool removeElement(int id) override;
     void log(const char* msg) override;
 
+    // 多文档切换重绑：插件桥接的模型随活动文档换
+    void setModel(SketchModel* m) { m_ = m; }
+
     SketchModel* raw() const { return m_; }
 
 private:
@@ -67,6 +70,9 @@ public:
 
     SketchModel*       rawModel() const { return m_; }
     CommandInterpreter* rawInterp() const { return interp_; }
+
+    // 多文档切换重绑：应用桥与模型桥一起换绑
+    void setModel(SketchModel* m) { m_ = m; modelBridge_.setModel(m); }
 
 private:
     SketchModel*      m_ = nullptr;

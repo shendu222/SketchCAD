@@ -174,6 +174,8 @@ signals:
     void regionPickCancelled();                     // 点选模式被 Esc / 右键取消
     void regionPickParamsRequested();               // 点选模式按 Enter：请求打开参数对话框
     void editTextRequested(int id);                 // 双击文字图元：请求打开多行文字编辑框
+    void blockEditRequested(int id);                // 双击块引用：请求打开在位编辑器（BEDIT）
+    void repeatLastCommandRequested();              // 空闲态右键：请求重复上一命令（AutoCAD 约定）
     void requestShowProperties();                   // 右键「特性」：请求主窗口弹出属性面板
 public slots:
     void onModelChanged();
@@ -198,6 +200,9 @@ protected:
     void contextMenuEvent(QContextMenuEvent* e) override;  // 显式忽略右键菜单手势，确保右键只用于平移/结束绘制
     void keyPressEvent(QKeyEvent* e) override;
     void keyReleaseEvent(QKeyEvent* e) override;
+    // DYN 动态输入框字段切换：Tab/Shift+Tab 在「距离/角度」两输入框间循环，
+    // 并阻止焦点逃出 dynBox（QLineEdit 默认 Tab 会把焦点交还主窗口）。
+    bool eventFilter(QObject* obj, QEvent* ev) override;
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
 
@@ -307,6 +312,9 @@ private:
     void applySnapOverride(bool snap::SnapConfig::* field, const QString& name);    // 临时仅启用某一捕捉类型
     void clearSnapOverride();             // 清除覆盖，恢复覆盖前的活动配置
     void showSnapOverrideMenu(const QPoint& globalPos);  // 弹出覆盖类型选择菜单
+    // Ctrl+右键：捕捉/追踪快捷开关菜单（AutoCAD 捕捉追踪覆盖约定）。
+    // 勾选项直写 model_ 单一状态源：正交/极轴追踪/对象捕捉追踪/栅格捕捉。
+    void showTrackingQuickMenu(const QPoint& globalPos);
     // ---- 追踪（极轴 / 对象捕捉追踪 / 临时追踪点 TK）----
     void addOtrackAnchor(const Vec3& p);  // 去重并入对象追踪锚点集（命令期累积，封顶防膨胀）
     void clearOtrackAnchors();            // 清空对象追踪锚点集

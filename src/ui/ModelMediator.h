@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QColor>
 #include <QString>
+#include <QList>
 #include <functional>
 
 class QWidget;
@@ -53,9 +54,14 @@ public:
     void setHost(const Host& host);
     void wire();   // 集中接线：可显式调用；构造函数并不会自动 wire，便于测试按需控制
 
+    // 多文档切换重绑：先断开 wire() 建立的全部连接，再换绑组件集合并重新接线。
+    // 连接清单由 wire() 自行登记（conns_），保证"断多少、重接多少"严格对称。
+    void rewire(const Components& comp);
+
 private:
     Components c_;
     Host host_;
+    QList<QMetaObject::Connection> conns_;   // wire() 登记的全部连接（rewire 时统一断开）
 };
 
 } // namespace SketchCAD

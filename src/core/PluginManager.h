@@ -48,6 +48,10 @@ public:
     // 卸载全部插件（析构时自动调用）。
     void unloadAll();
 
+    // 多文档切换重绑：已加载插件经 SDK 桥接访问的模型随活动文档换。
+    // 插件不重新 initialize——下次命令调用时自然作用于新活动文档。
+    void setModel(SketchModel* model) { model_ = model; app_.setModel(model); }
+
     // 已加载插件记录。
     struct LoadedPlugin {
         QString            path;                 // 插件文件完整路径（规范化）

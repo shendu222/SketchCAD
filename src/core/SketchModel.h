@@ -17,6 +17,7 @@
 #include "Snap.h"
 #include "Layout.h"   // PlotLayoutDef / PrintSettings（布局表）
 #include "ConstraintSolver.h"   // 显式几何约束表（ConstraintRecord）
+#include "Ucs.h"      // 用户坐标系（输入/显示变换，不改图元世界坐标语义）
 
 namespace SketchCAD {
 
@@ -417,6 +418,38 @@ public:
     QString activeTool() const { return activeTool_; }
     void setPlane(Plane p);
     Plane plane() const { return plane_; }
+
+    // ---- 用户坐标系（UCS）----
+    // UCS 是「输入/显示变换」层，**绝不改动**图元存储的世界坐标语义（Element.pts 恒为世界坐标）。
+    // 所有用户输入（命令行点 / 参数条 / 动态输入）与显示（栅格 / 坐标轴 / 极轴 / 正交 / 读数）
+    // 都经 toWorld / toUcs 双向换算，保证唯一入口、方向一致。
+    // 默认 UCS = 世界系（origin=0, angleRad=0），故既有命令 / 自测在未被显式切换 UCS 时行为完全不变。
+    const Ucs& currentUcs() const { return currentUcs_; }
+    void setCurrentUcs(const Ucs& u);                  // 变化发 ucsChanged() + viewChanged()
+    // 双向换算唯一入口（世界坐标 ↔ UCS 局部坐标）
+    Vec3 toWorld(const Vec3& p) const { return currentUcs_.toWorld(p); }
+    Vec3 toUcs(const Vec3& w) const   { return currentUcs_.toUcs(w); }
+    // 命令行/参数条点的 UCS 感知解析：支持 x,y[z] / @dx,dy / dist<angle / @dist<angle，
+    // base 为相对坐标的基准点（世界坐标）。解析出的局部坐标经 toWorld 转世界系。
+    bool parsePointToWorld(const QString& s, const Vec3& base, Vec3& outWorld) const;
+    // 坐标读数显示模式（WCS 显示世界坐标 / UCS 显示局部坐标）；切换发 ucsChanged()。
+    bool coordDisplayUcs() const { return coordDisplayUcs_; }
+    void setCoordDisplayUcs(bool on);
+    // 给定世界坐标，按当前显示模式返回应读出的坐标（WCS=原值，UCS=toUcs 结果）。
+    Vec3 displayCoord(const Vec3& world) const {
+        return coordDisplayUcs_ ? toUcs(world) : world;
+    }
+    // ---- 命名 UCS 表（内存态，不随图存档；避免 JSON 兼容回归）----
+    int  ucsCount() const { return (int)ucsTable_.size(); }
+    QStringList ucsNames() const;
+    bool ucsHas(const QString& name) const;
+    Ucs  ucsGet(const QString& name) const;            // 不存在返回世界系
+    bool ucsSave(const QString& name);                // 以当前 UCS 存为命名（覆盖同名）
+    bool ucsDelete(const QString& name);              // 删除命名（世界系不可删）
+    bool ucsSetCurrent(const QString& name);           // 切换到命名 UCS（不存在返回 false）
+    // 上一次键盘点输入的基准点（世界坐标），供相对坐标 @ 解析复用（非信号、不入存档）。
+    Vec3 lastInputPointWorld() const { return lastInputPointWorld_; }
+    void setLastInputPointWorld(const Vec3& p) { lastInputPointWorld_ = p; }
     void setShowGrid(bool b);
     bool showGrid() const { return showGrid_; }
     void setViewScale(double s);
@@ -578,6 +611,13 @@ public:
     bool showLineWeight() const { return showLineWeight_; }
     void setShowLineWeight(bool on);          // 幂等；变化发 showLineWeightChanged()
 
+    // ---- 空闲态右键行为（AutoCAD 交互对齐）----
+    // true（默认，AutoCAD 约定）= select 空闲态右键重复上一命令；
+    // false = 既有行为（弹出上下文菜单）。应用习惯，随 AppSettings
+    // (interaction/rightClickIdleRepeat) 持久化；不入档、不入撤销栈。
+    bool rightClickIdleRepeat() const { return rightClickIdleRepeat_; }
+    void setRightClickIdleRepeat(bool on) { rightClickIdleRepeat_ = on; }   // 幂等直赋
+
     // ---- 动态输入 DYN ----
     // 绘制命令期间在光标旁显示「距离/角度」输入框（对应 AutoCAD DYN）。默认开。
     bool dynMode() const { return dynMode_; }
@@ -588,6 +628,35 @@ public:
     void redo();
     bool canUndo() const { return !undoStack_.empty(); }
     bool canRedo() const { return !redoStack_.empty(); }
+
+    // ---- 撤销栈深度上限（步）----
+    // 默认 100；超出时丢弃最旧的一步（undo/redo 双栈同限，避免 redo 侧无界增长）。
+    // 它记录的是「应用习惯」（用户愿意为历史付出多少内存），属 AppSettings 管辖、随注册表走，
+    // **不入撤销栈**——否则"改栈深"本身会成为一个可撤销步，语义自我指涉。
+    int  undoDepthLimit() const { return undoDepthLimit_; }
+    void setUndoDepthLimit(int steps);        // 非正/越界 → 回落默认 100
+    // 只读诊断/自测：栈内当前快照数（不是深度上限）
+    int  undoStackSize() const { return (int)undoStack_.size(); }
+    int  redoStackSize() const { return (int)redoStack_.size(); }
+
+    // ---- 撤销快照抑制（RAII）----
+    // 反序列化/批量载入专用：打开图纸时调用方已 beginEdit("打开草图") 建立唯一编辑步，
+    // 随后 setUnits/setLimits/setSnapConfig/setTrackConfig 等不得再各自入栈，
+    // 否则一次「打开」会被拆成好几步 Ctrl+Z（几何回了、配置没回的新变体）。
+    // 嵌套安全：构造时保存并置起，析构时恢复原值（不无条件置 false）。
+    class UndoGuard {
+    public:
+        explicit UndoGuard(SketchModel* m) : m_(m), old_(m ? m->undoSuppressed_ : false) {
+            if (m_) m_->undoSuppressed_ = true;
+        }
+        ~UndoGuard() { if (m_) m_->undoSuppressed_ = old_; }
+        UndoGuard(const UndoGuard&) = delete;
+        UndoGuard& operator=(const UndoGuard&) = delete;
+    private:
+        SketchModel* m_;
+        bool old_;
+    };
+
     void copySelected();
     void paste();
     void deleteSelected();
@@ -602,6 +671,7 @@ signals:
     void activeToolChanged(const QString& tool);
     void viewChanged();
     void planeChanged(Plane p);
+    void ucsChanged();                                 // 当前 UCS / 坐标显示模式变化（状态栏/视图联动）
     void gridToggled(bool show);
     void orthoModeChanged(bool on);             // 正交模式变化（状态栏/快捷键/命令三入口同步）
     void gridSnapChanged();                     // 栅格吸附开关或步长变化
@@ -632,13 +702,34 @@ signals:
     void paramsChanged();                    // 参数表变化（添加/修改/删除设计变量）
 
 private:
-    struct Memento { QString label; std::vector<Element> elems; int nextId; double scale = 1.0; std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles; std::map<QString,double> params; std::vector<dim::DimStyleEntry> dimStyles; QString currentDimStyle; };
+    // 撤销快照。**字段只增不改、只追加到尾部**：既有字段的含义与顺序是旧档/旧行为契约，
+    // 追加的随图属性（布局/单位/界限/捕捉/追踪/过滤器）全部放在尾部，不影响任何既有读取。
+    struct Memento {
+        QString label; std::vector<Element> elems; int nextId; double scale = 1.0;
+        std::vector<Layer> layers; std::vector<BlockDef> blocks; std::vector<TextStyle> textStyles;
+        std::map<QString,double> params; std::vector<dim::DimStyleEntry> dimStyles; QString currentDimStyle;
+        // ---- 随图属性（「万能回退」补齐；只追加，不改上方任何字段）----
+        std::vector<PlotLayoutDef> layouts;   // 布局表（含各布局完整页面设置）
+        QString currentLayout;                // 当前布局名（空 = 模型空间）
+        UnitsMeta  units;                     // 单位设置（显示/输入口径）
+        LimitsMeta limits;                    // 图纸界限
+        snap::SnapConfig  snapConfig;         // 捕捉全局配置
+        snap::TrackConfig trackConfig;        // 追踪全局配置
+        std::vector<FilterDef> savedFilters;  // 命名过滤器
+        // 注：Xref 附加表**没有单列字段**——外部参照本身就是块表记录（BlockDef::isXref），
+        // 已由上方 blocks 完整覆盖；再存一份会制造第二个真相源。见设计文档。
+    };
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
     std::vector<int> selectedIds_;      // 当前选择集（框选 / 加选后可能含多个）
     QString activeTool_ = "select";
     Plane plane_ = Plane::XY;
+    // ---- 用户坐标系（UCS）：纯输入/显示变换状态，不入存档、不入撤销栈 ----
+    Ucs currentUcs_ = Ucs("WORLD", Vec3(0, 0, 0), 0.0);   // 默认世界系
+    QMap<QString, Ucs> ucsTable_;                          // 命名 UCS 表（内存态，不序列化）
+    bool coordDisplayUcs_ = false;                        // 坐标读数显示模式（false=WCS, true=UCS）
+    Vec3 lastInputPointWorld_ = Vec3(0, 0, 0);            // 相对坐标 @ 解析的基准点（世界坐标）
     bool showGrid_ = true;
     // ---- 输入约束状态（单一状态源）----
     bool   orthoMode_    = false;   // 正交：方向锁定到水平/垂直
@@ -655,6 +746,7 @@ private:
     double ltscale_ = 1.0;     // 全局线型比例（LTSCALE），1.0 = 标准线素长度
     QString commandPrompt_;    // 当前分段命令提示文本
     QStringList commandOptions_;   // 当前分段命令可选项关键字（如 ["C/闭合","U/放弃"]）
+    bool rightClickIdleRepeat_ = true;   // 空闲态右键=重复上一命令（AutoCAD 约定；会话态不入档）
     bool showLineWeight_ = false;  // 线宽显示开关（状态栏可点击，默认关）
     bool dynMode_ = true;          // 动态输入 DYN（光标跟随的距离/角度输入框，默认开）
     QString drawingPath_;      // 当前图纸文件路径（Xref 相对路径的解析基准；未存盘为空）
@@ -664,14 +756,14 @@ private:
     std::vector<TextStyle> textStyles_;   // 文字样式表（唯一数据源，图元经 styleName 引用）
     std::vector<dim::DimStyleEntry> dimStyles_;  // 标注样式表（一图多标准；图元经 dimStyleName 引用）
     QString currentDimStyle_ = QStringLiteral("Standard");  // 当前标注样式（dimStyleName 为空者用它）
-    std::vector<FilterDef> savedFilters_; // 命名过滤器（FILTER 保存/复用；仅持久化不入撤销栈）
+    std::vector<FilterDef> savedFilters_; // 命名过滤器（FILTER 保存/复用；随图存档 + 入撤销栈）
     FilterDef activePickFilter_;          // FILTER 预选器（瞬态，作用于随后一次选择，用后即清）
-    std::vector<PlotLayoutDef> layouts_;  // 布局表（多布局；不入撤销栈，随图存档）
+    std::vector<PlotLayoutDef> layouts_;  // 布局表（多布局；随图存档 + 入撤销栈；切页签不单独入栈）
     QString currentLayout_;               // 当前布局名（空 = 模型空间）
     UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
     LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
-    snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档，不入撤销栈）
-    snap::TrackConfig trackConfig_;       // 追踪全局配置（随图存档，不入撤销栈）
+    snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档 + 入撤销栈）
+    snap::TrackConfig trackConfig_;       // 追踪全局配置（随图存档 + 入撤销栈）
     std::vector<Vec3> trackPoints_;       // 临时追踪点（TK，瞬态，不随图存档）
 
     // ---- 显式几何约束表 ----
@@ -682,7 +774,12 @@ private:
     Element clipboard_;
     bool hasClip_ = false;
     std::vector<Memento> undoStack_, redoStack_;
+    bool undoSuppressed_ = false;   // UndoGuard 置起：为 true 时 pushMemento 直接返回
+    int  undoDepthLimit_ = 100;     // 栈深上限（步）；setUndoDepthLimit 校验后写入
     void pushMemento(const QString& label);
+    // 精确相等判定（快照去重用）：只有**逐字段全部相同**才返回 true。
+    // 安全方向约定：无法证明相同即判为不同（照常入栈）——宁可少去重，绝不吞掉一个撤销步。
+    static bool sameState(const Memento& a, const Memento& b);
     std::vector<Element>::iterator find(int id);
     // 从种子图元沿「共享端点」连通性收集整条轮廓（selectContour/toggleContour 共用）
     std::vector<int> collectContourIds(int seedId) const;

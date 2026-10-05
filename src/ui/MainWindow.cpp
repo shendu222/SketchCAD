@@ -8,6 +8,11 @@
 #include "ui/TableDialog.h"         // 表格编辑器（双击 Table / 表格创建共用）
 #include "ui/GroupManagerDialog.h"  // 编组管理器（GROUP）
 #include "ui/QSelectDialog.h"       // 快速选择（QSELECT）
+#include "ui/CommandPalette.h"      // 命令面板（Ctrl+Shift+P）
+#include "ui/DiagnosticsDialog.h"   // 诊断包导出对话框（异常退出提示/帮助菜单共用）
+#include "core/CommandCatalog.h"    // 快捷键冲突自检（ShortcutAudit 纯函数）
+#include "core/Telemetry.h"         // 遥测出口（默认关闭零外发）
+#include <functional>               // auditShortcutConflicts 递归收集 std::function
 #include "ui/FilterDialog.h"        // 过滤器（FILTER）
 #include "ui/UnitsLimitsDialog.h"   // 单位与图纸界限（UNITS / LIMITS）
 #include "ui/SnapSettingsDialog.h"   // 捕捉设置（OSNAP）
@@ -18,6 +23,7 @@
 #include "core/CuiManager.h"          // 界面定制（CUIx）：工具条 / 工作空间
 #include "core/AliasTable.h"          // 命令别名（acad.pgp 兼容）
 #include "core/Element.h"
+#include "core/ElementValidate.h"   // 鲁棒性守卫层：读档前图元只读校验/丢弃/修复
 #include "core/Geometry.h"
 #include "core/DimStyle.h"
 #include "core/DimensionStandard.h"
@@ -26,6 +32,13 @@
 #include "ui/GraphicsView.h"
 #include "ui/ModelMediator.h"
 #include "ui/RulerWidget.h"
+#include <QTabBar>
+#include <QStackedWidget>
+#include <QShortcut>
+#include <QListWidget>     // 启动页「打开最近」列表
+#include <QGridLayout>     // 启动页模板按钮网格
+#include <QBrush>          // 启动页缺失项灰显前景
+#include <QGroupBox>       // 启动页分组框
 #include "ui/BomTree.h"
 #include "ui/ElementPanel.h"
 #include "ui/PropertyPanel.h"
@@ -53,12 +66,15 @@
 #include "ui/CleanupDialog.h"
 #include "ui/InquiryDialog.h"
 #include "ui/PrintSettingsDialog.h"
+#include "ui/PublishDialog.h"
 #include "ui/PrintPreviewDialog.h"
 #include "ui/PrintEngine.h"
 #include "ui/CrashRecoveryDialog.h"     // 启动恢复对话框（.sv$ 快照）
 #include "ui/AutoSaveOptionsDialog.h"   // 自动保存设置
 #include "core/AutoSave.h"              // 自动保存核心
 #include "core/AppSettings.h"           // 全局设置（HKCU\Software\SketchCAD）
+#include "core/I18n.h"                  // 界面语言单一入口（翻译器装载/语言解析）
+#include "core/RecentFiles.h"           // 最近文件 MRU（路径+时间+pin）
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
 #include "core/Diagnostics.h"           // 日志滚动落盘（供保存失败等记日志）
 #include "version.h"                    // 版本宏（由 CMake project VERSION 生成；关于对话框用）
@@ -107,7 +123,8 @@
 #include <QSignalBlocker>
 #include <QGuiApplication>
 #include <QCoreApplication>   // applicationDirPath（插件目录定位）
-#include <QDesktopServices>   // 命令别名文件：用系统默认编辑器打开
+#include <QDesktopServices>   // 命令别名文件：用系统默认编辑器打开；日志目录打开
+#include <QUrl>               // QUrl::fromLocalFile（诊断包：打开日志目录）
 #include <QStandardPaths>     // 配置目录定位（别名 / CUIx 默认路径）
 #include <QPlainTextEdit>
 #include <QFormLayout>
@@ -128,9 +145,12 @@ namespace SketchCAD {
 static const int kToolButtonMinWidth = 64;
 
 MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
-    model_ = new SketchModel(this);
+    // 多文档会话表：首张图纸（会话 0）在构造期创建；model_/view_ 从此只是
+    // 「活动文档」的借用指针，切换标签时由 switchToDoc 重绑（见 hookActiveDoc）。
+    docs_ = new DocManager(this);
+    DocSession* firstDoc = docs_->addNewDoc();
+    model_ = firstDoc->model();
     interp_ = new CommandInterpreter(model_);
-    view_ = new GraphicsView(model_, this);
 
     // 脚本宿主：构建统一交互面与语言引擎策略表，并实时把脚本输出/错误汇入日志面板
     scriptHost_ = new ScriptHost(model_, interp_, this);
@@ -174,47 +194,14 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     buildMenu();
     initCui();   // 注册内置 UI 元素、载入默认别名/CUIx、应用界面配置（#360/#361）
 
-    // 标尺必须在 connectSignals() 之前创建，否则信号连接时 hRuler_/vRuler_ 为 nullptr
-    hRuler_ = new RulerWidget(view_, RulerWidget::Orientation::Horizontal);
-    vRuler_ = new RulerWidget(view_, RulerWidget::Orientation::Vertical);
+    buildParamBar();   // 参数输入条先建（中央部件自上而下组装时需要）
+    buildDocArea();    // 多文档区：标签条 + 页栈 + 首页（创建 view_ 与活动文档标尺）
 
     connectSignals();
-    buildParamBar();
-
-    // 中央区 = [参数输入条] 在上 + [标尺 + 图形视图] 在下
-    auto* center = new QWidget(this);
-    auto* cvl = new QVBoxLayout(center);
-    cvl->setContentsMargins(0, 0, 0, 0);
-    cvl->setSpacing(0);
-    cvl->addWidget(paramBar_);
-
-    // 标尺 + 图形视图：用 QGridLayout 拼成十字布局
-    //   [角落] [水平标尺]
-    //   [垂直标尺] [GraphicsView]
-    auto* corner = new QWidget();
-    corner->setFixedSize(24, 24);
-    corner->setAutoFillBackground(true);
-
-    auto* rulerGrid = new QGridLayout();
-    rulerGrid->setContentsMargins(0, 0, 0, 0);
-    rulerGrid->setSpacing(0);
-    rulerGrid->addWidget(corner, 0, 0);
-    rulerGrid->addWidget(hRuler_, 0, 1);
-    rulerGrid->addWidget(vRuler_, 1, 0);
-    rulerGrid->addWidget(view_, 1, 1);
-    rulerGrid->setColumnStretch(1, 1);
-    rulerGrid->setRowStretch(1, 1);
-
-    cvl->addLayout(rulerGrid, 1);
-    setCentralWidget(center);
 
     statusBar_->setCount(0);
     statusBar_->setPlaneInfo(planeName(model_->plane()));
     statusBar_->setDrawScale(model_->scaleLabel());
-    // P0-04 数据面板：场景项数变化（打开/裁剪补建/批量同步）时刷新「场景项 M / 打开 Xms」
-    connect(view_, &GraphicsView::sceneStatsChanged, this, [this] {
-        statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
-    });
     model_->log(QStringLiteral("航空CAD 草图模块已启动 (C++17 / Qt6)"));
 
     // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「状态栏按钮」与「快捷键」----
@@ -223,7 +210,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     // 从机制上保证「三入口状态永远一致」，不存在各存一份导致的漂移。
     {
         auto makeToggle = [this](const QString& text, const QString& tip, const QKeySequence& key,
-                                 auto getter, auto setter, auto changedSignal) {
+                                 auto getter, auto setter, QToolButton** btnSlot) {
             auto* btn = new QToolButton(statusBar_);
             btn->setText(text);
             btn->setCheckable(true);
@@ -233,8 +220,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
                 (model_->*setter)(on);
                 model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
             });
-            // 状态源 → 按钮（其它入口改动时按钮同步）
-            connect(model_, changedSignal, btn, [this, btn, getter]() { btn->setChecked((model_->*getter)()); });
+            // 模型信号 → 按钮勾选态的连接在 hookActiveDoc 登记（随活动文档换绑）
             // 全局快捷键（应用级，画布有焦点时同样生效）
             auto* sc = new QShortcut(key, this);
             sc->setContext(Qt::ApplicationShortcut);
@@ -244,14 +230,22 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
                 model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
             });
             statusBar_->addWidget(btn);
-            return btn;
+            *btnSlot = btn;
         };
         makeToggle(QStringLiteral("正交"), QStringLiteral("正交模式：把落点方向锁定到水平/垂直"),
                    QKeySequence("F8"), &SketchModel::orthoMode, &SketchModel::setOrthoMode,
-                   &SketchModel::orthoModeChanged);
+                   &btnOrtho_);
         makeToggle(QStringLiteral("捕捉"), QStringLiteral("栅格吸附：把坐标量化到步长的整数倍"),
                    QKeySequence("F9"), &SketchModel::gridSnap, &SketchModel::setGridSnap,
-                   &SketchModel::gridSnapChanged);
+                   &btnSnap_);
+    }
+
+    // 命令面板（Ctrl+Shift+P）：模糊搜索中文名/英文命令名/别名 → Enter 执行。
+    // 与 F1（help 命令列表）互为补充：面板面向「找命令」，help 面向「学命令」。
+    {
+        auto* pal = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+P")), this);
+        pal->setContext(Qt::ApplicationShortcut);
+        connect(pal, &QShortcut::activated, this, &MainWindow::openCommandPalette);
     }
 
     // 默认窗口尺寸偏好 1366×720；先给一个合理的初始几何（落在屏幕可用区域内并居中），
@@ -274,6 +268,21 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     // 应用级配置持久化：注册表读入用户习惯（几何/布局/显示开关/最近文件）。
     // setupAutoSave 已建好 appSettings_；此函数只做读取与回放，不阻塞启动。
     loadAppSettingsOnStartup();
+
+    // 快捷键冲突自检：全部快捷键注册完毕后扫描重复绑定，warn 日志提示。
+    auditShortcutConflicts();
+
+    // 遥测开关同步（默认关闭；「选项 → 隐私」可改，改动经 applySettingLive 即时生效）。
+    // 自测（s_recentPersistEnabled=false）不读注册表，保持默认关闭。
+    if (appSettings_ && s_recentPersistEnabled)
+        Telemetry::setEnabled(appSettings_->telemetryEnabled());
+
+    // 启动页之后排队：首启动隐私明示 + 上次异常退出提示。
+    // （singleShot(0) FIFO：先注册的 showStartupPage 先弹，模态结束后这里才执行。）
+    QTimer::singleShot(0, this, [this] {
+        maybeShowPrivacyNotice();
+        showAbnormalExitNotice();
+    });
 }
 
 // ---- 崩溃不丢稿：自动保存 + 恢复 ----
@@ -281,6 +290,17 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
 void MainWindow::setupAutoSave() {
     appSettings_ = new SketchCAD::AppSettings(nullptr, this);
     autoSave_ = new SketchCAD::AutoSave(this);
+
+    // 最近文件 MRU：存储复用 AppSettings（键 files/recentEntries），任何增删立即持久化；
+    // changed → 重建「最近打开」菜单（离屏测试经 s_recentPersistEnabled 关闭落盘）
+    recent_ = new SketchCAD::RecentFiles(appSettings_, this);
+    recent_->setPersistEnabled(s_recentPersistEnabled);
+    connect(recent_, &SketchCAD::RecentFiles::changed,
+            this, &MainWindow::rebuildRecentMenu);
+
+    // 命令行历史持久化：注入 AppSettings（键 commandLine/recentCommands），
+    // 启动时预填 ↑↓ 历史（重启可用，AutoCAD 习惯）；此后每次入史同步写回。
+    interp_->setPersistence(s_recentPersistEnabled ? appSettings_ : nullptr);
 
     // 快照字节来源与「写盘」同一序列化入口（SketchModel::toDrawingBytes），
     // 保证恢复出来的内容与当时保存的完全一致。
@@ -325,15 +345,12 @@ void MainWindow::setupAutoSave() {
     });
 
     // 模型变化 = 一次「用户操作」→ 累计到阈值触发一次保存
-    connect(model_, &SketchModel::modelChanged, this, [this]{
-        if (recovering_) return;      // 恢复读档过程中的联动刷新不算用户操作
-        if (autoSave_) autoSave_->noteOperation();
-    });
-
+    // （连接在 hookActiveDoc 登记：随活动文档换绑，自动保存只盯活动文档）
     autoSave_->start();
 
-    // 启动扫描：发现残留快照（上次异常退出）则弹恢复对话框
-    QTimer::singleShot(0, this, [this]{ offerCrashRecovery(); });
+    // 启动页：启动=继续上次工作——恢复项优先（P0-02 快照），其次新建/打开最近/打开其他。
+    // （原为直接弹 CrashRecoveryDialog；恢复入口已并入启动页首屏横幅。）
+    QTimer::singleShot(0, this, [this]{ showStartupPage(); });
 }
 
 void MainWindow::offerCrashRecovery() {
@@ -414,6 +431,56 @@ void MainWindow::onAutoSaveDiscardAll() {
     model_->log(QStringLiteral("已丢弃 %1 份自动保存快照").arg(n));
 }
 
+// ---- 崩溃可复现诊断包 ----
+
+QVariantMap MainWindow::drawingDiagnosticsMeta() const {
+    // ⚠️ 边界铁律：这里只允许「计数类」字段——图元几何/文本内容绝不进诊断包。
+    QVariantMap meta;
+    const QString path = model_ ? model_->drawingPath() : QString();
+    meta.insert(QStringLiteral("drawingFile"),
+                path.isEmpty() ? QStringLiteral("(未命名)") : QFileInfo(path).fileName());
+    meta.insert(QStringLiteral("elementCount"), model_ ? model_->elementCount() : 0);
+    meta.insert(QStringLiteral("layerCount"),   model_ ? model_->layerCount()   : 0);
+    meta.insert(QStringLiteral("blockCount"),   model_ ? model_->blockCount()   : 0);
+    return meta;
+}
+
+void MainWindow::exportDiagnosticBundle() {
+    DiagnosticsDialog dlg(drawingDiagnosticsMeta(), this);
+    dlg.exec();
+}
+
+void MainWindow::maybeShowPrivacyNotice() {
+    // 首启动一次性明示（用户任务要求）。自测不写注册表 → 直接跳过。
+    if (!appSettings_ || !s_recentPersistEnabled) return;
+    if (appSettings_->firstRunNoticeShown()) return;
+    QMessageBox::information(this, QStringLiteral("隐私说明"),
+        QStringLiteral("SketchCAD 尊重您的隐私：\n\n"
+                       "· 默认不上传任何数据，没有任何后台网络请求；\n"
+                       "· 「导出诊断包」只在您主动点击时生成一个本机 ZIP 文件，\n"
+                       "  是否发送完全由您决定；\n"
+                       "· 匿名遥测默认关闭，可在「选项 → 隐私」中开启或关闭。"));
+    appSettings_->setFirstRunNoticeShown(true);
+}
+
+void MainWindow::showAbnormalExitNotice() {
+    if (!SketchCAD::Diagnostics::lastSessionAbnormal()) return;
+    SketchCAD::Diagnostics::acknowledgeAbnormalSession();   // 只提示一次
+    model_->log(QStringLiteral("检测到上次异常退出"), QStringLiteral("warning"));
+    const auto ret = QMessageBox::question(this, QStringLiteral("上次异常退出"),
+        QStringLiteral("检测到上次运行未正常退出（可能发生崩溃或被强制结束）。\n\n"
+                       "是否导出诊断包？包内包含日志、崩溃转储与环境信息（不含图纸内容），\n"
+                       "只生成本机 ZIP 文件，不会自动发送。\n\n"
+                       "「Yes」= 导出诊断包；「No」= 查看日志目录；「Cancel」= 忽略。"),
+        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
+    if (ret == QMessageBox::Yes) {
+        exportDiagnosticBundle();
+    } else if (ret == QMessageBox::No) {
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(SketchCAD::Diagnostics::logDir()));
+    }
+}
+
 void MainWindow::openAutoSaveOptions() {
     if (!appSettings_ || !autoSave_) return;
     AutoSaveOptionsDialog dlg(autoSave_->intervalMinutes(),
@@ -463,6 +530,11 @@ void MainWindow::loadAppSettingsOnStartup() {
     applySettingLive(QLatin1String(kOrtho),          appSettings_->value(QLatin1String(kOrtho)));
     applySettingLive(QLatin1String(kDynMode),        appSettings_->value(QLatin1String(kDynMode)));
     applySettingLive(QLatin1String(kShowLineWeight), appSettings_->value(QLatin1String(kShowLineWeight)));
+    // 撤销栈深度是"应用习惯"：不入撤销栈，只在启动时把值灌进模型的栈深上限
+    applySettingLive(QLatin1String(kUndoDepth), appSettings_->value(QLatin1String(kUndoDepth)));
+    // 空闲态右键行为（AutoCAD 约定默认开）：灌进活动模型会话态
+    applySettingLive(QLatin1String(kRightClickIdleRepeat),
+                     appSettings_->value(QLatin1String(kRightClickIdleRepeat)));
 
     // 自动保存参数已由 setupAutoSave 从 AppSettings 读入，无需重复。
 
@@ -474,8 +546,7 @@ void MainWindow::loadAppSettingsOnStartup() {
         if (pdoc.isObject()) currentPrintSettings_.fromJson(pdoc.object());
     }
 
-    // 最近文件
-    recentFiles_ = appSettings_->recentFiles();
+    // 最近文件：RecentFiles 在构造时已从 AppSettings 自载（含旧键迁移），这里只需重建菜单
     rebuildRecentMenu();
 
     // 之后所有设置变更（对话框应用/取消回滚/导入）都走这一条统一消费点
@@ -508,11 +579,25 @@ void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
     } else if (key == QLatin1String(kLowDiskMb)) {
         if (autoSave_) autoSave_->setLowDiskThresholdMb(v.toInt());
     } else if (key == QLatin1String(kRecentFileCount)) {
-        while (recentFiles_.size() > v.toInt()) recentFiles_.removeLast();
+        // 上限条数只影响「菜单显示几条」；存储硬上限 10 由 RecentFiles::trim 保证
         rebuildRecentMenu();
-    } else if (key == QLatin1String(kRecentList)) {
-        recentFiles_ = v.toStringList();
-        rebuildRecentMenu();
+    } else if (key == QLatin1String(kUndoDepth)) {
+        // 栈深是应用习惯：只改模型的上限（并即时收敛超限的栈），本身不产生撤销步
+        model_->setUndoDepthLimit(v.toInt());
+    } else if (key == QLatin1String(kRecentEntries)) {
+        // 外部直接改了底层存储（选项-取消回滚 / 重置 / 导入）→ RecentFiles 重载
+        if (recent_) recent_->reloadFromSettings();   // 重载后 changed → rebuildRecentMenu
+    } else if (key == QLatin1String(kRightClickIdleRepeat)) {
+        // 空闲态右键行为（AutoCAD 约定默认开）→ 写入活动模型会话态（GraphicsView 侧判定）
+        if (model_) model_->setRightClickIdleRepeat(v.toBool());
+    } else if (key == QLatin1String(kTelemetryEnabled)) {
+        // 遥测总开关即时生效（默认 false；与 Telemetry 静态状态同步）
+        Telemetry::setEnabled(v.toBool());
+    } else if (key == QLatin1String(kLanguage)) {
+        // 界面语言切换即刻生效：重装翻译器 + 重建菜单栏（buildMenu 内 tr() 重新求值）。
+        // 对话框类（选项/新建图纸等）下次打开自然使用新语言，无需驻留重建。
+        SketchCAD::I18n::installTranslator(SketchCAD::I18n::resolveLanguage(v.toString()));
+        rebuildMenusForLanguage();
     }
     // 其余键（目录/打印设备/用户信息/语言/GPU 预留）由消费点在各自使用时机读取，
     // 无需即时动作。
@@ -532,8 +617,7 @@ void MainWindow::saveAppSettingsOnClose() {
     appSettings_->setOrthoMode(model_->orthoMode());
     appSettings_->setDynMode(model_->dynMode());
     appSettings_->setShowLineWeight(model_->showLineWeight());
-    // 最近文件与上次目录
-    appSettings_->setRecentFiles(recentFiles_);
+    // 最近文件由 RecentFiles 在每次变更时立即持久化（崩溃也不丢），退出时无需重写
     // 打印页面设置快照（下次启动作为「打印设置」对话框的起始值）
     appSettings_->setPrintDefaultsJson(
         QString::fromUtf8(QJsonDocument(currentPrintSettings_.toJson()).toJson(QJsonDocument::Compact)));
@@ -561,41 +645,52 @@ void MainWindow::openOptionsDialog() {
 
 void MainWindow::pushRecentFile(const QString& path) {
     if (path.isEmpty()) return;
-    recentFiles_.removeAll(path);
-    recentFiles_.prepend(path);
-    const int maxN = appSettings_ ? appSettings_->recentFileCount() : 10;
-    while (recentFiles_.size() > qMax(0, maxN)) recentFiles_.removeLast();
-    if (s_recentPersistEnabled && appSettings_)
-        appSettings_->setRecentFiles(recentFiles_);   // 触发 settingChanged → rebuildRecentMenu
-    else
-        rebuildRecentMenu();
+    // MRU 语义（去重置顶/刷新时间/pin 保留/上限 10/立即持久化）收敛在 RecentFiles；
+    // changed 信号 → rebuildRecentMenu（菜单重建只有一条通路）
+    if (recent_) recent_->add(path);
+    else rebuildRecentMenu();
 }
 
 void MainWindow::rebuildRecentMenu() {
     if (!recentMenu_) return;
     recentMenu_->clear();
     const int maxN = appSettings_ ? appSettings_->recentFileCount() : 10;
-    if (recentFiles_.isEmpty() || maxN <= 0) {
-        QAction* a = recentMenu_->addAction(QStringLiteral("（空）"));
+    if (!recent_ || recent_->count() == 0 || maxN <= 0) {
+        QAction* a = recentMenu_->addAction(tr("（空）"));
         a->setEnabled(false);
         return;
     }
     int shown = 0;
-    for (const QString& p : recentFiles_) {
+    const QVector<SketchCAD::RecentFiles::RecentEntry> entries = recent_->entries();
+    for (const auto& e : entries) {
         if (shown >= maxN) break;
-        QAction* a = recentMenu_->addAction(QFileInfo(p).fileName());
+        const QString p = e.path;
+        const bool missing = !QFile::exists(p);
+        const QString text = QStringLiteral("%1%2%3")
+                .arg(e.pinned ? QStringLiteral("📌 ") : QString())
+                .arg(QFileInfo(p).fileName())
+                .arg(missing ? QStringLiteral("（路径不存在）") : QString());
+        QAction* a = recentMenu_->addAction(text);
+        a->setData(p);                 // 右键菜单按 path 定位条目
         a->setStatusTip(p);
-        a->setToolTip(p);
-        connect(a, &QAction::triggered, this, [this, p] { readDrawing(p, nullptr); });
+        a->setToolTip(missing ? QStringLiteral("%1\n路径不存在，点击可从列表中移除。").arg(p) : p);
+        if (missing) {
+            QFont f = a->font();
+            f.setItalic(true);
+            a->setFont(f);             // 灰显提示：缺失项点击不再尝试打开，而是从列表移除
+            connect(a, &QAction::triggered, this, [this, p] {
+                if (recent_) recent_->remove(p);   // changed → 菜单重建
+                model_->log(QStringLiteral("最近列表：已移除缺失项 %1").arg(p));
+            });
+        } else {
+            connect(a, &QAction::triggered, this, [this, p] { openDocInteractive(p); });
+        }
         ++shown;
     }
     recentMenu_->addSeparator();
-    recentMenu_->addAction(QStringLiteral("清除最近文件历史"), this, [this] {
-        recentFiles_.clear();
-        if (s_recentPersistEnabled && appSettings_)
-            appSettings_->setRecentFiles(recentFiles_);   // 信号触发重建
-        else
-            rebuildRecentMenu();
+    recentMenu_->addAction(tr("清除最近文件历史"), this, [this] {
+        if (recent_) recent_->clear();   // changed → 菜单重建
+        else rebuildRecentMenu();
     });
 }
 
@@ -607,6 +702,32 @@ QString MainWindow::rememberDialogDir() const {
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
+    // 多文档退出保护：任一文档有未保存修改 → 一次性询问（全部保存 / 放弃 / 取消退出）。
+    // 有路径的文档直接写盘（不打断），未命名的走「保存」对话框逐个取路径。
+    QList<int> dirtyIdx;
+    for (int i = 0; i < docs_->count(); ++i)
+        if (docs_->isDirty(i)) dirtyIdx << i;
+    if (!dirtyIdx.isEmpty()) {
+        const auto ret = QMessageBox::question(this, QStringLiteral("退出"),
+            QStringLiteral("有 %1 张图纸存在未保存的修改。是否全部保存？")
+                .arg(dirtyIdx.size()),
+            QMessageBox::SaveAll | QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::SaveAll);
+        if (ret == QMessageBox::Cancel) { e->ignore(); return; }
+        if (ret == QMessageBox::SaveAll) {
+            for (int i : dirtyIdx) {
+                switchToDoc(i);
+                DocSession* s = docs_->doc(i);
+                if (!s) continue;
+                if (s->filePath.isEmpty()) {
+                    saveFile();                       // 未命名 → 对话框取路径（成功后内部清脏）
+                } else if (writeDrawing(s->filePath, nullptr)) {
+                    docs_->markClean(i);              // 已有路径 → 静默写盘后清脏
+                    syncTabTitle(i);
+                }
+            }
+        }
+    }
     // 记住用户习惯：几何/布局/显示开关/最近文件/打印设置（写失败会弹窗提示）
     saveAppSettingsOnClose();
     // 正常退出：停定时器 + 清理 .tmp 半写残留（正式 .sv$ 保留，供下次恢复）
@@ -688,6 +809,58 @@ int MainWindow::kindIndexFromName(const QString& k) {
     return 0;
 }
 
+// 语言切换即刻生效：菜单栏整体重建。
+// QMenu 由 new QMenu(title, this) 挂在 MainWindow 上、经 bar->addMenu 呈现；
+// 先收集顶级菜单（action->menu()），clear 菜单栏后逐个 delete（此刻无菜单弹出中，
+// 同步删除安全），再重跑 buildMenu —— 其中所有 tr() 按新翻译器重新求值。
+// 成员菜单（recentMenu_ 等）由 buildMenu 重新赋值；rebuildRecentMenu/插件面板
+// 等外部消费者都有空守卫，重建窗口期内安全。
+void MainWindow::rebuildMenusForLanguage() {
+    const QList<QAction*> tops = menuBar()->actions();
+    QList<QMenu*> olds;
+    for (QAction* a : tops)
+        if (QMenu* m = a->menu()) olds << m;
+    menuBar()->clear();
+    for (QMenu* m : olds) delete m;
+    buildMenu();
+}
+
+// ---- 命令面板（Ctrl+Shift+P）：薄壳，过滤/排序/最近使用逻辑在 CommandPaletteModel ----
+void MainWindow::openCommandPalette() {
+    CommandPaletteDialog dlg(interp_, s_recentPersistEnabled ? appSettings_ : nullptr, this);
+    dlg.exec();
+}
+
+// ---- 快捷键冲突自检：菜单动作（递归收集）+ 全局 QShortcut，重复绑定 warn 提示 ----
+void MainWindow::auditShortcutConflicts() {
+    QVector<ShortcutAudit::Binding> bindings;
+
+    // 1) 菜单栏全部 QAction（含子菜单，递归）
+    std::function<void(QMenu*)> walk = [&](QMenu* menu) {
+        for (QAction* a : menu->actions()) {
+            if (QMenu* sub = a->menu()) { walk(sub); continue; }
+            if (!a->shortcut().isEmpty())
+                bindings.append({ a->text().remove(QChar('&')), a->shortcut().toString() });
+        }
+    };
+    for (QAction* top : menuBar()->actions())
+        if (QMenu* m = top->menu()) walk(m);
+
+    // 2) 独立 QShortcut（F8/F9 正交捕捉、Ctrl+Return 聚焦命令行、Ctrl+Tab 文档切换、
+    //    Ctrl+Shift+P 命令面板等——不挂在菜单上的全局键）
+    for (QShortcut* sc : findChildren<QShortcut*>())
+        if (!sc->key().isEmpty())
+            bindings.append({ QStringLiteral("（全局快捷键 %1）").arg(sc->key().toString()),
+                              sc->key().toString() });
+
+    // 3) 纯函数查重（可无头直测）→ warn 日志
+    const auto dups = ShortcutAudit::duplicates(bindings);
+    for (const auto& d : dups)
+        model_->log(QStringLiteral("快捷键冲突：%1 同时绑定于 %2（后者将不生效或抢占，请检查菜单定义）")
+                        .arg(d.first, d.second),
+                    QStringLiteral("warn"));
+}
+
 void MainWindow::buildMenu() {
     QMenuBar* bar = menuBar();
 
@@ -722,71 +895,89 @@ void MainWindow::buildMenu() {
         if (ok && !content.isEmpty()) interp_->execute(QStringLiteral("ddedit ") + content);
     };
 
-    QMenu* f = new QMenu(QStringLiteral("文件(&F)"), this);
+    QMenu* f = new QMenu(tr("文件(&F)"), this);
     f->setObjectName("menuFile");
-    mk(f, QStringLiteral("新建"),        QKeySequence::New,  [this] {
+    mk(f, tr("新建"),        QKeySequence::New,  [this] {
             NewDrawingDialog dlg(this);
             if (dlg.exec() != QDialog::Accepted) return;
-            // 参数确定后交给可测接缝执行（对话框本身在离屏测试里无法驱动）
-            applyNewDrawing(dlg.selectedSpec(), dlg.selectedScaleRatio());
+            // 模板化新建唯一入口：多文档新标签 + applyNewDrawing（既有流）+ 标题栏样式
+            createTemplatedDrawing(dlg.selectedSpec(), dlg.selectedScaleRatio(),
+                                   dlg.titleBlockStyle());
         })
         ->setIcon(icons::make("new"));
-    mk(f, QStringLiteral("填写标题栏..."), QKeySequence(), [this] {
+    mk(f, tr("填写标题栏..."), QKeySequence(), [this] {
             TitleBlockForm dlg(model_, this);
             dlg.exec();
         });
-    mk(f, QStringLiteral("插入标准标题栏..."), QKeySequence(), [this] {
+    mk(f, tr("插入标准标题栏..."), QKeySequence(), [this] {
             insertStandardTitleBlock();
         });
-    mk(f, QStringLiteral("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
+    mk(f, tr("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
             generateFramedTitleBlock();
         });
     // 绘图比例属于「图纸属性」而非视图属性，故放在文件菜单（GB/T 14690 技术制图 比例）
-    mk(f, QStringLiteral("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
+    mk(f, tr("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
             changeDrawingScale();
         });
     // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档
-    mk(f, QStringLiteral("单位与图纸界限..."), QKeySequence(), [this] {
+    mk(f, tr("单位与图纸界限..."), QKeySequence(), [this] {
             openUnitsLimits();
         });
     // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档
-    mk(f, QStringLiteral("捕捉设置..."), QKeySequence(), [this] {
+    mk(f, tr("捕捉设置..."), QKeySequence(), [this] {
             openSnapSettings();
         });
     // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）
-    mk(f, QStringLiteral("自动保存设置..."), QKeySequence(), [this] {
+    mk(f, tr("自动保存设置..."), QKeySequence(), [this] {
             openAutoSaveOptions();
         });
-    mk(f, QStringLiteral("打开..."),      QKeySequence::Open, [this] { openFile(); })
+    mk(f, tr("打开..."),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
-    mk(f, QStringLiteral("保存..."),      QKeySequence::Save, [this] { saveFile(); })
+    mk(f, tr("保存..."),      QKeySequence::Save, [this] { saveFile(); })
         ->setIcon(icons::make("save"));
-    // 最近打开：动态子菜单（条目数 = 选项里的「最近文件数」，列表随成功读档更新）
-    recentMenu_ = new QMenu(QStringLiteral("最近打开(&R)"), f);
+    // 最近打开：动态子菜单（条目数 = 选项里的「最近文件数」，列表随成功读档更新；
+    // 缺失文件灰显提示、点击移除单条；右键条目 → 固定/取消固定、从列表删除）
+    recentMenu_ = new QMenu(tr("最近打开(&R)"), f);
     recentMenu_->setObjectName("menuRecent");
+    recentMenu_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(recentMenu_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        QAction* a = recentMenu_->actionAt(pos);
+        const QString p = a ? a->data().toString() : QString();
+        if (!a || p.isEmpty()) return;                    // 分隔线/空态/清除历史 无右键菜单
+        QMenu ctx(recentMenu_);
+        QAction* pinAct = ctx.addAction(recent_->isPinned(p)
+                                            ? QStringLiteral("取消固定")
+                                            : QStringLiteral("固定到列表"));
+        QAction* delAct = ctx.addAction(QStringLiteral("从列表中删除"));
+        QAction* chosen = ctx.exec(recentMenu_->mapToGlobal(pos));
+        if (chosen == pinAct) recent_->setPinned(p, !recent_->isPinned(p));
+        else if (chosen == delAct) recent_->remove(p);
+    });
     f->addMenu(recentMenu_);
     rebuildRecentMenu();
     f->addSeparator();
-    mk(f, QStringLiteral("导出 DXF..."),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
+    mk(f, tr("导出 DXF..."),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
         ->setIcon(icons::make("export"));
     f->addSeparator();
-    mk(f, QStringLiteral("退出"),        QKeySequence::Quit, [this] { close(); });
+    mk(f, tr("退出"),        QKeySequence::Quit, [this] { close(); });
     bar->addMenu(f);
 
     // ---- 顶级菜单：打印（页面设置 + 简化 CTB 样式 + 视口/布局 MVP + 预览/PDF/物理打印）----
-    QMenu* pr = new QMenu(QStringLiteral("打印(&P)"), this);
+    QMenu* pr = new QMenu(tr("打印(&P)"), this);
     pr->setObjectName("menuPrint");
-    mk(pr, QStringLiteral("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
-    mk(pr, QStringLiteral("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
-    mk(pr, QStringLiteral("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
-    mk(pr, QStringLiteral("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); });
+    mk(pr, tr("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
+    mk(pr, tr("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
+    mk(pr, tr("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
+    mk(pr, tr("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); });
+    pr->addSeparator();
+    mk(pr, tr("发布... (PUBLISH)"), QKeySequence(), [this] { openPublish(); });
     pr->addSeparator();
     mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); });
     bar->addMenu(pr);
 
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     // 快速开关 + 追踪设置入口；勾选态与 trackConfigChanged 双向同步（命令行/面板改动即时反映）。
-    QMenu* k = new QMenu(QStringLiteral("追踪(&K)"), this);
+    QMenu* k = new QMenu(tr("追踪(&K)"), this);
     k->setObjectName("menuTrack");
     QAction* aPolar = mk(k, QStringLiteral("极轴追踪 (POLAR)"), QKeySequence("F10"), [this] {
             snap::TrackConfig c = model_->trackConfig();
@@ -796,6 +987,7 @@ void MainWindow::buildMenu() {
         });
     aPolar->setCheckable(true);
     aPolar->setChecked(model_->trackConfig().polar);
+    aPolar_ = aPolar;   // 勾选态连接随活动文档换（hookActiveDoc 登记）
     QAction* aOtrack = mk(k, QStringLiteral("对象捕捉追踪 (OTRACK)"), QKeySequence("F11"), [this] {
             snap::TrackConfig c = model_->trackConfig();
             c.objectTrack = !c.objectTrack;
@@ -804,6 +996,7 @@ void MainWindow::buildMenu() {
         });
     aOtrack->setCheckable(true);
     aOtrack->setChecked(model_->trackConfig().objectTrack);
+    aOtrack_ = aOtrack;
     k->addSeparator();
     mk(k, QStringLiteral("清除临时追踪点"), QKeySequence(), [this] {
             model_->clearTrackPoints();
@@ -812,17 +1005,13 @@ void MainWindow::buildMenu() {
     mk(k, QStringLiteral("追踪设置..."), QKeySequence(), [this] {
             openSnapSettings();   // 追踪配置并入捕捉设置面板（同一数据源，随图存档）
         });
-    // 勾选态随配置变化实时刷新（命令行 polar/otrack、设置面板改动后菜单即时同步）
-    connect(model_, &SketchModel::trackConfigChanged, this, [this, aPolar, aOtrack]() {
-            aPolar->setChecked(model_->trackConfig().polar);
-            aOtrack->setChecked(model_->trackConfig().objectTrack);
-        });
+    // 勾选态随配置变化实时刷新（连接在 hookActiveDoc 登记，随活动文档换绑）
     bar->addMenu(k);
 
     // 顶级菜单整合后，【修改】【选择】不再各占一个顶级入口，而是作为【编辑】的子菜单
     // （下方构建完成后用 e->addMenu(...) 挂进来）。显示顺序 = 添加顺序：
     //   撤销 / 重做 | 复制 / 粘贴 / 删除 | 修改 | 选择
-    QMenu* e = new QMenu(QStringLiteral("编辑(&E)"), this);
+    QMenu* e = new QMenu(tr("编辑(&E)"), this);
     e->setObjectName("menuEdit");
     mk(e, QStringLiteral("撤销"), QKeySequence::Undo,  [this] { model_->undo(); })
         ->setIcon(icons::make("undo"));
@@ -841,7 +1030,7 @@ void MainWindow::buildMenu() {
     // （application/x-sketchcad-clip），支持跨 SketchCAD 实例搬运图元，
     // 粘贴时依赖的块定义一并合并进目标图（详见 core/Clipboard.h）。
     // 快捷键避开既有 Ctrl+C / Ctrl+V（模型内部剪贴板），用 Alt/Shift 组合。
-    QMenu* clipMenu = e->addMenu(icons::make("copy"), QStringLiteral("剪贴板(&L)"));
+    QMenu* clipMenu = e->addMenu(icons::make("copy"), tr("剪贴板(&L)"));
     mk(clipMenu, QStringLiteral("复制(&C)"), QKeySequence("Ctrl+Alt+C"), [this] { copyClipToClipboard(false); })
         ->setIcon(icons::make("copy"));
     mk(clipMenu, QStringLiteral("带基点复制(&B)..."), QKeySequence("Ctrl+Shift+C"), [this] { copyClipToClipboard(true); })
@@ -853,7 +1042,7 @@ void MainWindow::buildMenu() {
     e->addSeparator();
     // ---- 选择工具：编组 / 快速选择 / 过滤器（QSELECT / FILTER）----
     // 三者共用 SketchModel 选择集状态，与点击选择/框选/图层选择完全一致。
-    QMenu* selMenu = e->addMenu(icons::make("qselect"), QStringLiteral("选择工具(&S)"));
+    QMenu* selMenu = e->addMenu(icons::make("qselect"), tr("选择工具(&S)"));
     mk(selMenu, QStringLiteral("编组管理(&G)..."), QKeySequence(), [this] { openGroupManager(); })
         ->setIcon(icons::make("group"));
     mk(selMenu, QStringLiteral("快速选择(&Q)..."), QKeySequence(), [this] { openQSelect(); })
@@ -871,7 +1060,7 @@ void MainWindow::buildMenu() {
     //   几何构造（Offset, Bevel, Fillet, Divide, Stretch）
     //   工具与分解（Properties, Attributes, Explode Text into Letters, Explode, Delete）
     // 已存在的工具型菜单项（trim/extend）复用 toolActions_ 指针，其余走 mk() 即时构造。
-    QMenu* mod = new QMenu(QStringLiteral("修改(&M)"), this);
+    QMenu* mod = new QMenu(tr("修改(&M)"), this);
     mod->setObjectName("menuModify");
 
     // ---- 变换类 ----
@@ -898,7 +1087,7 @@ void MainWindow::buildMenu() {
     })->setIcon(icons::make("duplicate"));
 
     // ---- 阵列复制（需求：基于选中图元的矩形 / 环形阵列）----
-    auto* arrayMenu = mod->addMenu(icons::make("duplicate"), QStringLiteral("阵列(&R)"));
+    auto* arrayMenu = mod->addMenu(icons::make("duplicate"), tr("阵列(&R)"));
     mk(arrayMenu, QStringLiteral("矩形阵列..."), QKeySequence(), [this] { arrayRectangular(); })
         ->setIcon(icons::make("duplicate"));
     mk(arrayMenu, QStringLiteral("环形阵列..."), QKeySequence(), [this] { arrayPolar(); })
@@ -937,7 +1126,7 @@ void MainWindow::buildMenu() {
     mk(mod, QStringLiteral("图形清理(&C)..."), QKeySequence(), [this] { openCleanup(); })
         ->setIcon(icons::make("cleanup"));
 
-    auto* alignMenu = mod->addMenu(icons::make("align"), QStringLiteral("对齐(&A)"));
+    auto* alignMenu = mod->addMenu(icons::make("align"), tr("对齐(&A)"));
     mk(alignMenu, QStringLiteral("对齐..."), QKeySequence(), [this] {
         std::vector<Element> src;
         const Element* refE = nullptr;
@@ -1305,7 +1494,7 @@ void MainWindow::buildMenu() {
 
     // 块（Block）：把命令行块操作封装为可视化子菜单（与【绘图>块】共用 buildBlockMenu）
     {
-        QMenu* blk = mod->addMenu(icons::make("block"), QStringLiteral("块(&B)"));
+        QMenu* blk = mod->addMenu(icons::make("block"), tr("块(&B)"));
         buildBlockMenu(blk);
     }
 
@@ -1326,7 +1515,7 @@ void MainWindow::buildMenu() {
     //       选择相交 / 取消相交 / (取消)选择图层 / 反选
     // 注意：工具型菜单项直接复用 toolActions_ 中已注册的 QAction（与工具条下拉
     // 共享高亮/互斥状态），即时命令（全选等）由 mk() 单独构造。
-    QMenu* sel = new QMenu(QStringLiteral("选择(&N)"), this);
+    QMenu* sel = new QMenu(tr("选择(&N)"), this);
     sel->setObjectName("menuSelect");
     mk(sel, QStringLiteral("全部不选"), QKeySequence("Ctrl+K"), [this] { model_->clearSelection(); })
         ->setIcon(icons::make("deselect_all"));
@@ -1399,7 +1588,7 @@ void MainWindow::buildMenu() {
 
     // ---- 顶级菜单：绘图（原「草图绘制」+ 直线/圆/圆弧/多边形/样条/椭圆/折线 7 个顶级菜单
     //      全部收纳到本菜单，各类图元的绘制方式以子菜单形式挂在下面）----
-    QMenu* s = new QMenu(QStringLiteral("绘图(&D)"), this);
+    QMenu* s = new QMenu(tr("绘图(&D)"), this);
     s->setObjectName("menuDraw");
     buildSketchMenu(s);
     // ---- 命令补齐：绘图类命令（与命令行共用 interp_->execute）----
@@ -1413,13 +1602,13 @@ void MainWindow::buildMenu() {
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
-    QMenu* q = new QMenu(QStringLiteral("测量查询(&I)"), this);
+    QMenu* q = new QMenu(tr("测量查询(&I)"), this);
     q->setObjectName("menuInquiry");
     mk(q, QStringLiteral("打开测量查询面板..."), QKeySequence(), [this] { openInquiry(); })
         ->setIcon(icons::make("query"));
     bar->addMenu(q);
 
-    QMenu* v = new QMenu(QStringLiteral("视图(&V)"), this);
+    QMenu* v = new QMenu(tr("视图(&V)"), this);
     v->setObjectName("menuView");
     mk(v, QStringLiteral("放大"),     QKeySequence::ZoomIn,  [this] { view_->zoomBy(1.2); })
         ->setIcon(icons::make("zoomin"));
@@ -1435,11 +1624,11 @@ void MainWindow::buildMenu() {
     aGrid->setIcon(icons::make("grid"));
     aGrid->setCheckable(true);
     aGrid->setChecked(model_->showGrid());
-    connect(model_, &SketchModel::gridToggled, aGrid, &QAction::setChecked);
+    aGrid_ = aGrid;   // gridToggled 连接在 hookActiveDoc 登记（随活动文档换绑）
 
     // 绘图比例入口已迁至【文件】菜单（属图纸属性），此处不再重复提供，避免同一功能两处出现
 
-    QMenu* plane = new QMenu(QStringLiteral("视图方向"), this);
+    QMenu* plane = new QMenu(tr("视图方向"), this);
     mk(plane, QStringLiteral("XY 平面（俯视）"), QKeySequence("Ctrl+1"), [this] { model_->setPlane(Plane::XY); })
         ->setIcon(icons::make("plane_xy"));
     mk(plane, QStringLiteral("YZ 平面（左视）"), QKeySequence("Ctrl+2"), [this] { model_->setPlane(Plane::YZ); })
@@ -1450,7 +1639,7 @@ void MainWindow::buildMenu() {
     v->addSeparator();
 
     // 面板显隐切换：关闭后可在此重新勾选（QDockWidget::toggleViewAction 自带勾选态同步）
-    QMenu* panels = new QMenu(QStringLiteral("面板"), this);
+    QMenu* panels = new QMenu(tr("面板"), this);
     panels->addAction(bomDock_->toggleViewAction());
     panels->addAction(elemDock_->toggleViewAction());
     panels->addAction(layerDock_->toggleViewAction());
@@ -1473,7 +1662,7 @@ void MainWindow::buildMenu() {
     bar->addMenu(v);
 
     // ---- 脚本（二次开发宿主）----
-    QMenu* scr = new QMenu(QStringLiteral("脚本(&S)"), this);
+    QMenu* scr = new QMenu(tr("脚本(&S)"), this);
     scr->setObjectName("menuScript");
     mk(scr, QStringLiteral("运行 JavaScript..."), QKeySequence(), [this] { onRunJavaScript(); })
         ->setIcon(icons::make("script"));
@@ -1518,7 +1707,7 @@ void MainWindow::buildMenu() {
     bar->addMenu(scr);
 
     // ---- 界面定制（CUIx + 命令别名，二次开发生态）----
-    QMenu* cui = new QMenu(QStringLiteral("界面(&U)"), this);
+    QMenu* cui = new QMenu(tr("界面(&U)"), this);
     cui->setObjectName("menuCui");
     mk(cui, QStringLiteral("编辑命令别名文件..."), QKeySequence(), [this] { openAliasFile(); })
         ->setIcon(icons::make("script"));
@@ -1530,7 +1719,7 @@ void MainWindow::buildMenu() {
     })->setIcon(icons::make("script"));
     cui->addSeparator();
     // 工作空间子菜单：切换项在展开时动态重建（反映当前工作空间列表与勾选态）
-    QMenu* wsMenu = new QMenu(QStringLiteral("工作空间"), this);
+    QMenu* wsMenu = new QMenu(tr("工作空间"), this);
     cui->addMenu(wsMenu);
     connect(wsMenu, &QMenu::aboutToShow, this, [this, wsMenu] {
         wsMenu->clear();
@@ -1579,20 +1768,20 @@ void MainWindow::buildMenu() {
     bar->addMenu(cui);
 
     // ---- 插件（原生 SDK 二次开发框架）----
-    QMenu* plug = new QMenu(QStringLiteral("插件(&X)"), this);
+    QMenu* plug = new QMenu(tr("插件(&X)"), this);
     plug->setObjectName("menuPlugin");
     mk(plug, QStringLiteral("加载插件文件..."), QKeySequence(), [this] { onLoadPlugin(); })
         ->setIcon(icons::make("properties"));
     mk(plug, QStringLiteral("重新加载插件目录"), QKeySequence(), [this] { onReloadPlugins(); })
         ->setIcon(icons::make("properties"));
-    pluginLoadedSub_ = new QMenu(QStringLiteral("已加载插件"), this);
+    pluginLoadedSub_ = new QMenu(tr("已加载插件"), this);
     pluginLoadedSub_->setIcon(icons::make("properties"));
     plug->addMenu(pluginLoadedSub_);
     refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
     bar->addMenu(plug);
 
     // ---- 工具（统一「选项」入口：应用级配置持久化 + 分类树表单）----
-    QMenu* tools = new QMenu(QStringLiteral("工具(&T)"), this);
+    QMenu* tools = new QMenu(tr("工具(&T)"), this);
     tools->setObjectName("menuTools");
     mk(tools, QStringLiteral("选项..."), QKeySequence(), [this] { openOptionsDialog(); });
     // ---- 命令补齐：格式/工具类命令（与命令行共用 interp_->execute）----
@@ -1600,9 +1789,15 @@ void MainWindow::buildMenu() {
     mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); });
     bar->addMenu(tools);
 
-    QMenu* h = new QMenu(QStringLiteral("帮助(&H)"), this);
+    QMenu* h = new QMenu(tr("帮助(&H)"), this);
     h->setObjectName("menuHelp");
     mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); });
+    // 崩溃可复现诊断包：一键导出（异常退出启动提示与此共用 DiagnosticsDialog）
+    mk(h, QStringLiteral("导出诊断包..."), QKeySequence(), [this] { exportDiagnosticBundle(); });
+    mk(h, QStringLiteral("打开日志目录"), QKeySequence(), [this] {
+        QDesktopServices::openUrl(
+            QUrl::fromLocalFile(SketchCAD::Diagnostics::logDir()));
+    });
     mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
         // 版本号来自 version.h（CMake project VERSION 生成的宏），
         // 与 exe 文件属性（app.rc）、安装包名（installer.iss）同源于同一个版本号，
@@ -1764,6 +1959,21 @@ void MainWindow::editElementText(int id) {
         return;
     }
 
+    // ---- 标注/引线/形位公差：就地编辑覆盖文本（AutoCAD 双击标注约定）----
+    // 标注文字 el.text 为空时显示测量值；写入覆盖文本后由标注渲染器优先显示。
+    if (e->type == ElementType::Dimension || e->type == ElementType::MLeader
+        || e->type == ElementType::Fcf) {
+        bool ok = false;
+        const QString txt = QInputDialog::getMultiLineText(
+            this, QStringLiteral("编辑文字"),
+            QStringLiteral("覆盖文本（留空恢复测量值/默认内容）："), e->text, &ok);
+        if (!ok) return;
+        model_->beginEdit(QStringLiteral("编辑标注文字"));
+        model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
+        model_->log(QStringLiteral("已更新标注文字 #%1").arg(id));
+        return;
+    }
+
     if (e->type != ElementType::Text && e->type != ElementType::MText) return;
 
     MTextDialog dlg(model_, this, e);
@@ -1820,6 +2030,13 @@ void MainWindow::openPrintSettings() {
     PrintSettingsDialog dlg(model_, currentPrintSettings_, this);
     if (dlg.exec() == QDialog::Accepted)
         currentPrintSettings_ = dlg.settings();
+}
+
+// 发布（PUBLISH）：勾选布局批量出图（单多页 PDF / 每布局一档 / 物理打印机）。
+// 模型空间页沿用当前打印设置（发布时视口清空 = 模型空间打印语义）。
+void MainWindow::openPublish() {
+    PublishDialog dlg(model_, currentPrintSettings_, this);
+    dlg.exec();
 }
 
 void MainWindow::openPrintPreview() {
@@ -1943,8 +2160,13 @@ void MainWindow::openBlockEditorDialog() {
                                      QStringLiteral("选择要编辑的块："), names, 0, false, &ok);
         if (!ok || name.isEmpty()) return;
     }
-    if (!model_->hasBlock(name)) return;
-    BlockEditorDialog dlg(model_, name, this);
+    openBlockEditorDialog(name);
+}
+
+// 指定块名直接打开在位编辑器（双击块引用入口；菜单入口经上面解析后同样落到这里）。
+void MainWindow::openBlockEditorDialog(const QString& blockName) {
+    if (blockName.isEmpty() || !model_->hasBlock(blockName)) return;
+    BlockEditorDialog dlg(model_, blockName, this);
     dlg.exec();   // 确定 → redefineBlockEntities（全部引用同步）；取消/Esc → 丢弃不落盘
 }
 
@@ -2066,14 +2288,14 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     // 尺寸标注子菜单：GB/T 4458.4-2003 的各种注法集中在这里
     m->addSection(QStringLiteral("尺寸标注  GB/T 4458.4 / ISO 129"));
-    dimMenu_ = m->addMenu(icons::make("dim"), QStringLiteral("尺寸标注"));
+    dimMenu_ = m->addMenu(icons::make("dim"), tr("尺寸标注"));
     for (QAction* a : dimActs_) if (a) dimMenu_->addAction(a);
 
     m->addSection(QStringLiteral("绘制选项"));
     m->addAction(actChain_);
 
     // 线宽子菜单（与工具条下拉框指向同一个 applyWidth）
-    widthMenu_ = m->addMenu(icons::make("width"), QStringLiteral("线宽"));
+    widthMenu_ = m->addMenu(icons::make("width"), tr("线宽"));
     auto* wg = new QActionGroup(this);
     wg->setExclusive(true);
     for (double px : {1.0, 2.0, 3.0, 5.0}) {
@@ -2142,7 +2364,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     // 块（Block）：创建/插入/管理/分解的可视化入口（与【编辑>修改>块】共用 buildBlockMenu）
     {
-        QMenu* blk = m->addMenu(icons::make("block"), QStringLiteral("块(&B)"));
+        QMenu* blk = m->addMenu(icons::make("block"), tr("块(&B)"));
         buildBlockMenu(blk);
     }
 
@@ -3322,11 +3544,12 @@ void MainWindow::connectSignals() {
     // 模型↔视图↔面板↔状态栏↔标尺↔命令行 的全部信号接线收口到 ModelMediator（中介者，
     // 单一触发时机）：谁订阅谁、触发几次只在此定义，杜绝"面板自连接 vs 主窗口连接"的
     // 双份/遗漏。仅需触碰主窗口私有成员的反应以回调注入，纯组件联动由中介者直接接线。
-    auto* mediator = new ModelMediator(this, {
+    // 多文档：中介者成为成员，切文档时 rewire() 换绑活动文档的模型/视图/标尺。
+    mediator_ = new ModelMediator(this, {
         model_, view_, logPanel_, elemPanel_, bom_, propPanel_,
         statusBar_, hRuler_, vRuler_, cmdLine_
     });
-    mediator->setHost({
+    mediator_->setHost({
         /* onActiveToolChanged */ [this](const QString& t) {
             if (QAction* a = toolActions_.value(t, nullptr)) a->setChecked(true);
             else if (QAction* s = toolActions_.value("select", nullptr)) s->setChecked(true);
@@ -3342,97 +3565,33 @@ void MainWindow::connectSignals() {
             if (actChain_) { QSignalBlocker b(actChain_); actChain_->setChecked(on); }
         },
     });
-    mediator->wire();
 
-    // ---- 单位（UNITS）：状态栏坐标口径与参数条后缀/显示值实时跟随 ----
-    // limitsChanged 无需 UI 联动（越界检查直接读模型状态），故只接 unitsChanged。
-    statusBar_->setUnitsMeta(model_->units());
-    applyUnitsToParamBar();
-    connect(model_, &SketchModel::unitsChanged, this, [this] {
-        statusBar_->setUnitsMeta(model_->units());
-        applyUnitsToParamBar();
-    });
-
-    // ---- 状态栏可点击开关组（正交/极轴/捕捉/追踪/线宽）----
-    // 单一状态源纪律：按钮点击 → 回写模型 setter；模型信号 → 回写按钮勾选态。
-    // 与 F8/F9/F10/F11 快捷键、ortho/snap 命令三入口完全同步。
-    using ST = StatusBar::Toggle;
-    statusBar_->setToggleState(ST::Ortho, model_->orthoMode());
-    statusBar_->setToggleState(ST::Snap,  model_->gridSnap());
-    statusBar_->setToggleState(ST::Polar, model_->trackConfig().polar);
-    statusBar_->setToggleState(ST::Track, model_->trackConfig().objectTrack);
-    statusBar_->setToggleState(ST::Lwt,   model_->showLineWeight());
+    // ---- 状态栏可点击开关组：按钮点击 → 回写模型 setter（一次性；信号侧回显随文档换绑）----
     connect(statusBar_, &StatusBar::toggleRequested, this,
             [this](StatusBar::Toggle key, bool on) {
         switch (key) {
-        case ST::Ortho: model_->setOrthoMode(on); break;
-        case ST::Snap:  model_->setGridSnap(on); break;
-        case ST::Polar:
-        case ST::Track: {
+        case StatusBar::Toggle::Ortho: model_->setOrthoMode(on); break;
+        case StatusBar::Toggle::Snap:  model_->setGridSnap(on); break;
+        case StatusBar::Toggle::Polar:
+        case StatusBar::Toggle::Track: {
             auto cfg = model_->trackConfig();       // 就地改单字段，其余保持
-            if (key == ST::Polar) cfg.polar = on; else cfg.objectTrack = on;
+            if (key == StatusBar::Toggle::Polar) cfg.polar = on; else cfg.objectTrack = on;
             model_->setTrackConfig(cfg);
             break;
         }
-        case ST::Lwt:   model_->setShowLineWeight(on); break;
+        case StatusBar::Toggle::Lwt:   model_->setShowLineWeight(on); break;
         }
     });
-    connect(model_, &SketchModel::orthoModeChanged, this,
-            [this](bool on) { statusBar_->setToggleState(ST::Ortho, on); });
-    connect(model_, &SketchModel::gridSnapChanged, this,
-            [this] { statusBar_->setToggleState(ST::Snap, model_->gridSnap()); });
-    connect(model_, &SketchModel::trackConfigChanged, this, [this] {
-        statusBar_->setToggleState(ST::Polar, model_->trackConfig().polar);
-        statusBar_->setToggleState(ST::Track, model_->trackConfig().objectTrack);
-    });
-    connect(model_, &SketchModel::showLineWeightChanged, this,
-            [this](bool on) { statusBar_->setToggleState(ST::Lwt, on); });
 
-    // ---- 选项提示区：分段命令的可选项关键字（如 [C/闭合 U/放弃]）----
-    connect(model_, &SketchModel::commandOptionsChanged, this,
-            [this](const QStringList& opts) { statusBar_->setOptions(opts); });
-    statusBar_->setOptions(model_->commandOptions());
-
-    // ---- 选中对象即弹出属性面板（面板内容由中介者 selectionChanged 路径刷新）----
-    // 门控：仅选择工具态弹出。连续绘制时 commitElement 逐段 setSelected 也会发
-    // selectionChanged，若不门控会绘制中反复抢屏；绘制完成的元素可随时点选查看。
-    connect(model_, &SketchModel::selectionChanged, this, [this](int id) {
-        if (id < 0 || model_->activeTool() != "select") return;
-        propDock_->show();
-        propDock_->raise();
-    });
-    // 右键「特性」：同样弹出到前台
-    connect(view_, &GraphicsView::requestShowProperties, this, [this] {
-        propDock_->show();
-        propDock_->raise();
-    });
-
-    // ---- 剖面填充：区域拾取模式接线（视图 → 主窗口）----
-    connect(view_, &GraphicsView::regionPickRequested, this, &MainWindow::onRegionPickRequested);
-    connect(view_, &GraphicsView::regionHoverMoved, this, &MainWindow::onRegionHover);
-    connect(view_, &GraphicsView::regionPickCancelled, this, &MainWindow::onRegionPickCancelled);
-    connect(view_, &GraphicsView::regionPickParamsRequested, this, &MainWindow::onRegionPickParams);
-    // ---- 中心点拾取模式接线（阵列对话框「拾取中心点」）----
-    // 注：该模式此前只置位、无人消费，左键取点从未回抛（功能实际不可用），在此补齐。
-    connect(view_, &GraphicsView::canvasPointPicked, this,
-            [this](double x, double y) { onCanvasPointPicked(Vec3(x, y, 0)); });
-    connect(view_, &GraphicsView::pointPickCancelled, this, &MainWindow::onPointPickCancelled);
-
-    // 双击文字图元 → 弹出多行文字编辑框（MTEXT/Text 通用）
-    connect(view_, &GraphicsView::editTextRequested, this, &MainWindow::editElementText);
-
-    // ---- 约束可视化联动（需求②③④）----
-    // 约束表变化（添加/删除/修改）→ 刷新约束栏 + 重算过约束/冲突高亮与告警
-    connect(model_, &SketchModel::constraintsChanged, constraintBar_, &ConstraintBar::refresh);
-    connect(model_, &SketchModel::constraintsChanged, view_, &GraphicsView::refreshConstraintDiagnostics);
-    // 选中变化 / 几何变化 → 约束栏随之刷新（展示选中对象的约束、satisfied 状态）
-    connect(model_, &SketchModel::selectionChanged, constraintBar_, &ConstraintBar::refresh);
-    connect(model_, &SketchModel::modelChanged, constraintBar_, &ConstraintBar::refresh);
-    // 约束栏交互 → 视图定位 / 模型删除约束
+    // 约束栏交互 → 视图定位 / 模型删除约束（发送方是常驻面板，lambda 内的 model_ 随切换换绑）
     connect(constraintBar_, &ConstraintBar::locateRequested, this,
             [this](int id) { view_->zoomToElement(id); });
     connect(constraintBar_, &ConstraintBar::deleteRequested, this,
             [this](int idx) { model_->removeConstraint(idx); });
+
+    // 脏标记 → 标签文本刷新（DocSession 置脏/复位 → 对应下标的标签重绘 "*"）
+    connect(docs_, &DocManager::dirtyChanged, this, [this](int i) { syncTabTitle(i); });
+    connect(docs_, &DocManager::docAdded, this, [this](int i) { syncTabTitle(i); });
 
     // Ctrl+回车：把焦点交给命令行，便于纯键盘连续作业
     auto* focusCmd = new QAction(this);
@@ -3443,7 +3602,573 @@ void MainWindow::connectSignals() {
         cmdLine_->setFocus(Qt::ShortcutFocusReason);
     });
     addAction(focusCmd);
+
+    // 活动文档接线（模型/视图信号 + 消费者重绑 + 状态回显）——切文档时再次进入
+    hookActiveDoc();
 }
+
+// ============================================================================
+// 多文档切换：活动文档接线 + 状态回显
+// ----------------------------------------------------------------------------
+// 单一职责：把「model_/view_/标尺」指向活动文档，断开旧文档的全部信号连接，
+// 重绑所有持有模型指针的消费者，并把活动文档状态回显到常驻 UI（工具条/参数条/
+// 状态栏/开关组）。连接清单 modelConns_/viewConns_ 保证"断多少、重接多少"对称。
+// ============================================================================
+void MainWindow::hookActiveDoc() {
+    for (const auto& c : modelConns_) disconnect(c);
+    for (const auto& c : viewConns_)  disconnect(c);
+    modelConns_.clear();
+    viewConns_.clear();
+
+    // ---- 中介者重绑：model/view/标尺换活动文档的，共享面板不变 ----
+    mediator_->rewire({ model_, view_, logPanel_, elemPanel_, bom_, propPanel_,
+                        statusBar_, hRuler_, vRuler_, cmdLine_ });
+
+    // 应用习惯会话态重放：新活动文档的模型把 AppSettings 里的空闲态右键行为
+    // 带上（每文档模型独立一份会话态，切标签/新建文档后保持用户设置一致）。
+    if (appSettings_)
+        model_->setRightClickIdleRepeat(
+            appSettings_->value(QLatin1String(SettingKeys::kRightClickIdleRepeat)).toBool());
+
+    // ---- 单位（UNITS）：状态栏坐标口径与参数条后缀/显示值实时跟随 ----
+    modelConns_ << connect(model_, &SketchModel::unitsChanged, this, [this] {
+        statusBar_->setUnitsMeta(model_->units());
+        applyUnitsToParamBar();
+    });
+
+    // ---- 状态栏开关组 / 快捷键三入口的信号回显 ----
+    modelConns_ << connect(model_, &SketchModel::orthoModeChanged, this,
+            [this](bool on) { statusBar_->setToggleState(StatusBar::Toggle::Ortho, on); });
+    modelConns_ << connect(model_, &SketchModel::gridSnapChanged, this,
+            [this] { statusBar_->setToggleState(StatusBar::Toggle::Snap, model_->gridSnap()); });
+    modelConns_ << connect(model_, &SketchModel::trackConfigChanged, this, [this] {
+        statusBar_->setToggleState(StatusBar::Toggle::Polar, model_->trackConfig().polar);
+        statusBar_->setToggleState(StatusBar::Toggle::Track, model_->trackConfig().objectTrack);
+    });
+    modelConns_ << connect(model_, &SketchModel::showLineWeightChanged, this,
+            [this](bool on) { statusBar_->setToggleState(StatusBar::Toggle::Lwt, on); });
+
+    // ---- 选项提示区：分段命令的可选项关键字（如 [C/闭合 U/放弃]）----
+    modelConns_ << connect(model_, &SketchModel::commandOptionsChanged, this,
+            [this](const QStringList& opts) { statusBar_->setOptions(opts); });
+
+    // ---- 选中对象即弹出属性面板（门控：仅选择工具态弹出，避免绘制中反复抢屏）----
+    modelConns_ << connect(model_, &SketchModel::selectionChanged, this, [this](int id) {
+        if (id < 0 || model_->activeTool() != "select") return;
+        propDock_->show();
+        propDock_->raise();
+    });
+
+    // ---- 约束可视化联动 ----
+    modelConns_ << connect(model_, &SketchModel::constraintsChanged, constraintBar_, &ConstraintBar::refresh);
+    modelConns_ << connect(model_, &SketchModel::constraintsChanged, view_, &GraphicsView::refreshConstraintDiagnostics);
+    modelConns_ << connect(model_, &SketchModel::selectionChanged, constraintBar_, &ConstraintBar::refresh);
+    modelConns_ << connect(model_, &SketchModel::modelChanged, constraintBar_, &ConstraintBar::refresh);
+
+    // ---- 追踪/栅格菜单勾选态随活动文档同步 ----
+    modelConns_ << connect(model_, &SketchModel::trackConfigChanged, this, [this] {
+        if (aPolar_)  aPolar_->setChecked(model_->trackConfig().polar);
+        if (aOtrack_) aOtrack_->setChecked(model_->trackConfig().objectTrack);
+    });
+    if (aGrid_)
+        modelConns_ << connect(model_, &SketchModel::gridToggled, aGrid_, &QAction::setChecked);
+
+    // ---- 状态栏「正交/捕捉」按钮勾选态（按钮常驻，连接随文档换）----
+    if (btnOrtho_)
+        modelConns_ << connect(model_, &SketchModel::orthoModeChanged, this,
+                [this] { btnOrtho_->setChecked(model_->orthoMode()); });
+    if (btnSnap_)
+        modelConns_ << connect(model_, &SketchModel::gridSnapChanged, this,
+                [this] { btnSnap_->setChecked(model_->gridSnap()); });
+
+    // ---- 自动保存：模型变化 → 累计操作（只盯活动文档）----
+    modelConns_ << connect(model_, &SketchModel::modelChanged, this, [this]{
+        if (recovering_) return;      // 恢复读档过程中的联动刷新不算用户操作
+        if (autoSave_) autoSave_->noteOperation();
+    });
+
+    // ---- 视图信号（每文档一个视图，随页栈切换）----
+    // P0-04 数据面板：场景项数变化（打开/裁剪补建/批量同步）时刷新「场景项 M / 打开 Xms」
+    viewConns_ << connect(view_, &GraphicsView::sceneStatsChanged, this, [this] {
+        statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
+    });
+    viewConns_ << connect(view_, &GraphicsView::requestShowProperties, this, [this] {
+        propDock_->show();
+        propDock_->raise();
+    });
+    viewConns_ << connect(view_, &GraphicsView::regionPickRequested, this, &MainWindow::onRegionPickRequested);
+    viewConns_ << connect(view_, &GraphicsView::regionHoverMoved, this, &MainWindow::onRegionHover);
+    viewConns_ << connect(view_, &GraphicsView::regionPickCancelled, this, &MainWindow::onRegionPickCancelled);
+    viewConns_ << connect(view_, &GraphicsView::regionPickParamsRequested, this, &MainWindow::onRegionPickParams);
+    viewConns_ << connect(view_, &GraphicsView::canvasPointPicked, this,
+            [this](double x, double y) { onCanvasPointPicked(Vec3(x, y, 0)); });
+    viewConns_ << connect(view_, &GraphicsView::pointPickCancelled, this, &MainWindow::onPointPickCancelled);
+    viewConns_ << connect(view_, &GraphicsView::editTextRequested, this, &MainWindow::editElementText);
+    // 空闲态右键 = 重复上一命令（AutoCAD 约定；开关 interaction/rightClickIdleRepeat，
+    // 经 SketchModel::rightClickIdleRepeat 会话态传递，GraphicsView 侧判定后才发本信号）。
+    // 走 CommandLine::repeatLastCommand（与空输入回车/空格重复同构，历史游标保持同步）；
+    // 无上一命令时回显提示。
+    viewConns_ << connect(view_, &GraphicsView::repeatLastCommandRequested, this, [this] {
+        if (interp_->lastCommand().isEmpty())
+            model_->log(QStringLiteral("没有可重复的命令"), "info");
+        else
+            cmdLine_->repeatLastCommand();
+    });
+    // 双击块引用 = 进入在位编辑（BEDIT，改定义 → 全部引用同步）
+    viewConns_ << connect(view_, &GraphicsView::blockEditRequested, this, [this](int id) {
+        const Element* e = model_->element(id);
+        if (!e || e->type != ElementType::BlockRef || e->blockName.isEmpty()) return;
+        openBlockEditorDialog(e->blockName);
+    });
+
+    // ---- 消费者重绑（持有模型指针的共享组件随活动文档换绑）----
+    if (auto* cur = docs_->active()) {
+        interp_->setHistory(cur->cmdHistory);       // 命令行历史/lastCommand 属会话态
+        interp_->setLastCommand(cur->lastCommand);
+    }
+    interp_->setModel(model_);
+    cmdLine_->setModel(model_);
+    bom_->setModel(model_);
+    propPanel_->setModel(model_);
+    layerPanel_->setModel(model_);
+    constraintBar_->setModel(model_);
+    scriptHost_->setModel(model_);
+    pluginManager_->setModel(model_);
+    if (autoSave_) autoSave_->setCurrentDrawing(docs_->active() ? docs_->active()->filePath : QString());
+
+    // ---- 活动文档状态回显到常驻 UI ----
+    const QString tool = model_->activeTool();
+    if (QAction* a = toolActions_.value(tool, nullptr)) a->setChecked(true);
+    else if (QAction* s = toolActions_.value("select", nullptr)) s->setChecked(true);
+    updateParamBarForTool(tool);
+    syncStyleWidgets(model_->defaultColor(), model_->defaultWidth());
+    syncLineStyleWidgets(int(model_->defaultLineStyle()));
+    if (actChain_) { QSignalBlocker b(actChain_); actChain_->setChecked(model_->chainLine()); }
+    statusBar_->setUnitsMeta(model_->units());
+    applyUnitsToParamBar();
+    statusBar_->setToggleState(StatusBar::Toggle::Ortho, model_->orthoMode());
+    statusBar_->setToggleState(StatusBar::Toggle::Snap,  model_->gridSnap());
+    statusBar_->setToggleState(StatusBar::Toggle::Polar, model_->trackConfig().polar);
+    statusBar_->setToggleState(StatusBar::Toggle::Track, model_->trackConfig().objectTrack);
+    statusBar_->setToggleState(StatusBar::Toggle::Lwt,   model_->showLineWeight());
+    statusBar_->setOptions(model_->commandOptions());
+    statusBar_->setCount(model_->elementCount());
+    statusBar_->setDrawScale(model_->scaleLabel());
+    statusBar_->setPlaneInfo(QString::fromLatin1(planeName(model_->plane())));
+    // UCS 指示器由 mediator->rewire() 末尾回显；工具条高亮由 activeToolChanged 路径覆盖。
+}
+
+// ============================================================================
+// 多文档区构建：标签条 + 页栈 + 首页（中央部件在此组装）
+// ============================================================================
+void MainWindow::buildDocArea() {
+    docTabs_ = new QTabBar(this);
+    docTabs_->setObjectName(QStringLiteral("docTabs"));
+    docTabs_->setMovable(true);            // 拖拽标签重排
+    docTabs_->setTabsClosable(true);       // 关闭按钮（脏文档走「保存/不保存/取消」）
+    docTabs_->setExpanding(false);
+    connect(docTabs_, &QTabBar::currentChanged, this,
+            [this](int idx) { switchToDoc(idx); });
+    connect(docTabs_, &QTabBar::tabCloseRequested, this, [this](int idx) {
+        if (confirmCloseDoc(idx)) closeDocAt(idx);
+    });
+    connect(docTabs_, &QTabBar::tabMoved, this, [this](int from, int to) {
+        docs_->reorder(from, to);          // 会话顺序重排（活动身份跟随会话，不随下标漂移）
+        syncTabTitle(docs_->activeIndex());
+    });
+    // Ctrl+Tab 循环切换（应用级快捷键，命令行/面板聚焦时同样生效）
+    auto* cyc = new QShortcut(QKeySequence("Ctrl+Tab"), this);
+    cyc->setContext(Qt::ApplicationShortcut);
+    connect(cyc, &QShortcut::activated, this,
+            [this] { if (docs_->count() > 1) switchToDoc(docs_->cycle(1)); });
+
+    viewStack_ = new QStackedWidget(this);
+
+    // 首页（构造期唯一一次；后续每文档一页走 makeDocPage）
+    const DocPage pg = makeDocPage(docs_->doc(0));
+    view_ = pg.view;
+    hRuler_ = pg.hRuler;
+    vRuler_ = pg.vRuler;
+    docTabs_->addTab(docTabText(0));
+
+    // 中央区 = [参数输入条] 在上 + [文档标签条] + [页栈（标尺 + 视图）]
+    auto* center = new QWidget(this);
+    auto* cvl = new QVBoxLayout(center);
+    cvl->setContentsMargins(0, 0, 0, 0);
+    cvl->setSpacing(0);
+    cvl->addWidget(paramBar_);
+    cvl->addWidget(docTabs_);
+    cvl->addWidget(viewStack_, 1);
+    setCentralWidget(center);
+}
+
+// 为会话创建一页：标尺十字布局 + 该文档专属的 GraphicsView（每文档独立视图）
+MainWindow::DocPage MainWindow::makeDocPage(DocSession* d) {
+    DocPage pg;
+    pg.view   = new GraphicsView(d->model(), this);
+    pg.hRuler = new RulerWidget(pg.view, RulerWidget::Orientation::Horizontal);
+    pg.vRuler = new RulerWidget(pg.view, RulerWidget::Orientation::Vertical);
+
+    auto* corner = new QWidget();
+    corner->setFixedSize(24, 24);
+    corner->setAutoFillBackground(true);
+
+    pg.page = new QWidget;
+    auto* grid = new QGridLayout(pg.page);
+    grid->setContentsMargins(0, 0, 0, 0);
+    grid->setSpacing(0);
+    grid->addWidget(corner, 0, 0);
+    grid->addWidget(pg.hRuler, 0, 1);
+    grid->addWidget(pg.vRuler, 1, 0);
+    grid->addWidget(pg.view, 1, 1);
+    grid->setColumnStretch(1, 1);
+    grid->setRowStretch(1, 1);
+
+    docPages_.insert(d, pg);
+    viewStack_->addWidget(pg.page);
+    return pg;
+}
+
+QString MainWindow::docTabText(int idx) const {
+    const DocSession* d = docs_->doc(idx);
+    return d ? d->title() : QString();
+}
+
+void MainWindow::syncTabTitle(int idx) {
+    if (docTabs_ && idx >= 0 && idx < docTabs_->count())
+        docTabs_->setTabText(idx, docTabText(idx));
+}
+
+// 切换活动文档：互换命令行历史 → 换绑指针与连接 → 回显 → 同步标签/页栈
+void MainWindow::switchToDoc(int idx, bool forceHook) {
+    DocSession* d = docs_ ? docs_->doc(idx) : nullptr;
+    if (!d || !docPages_.contains(d)) return;
+    if (d != docs_->active() || forceHook) {
+        if (auto* cur = docs_->active()) {           // copy-out：当前文档的会话态
+            cur->cmdHistory  = interp_->history();
+            cur->lastCommand = interp_->lastCommand();
+        }
+        { QSignalBlocker b(docs_); docs_->setActive(idx); }   // 本函数负责同步 UI
+        const DocPage pg = docPages_.value(d);
+        model_  = d->model();
+        view_   = pg.view;
+        hRuler_ = pg.hRuler;
+        vRuler_ = pg.vRuler;
+        hookActiveDoc();                              // copy-in + 重绑 + 回显
+    }
+    { QSignalBlocker b(docTabs_); docTabs_->setCurrentIndex(idx); }
+    viewStack_->setCurrentWidget(docPages_.value(d).page);
+}
+
+// 关闭保护：脏文档弹「保存 / 不保存 / 取消」；返回 false = 用户取消，放弃关闭
+bool MainWindow::confirmCloseDoc(int idx) {
+    DocSession* d = docs_->doc(idx);
+    if (!d || !d->isDirty()) return true;
+    switchToDoc(idx);   // 保存流程作用于活动文档，先切过去
+    const auto ret = QMessageBox::question(this, QStringLiteral("关闭图纸"),
+        QStringLiteral("图纸「%1」有未保存的修改，是否保存？").arg(d->title()),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (ret == QMessageBox::Save)   { saveFile(); return !d->isDirty(); }   // 保存失败/取消 → 继续保留
+    if (ret == QMessageBox::Discard) return true;
+    return false;
+}
+
+// 关闭文档：先销毁页面（视图引用模型，必须先于模型析构），再销毁会话
+void MainWindow::closeDocAt(int idx) {
+    DocSession* d = docs_->doc(idx);
+    if (!d) return;
+    if (DocPage pg = docPages_.value(d); pg.page) {
+        docPages_.remove(d);
+        delete pg.page;   // 视图/标尺随页面销毁
+    }
+    docs_->removeDoc(idx);   // 会话 + 模型销毁；活动下标夹取到邻居
+    if (docTabs_) {
+        QSignalBlocker b(docTabs_);
+        docTabs_->removeTab(idx);
+    }
+    if (docs_->count() == 0) {
+        // 全部关闭：回落到一张空白图，保证窗口始终可用（与「新建」等价的空会话）
+        DocSession* s = docs_->addNewDoc();
+        makeDocPage(s);
+        if (docTabs_) docTabs_->addTab(docTabText(0));
+        switchToDoc(0, /*forceHook=*/true);
+        return;
+    }
+    switchToDoc(docs_->activeIndex(), /*forceHook=*/true);
+}
+
+// 新标签打开图纸：新建会话 → 读档；失败回滚关闭新标签（空文档不脏，直接关）
+int MainWindow::openDocInteractive(const QString& path) {
+    DocSession* s = docs_->addNewDoc();
+    makeDocPage(s);
+    if (docTabs_) docTabs_->addTab(docTabText(docs_->count() - 1));
+    switchToDoc(docs_->count() - 1);
+    QString err;
+    if (!readDrawing(path, &err)) {
+        closeDocAt(docs_->count() - 1);
+        return -1;
+    }
+    s->filePath = path;
+    s->markClean();          // 读档过程的模型改动是瞬态的，读后即净
+    syncTabTitle(docs_->activeIndex());
+    return docs_->activeIndex();
+}
+
+// ---- 启动页：启动=继续上次工作 ----
+
+// 「出厂空白」判定：唯一/未命名/不脏/无图元——启动页打开首图后可安全收走的文档
+bool MainWindow::isPristineBlank(const DocSession* s) const {
+    return s && s->filePath.isEmpty() && !s->isDirty()
+        && s->model() && s->model()->elements().empty();
+}
+
+// 收走 0 号位的出厂空白文档：先 delete 页面（视图先于会话/模型析构）再摘会话。
+// 活动下标收缩由 DocManager::removeDoc 保证（关非活动且位于活动之前 → 左移）。
+void MainWindow::closePristineFirstDoc() {
+    if (docs_->count() == 0) return;
+    if (!isPristineBlank(docs_->doc(0))) return;      // 只收出厂空白，用户内容绝不动
+    const DocPage pg = docPages_.take(docs_->doc(0));
+    delete pg.page;
+    {
+        QSignalBlocker blk(docTabs_);                 // 摘标签不触发切换（活动会话不变）
+        docTabs_->removeTab(0);
+    }
+    docs_->removeDoc(0);
+    if (docs_->count() > 0 && docs_->activeIndex() >= 0)
+        switchToDoc(docs_->activeIndex(), /*forceHook=*/true);   // 保险：重绑 + 回显
+}
+
+// 启动页打开首图：成功后若出厂空白仍在则收走（避免留下永远不用的空标签）。
+// 打开失败时 openDocInteractive 内部回滚 → 窗口仍保持一张可用空白图。
+int MainWindow::openDocAdoptingBlank(const QString& path) {
+    const int idx = openDocInteractive(path);
+    if (idx >= 0 && docs_->count() == 2 && isPristineBlank(docs_->doc(0)))
+        closePristineFirstDoc();
+    return idx;
+}
+
+// 模板化新建唯一入口：菜单「新建」与启动页模板按钮共用同一 new drawing 流。
+// applyNewDrawing 原样不动；TitleBlockStyle::None 在同一撤销步内静默移除标题栏层
+//（beginEdit 的快照在 applyNewDrawing 开头已压栈，此后的 Quiet 操作并入该步，
+//  整张"新建"仍只占一次 Ctrl+Z）。
+void MainWindow::createTemplatedDrawing(const SheetSpec& spec, double ratio,
+                                        TitleBlockStyle tb) {
+    DocSession* s = docs_->addNewDoc();
+    makeDocPage(s);
+    docTabs_->addTab(docTabText(docs_->count() - 1));
+    switchToDoc(docs_->count() - 1);
+    applyNewDrawing(spec, ratio);                      // 既有业务逻辑原样
+    if (tb == TitleBlockStyle::None) removeTitleBlockElements();
+    s->markClean();                                    // 新建的图框/标准层不是用户改动
+    syncTabTitle(docs_->activeIndex());
+}
+
+// 移除标题栏层全部图元（网格线 + tb:label/tb:field 文本同层）
+void MainWindow::removeTitleBlockElements() {
+    std::vector<int> ids;
+    for (const auto& e : model_->elements())
+        if (e.layer == QStringLiteral("标题栏")) ids.push_back(e.id);
+    for (int id : ids) model_->removeElementQuiet(id);
+    model_->log(QStringLiteral("已按「无标题栏」样式移除标题栏（%1 条图元）").arg(ids.size()));
+}
+
+// 启动页对话框：只做选择、不动模型；执行统一在 exec 返回后分派。
+// 恢复横幅仅在存在 .sv$ 快照时出现（优先显示，配合 P0-02）；恢复走既有
+// CrashRecoveryDialog → onAutoSaveRecovered 全流程（含覆盖确认/另存为）。
+namespace {
+
+class StartupPage : public QDialog {
+public:
+    // 取值避开 QDialog::Accepted(1)/Rejected(0)：exec() 的返回值须与本枚举互斥判别
+    enum Action { None = 0, NewTemplate = 100, OpenOther = 101, OpenRecent = 102, Recover = 103 };
+
+    explicit StartupPage(SketchCAD::RecentFiles* recent, int maxShown, QWidget* parent)
+        : QDialog(parent), recent_(recent), maxShown_(maxShown) {
+        setWindowTitle(QStringLiteral("航空CAD — 继续"));
+        resize(420, 480);
+
+        auto* root = new QVBoxLayout(this);
+        auto* title = new QLabel(QStringLiteral("继续上次工作"), this);
+        QFont tf = title->font();
+        tf.setBold(true);
+        tf.setPointSize(tf.pointSize() + 2);
+        title->setFont(tf);
+        root->addWidget(title);
+
+        // ---- 恢复横幅（优先显示：上次未正常保存）----
+        const QVector<SketchCAD::AutoSave::Snapshot> snaps = SketchCAD::AutoSave::scanSnapshots();
+        if (!snaps.isEmpty()) {
+            auto* banner = new QFrame(this);
+            banner->setFrameShape(QFrame::StyledPanel);
+            banner->setStyleSheet(
+                QStringLiteral("QFrame { background: #FFF4E5; border: 1px solid #E6A23C; border-radius: 4px; }"));
+            auto* bl = new QVBoxLayout(banner);
+            bl->addWidget(new QLabel(
+                QStringLiteral("检测到 %1 份上次未正常保存的图纸快照").arg(snaps.size()), banner));
+            auto* recBtn = new QPushButton(QStringLiteral("恢复图纸..."), banner);
+            bl->addWidget(recBtn);
+            connect(recBtn, &QPushButton::clicked, this, [this] { done(Recover); });
+            root->addWidget(banner);
+        }
+
+        // ---- 新建：空白 / 标准模板 A0~A4（横向 1:1）/ 更多模板 ----
+        auto* gbNew = new QGroupBox(QStringLiteral("新建"), this);
+        auto* nl = new QGridLayout(gbNew);
+        auto* blankBtn = new QPushButton(QStringLiteral("空白图"), gbNew);
+        nl->addWidget(blankBtn, 0, 0);
+        connect(blankBtn, &QPushButton::clicked, this, [this] { done(None); });
+        static const QPair<SheetFormat, QString> kFmts[] = {
+            {SheetFormat::A0, QStringLiteral("A0")}, {SheetFormat::A1, QStringLiteral("A1")},
+            {SheetFormat::A2, QStringLiteral("A2")}, {SheetFormat::A3, QStringLiteral("A3")},
+            {SheetFormat::A4, QStringLiteral("A4")},
+        };
+        int col = 1;
+        for (const auto& f : kFmts) {
+            auto* b = new QPushButton(f.second, gbNew);
+            const SheetFormat fmt = f.first;
+            connect(b, &QPushButton::clicked, this, [this, fmt] {
+                spec_ = SheetSpec::make(fmt, /*landscape=*/true);
+                ratio_ = 1.0;
+                tb_ = TitleBlockStyle::Standard;
+                done(NewTemplate);
+            });
+            nl->addWidget(b, 0, col++);
+        }
+        auto* moreBtn = new QPushButton(QStringLiteral("更多模板..."), gbNew);
+        connect(moreBtn, &QPushButton::clicked, this, [this] {
+            NewDrawingDialog dlg(this);
+            if (dlg.exec() != QDialog::Accepted) return;
+            spec_ = dlg.selectedSpec();
+            ratio_ = dlg.selectedScaleRatio();
+            tb_ = dlg.titleBlockStyle();
+            done(NewTemplate);
+        });
+        nl->addWidget(moreBtn, 1, 0, 1, col);
+        root->addWidget(gbNew);
+
+        // ---- 打开最近 ----
+        auto* gbRecent = new QGroupBox(QStringLiteral("打开最近"), this);
+        auto* rl = new QVBoxLayout(gbRecent);
+        list_ = new QListWidget(gbRecent);
+        list_->setObjectName("startupRecentList");
+        populateRecent();
+        rl->addWidget(list_);
+        // 双击打开；缺失项提示且不打开（不崩溃）
+        connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
+            const QString p = it->data(Qt::UserRole).toString();
+            if (p.isEmpty()) return;
+            if (!QFile::exists(p)) {
+                QMessageBox::information(this, QStringLiteral("路径不存在"),
+                    QStringLiteral("该文件当前不可用：\n%1").arg(p));
+                return;
+            }
+            recentPath_ = p;
+            done(OpenRecent);
+        });
+        // 右键：固定/取消固定、从列表中删除（与「最近打开」菜单同语义）
+        list_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(list_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+            QListWidgetItem* it = list_->itemAt(pos);
+            if (!it) return;
+            const QString p = it->data(Qt::UserRole).toString();
+            if (p.isEmpty()) return;
+            QMenu ctx(list_);
+            QAction* pinAct = ctx.addAction(recent_->isPinned(p)
+                                                ? QStringLiteral("取消固定")
+                                                : QStringLiteral("固定到列表"));
+            QAction* delAct = ctx.addAction(QStringLiteral("从列表中删除"));
+            QAction* chosen = ctx.exec(list_->mapToGlobal(pos));
+            if (chosen == pinAct) recent_->setPinned(p, !recent_->isPinned(p));
+            else if (chosen == delAct) recent_->remove(p);
+            populateRecent();
+        });
+        root->addWidget(gbRecent, 1);
+
+        // ---- 打开其他 / 关闭 ----
+        auto* hl = new QHBoxLayout;
+        auto* openBtn = new QPushButton(QStringLiteral("打开其他..."), this);
+        connect(openBtn, &QPushButton::clicked, this, [this] { done(OpenOther); });
+        hl->addWidget(openBtn);
+        hl->addStretch(1);
+        auto* closeBtn = new QPushButton(QStringLiteral("继续使用空白图"), this);
+        connect(closeBtn, &QPushButton::clicked, this, [this] { done(None); });
+        hl->addWidget(closeBtn);
+        root->addLayout(hl);
+    }
+
+    Action    action() const { return action_; }
+    SheetSpec spec() const { return spec_; }
+    double    ratio() const { return ratio_; }
+    TitleBlockStyle titleBlockStyle() const { return tb_; }
+    QString   recentPath() const { return recentPath_; }
+
+private:
+    // 从 RecentFiles 重建最近列表（pin 置顶标记 / 缺失项灰显 + 提示）
+    void populateRecent() {
+        list_->clear();
+        if (!recent_ || recent_->count() == 0 || maxShown_ <= 0) {
+            auto* it = new QListWidgetItem(QStringLiteral("（空）"), list_);
+            it->setFlags(Qt::NoItemFlags);
+            return;
+        }
+        int shown = 0;
+        for (const auto& e : recent_->entries()) {
+            if (shown >= maxShown_) break;
+            const bool missing = !QFile::exists(e.path);
+            auto* it = new QListWidgetItem(
+                QStringLiteral("%1%2%3")
+                    .arg(e.pinned ? QStringLiteral("📌 ") : QString())
+                    .arg(QFileInfo(e.path).fileName())
+                    .arg(missing ? QStringLiteral("（路径不存在）") : QString()),
+                list_);
+            it->setData(Qt::UserRole, e.path);
+            it->setToolTip(e.path);
+            if (missing) it->setForeground(QBrush(QColor(0x9A, 0x9A, 0x9A)));
+            ++shown;
+        }
+    }
+
+    SketchCAD::RecentFiles* recent_ = nullptr;
+    int maxShown_ = 10;
+    Action action_ = None;
+    SheetSpec spec_;
+    double ratio_ = 1.0;
+    TitleBlockStyle tb_ = TitleBlockStyle::Standard;
+    QString recentPath_;
+    QListWidget* list_ = nullptr;
+};
+} // namespace
+
+void MainWindow::showStartupPage() {
+    StartupPage dlg(recent_, appSettings_ ? appSettings_->recentFileCount() : 10, this);
+    const StartupPage::Action act = static_cast<StartupPage::Action>(dlg.exec());
+
+    switch (act) {
+    case StartupPage::Recover:
+        offerCrashRecovery();   // 既有恢复全流程（CrashRecoveryDialog + 覆盖确认）
+        break;
+    case StartupPage::NewTemplate:
+        createTemplatedDrawing(dlg.spec(), dlg.ratio(), dlg.titleBlockStyle());
+        break;
+    case StartupPage::OpenRecent: {
+        const QString p = dlg.recentPath();
+        if (!p.isEmpty()) openDocAdoptingBlank(p);
+        break;
+    }
+    case StartupPage::OpenOther: {
+        // 先记原状：openFile() 成功开新标签后收走出厂空白；取消则什么都不动
+        const int before = docs_->count();
+        openFile();
+        if (docs_->count() == before + 1) closePristineFirstDoc();
+        break;
+    }
+    case StartupPage::None:
+    default:
+        break;   // 空白图：首张空白文档保持原样
+    }
+}
+
 
 // ---- 文件格式过滤器（另存为 / 打开）----
 // 与 core/CadFormats.h 的 CadFormat 一一对应；扩展名是唯一的分派依据。
@@ -3478,7 +4203,10 @@ void MainWindow::saveFile() {
     dlg.setNameFilters(saveNameFilters());
     dlg.selectNameFilter(saveNameFilters().first());
     dlg.setDefaultSuffix(QStringLiteral("json"));
-    dlg.selectFile(QStringLiteral("sketch.json"));
+    // 多文档：默认预填活动文档的文件名（已存过盘）；未命名图保持 sketch.json
+    const QString curPath = docs_ && docs_->active() ? docs_->active()->filePath : QString();
+    dlg.selectFile(curPath.isEmpty() ? QStringLiteral("sketch.json")
+                                     : QFileInfo(curPath).fileName());
     // 起始目录习惯：默认存盘目录 > 上次目录 > 系统默认
     const QString startDir = rememberDialogDir();
     if (!startDir.isEmpty()) dlg.setDirectory(startDir);
@@ -3503,7 +4231,14 @@ void MainWindow::saveFile() {
     // DXF：弹出版本下拉（R12 默认 / R2000），写入 dxfSaveOptions_ 供 writeDrawing 采用。
     if (fmt == cadfmt::CadFormat::Dxf)
         dxfSaveOptions_.version = chooseDxfVersion();
-    writeDrawing(fn, nullptr);
+    if (writeDrawing(fn, nullptr)) {
+        // 多文档：保存成功 → 会话记录路径并清除脏标记（标签 "*" 消失）
+        if (docs_ && docs_->active()) {
+            docs_->active()->filePath = fn;
+            docs_->markClean(docs_->activeIndex());
+            syncTabTitle(docs_->activeIndex());
+        }
+    }
 }
 
 // 新建图纸的实作（与对话框解耦，便于离屏测试直接驱动）。
@@ -3603,7 +4338,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     return true;
 }
 
-// 打开：草图 JSON 完整往返；DXF 读回图元几何（标注/样条已按几何炸开）
+// 打开：草图 JSON 完整往返；DXF 读回图元几何（标注/样条已按几何炸开）。
+// 多文档：每次打开都落在一张新标签上（对照作业）；读档失败自动回滚新标签。
 void MainWindow::openFile() {
     // 起始目录习惯：默认存盘目录 > 上次目录 > 系统默认
     const QString startDir = rememberDialogDir();
@@ -3611,7 +4347,7 @@ void MainWindow::openFile() {
         QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
     if (fn.isEmpty()) return;
     if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
-    readDrawing(fn, nullptr);
+    openDocInteractive(fn);
 }
 
 // ==================== P0-04：大图纸打开（后台解析 + 内存优雅降级） ====================
@@ -3719,10 +4455,16 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         model_->clear();
         // 块定义须先于 BlockRef 图元注册：INSERT 引用按名解析，缺定义则渲染为空。
         for (const auto& b : st.blocks) model_->addBlockDef(b);
+        // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
+        int robSkip = 0, robFix = 0; QString robRep;
+        std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
+        if (robSkip > 0 || robFix > 0)
+            model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+                           .arg(robSkip).arg(robFix).arg(robRep), "warn");
         model_->beginEdit(QStringLiteral("导入 DXF"));
-        model_->addElementsQuiet(imported);
+        model_->addElementsQuiet(kept);
         QString note = QStringLiteral("已打开 DXF：%1（导入 %2 个图元%3；标注/样条已按几何炸开）")
-                           .arg(path).arg(imported.size())
+                           .arg(path).arg(kept.size())
                            .arg(st.blocks.empty() ? QString() : QStringLiteral("，块定义 %1 个").arg(st.blocks.size()));
         if (rescaled)
             note += QStringLiteral("；按文件头 $INSUNITS 自 %1 换算到 mm")
@@ -3743,7 +4485,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         // 表现为"打开了却一片空白"。
         QRectF bb;
         bool haveBox = false;
-        for (const auto& el : imported) {
+        for (const auto& el : kept) {
             const QRectF r = geo::elementBounds(el);
             bb = haveBox ? bb.united(r) : r;
             haveBox = true;
@@ -3780,13 +4522,19 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         }
         *modelTouched = true;
         model_->clear();
+        // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
+        int robSkip = 0, robFix = 0; QString robRep;
+        std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
+        if (robSkip > 0 || robFix > 0)
+            model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+                           .arg(robSkip).arg(robFix).arg(robRep), "warn");
         model_->beginEdit(QStringLiteral("导入 DWG"));
-        model_->addElementsQuiet(imported);
+        model_->addElementsQuiet(kept);
         QString note = QStringLiteral("已打开 DWG（R12/AC1009）：%1（导入 %2 个图元）")
-                           .arg(path).arg(imported.size());
+                           .arg(path).arg(kept.size());
         model_->log(note, "info");
         QRectF bb; bool haveBox = false;
-        for (const auto& el : imported) {
+        for (const auto& el : kept) {
             const QRectF r = geo::elementBounds(el);
             bb = haveBox ? bb.united(r) : r;
             haveBox = true;
@@ -3836,8 +4584,14 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     const QJsonObject root = parsedRoot;
     *modelTouched = true;   // P0-04：此后模型可能被改动（内存失败需恢复空态）
     model_->clear();
+    // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
+    int robSkip = 0, robFix = 0; QString robRep;
+    std::vector<Element> kept = SketchCAD::filterElements(loaded, &robSkip, &robFix, &robRep);
+    if (robSkip > 0 || robFix > 0)
+        model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+                       .arg(robSkip).arg(robFix).arg(robRep), "warn");
     model_->beginEdit(QStringLiteral("打开草图"));
-    model_->addElementsQuiet(loaded);
+    model_->addElementsQuiet(kept);
     // 读回图层表（若有）。必须在 addElementsQuiet 之后、setScaleRatioValue 之前：
     // 图层表不依赖比例；若文件无 layers 字段则回退为单层"0"，不影响旧图兼容。
     model_->setLayersFromJson(root["layers"].toArray());
@@ -3852,12 +4606,34 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     model_->setDimStylesFromJson(root["dimStyles"].toObject());
     model_->setSavedFiltersFromJson(root["savedFilters"].toArray());   // 旧文件无此字段 → 空过滤器列表（容缺）
     model_->setLayoutsFromJson(root);   // 布局表（顶层 "layouts"/"currentLayout"；旧文件缺键 → 空表回落模型空间打印）
-    // 读回单位与图纸界限（若有）。二者为应用级配置：不发 modelChanged，只发各自的
-    // 专用信号驱动状态栏/参数条刷新；旧文件无此字段 → 回落 mm/十进制度/2 位 + A3。
-    model_->setUnits(UnitsMeta::fromJson(root["units"].toObject()));
-    model_->setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
-    model_->setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));  // 捕捉配置（缺键回落默认）
-    model_->setTrackConfig(snap::TrackConfig::fromJson(root["trackConfig"].toObject())); // 追踪配置（缺键回落默认）
+    // 鲁棒性守卫（续）：统计引用了不存在图层/块/样式或悬空几何(refA/refB/hatchSrcIds)的图元，
+    // 如实告知用户（不丢弃——这些引用按各模块既有降级逻辑静默处理）。
+    {
+        std::vector<QString> lns, bns, sns;
+        for (int i = 0; i < model_->layerCount(); ++i) lns.push_back(model_->layerAt(i).name);
+        for (const auto& b : model_->blockTable()) bns.push_back(b.name);
+        for (int i = 0; i < model_->textStyleCount(); ++i) sns.push_back(model_->textStyleAt(i).name);
+        QString drep;
+        const int dangling = SketchCAD::countDanglingRefs(kept, lns, bns, sns, &drep);
+        if (dangling > 0)
+            model_->log(QStringLiteral("打开校验：%1 个图元引用了不存在的图层/块/样式或悬空几何：%2")
+                           .arg(dangling).arg(drep), "warn");
+    }
+    // 读回单位与图纸界限（若有）。二者是**随图属性**（随图存档、现按 Ctrl+Z 可回退）：
+    // 不发 modelChanged，只发各自的专用信号驱动状态栏/参数条刷新；
+    // 旧文件无此字段 → 回落 mm/十进制度/2 位 + A3。
+    //
+    // 抑制快照：这四项现在会各自入栈，但开档已经由上面的 beginEdit("打开草图")
+    // 建立了唯一编辑步；若不抑制，一次「打开」会被拆成好几步 Ctrl+Z
+    // （先退回"单位没设"、再退回"界限没设"…）。抑制范围严格限于这四行，
+    // 其余调用（含 setScaleRatioValue / setLtscale）保持原样，开档的撤销步数与旧版一致。
+    {
+        SketchModel::UndoGuard guard(model_);
+        model_->setUnits(UnitsMeta::fromJson(root["units"].toObject()));
+        model_->setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
+        model_->setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));  // 捕捉配置（缺键回落默认）
+        model_->setTrackConfig(snap::TrackConfig::fromJson(root["trackConfig"].toObject())); // 追踪配置（缺键回落默认）
+    }
     model_->setConstraintsFromJson(root["constraints"].toArray());  // 显式几何约束（缺键 → 空表）
     model_->setParamsFromJson(root["params"].toObject());           // 命名设计变量表（缺键 → 空表，Request M 新增）
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次

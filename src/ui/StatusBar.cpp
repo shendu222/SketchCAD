@@ -10,10 +10,13 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
     lOpt   = new QLabel(QString());                lOpt->setMinimumWidth(60);
     lCoord = new QLabel(QStringLiteral("X:0.00  Y:0.00  Z:0.00")); lCoord->setMinimumWidth(170);
     lPlane = new QLabel(QStringLiteral("平面:XY")); lPlane->setMinimumWidth(70);
+    // UCS 指示器：⌖ 为坐标系定位符号（图标语义），世界系显示 WCS，命名 UCS 显示名称+角度
+    lUcs   = new QLabel(QStringLiteral("⌖ WCS"));   lUcs->setMinimumWidth(80);
+    lUcs->setToolTip(QStringLiteral("当前用户坐标系（UCS）。命令 ucs world|3p|object|z|save|set 切换"));
     lCount = new QLabel(QStringLiteral("图元:0"));  lCount->setMinimumWidth(60);
     lScale = new QLabel(QStringLiteral("比例:4.00")); lScale->setMinimumWidth(70);
     lStats = new QLabel(QString());               lStats->setMinimumWidth(150);   // P0-04 数据面板
-    addWidget(lCmd); addWidget(lOpt); addWidget(lCoord); addWidget(lPlane);
+    addWidget(lCmd); addWidget(lOpt); addWidget(lCoord); addWidget(lPlane); addWidget(lUcs);
     addWidget(lCount); addWidget(lScale); addWidget(lStats);
 
     // ---- 上次自动保存时间（点击手动触发一次自动保存）----
@@ -79,6 +82,7 @@ void StatusBar::setCoord(double x, double y, double z) {
                         .arg(formatLengthMm(z, units_)));
 }
 void StatusBar::setPlaneInfo(const QString& s) { lPlane->setText("平面:" + s); }
+void StatusBar::setUcsInfo(const QString& s) { lUcs->setText("⌖ " + s); }
 void StatusBar::setCount(int n) { lCount->setText("图元:" + QString::number(n)); }
 
 // P0-04 数据面板：「图元 N / 场景项 M / 打开 Xms」。openMs<=0 时隐藏打开耗时段。

@@ -92,6 +92,25 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     connect(rbThird, &QRadioButton::toggled, this, [this](bool on) { if (on) projection_ = ProjectionMethod::ThirdAngle; });
     root->addWidget(gbProj);
 
+    // ---- 标题栏样式 ----
+    auto* gbTb = new QGroupBox(QStringLiteral("标题栏样式"), this);
+    auto* tbLay = new QHBoxLayout(gbTb);
+    auto* grpTb = new QButtonGroup(this);
+    auto* rbTbStd = new QRadioButton(QStringLiteral("标准标题栏（GB/T 10609.1）"), gbTb);
+    auto* rbTbNone = new QRadioButton(QStringLiteral("无标题栏（仅图框）"), gbTb);
+    grpTb->addButton(rbTbStd, 0);
+    grpTb->addButton(rbTbNone, 1);
+    rbTbStd->setChecked(true);   // 默认标准
+    tbLay->addWidget(rbTbStd);
+    tbLay->addWidget(rbTbNone);
+    connect(rbTbStd, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) tbStyle_ = TitleBlockStyle::Standard;
+    });
+    connect(rbTbNone, &QRadioButton::toggled, this, [this](bool on) {
+        if (on) tbStyle_ = TitleBlockStyle::None;
+    });
+    root->addWidget(gbTb);
+
     root->addWidget(new QLabel(QStringLiteral("新建后自动生成对应图框与标准标题栏，可随后在「填写标题栏」中录入。"), this));
 
     // ---- 绘图比例（GB/T 14690）----

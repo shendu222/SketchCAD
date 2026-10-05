@@ -38,7 +38,7 @@ int comboIndexOfData(const QComboBox* box, const QVariant& data) {
 OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
     : QDialog(parent), s_(settings) {
     Q_ASSERT(s_);
-    setWindowTitle(QStringLiteral("选项"));
+    setWindowTitle(tr("选项"));
     setModal(true);
     resize(720, 540);
 
@@ -48,7 +48,7 @@ OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
     auto* body = new QHBoxLayout();
     catTree_ = new QTreeWidget(this);
     catTree_->setFixedWidth(150);
-    catTree_->setHeaderLabel(QStringLiteral("分类"));
+    catTree_->setHeaderLabel(tr("分类"));
     catTree_->setRootIsDecorated(false);
     pages_ = new QStackedWidget(this);
     body->addWidget(catTree_);
@@ -56,10 +56,10 @@ OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
     rootLay->addLayout(body, 1);
 
     // 底部按钮：重置（左）| stretch | 确定 取消 应用（右）
-    btnReset_   = new QPushButton(QStringLiteral("重置为默认值"), this);
-    btnOk_      = new QPushButton(QStringLiteral("确定"), this);
-    btnCancel_  = new QPushButton(QStringLiteral("取消"), this);
-    btnApply_   = new QPushButton(QStringLiteral("应用"), this);
+    btnReset_   = new QPushButton(tr("重置为默认值"), this);
+    btnOk_      = new QPushButton(tr("确定"), this);
+    btnCancel_  = new QPushButton(tr("取消"), this);
+    btnApply_   = new QPushButton(tr("应用"), this);
     btnOk_->setDefault(true);
     auto* btnLay = new QHBoxLayout();
     btnLay->addWidget(btnReset_);
@@ -69,13 +69,14 @@ OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
     btnLay->addWidget(btnApply_);
     rootLay->addLayout(btnLay);
 
-    // 六个分类页（顺序 = 需求规定）
-    addPage(QStringLiteral("常规"),     buildGeneralPage());
-    addPage(QStringLiteral("显示"),     buildDisplayPage());
-    addPage(QStringLiteral("文件位置"), buildFilesPage());
-    addPage(QStringLiteral("自动保存"), buildAutosavePage());
-    addPage(QStringLiteral("打印"),     buildPrintPage());
-    addPage(QStringLiteral("用户"),     buildUserPage());
+    // 七个分类页（顺序 = 需求规定）
+    addPage(tr("常规"),     buildGeneralPage());
+    addPage(tr("显示"),     buildDisplayPage());
+    addPage(tr("文件位置"), buildFilesPage());
+    addPage(tr("自动保存"), buildAutosavePage());
+    addPage(tr("打印"),     buildPrintPage());
+    addPage(tr("用户"),     buildUserPage());
+    addPage(tr("隐私"),     buildPrivacyPage());
 
     connect(catTree_, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* cur, QTreeWidgetItem*) {
@@ -109,14 +110,22 @@ QWidget* OptionsDialog::formWrap(QWidget* inner) {
 QWidget* OptionsDialog::buildGeneralPage() {
     auto* form = new QFormLayout();
     langBox_ = new QComboBox(this);
+    addComboItem(langBox_, tr("跟随系统"), QStringLiteral(""));
     addComboItem(langBox_, QStringLiteral("简体中文"), QStringLiteral("zh-CN"));
-    addComboItem(langBox_, QStringLiteral("English（界面文案暂未翻译，预留）"), QStringLiteral("en"));
-    form->addRow(QStringLiteral("界面语言："), langBox_);
+    addComboItem(langBox_, QStringLiteral("English"), QStringLiteral("en"));
+    form->addRow(tr("界面语言："), langBox_);
     recentSpin_ = new QSpinBox(this);
     recentSpin_->setRange(0, 20);
     recentSpin_->setSuffix(QStringLiteral(" 条"));
     recentSpin_->setToolTip(QStringLiteral("「文件 > 最近打开」子菜单保留的条目数；0 表示关闭最近文件"));
     form->addRow(QStringLiteral("最近文件数："), recentSpin_);
+    undoDepthSpin_ = new QSpinBox(this);
+    undoDepthSpin_->setRange(1, 1000);
+    undoDepthSpin_->setSuffix(QStringLiteral(" 步"));
+    undoDepthSpin_->setToolTip(QStringLiteral(
+        "Ctrl+Z 最多能回退多少步；超出时丢弃最旧的一步。\n"
+        "调大更省心但占内存（每步都含一份图纸状态）。"));
+    form->addRow(QStringLiteral("撤销栈深度："), undoDepthSpin_);
     auto* hint = new QLabel(
         QStringLiteral("语言切换需要重新启动程序后完全生效。"), this);
     hint->setStyleSheet(QStringLiteral("color: gray;"));
@@ -262,6 +271,25 @@ QWidget* OptionsDialog::buildUserPage() {
     return formWrap(inner);
 }
 
+QWidget* OptionsDialog::buildPrivacyPage() {
+    auto* form = new QFormLayout();
+    chkTelemetry_ = new QCheckBox(QStringLiteral("启用匿名遥测（默认关闭）"), this);
+    chkTelemetry_->setToolTip(QStringLiteral(
+        "开启后仅记录匿名会话/崩溃计数（无任何图纸内容）。\n"
+        "默认关闭；当前版本不含任何网络上报实现，开启也不会产生网络请求。"));
+    form->addRow(chkTelemetry_);
+    auto* hint = new QLabel(
+        QStringLiteral("本程序默认不上传任何数据，没有任何后台网络请求。\n"
+                       "「导出诊断包」（帮助菜单 / 异常退出提示）只在本机生成 ZIP 文件，\n"
+                       "包内不含图纸几何与文字内容，是否发送完全由您决定。"), this);
+    hint->setStyleSheet(QStringLiteral("color: gray;"));
+    hint->setWordWrap(true);
+    form->addRow(QString(), hint);
+    auto* inner = new QWidget(this);
+    inner->setLayout(form);
+    return formWrap(inner);
+}
+
 void OptionsDialog::addPage(const QString& title, QWidget* page) {
     new QTreeWidgetItem(catTree_, QStringList{ title });   // 以 catTree_ 为父 → 自动成为顶层项
     pages_->addWidget(page);
@@ -272,6 +300,7 @@ void OptionsDialog::addPage(const QString& title, QWidget* page) {
 void OptionsDialog::loadWidgets() {
     langBox_->setCurrentIndex(comboIndexOfData(langBox_, s_->language()));
     recentSpin_->setValue(s_->recentFileCount());
+    undoDepthSpin_->setValue(s_->undoDepth());
     chkGrid_->setChecked(s_->showGrid());
     chkSnap_->setChecked(s_->gridSnap());
     stepSpin_->setValue(s_->gridSnapStep());
@@ -288,12 +317,14 @@ void OptionsDialog::loadWidgets() {
     printerBox_->setCurrentIndex(comboIndexOfData(printerBox_, s_->printerName()));
     userNameEdit_->setText(s_->userName());
     companyEdit_->setText(s_->userCompany());
+    chkTelemetry_->setChecked(s_->telemetryEnabled());
 }
 
 void OptionsDialog::loadWidgetsFromDefaults() {
     // 从规格表取默认值回填控件（草稿态；须再点确定/应用才生效）
     langBox_->setCurrentIndex(comboIndexOfData(langBox_, AppSettings::defaultValue(QLatin1String(kLanguage))));
     recentSpin_->setValue(AppSettings::defaultValue(QLatin1String(kRecentFileCount)).toInt());
+    undoDepthSpin_->setValue(AppSettings::defaultValue(QLatin1String(kUndoDepth)).toInt());
     chkGrid_->setChecked(AppSettings::defaultValue(QLatin1String(kShowGrid)).toBool());
     chkSnap_->setChecked(AppSettings::defaultValue(QLatin1String(kGridSnap)).toBool());
     stepSpin_->setValue(AppSettings::defaultValue(QLatin1String(kGridSnapStep)).toDouble());
@@ -311,11 +342,13 @@ void OptionsDialog::loadWidgetsFromDefaults() {
     printerBox_->setCurrentIndex(comboIndexOfData(printerBox_, QString()));
     userNameEdit_->setText(AppSettings::defaultValue(QLatin1String(kUserName)).toString());
     companyEdit_->setText(AppSettings::defaultValue(QLatin1String(kUserCompany)).toString());
+    chkTelemetry_->setChecked(AppSettings::defaultValue(QLatin1String(kTelemetryEnabled)).toBool());
 }
 
 void OptionsDialog::collectWidgets() {
     s_->setLanguage(langBox_->currentData().toString());
     s_->setRecentFileCount(recentSpin_->value());
+    s_->setUndoDepth(undoDepthSpin_->value());
     s_->setShowGrid(chkGrid_->isChecked());
     s_->setGridSnap(chkSnap_->isChecked());
     s_->setGridSnapStep(stepSpin_->value());
@@ -332,6 +365,7 @@ void OptionsDialog::collectWidgets() {
     s_->setPrinterName(printerBox_->currentData().toString());
     s_->setUserName(userNameEdit_->text().trimmed());
     s_->setUserCompany(companyEdit_->text().trimmed());
+    s_->setTelemetryEnabled(chkTelemetry_->isChecked());
 }
 
 // ---- 动作 ----

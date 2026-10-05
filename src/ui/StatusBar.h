@@ -25,6 +25,7 @@ public:
     void setOptions(const QStringList& opts);  // 选项提示区：[C/闭合 U/放弃]，空列表则清空
     void setCoord(double x, double y, double z);
     void setPlaneInfo(const QString& s);
+    void setUcsInfo(const QString& s);         // UCS 指示器：如 "WCS" / "⌖ MYUCS 45°"
     void setCount(int n);
     void setScale(double s);
     void setDrawScale(const QString& label);   // 绘图比例标签，如 "1:1" / "1:2"
@@ -39,7 +40,7 @@ signals:
     void toggleRequested(Toggle key, bool on); // 用户点击开关 → MainWindow 回写模型
     void manualSaveRequested();                // 用户点击「上次自动保存」标签
 private:
-    QLabel *lCmd, *lOpt, *lCoord, *lPlane, *lCount, *lScale, *lStats;
+    QLabel *lCmd, *lOpt, *lCoord, *lPlane, *lUcs, *lCount, *lScale, *lStats;
     QToolButton* btnSave_ = nullptr;            // 上次自动保存时间（点击手动触发）
     QToolButton* btns_[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
     UnitsMeta units_;                          // 坐标显示口径（默认 mm/2 位）

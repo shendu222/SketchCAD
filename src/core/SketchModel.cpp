@@ -9,6 +9,7 @@
 #include <cmath>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSet>
 #include <QDir>
 #include <QFileInfo>
@@ -37,7 +38,188 @@ std::vector<Element>::iterator SketchModel::find(int id) {
                         [id](const Element& e) { return e.id == id; });
 }
 
+// ============================================================================
+// 撤销快照去重：精确相等的逐字段比较
+// ----------------------------------------------------------------------------
+// 安全方向是单向的：**无法证明相同，就判为不同**。
+//   判为不同 → 照常入栈，最坏只是少去重一次（多一步无意义的 Ctrl+Z，无害）；
+//   判为相同 → 跳过入栈，一旦判错就永久吞掉用户的一步撤销（致命）。
+// 因此这里宁可写全，也不做任何"看起来差不多"的近似（不比 JSON 摘要的模糊等价、
+// 不比容器 size 了事——改一个图层的名字、挪一个图元，size 都不变）。
+//
+// 双精度用 == 精确比较是安全的：待比较的两份快照都是同一份数据的副本链，
+// 未被改动过的字段必然逐位相同；而"改过但值恰好相等"的情形由各 setter 的幂等守卫挡住。
+// ============================================================================
+
+// 深比较的元素数上限：超过则直接判为"不同"（照常入栈）。
+// 大图纸下逐图元比较是 O(N)，而 pushMemento 本身还要复制一份；去重只是优化，
+// 不能反过来成为编辑卡顿的来源。拒绝去重是安全方向（少优化，不丢步）。
+static constexpr size_t kDedupDeepElemsLimit = 20000;
+
+static bool sameVec3s(const std::vector<Vec3>& a, const std::vector<Vec3>& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+}
+static bool sameStrings(const std::vector<QString>& a, const std::vector<QString>& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+}
+
+// 逐字段比较图元。Element 字段只增不改：新增字段时必须同步这里，
+// 否则"只改了新字段"的两次快照会被误判为相同（吞掉一步撤销）。
+static bool sameElement(const Element& a, const Element& b) {
+    if (a.id != b.id || a.type != b.type || a.name != b.name || a.layer != b.layer) return false;
+    if (a.color != b.color) return false;
+    if (a.lineWidth != b.lineWidth || a.lineStyle != b.lineStyle || a.lineWidthAuto != b.lineWidthAuto) return false;
+    if (!sameVec3s(a.pts, b.pts)) return false;
+    if (a.radius != b.radius || a.startAngle != b.startAngle || a.endAngle != b.endAngle) return false;
+    if (a.radiusY != b.radiusY || a.rotation != b.rotation || a.closed != b.closed) return false;
+    if (a.splineSubType != b.splineSubType || a.ctype != b.ctype
+        || a.dtype != b.dtype || a.standard != b.standard) return false;
+    if (a.text != b.text) return false;
+    if (a.tolUpper != b.tolUpper || a.tolLower != b.tolLower || a.dimTextHeight != b.dimTextHeight) return false;
+    if (a.fitCode != b.fitCode || a.symbolLibrary != b.symbolLibrary) return false;
+    if (a.refA != b.refA || a.refB != b.refB || a.visible != b.visible || a.byLayer != b.byLayer) return false;
+    if (a.dimValue != b.dimValue || a.dimDriven != b.dimDriven
+        || a.dimParam != b.dimParam || a.dimLinked != b.dimLinked) return false;
+    if (a.widthFactor != b.widthFactor || a.textAlign != b.textAlign || a.styleName != b.styleName) return false;
+    if (a.lineSpacing != b.lineSpacing || a.mtextWidth != b.mtextWidth || a.groupName != b.groupName) return false;
+    if (a.tableRows != b.tableRows || a.tableCols != b.tableCols || a.rowHeight != b.rowHeight) return false;
+    if (a.colWidths != b.colWidths) return false;                 // std::vector<double>
+    if (!sameStrings(a.tableCells, b.tableCells)) return false;
+    if (a.dimStyleName != b.dimStyleName) return false;
+    if (a.mleaderStyleName != b.mleaderStyleName
+        || a.mleaderLanding != b.mleaderLanding || a.mleaderArrowLen != b.mleaderArrowLen) return false;
+    if (a.fcfSymbol != b.fcfSymbol || a.fcfModifier != b.fcfModifier || a.fcfTolerance != b.fcfTolerance) return false;
+    if (!sameStrings(a.fcfDatums, b.fcfDatums)) return false;
+    if (a.arcFlags != b.arcFlags) return false;                   // std::vector<bool>
+    if (a.holes.size() != b.holes.size()) return false;
+    for (size_t i = 0; i < a.holes.size(); ++i)
+        if (!sameVec3s(a.holes[i], b.holes[i])) return false;
+    if (a.sectionExempt != b.sectionExempt || a.sectionMaterial != b.sectionMaterial) return false;
+    if (a.hatchSrcIds != b.hatchSrcIds) return false;             // std::vector<int>
+    if (a.hatchPattern != b.hatchPattern || a.hatchScale != b.hatchScale) return false;
+    if (a.hatchAssociative != b.hatchAssociative || a.hatchInvalid != b.hatchInvalid) return false;
+    if (a.blockName != b.blockName || a.scaleX != b.scaleX || a.scaleY != b.scaleY) return false;
+    if (a.blockAttrs.size() != b.blockAttrs.size()) return false;
+    for (size_t i = 0; i < a.blockAttrs.size(); ++i) {
+        if (a.blockAttrs[i].tag != b.blockAttrs[i].tag) return false;
+        if (a.blockAttrs[i].value != b.blockAttrs[i].value) return false;
+    }
+    if (a.dynValues.size() != b.dynValues.size()) return false;
+    for (size_t i = 0; i < a.dynValues.size(); ++i) {
+        if (a.dynValues[i].name != b.dynValues[i].name) return false;
+        if (a.dynValues[i].value != b.dynValues[i].value) return false;
+        if (a.dynValues[i].state != b.dynValues[i].state) return false;
+    }
+    return true;
+}
+
+static bool sameLayer(const Layer& a, const Layer& b) {
+    return a.name == b.name && a.color == b.color && a.lineWidth == b.lineWidth
+        && a.lineStyle == b.lineStyle && a.visible == b.visible && a.locked == b.locked
+        && a.frozen == b.frozen && a.plot == b.plot && a.alpha == b.alpha
+        && a.code == b.code && a.standardName == b.standardName;
+}
+
+static bool sameTextStyle(const TextStyle& a, const TextStyle& b) {
+    return a.name == b.name && a.fontFamily == b.fontFamily && a.textHeight == b.textHeight
+        && a.widthFactor == b.widthFactor && a.obliquingAngle == b.obliquingAngle
+        && a.bold == b.bold && a.italic == b.italic;
+}
+
+static bool sameBlockDef(const BlockDef& a, const BlockDef& b) {
+    if (a.name != b.name || a.description != b.description || !(a.basePoint == b.basePoint)) return false;
+    if (a.annotative != b.annotative) return false;
+    // Xref 附加属性：外部参照就是块表记录（BlockDef::isXref），随块表一并回退
+    if (a.isXref != b.isXref || a.xrefPath != b.xrefPath || a.xrefPathType != b.xrefPathType) return false;
+    if (a.xrefNested != b.xrefNested || a.xrefStatus != b.xrefStatus) return false;
+    if (a.entities.size() != b.entities.size()) return false;
+    for (size_t i = 0; i < a.entities.size(); ++i)
+        if (!sameElement(a.entities[i], b.entities[i])) return false;
+    if (a.attdefs.size() != b.attdefs.size()) return false;
+    for (size_t i = 0; i < a.attdefs.size(); ++i) {
+        const AttributeDef& x = a.attdefs[i];
+        const AttributeDef& y = b.attdefs[i];
+        if (x.tag != y.tag || x.prompt != y.prompt || x.defaultValue != y.defaultValue) return false;
+        if (!(x.pos == y.pos) || x.height != y.height) return false;
+        if (x.constant != y.constant || x.invisible != y.invisible) return false;
+    }
+    if (a.dynParams.size() != b.dynParams.size()) return false;
+    for (size_t i = 0; i < a.dynParams.size(); ++i) {
+        const DynParam& x = a.dynParams[i];
+        const DynParam& y = b.dynParams[i];
+        if (x.name != y.name || x.type != y.type || x.affected != y.affected) return false;
+        if (!(x.base == y.base) || !(x.direction == y.direction)) return false;
+        if (x.defaultValue != y.defaultValue || x.minValue != y.minValue || x.maxValue != y.maxValue) return false;
+        if (x.states.size() != y.states.size()) return false;
+        for (size_t j = 0; j < x.states.size(); ++j) {
+            if (x.states[j].name != y.states[j].name) return false;
+            if (x.states[j].hiddenEntities != y.states[j].hiddenEntities) return false;
+        }
+    }
+    return true;
+}
+
+static bool sameFilter(const FilterDef& a, const FilterDef& b) {
+    if (a.name != b.name || a.matchAll != b.matchAll || a.conds.size() != b.conds.size()) return false;
+    for (size_t i = 0; i < a.conds.size(); ++i) {
+        if (a.conds[i].prop != b.conds[i].prop) return false;
+        if (a.conds[i].op != b.conds[i].op) return false;
+        if (a.conds[i].value != b.conds[i].value) return false;
+    }
+    return true;
+}
+
+// 两张"字段很多但条数很少"的表（标注样式 / 布局）：手写逐字段比较不划算且易漏，
+// 改走它们**自己的** toJson —— 序列化是这批结构的完整定义（漏字段 = 存盘丢数据，
+// 早就是必须为零的缺陷），因此 JSON 全等 ⟺ 结构全等。条数个位数，开销可忽略。
+static QByteArray jsonCompact(const QJsonObject& o) {
+    return QJsonDocument(o).toJson(QJsonDocument::Compact);
+}
+static bool sameDimStyles(const std::vector<dim::DimStyleEntry>& a, const std::vector<dim::DimStyleEntry>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (jsonCompact(dim::dimStyleEntryToJson(a[i])) != jsonCompact(dim::dimStyleEntryToJson(b[i]))) return false;
+    return true;
+}
+static bool sameLayouts(const std::vector<PlotLayoutDef>& a, const std::vector<PlotLayoutDef>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (jsonCompact(a[i].toJson()) != jsonCompact(b[i].toJson())) return false;
+    return true;
+}
+
+bool SketchModel::sameState(const Memento& a, const Memento& b) {
+    // 先比廉价且最易分化的：绝大多数入栈在这一层就分出胜负，不碰大数组。
+    if (a.nextId != b.nextId || a.scale != b.scale) return false;
+    if (a.currentDimStyle != b.currentDimStyle || a.currentLayout != b.currentLayout) return false;
+    if (!(a.units == b.units) || !(a.limits == b.limits)) return false;
+    if (!(a.snapConfig == b.snapConfig) || !(a.trackConfig == b.trackConfig)) return false;
+    if (a.params != b.params) return false;                       // std::map 自带 ==
+    if (a.elems.size() != b.elems.size() || a.layers.size() != b.layers.size()) return false;
+    if (a.blocks.size() != b.blocks.size() || a.textStyles.size() != b.textStyles.size()) return false;
+    if (a.dimStyles.size() != b.dimStyles.size() || a.layouts.size() != b.layouts.size()) return false;
+    if (a.savedFilters.size() != b.savedFilters.size()) return false;
+    // 大图纸：放弃深比较，判为"不同" → 照常入栈（安全方向）
+    if (a.elems.size() > kDedupDeepElemsLimit) return false;
+    for (size_t i = 0; i < a.elems.size(); ++i)
+        if (!sameElement(a.elems[i], b.elems[i])) return false;
+    for (size_t i = 0; i < a.layers.size(); ++i)
+        if (!sameLayer(a.layers[i], b.layers[i])) return false;
+    for (size_t i = 0; i < a.textStyles.size(); ++i)
+        if (!sameTextStyle(a.textStyles[i], b.textStyles[i])) return false;
+    for (size_t i = 0; i < a.blocks.size(); ++i)
+        if (!sameBlockDef(a.blocks[i], b.blocks[i])) return false;
+    if (!sameDimStyles(a.dimStyles, b.dimStyles)) return false;
+    if (!sameLayouts(a.layouts, b.layouts)) return false;
+    for (size_t i = 0; i < a.savedFilters.size(); ++i)
+        if (!sameFilter(a.savedFilters[i], b.savedFilters[i])) return false;
+    return true;
+}
+
 void SketchModel::pushMemento(const QString& label) {
+    // 批量载入/反序列化：调用方已 beginEdit() 建立唯一编辑步，此处禁止再入栈，
+    // 否则一次「打开图纸」会被拆成若干步 Ctrl+Z（几何回了、配置还留在半路）。
+    if (undoSuppressed_) return;
     // 快照同时记录绘图比例：撤销"修改比例"时必须让几何与比例一起回退，
     // 否则回退后再改比例会以错误的基准计算缩放因子。
     // 也记录图层表：撤销"隐藏图层/改图层样式"等操作时，图层定义与图元需一起回退。
@@ -45,9 +227,33 @@ void SketchModel::pushMemento(const QString& label) {
     m.label = label; m.elems = elems_; m.nextId = nextId_;
     m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
     m.dimStyles = dimStyles_; m.currentDimStyle = currentDimStyle_;
+    // 随图属性与几何同源快照：Ctrl+Z 必须"几何与配置一起回退"，
+    // 否则用户会看到"线回来了、单位/布局没回来"的半截状态。
+    m.layouts = layouts_; m.currentLayout = currentLayout_;
+    m.units = units_; m.limits = limits_;
+    m.snapConfig = snapConfig_; m.trackConfig = trackConfig_;
+    m.savedFilters = savedFilters_;
+    // 去重：与栈顶逐字段完全相同 → 不入栈（连续空转不会攒出无意义的撤销步）。
+    // 注意"单次批量操作仍是一步"由调用方 beginEdit + *Quiet 契约保证，与去重无关。
+    if (!undoStack_.empty() && sameState(undoStack_.back(), m)) return;
     undoStack_.push_back(std::move(m));
-    if (undoStack_.size() > 200) undoStack_.erase(undoStack_.begin());
+    while (undoStack_.size() > (size_t)undoDepthLimit_) undoStack_.erase(undoStack_.begin());
     redoStack_.clear();
+}
+
+// 撤销栈深度的合法区间与默认值。AppSettings 的校验器与之保持一致（唯一真源在此）。
+// 下限取 1：0 步等于关掉撤销，会让 Ctrl+Z 变成"什么都没发生"，比留 1 步更难理解。
+static constexpr int kUndoDepthMin     = 1;
+static constexpr int kUndoDepthMax     = 1000;
+static constexpr int kUndoDepthDefault = 100;
+
+void SketchModel::setUndoDepthLimit(int steps) {
+    int v = (steps >= kUndoDepthMin && steps <= kUndoDepthMax) ? steps : kUndoDepthDefault;
+    if (v == undoDepthLimit_) return;
+    undoDepthLimit_ = v;
+    // 调小后立刻收敛：丢弃最旧的（双栈同限，避免 redo 侧无界增长）
+    while (undoStack_.size() > (size_t)v) undoStack_.erase(undoStack_.begin());
+    while (redoStack_.size()  > (size_t)v) redoStack_.erase(redoStack_.begin());
 }
 
 int SketchModel::addElement(const Element& e) {
@@ -764,6 +970,107 @@ void SketchModel::setDynMode(bool on) {
 }
 void SketchModel::setPlane(Plane p) {
     if (plane_ != p) { plane_ = p; emit planeChanged(p); emit viewChanged(); }
+}
+
+// ============================================================
+// 用户坐标系（UCS）：纯输入/显示变换层
+// ============================================================
+
+void SketchModel::setCurrentUcs(const Ucs& u) {
+    // 归一化命名：世界系强制为内置 "WORLD"
+    Ucs next = u;
+    if (next.isWorld()) next.name = "WORLD";
+    currentUcs_ = next;
+    emit ucsChanged();
+    emit viewChanged();   // 网格 / 坐标轴 / 极轴等显示层需重绘
+}
+
+void SketchModel::setCoordDisplayUcs(bool on) {
+    if (coordDisplayUcs_ != on) {
+        coordDisplayUcs_ = on;
+        emit ucsChanged();
+    }
+}
+
+QStringList SketchModel::ucsNames() const {
+    QStringList names = ucsTable_.keys();
+    // 世界系始终作为隐含项存在，但表里不存；此处仅返回显式命名项。
+    return names;
+}
+
+bool SketchModel::ucsHas(const QString& name) const {
+    return ucsTable_.contains(name);
+}
+
+Ucs SketchModel::ucsGet(const QString& name) const {
+    auto it = ucsTable_.find(name);
+    return (it != ucsTable_.end()) ? *it : Ucs("WORLD", Vec3(0, 0, 0), 0.0);
+}
+
+bool SketchModel::ucsSave(const QString& name) {
+    if (name.isEmpty() || name.compare("WORLD", Qt::CaseInsensitive) == 0) return false;
+    ucsTable_[name] = currentUcs_;   // 以当前 UCS 存为命名（覆盖同名）
+    return true;
+}
+
+bool SketchModel::ucsDelete(const QString& name) {
+    if (name.compare("WORLD", Qt::CaseInsensitive) == 0) return false;   // 世界系不可删
+    return ucsTable_.remove(name) > 0;
+}
+
+bool SketchModel::ucsSetCurrent(const QString& name) {
+    auto it = ucsTable_.find(name);
+    if (it == ucsTable_.end()) return false;
+    setCurrentUcs(*it);
+    return true;
+}
+
+bool SketchModel::parsePointToWorld(const QString& s, const Vec3& base, Vec3& outWorld) const {
+    // 支持：
+    //   x,y [z]            绝对（UCS 局部坐标）→ 世界
+    //   @dx,dy             相对（UCS 局部坐标系下相对 base 的偏移）
+    //   dist<angle         绝对极坐标（从 UCS 原点起，UCS X 正向为 0°）
+    //   @dist<angle        相对极坐标（从 base 起，UCS X 正向为 0°）
+    // 解析得到的局部坐标经 toWorld 转世界系，保证唯一换算入口。
+    QString t = s.trimmed();
+    if (t.isEmpty()) return false;
+    bool rel = false;
+    if (t.startsWith('@')) { rel = true; t = t.mid(1); }
+
+    // 极坐标形式：含 '<'
+    const int lt = t.indexOf('<');
+    if (lt >= 0) {
+        bool okD = false, okA = false;
+        const double dist = t.left(lt).toDouble(&okD);
+        const double ang  = t.mid(lt + 1).toDouble(&okA);
+        if (!okD || !okA) return false;
+        const double a = math::deg2rad(ang);
+        const Vec3 localDir(std::cos(a), std::sin(a), 0.0);
+        if (rel) {
+            const Vec3 outUcs = toUcs(base) + localDir * dist;
+            outWorld = toWorld(outUcs);
+        } else {
+            outWorld = toWorld(localDir * dist);   // 从 UCS 原点起
+        }
+        return true;
+    }
+
+    // 笛卡尔形式：x,y[,z]
+    const QStringList parts = t.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
+    if (parts.size() < 2) return false;
+    bool ok1 = false, ok2 = false, ok3 = true;
+    const double x = parts[0].toDouble(&ok1);
+    const double y = parts[1].toDouble(&ok2);
+    double z = 0.0;
+    if (parts.size() >= 3) z = parts[2].toDouble(&ok3);
+    if (!ok1 || !ok2 || !ok3) return false;
+    if (rel) {
+        const Vec3 outUcs = toUcs(base) + Vec3(x, y, z);
+        outWorld = toWorld(outUcs);
+    } else {
+        outWorld = toWorld(Vec3(x, y, z));
+    }
+    return true;
 }
 void SketchModel::setShowGrid(bool b) {
     if (showGrid_ != b) { showGrid_ = b; emit gridToggled(b); emit viewChanged(); }
@@ -2002,12 +2309,15 @@ void SketchModel::applySelectionDelta(const std::vector<int>& hits, QSelectActio
 }
 
 // ============================================================================
-// 命名过滤器（FILTER 保存/复用）：仅持久化，不入撤销栈
+// 命名过滤器（FILTER 保存/复用）：随图持久化 + **入撤销栈**。
+// 过滤器存的是"这张图的检索口径"，与图层/块表同级属图纸内容，删除/覆盖都应可回退。
+// 入口先压改前状态再改；重名覆盖同样算一步。
 // ============================================================================
 
 bool SketchModel::saveFilter(const FilterDef& f) {
     const QString nm = f.name.trimmed();
     if (nm.isEmpty() || f.conds.empty()) return false;
+    pushMemento(QStringLiteral("保存过滤器 ") + nm);
     for (auto& sf : savedFilters_) {
         if (sf.name == nm) { sf = f; sf.name = nm; return true; }   // 重名覆盖
     }
@@ -2018,7 +2328,11 @@ bool SketchModel::saveFilter(const FilterDef& f) {
 
 bool SketchModel::deleteFilter(const QString& name) {
     for (auto it = savedFilters_.begin(); it != savedFilters_.end(); ++it) {
-        if (it->name == name) { savedFilters_.erase(it); return true; }
+        if (it->name == name) {
+            pushMemento(QStringLiteral("删除过滤器 ") + name);
+            savedFilters_.erase(it);
+            return true;
+        }
     }
     return false;
 }
@@ -2072,14 +2386,21 @@ std::vector<int> SketchModel::applyPickFilterOnce(const std::vector<int>& candid
 // ============================================================================
 // 单位（UNITS）与图纸界限（LIMITS）
 // ----------------------------------------------------------------------------
-// 应用级配置（与打印设置同级）：**不入撤销栈** —— 单位切换改变的是「显示口径」
-// 而非几何内容，允许 Ctrl+Z 撤销反而会让"数值没变、显示变了"的中间态难以理解。
-// 信号仅在设置真变化时发出（unitsChanged/limitsChanged），下游（状态栏坐标、
+// 随图属性（与几何同源）：**入撤销栈** —— 单位/界限/捕捉/追踪都随图存档，
+// 用户按 Ctrl+Z 时期望"整体回到上一步"；若这几项不跟随回退，就会出现
+// 「线回来了、单位没回来」的半截状态，正是本次要消除的不一致。
+// 每个入口先 pushMemento（改**前**状态）再改值，保证一步一次、redo 对称。
+// 幂等守卫保持不变：值没变则不入栈、不发信号。
+// 信号仅在设置真变化时发出（unitsChanged/limitsChanged/…），下游（状态栏坐标、
 // 参数输入条后缀、单位面板）各自连接刷新，避免无效重绘。
+//
+// 边界：这里入栈的是**随图属性**；「应用习惯」（窗口几何、最近文件、自动保存间隔等
+// AppSettings 键）一律不入栈——它们不属于图纸内容，见 P1-01 与本文档第 2 节。
 // ============================================================================
 
 void SketchModel::setUnits(const UnitsMeta& u) {
-    if (u == units_) return;                       // 相同不发信号（幂等）
+    if (u == units_) return;                       // 相同不发信号、也不入栈（幂等）
+    pushMemento(QStringLiteral("修改单位"));
     units_ = u;
     emit unitsChanged();
 }
@@ -2087,18 +2408,21 @@ void SketchModel::setUnits(const UnitsMeta& u) {
 void SketchModel::setLimits(const LimitsMeta& l) {
     const LimitsMeta v = l.isValid() ? l : LimitsMeta();   // 非法范围回落默认 A3
     if (v == limits_) return;
+    pushMemento(QStringLiteral("修改图纸界限"));
     limits_ = v;
     emit limitsChanged();
 }
 
 void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
-    if (c == snapConfig_) return;                 // 相同不发信号（幂等）
+    if (c == snapConfig_) return;                 // 相同不发信号、也不入栈（幂等）
+    pushMemento(QStringLiteral("修改捕捉设置"));
     snapConfig_ = c;
     emit snapConfigChanged();
 }
 
 void SketchModel::setTrackConfig(const snap::TrackConfig& c) {
-    if (c == trackConfig_) return;               // 相同不发信号（幂等）
+    if (c == trackConfig_) return;               // 相同不发信号、也不入栈（幂等）
+    pushMemento(QStringLiteral("修改追踪设置"));
     trackConfig_ = c;
     emit trackConfigChanged();
 }
@@ -2463,34 +2787,71 @@ void SketchModel::setLineParamCount(int v) {
 void SketchModel::log(const QString& m, const QString& t) { emit logAppended(m, t); }
 void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged(c); }
 
+// 说明：命名过滤器表随快照回退，但它**没有专用变更信号**（既有 saveFilter/deleteFilter
+// 也从不发信号，过滤器管理界面在打开时读取），故此处不额外广播，与既有行为一致。
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
+    // 先算差异：下面 std::move 会掏空 m，之后再比就晚了。
+    Memento& top = undoStack_.back();
+    const bool unitsDiff  = !(top.units == units_);
+    const bool limitsDiff = !(top.limits == limits_);
+    const bool snapDiff   = !(top.snapConfig == snapConfig_);
+    const bool trackDiff  = !(top.trackConfig == trackConfig_);
+    const bool layoutDiff = (top.currentLayout != currentLayout_) || !sameLayouts(top.layouts, layouts_);
     Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
     rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
+    rb.layouts = layouts_; rb.currentLayout = currentLayout_; rb.units = units_; rb.limits = limits_;
+    rb.snapConfig = snapConfig_; rb.trackConfig = trackConfig_; rb.savedFilters = savedFilters_;
     redoStack_.push_back(std::move(rb));
+    while (redoStack_.size() > (size_t)undoDepthLimit_) redoStack_.erase(redoStack_.begin());
     auto m = undoStack_.back(); undoStack_.pop_back();
     elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
     dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
+    // 随图属性回退（与几何同一步）：用户心智里的 Ctrl+Z 是"整体回到上一步"
+    units_ = m.units; limits_ = m.limits; snapConfig_ = m.snapConfig; trackConfig_ = m.trackConfig;
+    layouts_ = std::move(m.layouts); currentLayout_ = m.currentLayout; savedFilters_ = std::move(m.savedFilters);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
     emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
-    if (scaleDiff) emit scaleChanged(scaleRatio_);
+    // 只在真变化时发信号（与既有 scaleChanged 同理）：撤销不应引发无谓的面板重绘
+    if (layoutDiff) emit layoutsChanged();
+    if (unitsDiff)  emit unitsChanged();
+    if (limitsDiff) emit limitsChanged();
+    if (snapDiff)   emit snapConfigChanged();
+    if (trackDiff)  emit trackConfigChanged();
+    if (scaleDiff)  emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已撤销: ") + m.label);
 }
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
+    Memento& top = redoStack_.back();
+    const bool unitsDiff  = !(top.units == units_);
+    const bool limitsDiff = !(top.limits == limits_);
+    const bool snapDiff   = !(top.snapConfig == snapConfig_);
+    const bool trackDiff  = !(top.trackConfig == trackConfig_);
+    const bool layoutDiff = (top.currentLayout != currentLayout_) || !sameLayouts(top.layouts, layouts_);
     Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
     rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
+    rb.layouts = layouts_; rb.currentLayout = currentLayout_; rb.units = units_; rb.limits = limits_;
+    rb.snapConfig = snapConfig_; rb.trackConfig = trackConfig_; rb.savedFilters = savedFilters_;
     undoStack_.push_back(std::move(rb));
+    while (undoStack_.size() > (size_t)undoDepthLimit_) undoStack_.erase(undoStack_.begin());
     auto m = redoStack_.back(); redoStack_.pop_back();
     elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
     dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
+    units_ = m.units; limits_ = m.limits; snapConfig_ = m.snapConfig; trackConfig_ = m.trackConfig;
+    layouts_ = std::move(m.layouts); currentLayout_ = m.currentLayout; savedFilters_ = std::move(m.savedFilters);
     const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
     scaleRatio_ = m.scale;
     selectedIds_.clear(); selectedId_ = -1;
     emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
-    if (scaleDiff) emit scaleChanged(scaleRatio_);
+    if (layoutDiff) emit layoutsChanged();
+    if (unitsDiff)  emit unitsChanged();
+    if (limitsDiff) emit limitsChanged();
+    if (snapDiff)   emit snapConfigChanged();
+    if (trackDiff)  emit trackConfigChanged();
+    if (scaleDiff)  emit scaleChanged(scaleRatio_);
     log(QStringLiteral("已重做: ") + m.label);
 }
 
@@ -2705,8 +3066,14 @@ const PlotLayoutDef* SketchModel::findLayout(const QString& name) const {
     return nullptr;
 }
 
+// 布局是随图内容（与图层/块表同级），增删改一律入撤销栈：先压改前状态，再改。
+// 唯一例外是 setCurrentLayout（切页签）：它只改"当前看哪一张"，属视图焦点而非图纸内容，
+// 若为它单独压栈，Ctrl+Z 会退化成"来回翻页签"。它仍**参与快照**（currentLayout 字段），
+// 因此撤销任何一步时当前布局都会随快照一起回到当时，不会出现"布局表回来了、
+// 当前页签还停在新布局"的错位。
 bool SketchModel::addLayout(const QString& name, const PrintSettings& settings) {
     if (name.trimmed().isEmpty() || findLayout(name)) return false;
+    pushMemento(QStringLiteral("新建布局 ") + name);
     PlotLayoutDef def;
     def.name = name;
     def.settings = settings;
@@ -2718,6 +3085,7 @@ bool SketchModel::addLayout(const QString& name, const PrintSettings& settings) 
 bool SketchModel::removeLayout(const QString& name) {
     for (auto it = layouts_.begin(); it != layouts_.end(); ++it) {
         if (it->name == name) {
+            pushMemento(QStringLiteral("删除布局 ") + name);
             layouts_.erase(it);
             if (currentLayout_ == name) currentLayout_.clear();   // 回落模型空间
             emit layoutsChanged();
@@ -2734,6 +3102,7 @@ bool SketchModel::renameLayout(const QString& oldName, const QString& newName) {
         if (l.name == oldName) { def = &l; break; }
     if (!def) return false;
     if (newName != oldName && findLayout(newName)) return false;  // 重名拒绝
+    pushMemento(QStringLiteral("重命名布局 ") + oldName);
     def->name = newName;
     if (currentLayout_ == oldName) currentLayout_ = newName;
     emit layoutsChanged();
@@ -2743,6 +3112,7 @@ bool SketchModel::renameLayout(const QString& oldName, const QString& newName) {
 bool SketchModel::updateLayout(const QString& name, const PrintSettings& settings) {
     for (auto& l : layouts_) {
         if (l.name == name) {
+            pushMemento(QStringLiteral("修改布局 ") + name);
             l.settings = settings;
             emit layoutsChanged();
             return true;
@@ -2760,7 +3130,7 @@ bool SketchModel::setCurrentLayout(const QString& name) {
     }
     if (!findLayout(name)) return false;
     if (currentLayout_ == name) return true;         // 幂等
-    currentLayout_ = name;
+    currentLayout_ = name;                           // 不单独入栈：见上方说明
     emit layoutsChanged();
     return true;
 }

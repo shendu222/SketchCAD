@@ -1,4 +1,6 @@
 #include "Gdt.h"
+#include "TextStyle.h"      // ResolvedTextStyle
+#include "TextMetrics.h"    // 标注文字宽度：真实度量（有 GUI）/ 无头确定性估算
 
 #include <algorithm>
 #include <cmath>
@@ -104,11 +106,13 @@ void appendFcfSymbolStrokes(std::vector<geo::Seg>& out, FcfSymbol sym, const Vec
     }
 }
 
-// 估算一行文字的宽度(mm)。核心层不引 QFontMetrics（离屏无字体环境会退化），
-// 用「字符数 × 字高 × 系数」的确定性估算，保证布局在测试与实机一致。
+// 一行文字的宽度(mm)：优先真实度量（有 GUI 时），无头/字体缺失降级为确定性估算。
+// 这样 GD&T 框格文字宽度在屏幕/打印/取景三处同源，且离屏测试与实机一致。
 double estTextWidth(const QString& s, double h) {
     if (s.isEmpty()) return 0.0;
-    return s.size() * h * 0.62;
+    ResolvedTextStyle rs;
+    rs.height = h;                 // 真实字高(mm)，宽度因子/字体走默认
+    return TextMetrics::lineWidthMm(rs, s, h);
 }
 
 } // namespace

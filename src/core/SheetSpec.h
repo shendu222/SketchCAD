@@ -15,6 +15,9 @@ enum class SheetFormat { A0, A1, A2, A3, A4, A5 };
 // 第三角画法：俯视图在主视图上方、左视图在主视图左方（与 ISO 一致）。
 enum class ProjectionMethod { FirstAngle, ThirdAngle };
 
+// 新建图纸的标题栏样式（只增不改：Standard=现状，None=仅图框不画标题栏）
+enum class TitleBlockStyle { Standard, None };
+
 // 图纸规格：含幅面、横竖方向与最终毫米尺寸
 struct SheetSpec {
     SheetFormat format = SheetFormat::A3;

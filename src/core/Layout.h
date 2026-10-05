@@ -4,6 +4,7 @@
 #include <QRectF>
 #include <QMarginsF>
 #include <QString>
+#include <QStringList>
 #include <QList>
 #include <QJsonObject>
 #include "core/PlotStyle.h"
@@ -33,9 +34,37 @@ struct PlotViewport {
     // 图纸目标区（mm）：相对可打印区左上角、y 向下；空矩形 → 整块可打印区（MVP 行为）。
     // 视口平铺：布局内多个视口各占 paperRect 一块，实现矩形排布。
     QRectF  paperRect;
+    // per-viewport 冻结：仅在该视口内不输出的图层名单（其他视口/模型空间正常输出）。
+    // 序列化键 "frozenLayers"（缺键 → 空 = 旧档行为不变，逐字节等价改造前）。
+    QStringList frozenLayers;
+
+    // 该视口内某图层是否被冻结（只读裁决；渲染侧 PlotRenderer 消费）
+    bool layerFrozenIn(const QString& layer) const { return frozenLayers.contains(layer); }
 
     QJsonObject toJson() const;
     static PlotViewport fromJson(const QJsonObject& o);
+};
+
+// ============================================================================
+// 打印戳记（plot stamp）：可选叠加在页面边角的信息栏。
+//   * 默认 enabled=false → 出图路径零绘制调用（旧行为逐字节不变）；
+//   * 字段开关独立（图名/日期/时间/布局名/比例/文件名），字体与位置可配；
+//   * 序列化键 "stamp" 挂在 PrintSettings 下，缺键 → 默认（关闭）。
+// ============================================================================
+struct PlotStamp {
+    bool   enabled = false;       // 总开关（默认关闭）
+    bool   showDrawingName = true;   // 图名（drawingPath 基名；无路径省略该行）
+    bool   showDate = true;
+    bool   showTime = true;
+    bool   showLayoutName = true;
+    bool   showScale = true;
+    bool   showFileName = true;      // 完整文件路径（无路径省略该行）
+    QString fontFamily;              // 空 = 应用默认字体
+    double textHeightMm = 2.5;       // 纸面文字高（mm）
+    int    position = 3;             // 0=左上 1=右上 2=左下 3=右下（相对可打印区角）
+
+    QJsonObject toJson() const;
+    void fromJson(const QJsonObject& o);   // 缺键逐项回落默认（enabled 缺 → false）
 };
 
 // 当前设计把「布局」直接由 PrintSettings 表达，此处仅提供一个构造整体图形单视口的
@@ -72,6 +101,7 @@ struct PrintSettings {
     bool   monochrome = false;
     PlotStyleTable plotStyle;    // 简化 CTB 映射（灰度/线宽/抖动）
     QList<PlotViewport> viewports; // 空 = 模型空间打印；非空 = 按视口布局
+    PlotStamp stamp;             // 打印戳记（默认关闭 → 旧行为不变；序列化键 "stamp"，缺键回落默认）
 
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& o);

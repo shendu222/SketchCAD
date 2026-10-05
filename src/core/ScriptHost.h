@@ -28,6 +28,9 @@ public:
 
     ScriptApi* api() const { return api_.get(); }
 
+    // 多文档切换重绑：脚本交互面随活动文档换绑模型
+    void setModel(SketchModel* model);
+
 signals:
     void scriptOutput(const QString& msg);   // 脚本输出行（实时）
     void scriptError(const QString& msg);    // 脚本错误（实时）

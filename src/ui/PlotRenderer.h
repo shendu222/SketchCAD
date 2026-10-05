@@ -18,9 +18,12 @@ class PlotRenderer {
 public:
     // 渲染整个模型（不含坐标轴 / 提示等覆盖层）
     //   lineWidthScale: 打印时对图元线宽(mm)的整体缩放（<1 变细，默认 0.5），用于消除过粗失真
+    //   frozenLayers:   per-viewport 冻结图层名单（nullptr = 不冻结，历史行为）；
+    //                   名单内图层的打印零输出（仅影响本次调用，模型空间与其他视口不受影响）
     static void renderModel(QPainter* p, SketchModel* model, double scaleDev,
                            const QRectF& clipWorld, const PlotStyleTable& style,
-                           double lineWidthScale = 0.5);
+                           double lineWidthScale = 0.5,
+                           const QStringList* frozenLayers = nullptr);
 
     // 渲染单个图元（对外可见，便于测试 / 扩展）
     static void renderElement(QPainter* p, const Element& e, SketchModel* model,

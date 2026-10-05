@@ -18,6 +18,7 @@
 #include "core/Clipboard.h"      // clipboard::Payload（剪贴板粘贴拾取状态成员需要）
 #include "core/CadFormats.h"      // cadfmt::DxfVersion / DxfExportOptions（导出 DXF 版本选择）
 #include "core/AutoSave.h"        // AutoSave::Snapshot（恢复流程的方法签名需要完整类型）
+#include "ui/DocTab.h"            // DocManager / DocSession（多文档标签会话）
 
 class QDockWidget;
 class QToolBar;
@@ -29,6 +30,8 @@ class QToolButton;
 class QLabel;
 class QDoubleSpinBox;
 class QSpinBox;
+class QTabBar;
+class QStackedWidget;
 
 namespace SketchCAD {
 class SketchModel;
@@ -52,8 +55,11 @@ class GroupManagerDialog;   // 编组管理器（GROUP）
 class QSelectDialog;        // 快速选择（QSELECT）
 class FilterDialog;         // 过滤器（FILTER）
 struct SheetSpec;
+enum class TitleBlockStyle : int;   // core/SheetSpec.h：标题栏样式（Standard/None）
 class AppSettings;          // 全局设置（AppSettings.h 仍需在 cpp 中包含）
+class RecentFiles;          // 最近文件 MRU（core/RecentFiles.h 在 cpp 中包含）
 class OptionsDialog;        // 统一「选项」对话框（ui/OptionsDialog.h 在 cpp 中包含）
+class ModelMediator;        // 模型↔面板中介者（多文档切换时 rewire）
 
 // 主窗口：菜单栏、工具条、三栏 dock 布局、面板联动、文件 IO
 class MainWindow : public QMainWindow {
@@ -97,12 +103,31 @@ private:
     QList<QAction*> widthActs_, colorActs_;  // 子菜单项（用于勾选同步）
     QList<QAction*> dimActs_;                // 各类尺寸标注工具（不占工具条空间）
 
-    SketchModel* model_;
+    SketchModel* model_;   // 当前活动文档的模型（多文档切换时指向活动 DocSession 的模型）
     CommandInterpreter* interp_;
     ScriptHost* scriptHost_ = nullptr;   // 脚本宿主（二次开发：JS/Python/VBA 扩展）
     PluginManager* pluginManager_ = nullptr;   // 插件管理器（原生 SDK 二次开发）
     QMenu*       pluginLoadedSub_ = nullptr;   // 「已加载插件」动态子菜单
-    GraphicsView* view_;
+    GraphicsView* view_;   // 当前活动文档的视图（每文档一个 GraphicsView，随页栈切换）
+
+    // ---- 多文档标签（DocTab）----
+    // 单一真相源 = 每个 DocSession 各持一份 SketchModel（禁止全局单例模型）；
+    // model_/view_ 只是「活动文档」的借用指针，切换文档时重绑全部消费者。
+    DocManager*     docs_      = nullptr;   // 会话表（纯逻辑层，可离线直测）
+    QTabBar*        docTabs_   = nullptr;   // 标签条（可拖拽重排 + 关闭按钮）
+    QStackedWidget* viewStack_ = nullptr;   // 页栈：每文档一页（标尺十字 + 视图）
+    ModelMediator*  mediator_  = nullptr;   // 面板接线中介者（rewire 换绑活动文档）
+    // 一页 = 页面容器 + 该文档的视图与标尺（标尺须随视图成对切换）
+    struct DocPage { QWidget* page = nullptr; GraphicsView* view = nullptr;
+                  RulerWidget* hRuler = nullptr; RulerWidget* vRuler = nullptr; };
+    QHash<const DocSession*, DocPage> docPages_;
+    // 活动文档的信号连接清单（hookActiveDoc 统一登记；切换前统一断开，防旧模型串扰）
+    QList<QMetaObject::Connection> modelConns_, viewConns_;
+    QToolButton* btnOrtho_ = nullptr;   // 状态栏「正交」按钮（连接随文档换，按钮本体常驻）
+    QToolButton* btnSnap_  = nullptr;   // 状态栏「捕捉」按钮
+    QAction* aPolar_ = nullptr;         // 菜单「极轴」勾选态（连接随文档换）
+    QAction* aOtrack_ = nullptr;        // 菜单「对象追踪」勾选态
+    QAction* aGrid_  = nullptr;         // 菜单「显示栅格」勾选态
 
     PrintSettings currentPrintSettings_;   // 当前打印/出图设置（可由「打印设置」对话框修改并持久化）
 
@@ -137,7 +162,7 @@ private:
 
     // ---- 应用级配置持久化 + 最近文件 ----
     QMenu* recentMenu_ = nullptr;        // 文件 > 最近打开（动态子菜单）
-    QStringList recentFiles_;            // 最近文件列表（去重置顶；上限 = general/recentFileCount）
+    RecentFiles* recent_ = nullptr;      // 最近文件 MRU（路径+时间+pin；存储在 AppSettings）
     static bool s_recentPersistEnabled;  // 自测置 false：离屏测试不写注册表
     RulerWidget* hRuler_ = nullptr;   // 顶部水平标尺
     RulerWidget* vRuler_ = nullptr;   // 左侧垂直标尺
@@ -164,6 +189,14 @@ private:
     int            pickHlLoop_ = -2;         // 当前高亮的闭环下标（-2 = 尚未计算）
 
     void buildMenu();
+    void rebuildMenusForLanguage();           // 语言切换即刻生效：卸旧菜单 → buildMenu 重跑 tr()
+    void openCommandPalette();                // 命令面板（Ctrl+Shift+P）：模糊搜索 → Enter 执行
+    void auditShortcutConflicts();            // 启动自检：扫描重复快捷键绑定，warn 日志提示
+    // 崩溃可复现诊断包：启动提示 + 一键导出（打包/隐私逻辑在 core/DiagBundle 与 Telemetry）
+    void maybeShowPrivacyNotice();            // 首启动一次性明示（遥测默认关/诊断包零外发）
+    void showAbnormalExitNotice();            // 上次异常退出 → 发送诊断包 / 查看日志 / 忽略
+    void exportDiagnosticBundle();            // 组装图纸元信息（仅计数）→ DiagnosticsDialog
+    QVariantMap drawingDiagnosticsMeta() const; // 图纸元信息（不含几何/文本内容）
     void buildSketchMenu(QMenu* m);           // 【草图绘制】菜单：镜像工具条全部绘图工具
     void buildLineMenu(QMenu* m);             // 【直线】菜单：直线绘制方式的中文二级子菜单
     void buildXlineMenu(QMenu* m);            // 【构造线】菜单：XLINE 六种绘制方式
@@ -233,6 +266,35 @@ private:
 
     void saveFile();
     void openFile();
+
+    // ---- 启动页：启动=继续上次工作 ----
+    // 恢复项优先（P0-02 快照），其次 新建（空白 / A0~A4 模板+标题栏样式）/ 打开最近 / 打开其他。
+    // 对话框只做选择不动模型；执行统一在 exec 返回后分派（与 CrashRecoveryDialog 同设计）。
+    void showStartupPage();
+    // 模板化新建的唯一入口：菜单「新建」与启动页模板按钮共用同一 new drawing 流
+    //（applyNewDrawing 原样）；TitleBlockStyle::None 时在同一撤销步内静默移除标题栏层。
+    void createTemplatedDrawing(const SheetSpec& spec, double ratio, TitleBlockStyle tb);
+    // 「无标题栏」样式：移除标题栏层全部图元（Quiet，并入「新建图纸」同一撤销步）
+    void removeTitleBlockElements();
+    // 启动页打开首图：成功后若「出厂空白图」仍在（唯一/未命名/不脏/无图元）则收走它，
+    // 避免留下一个永远不会用的空标签；失败回滚后窗口仍保持一张可用空白图。
+    int  openDocAdoptingBlank(const QString& path);
+    // 唯一文档是否为「出厂空白」：未命名 + 不脏 + 无图元
+    bool isPristineBlank(const DocSession* s) const;
+    // 收走 0 号位的出厂空白文档（视图先于会话析构；活动下标自动收缩）
+    void closePristineFirstDoc();
+
+    // ---- 多文档标签（DocTab）----
+    // 每文档一份模型/视图/撤销栈/命令行历史/脏标记；标签显示文件名 + "*" 未保存。
+    void buildDocArea();                    // 标签条 + 页栈 + 首页（中央部件在此组装）
+    DocPage makeDocPage(DocSession* d);     // 为会话创建一页（视图 + 标尺十字），登记入页栈
+    void hookActiveDoc();                   // 活动文档接线：断开旧连接 → 重绑全部消费者 → 状态回显
+    void switchToDoc(int idx, bool forceHook = false);  // 切换活动文档（互换命令行历史/重绑/回显）
+    QString docTabText(int idx) const;      // 标签文本 = title()（含 "*" 脏标记）
+    void syncTabTitle(int idx);             // 刷新单个标签文本
+    bool confirmCloseDoc(int idx);          // 脏文档关闭保护：保存 / 不保存 / 取消
+    void closeDocAt(int idx);               // 关闭文档：销毁页面+会话；全关后回落到空白图
+    int  openDocInteractive(const QString& path);   // 新标签打开图纸；失败回滚返回 -1
     // ---- 崩溃不丢稿：自动保存 / 恢复 / 设置 ----
     void setupAutoSave();                       // 构建 autoSave_/appSettings_，接信号，启动定时器
     void offerCrashRecovery();                  // 启动扫描 .sv$ → 有残留则弹恢复对话框
@@ -248,9 +310,9 @@ private:
     void applySettingLive(const QString& key, const QVariant& v);   // settingChanged 统一消费点（含取消回滚）
     void saveAppSettingsOnClose();              // 关闭保存：几何/布局/显示开关/打印设置 + 写失败提示
     void openOptionsDialog();                   // 工具 → 选项...
-    // 最近文件（files/recentList + general/recentFileCount 消费方）
+    // 最近文件（files/recentEntries 消费方；MRU 语义在 core/RecentFiles）
     void pushRecentFile(const QString& path);   // 成功读档/存盘后登记（去重置顶、按上限截断）
-    void rebuildRecentMenu();                   // 重建「最近打开」子菜单
+    void rebuildRecentMenu();                   // 重建「最近打开」子菜单（缺失项灰显/右键固定删除）
     QString rememberDialogDir() const;          // 文件对话框起始目录：默认存盘目录 > 上次目录 > 系统
     void exportDxf();
     // P0-01：弹出版本下拉（R12 / R2000，默认 R12），供「导出 DXF」与「另存为 DXF」共用
@@ -316,6 +378,7 @@ private:
     void printDirect();                                 // 直接打印到打印机（模型空间）
     void exportPdfDirect();                             // 直接导出 PDF（QPdfWriter）
     void exportPdfLayoutsDirect();                      // 按布局表导出 PDF（每布局一页；空表回落模型空间单页）
+    void openPublish();                                 // 发布（PUBLISH）：勾选布局批量出图
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"
@@ -333,6 +396,7 @@ private:
     void openCreateBlockDialog();                     // 创建块...
     void openBlockManagerDialog();                    // 块管理器...（重命名/删除/重定义）
     void openBlockEditorDialog();                     // BEDIT 在位编辑块（改一份定义 → 全部引用同步）
+    void openBlockEditorDialog(const QString& blockName);   // 指定块名直接打开（双击块引用入口）
     void openDesignCenter();                          // 设计中心（符号库浏览/插入）侧栏
     void explodeBlockFromMenu();                      // 分解块...（当前选中的块引用）
     void openAttachXrefDialog();                      // 附加外部参照...（选择文件 + 路径类型）
@@ -368,6 +432,8 @@ public:
     //   新建 → 改比例 → 存成 JSON/DXF/STEP/DWG → 再读回来 → 比对。
     SketchModel* model() const { return model_; }
     GraphicsView* view() const { return view_; }   // 供测试断言"打开后是否真的看得见图"
+    // 多文档可测接缝：会话表（纯逻辑层）——开多张图/独立撤销/脏标记/跨文档剪贴板均可直测
+    DocManager* docManager() const { return docs_; }
     void applyNewDrawing(const SheetSpec& spec, double scaleRatio);
     bool writeDrawing(const QString& path, QString* err = nullptr);   // 按扩展名选格式
     bool readDrawing(const QString& path, QString* err = nullptr);

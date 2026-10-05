@@ -1,8 +1,11 @@
 #include "CommandInterpreter.h"
 #include "MacroScript.h"
 #include "AliasTable.h"
+#include "AppSettings.h"
 #include "SketchModel.h"
 #include <QRegularExpression>
+#include <QVector>
+#include <algorithm>
 #include <vector>
 
 namespace SketchCAD {
@@ -91,6 +94,29 @@ void CommandInterpreter::addHistory(const QString& line) {
     if (!history_.isEmpty() && history_.last() == s) return;
     history_ << s;
     if (history_.size() > 100) history_.removeFirst();
+    // 历史持久化：同步写回 AppSettings（尾部 ≤50 条）；写失败由 AppSettings 自身
+    // 状态记录，不阻断命令流（历史丢失不影响功能正确性）。
+    if (persist_)
+        persist_->setValue(QLatin1String(SettingKeys::kRecentCommands),
+                           history_.mid(history_.size() - kPersistMax));
+}
+
+// ---- 历史持久化（AppSettings 注入，可空=不持久化）----
+
+QStringList CommandInterpreter::persistedCommands(const AppSettings& s) {
+    QStringList out;
+    const QVariant raw = s.value(QLatin1String(SettingKeys::kRecentCommands));
+    for (const QString& c : raw.toStringList())
+        if (!c.trimmed().isEmpty()) out << c.trimmed();
+    return out;
+}
+
+void CommandInterpreter::setPersistence(AppSettings* s) {
+    persist_ = s;
+    if (!persist_) return;
+    // 预填：仅当当前会话历史为空（不覆盖 DocTab copy-in 的会话态）。
+    if (history_.isEmpty())
+        history_ = persistedCommands(*persist_);
 }
 
 // 编辑距离（Levenshtein）：用于「输错命令名给出最接近命令建议」。
@@ -114,15 +140,27 @@ static int levenshtein(const QString& a, const QString& b) {
     return prev[m];
 }
 
-// 在所有已知命令名中找与 cmd 编辑距离最小者（距离不超过阈值才建议，避免离谱猜测）。
-static QString nearestCommandName(const QString& cmd, const QStringList& names) {
-    int best = (int)1e9; QString bestName;
+// 在所有已知命令名中找与 cmd 编辑距离最小的最多 maxCount 个候选
+//（距离升序、同距离保持注册顺序；距离不超过阈值才算候选，避免离谱猜测）。
+// AutoCAD "Did you mean?" 风格：未知命令给出最相近的 3 个候选。
+QStringList CommandInterpreter::nearestCommands(const QString& cmd, const QStringList& names,
+                                                int maxCount) {
+    struct Cand { int dist; QString name; };
+    QVector<Cand> cands;
     int maxDist = cmd.size() / 2; if (maxDist < 2) maxDist = 2;
     for (const auto& nm : names) {
         const int d = levenshtein(cmd, nm);
-        if (d < best) { best = d; bestName = nm; }
+        if (d <= maxDist) cands.append({ d, nm });
     }
-    return (best <= maxDist) ? bestName : QString();
+    // 稳定排序（std::stable_sort 语义）：距离升序，同距离保持注册顺序
+    std::stable_sort(cands.begin(), cands.end(),
+                     [](const Cand& a, const Cand& b) { return a.dist < b.dist; });
+    QStringList res;
+    for (const auto& c : cands) {
+        if (res.size() >= maxCount) break;
+        res << c.name;
+    }
+    return res;
 }
 
 bool CommandInterpreter::execute(const QString& line) {
@@ -160,10 +198,12 @@ bool CommandInterpreter::execute(const QString& line) {
             QString args = (toks.size() > 1) ? toks.mid(1).join(QChar(' ')) : QString();
             ok = it->second(args);
         } else {
-            // 输错命令名 → 给出最接近的已知命令建议（AutoCAD 风格容错）
-            const QString sug = nearestCommandName(cmd, reg.exactNames() + externalCommandNames());
-            if (!sug.isEmpty())
-                model_->log("未知命令: " + cmd + "（是否想输入 " + sug + "？输入 help 查看全部）", "warn");
+            // 输错命令名 → 给出最相近的至多 3 个已知命令候选（AutoCAD "Did you mean?" 风格容错）
+            const QStringList sugs = nearestCommands(cmd, reg.exactNames() + externalCommandNames());
+            if (!sugs.isEmpty())
+                model_->log("未知命令: " + cmd + QStringLiteral("（您是不是想输入: ")
+                            + sugs.join(QStringLiteral(" / "))
+                            + QStringLiteral("？输入 help 查看全部）"), "warn");
             else
                 model_->log("未知命令: " + cmd + "（输入 help 查看）", "warn");
         }

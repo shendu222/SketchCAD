@@ -19,6 +19,9 @@
 #include "ConstraintSolver.h"
 #include "AircraftViews.h"
 #include "CadFormats.h"        // P0-01：dxfout 命令行导出（版本协商 / 原生实体）
+#include "CommandCatalog.h"    // help <cmd>：命令元数据目录（用法/参数/样例/相关）
+#include "CommandInterpreter.h" // help 总表：commandNames()（注册表+家族全集）
+#include "AliasTable.h"        // help 总表：别名单列；help <cmd> 先解析别名
 #include <QRegularExpression>
 #include <QFile>              // P0-01：dxfout 文件写出
 #include <QMap>
@@ -1787,6 +1790,134 @@ bool PlaneCommand::execute(const CommandContext& ctx) {
     return true;
 }
 
+// ============================================================
+// UCS 命令（用户坐标系）：五种定义方式 + CRUD + 读数模式切换
+// ============================================================
+bool UcsCommand::execute(const CommandContext& ctx) {
+    SketchModel* m = ctx.model;
+    const QStringList& t = ctx.toks;
+    if (t.size() < 2) {
+        m->log("当前 UCS: " + m->currentUcs().describe() +
+               (m->currentUcs().isWorld() ? "（世界系）" : ""));
+        m->log("用法: ucs world|view|3p|object|z|origin|save|set|restore|delete|list|coords");
+        return true;
+    }
+    const QString sub = t[1].toLower();
+
+    // ---- 定义方式 ①：世界 ----
+    if (sub == "world" || sub == "w") {
+        m->setCurrentUcs(Ucs("WORLD", Vec3(0, 0, 0), 0.0));
+        m->log("UCS 已切换到世界坐标系（WORLD）");
+        return true;
+    }
+    // ---- 定义方式 ②：视图（平面视图下视图系与世界系一致）----
+    if (sub == "view" || sub == "v") {
+        m->setCurrentUcs(Ucs("WORLD", Vec3(0, 0, 0), 0.0));
+        m->log("UCS 已对齐视图（平面视图下视图系=世界系）");
+        return true;
+    }
+    // ---- 定义方式 ③：三点 ----
+    if (sub == "3p" || sub == "three") {
+        if (t.size() < 4) { m->log("用法: ucs 3p <原点x,y> <X正向点x,y> [Y侧点x,y]", "warn"); return false; }
+        Vec3 p1, p2, p3;
+        if (!ctx.parsePoint(2, p1) || !ctx.parsePoint(3, p2)) { m->log("点解析失败", "warn"); return false; }
+        if (t.size() >= 5 && !ctx.parsePoint(4, p3)) { m->log("点解析失败", "warn"); return false; }
+        const Vec3 d = p2 - p1;
+        if (d.len2D() < 1e-12) { m->log("X 正向点与原点重合，无法定义 UCS", "warn"); return false; }
+        m->setCurrentUcs(Ucs("UCS3P", p1, d.angleRad()));
+        m->log("UCS(三点) 已定义: " + m->currentUcs().describe());
+        return true;
+    }
+    // ---- 定义方式 ④：对象 ----
+    if (sub == "object" || sub == "ob") {
+        if (t.size() < 3) { m->log("用法: ucs object <图元id>", "warn"); return false; }
+        bool ok = false;
+        const int id = t[2].toInt(&ok);
+        const Element* e = ok ? m->element(id) : nullptr;
+        if (!e || e->pts.size() < 2) { m->log("图元不存在或点数不足（需 ≥2 点）", "warn"); return false; }
+        const Vec3 d = e->pts[1] - e->pts[0];
+        if (d.len2D() < 1e-12) { m->log("图元前两点重合，无法确定 X 轴", "warn"); return false; }
+        m->setCurrentUcs(Ucs("UCSOBJ", e->pts[0], d.angleRad()));
+        m->log("UCS(对象) 已定义: " + m->currentUcs().describe());
+        return true;
+    }
+    // ---- 定义方式 ⑤：Z 轴（原点 + 绕 Z 旋转角；平面制图下 Z 轴法向恒定）----
+    if (sub == "z" || sub == "zaxis") {
+        if (t.size() < 4) { m->log("用法: ucs z <原点x,y> <绕Z旋转角°>", "warn"); return false; }
+        Vec3 p;
+        if (!ctx.parsePoint(2, p)) { m->log("点解析失败", "warn"); return false; }
+        bool ok = false;
+        const double deg = t[3].toDouble(&ok);
+        if (!ok) { m->log("角度解析失败: " + t[3], "warn"); return false; }
+        m->setCurrentUcs(Ucs("UCSZ", p, math::deg2rad(deg)));
+        m->log("UCS(Z轴) 已定义: " + m->currentUcs().describe());
+        return true;
+    }
+    // ---- 便捷定义：平移原点（可选旋转）----
+    if (sub == "origin" || sub == "org") {
+        if (t.size() < 3) { m->log("用法: ucs origin <x,y> [旋转角°]", "warn"); return false; }
+        Vec3 p;
+        if (!ctx.parsePoint(2, p)) { m->log("点解析失败", "warn"); return false; }
+        double deg = 0.0;
+        if (t.size() >= 4) {
+            bool ok = false;
+            deg = t[3].toDouble(&ok);
+            if (!ok) { m->log("角度解析失败: " + t[3], "warn"); return false; }
+        }
+        m->setCurrentUcs(Ucs("UCSORG", p, math::deg2rad(deg)));
+        m->log("UCS(原点) 已定义: " + m->currentUcs().describe());
+        return true;
+    }
+    // ---- CRUD ----
+    if (sub == "save" || sub == "s") {
+        if (t.size() < 3) { m->log("用法: ucs save <名称>", "warn"); return false; }
+        if (!m->ucsSave(t[2])) { m->log("名称无效（不能为空或 WORLD）", "warn"); return false; }
+        m->log("UCS 已保存: " + t[2] + " = " + m->currentUcs().describe());
+        return true;
+    }
+    if (sub == "set" || sub == "restore" || sub == "r") {
+        if (t.size() < 3) { m->log("用法: ucs set <名称>", "warn"); return false; }
+        if (!m->ucsSetCurrent(t[2])) { m->log("未找到命名 UCS: " + t[2], "warn"); return false; }
+        m->log("UCS 已切换: " + m->currentUcs().describe());
+        return true;
+    }
+    if (sub == "delete" || sub == "del") {
+        if (t.size() < 3) { m->log("用法: ucs delete <名称>", "warn"); return false; }
+        if (!m->ucsDelete(t[2])) { m->log("删除失败（不存在或为 WORLD）: " + t[2], "warn"); return false; }
+        m->log("UCS 已删除: " + t[2]);
+        return true;
+    }
+    if (sub == "list" || sub == "?") {
+        m->log(QString("命名 UCS 共 %1 个：").arg(m->ucsCount()));
+        for (const QString& n : m->ucsNames())
+            m->log("  " + n + " = " + m->ucsGet(n).describe());
+        m->log("当前 UCS: " + m->currentUcs().describe());
+        return true;
+    }
+    // ---- 坐标读数显示模式 ----
+    if (sub == "coords" || sub == "coord") {
+        if (t.size() < 3) {
+            m->log(QString("坐标读数当前按 %1 显示").arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
+            m->log("用法: ucs coords wcs|ucs");
+            return true;
+        }
+        const QString mode = t[2].toLower();
+        if (mode == "ucs")      m->setCoordDisplayUcs(true);
+        else if (mode == "wcs") m->setCoordDisplayUcs(false);
+        else { m->log("未知读数模式: " + mode + "（wcs|ucs）", "warn"); return false; }
+        m->log(QString("坐标读数已切换为按 %1 显示").arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
+        return true;
+    }
+    // ---- 便捷形式：直接用名称切换 ----
+    if (m->ucsHas(sub)) {
+        m->ucsSetCurrent(sub);
+        m->log("UCS 已切换: " + m->currentUcs().describe());
+        return true;
+    }
+    m->log("未知 ucs 子命令: " + sub, "warn");
+    return false;
+}
+
 bool GridCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 2) {
@@ -2879,48 +3010,91 @@ bool AircraftViewsCommand::execute(const CommandContext& ctx) {
 }
 
 // ============================================================
-// 帮助命令
+// 帮助命令（命令发现与容错帮助）
+// ============================================================
+// help            → 全命令总表（按分类分组，自动从注册表枚举，永不漏登记）
+//                   + 别名单列（acad.pgp 兼容，与命令数分开统计）
+// help <命令名>   → 单命令详情：名称/分类/简介/用法(Usage:)/参数/样例/相关命令；
+//                   先解析别名，未收录命令给出回落信息，未知命令给出相近候选
+//                   （复用 CommandInterpreter::nearestCommands 的编辑距离容错）。
+// 帮助文本只影响展示输出，不参与命令解析（help 仍按注册名分派）。
 // ============================================================
 
 bool HelpCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    m->log("绘制: line / circle / circle3p / arc / rect / poly / spline");
-    m->log("多边形: poly_regular / poly_circumscribed / poly_edge / rect_chamfer / rect_fillet / poly_star");
-    m->log("样条: spline_parabola_4p / spline_parabola_fd / spline_hyperbola / spline_parabola /"
-           " spline_through_points / freehand_line（后接点列）");
-    m->log("样条编辑: spline_from_polyline <id> / spline_append_pt <id> x,y / spline_insert_pts <id> x,y");
-    m->log("            spline_remove_pts <id> <idx> / spline_remove_between <id> <i> <j> / spline_explode <id>");
-    m->log("样式: width 1|2|3|5   color #RRGGBB|red   chain [on|off]");
-    m->log("编辑: delete <id> / trim <id> <x,y> [边界id..] / undo / redo / clear");
-    m->log("视图: plane xy|yz|xz / grid [on|off] / zoom <倍率>");
-    m->log("标注: dim linear|aligned|h|v x1,y1 x2,y2 [px,py]（GB/T 4458.4-2003）");
-    m->log("      dim baseline|continue|arc|leader|ordinate（新增 5 种）");
-    m->log("      dim angle 顶点 边1点 边2点 | dim radius|dia <圆id> [角度]");
-    m->log("      dim baseline|continue x1,y1 x2,y2 [px,py] | dim arc <圆/弧id> [起角 止角]");
-    m->log("      dim leader 起点x,y 折点x,y [文本点x,y] | dim ordinate 被测点x,y 基准点x,y [旋转角]");
-    m->log("      dims ：依据当前选区智能标注（直线→对齐，圆→直径）");
-    m->log("椭圆: ellipse_1pt cx,cy px,py / ellipse_axis cx,cy ax,ay px,py / ellipse_foci f1x,f1y f2x,f2y px,py");
-    m->log("      ellipse_4p x1,y1 x2,y2 x3,y3 x4,y4 / ellipse_c3p cx,cy x1,y1 x2,y2 x3,y3 / ellipse_inscribed <框id>");
-    m->log("折线: polyline x,y x,y x,y...（首末重合=闭合）");
-    m->log("      polyline_add_node|append_node <id> x,y");
-    m->log("      polyline_delete_node <id> <idx> | delete_between <id> <i> <j> | trim_segments <id> <segIdx>");
-    m->log("      polyline_equidistant <id> <d> | from_segments id1 id2... | arcs_to_chords <id> | change_segment_type <id> <i> <j>");
-    m->log("约束: constraint <type> <id..>");
-    m->log("选择: select_all / select_none / invert");
-    m->log("      select_entity <id> / deselect_entity <id> / select_contour <id> / toggle_contour <id>");
-    m->log("      select_intersected <id> / deselect_intersected <id> / select_layer <图层名> / toggle_layer <id>");
-    m->log("图层: layer add <名称> [颜色] [线宽] [线型] / layer delete <名称> / layer rename <旧> <新>");
-    m->log("      layer visible <名称> [on|off] / layer lock <名称> [on|off] / layer set <名称> <color|width|style> <值>");
-    m->log("      layer assign <名称>（选中图元移入该层） / layer apply <名称>（图层样式套用到本层图元） / layer list");
-    m->log("块: block create <块名> [基点x,y] [delete|keep]（从选择集建块，delete=用块引用替换原图元）");
-    m->log("      block insert <块名> <x,y> [旋转] [sx] [sy] / block list / block info <块名>");
-    m->log("      block redefine <块名>（用当前选择集重定义块，所有引用同步） / block explode <引用id>");
-    m->log("      block delete <块名> / block rename <旧名> <新名>");
-    m->log("属性块: attdef <块名> <标签> [提示] [x,y] [字高] / attedit <引用id> <标签> <值> / attlist [引用id]");
-    m->log("动态块: dynset <引用id> <参数名> <值|状态名> / dynlist <块名>");
-    m->log("查询: list [id..] / dist x1,y1 x2,y2 / area <封闭图元id> | x1,y1 x2,y2 [x3,y3..]");
-    m->log("      massprop <封闭图元id> ... / id x,y（封闭区域含圆/椭圆/矩形/多边形/闭合折线/剖面区域）");
-    m->log("点格式: x,y 或 x y 或 x,y,z（单位 mm，Y 轴向上为正）");
+
+    // ---- help <命令名>：单命令详情 ----
+    if (ctx.toks.size() >= 2) {
+        QString name = ctx.toks[1].toLower();
+        const QString resolved = AliasTable::instance().resolve(name);
+        const bool viaAlias = (resolved != name);
+        if (viaAlias) name = resolved;
+
+        const CommandInfo* ci = CommandCatalog::find(name);
+        const bool known = ci || CommandRegistry::instance().findExact(name) ||
+                           CommandRegistry::instance().findPrefixMatch(name);
+        if (!known) {
+            // 未知命令 → 相近候选（AutoCAD "Did you mean?" 风格）
+            const QStringList pool = CommandInterpreter::commandNames() +
+                                     AliasTable::instance().aliases();
+            const QStringList sugs = CommandInterpreter::nearestCommands(name, pool);
+            if (!sugs.isEmpty())
+                m->log(QStringLiteral("未知命令：%1（您是不是想输入: %2？）")
+                           .arg(ctx.toks[1].toLower(), sugs.join(QStringLiteral(" / "))),
+                       QStringLiteral("warn"));
+            else
+                m->log(QStringLiteral("未知命令：%1（输入 help 查看全部命令）")
+                           .arg(ctx.toks[1].toLower()),
+                       QStringLiteral("warn"));
+            return false;
+        }
+
+        if (viaAlias)
+            m->log(QStringLiteral("别名：%1 → %2").arg(ctx.toks[1].toLower(), name),
+                   QStringLiteral("info"));
+        if (ci) {
+            m->log(QStringLiteral("%1（%2 · 分类：%3）").arg(ci->name, ci->zhName, ci->category),
+                   QStringLiteral("info"));
+            if (!ci->summary.isEmpty()) m->log(QStringLiteral("简介：%1").arg(ci->summary));
+            if (!ci->usage.isEmpty())   m->log(QStringLiteral("用法（Usage:）：%1").arg(ci->usage));
+            if (!ci->params.isEmpty())  m->log(QStringLiteral("参数：%1").arg(ci->params));
+            if (!ci->example.isEmpty()) m->log(QStringLiteral("样例：%1").arg(ci->example));
+            if (!ci->shortcut.isEmpty()) m->log(QStringLiteral("快捷键：%1").arg(ci->shortcut));
+            if (!ci->related.isEmpty()) m->log(QStringLiteral("相关命令：%1").arg(ci->related.join(QStringLiteral(" / "))));
+        } else {
+            // 注册表中存在但目录未收录：给出回落信息（不编造用法）
+            m->log(QStringLiteral("%1（分类：%2）")
+                       .arg(name, CommandCatalog::categoryOf(name)),
+                   QStringLiteral("info"));
+            m->log(QStringLiteral("该命令暂无详细帮助；输入 help 查看全部命令总表。"));
+        }
+        return true;
+    }
+
+    // ---- help：全命令总表（自动枚举注册表 + 家族子模式，永不漏登记）----
+    const QStringList names = CommandInterpreter::commandNames();
+    // 按分类分组（保持注册顺序；未收录命令由 categoryOf 推断分类）
+    QVector<QPair<QString, QStringList>> groups;   // (分类, 命令名列表) 按首现顺序
+    auto groupOf = [&groups](const QString& cat) -> QStringList& {
+        for (auto& g : groups)
+            if (g.first == cat) return g.second;
+        groups.append({ cat, QStringList() });
+        return groups.last().second;
+    };
+    for (const QString& n : names)
+        groupOf(CommandCatalog::categoryOf(n)) << n;
+    for (const auto& g : groups)
+        m->log(QStringLiteral("【%1】%2").arg(g.first, g.second.join(QChar(' '))));
+    m->log(QStringLiteral("命令总数：%1（别名 %2 条，单列如下）")
+               .arg(names.size())
+               .arg(AliasTable::instance().aliases().size()));
+    // 别名单列（acad.pgp 兼容）：别名 → 完整命令，按别名升序
+    const auto aliasMap = AliasTable::instance().map();
+    QStringList aliasItems;
+    for (auto it = aliasMap.constBegin(); it != aliasMap.constEnd(); ++it)
+        aliasItems << QStringLiteral("%1=%2").arg(it.key(), it.value());
+    m->log(QStringLiteral("别名：%1").arg(aliasItems.join(QStringLiteral(", "))));
+    m->log(QStringLiteral("提示：help <命令名> 查看用法/参数/样例；Ctrl+Shift+P 打开命令面板。"));
     return true;
 }
 
@@ -3102,6 +3276,7 @@ void CommandRegistry::registerBuiltins() {
 
     // ---- 视图 ----
     registerExact("plane", std::make_shared<PlaneCommand>());
+    registerExact("ucs",   std::make_shared<UcsCommand>());
     registerExact("grid",  std::make_shared<GridCommand>());
     registerExact("zoom",  std::make_shared<ZoomCommand>());
 
@@ -3378,6 +3553,7 @@ void CommandRegistry::registerBuiltins() {
     //   layout delete <名>
     //   layout copy <源> <新>           复制布局（页面设置与视口集一并复制）
     //   layout vpscale <视口名> <比例>  改当前布局中某视口比例（"1:2" 或 0.5；1:2 = 出图缩小一半）
+    //   layout vpfreeze <视口名> [图层]  per-viewport 冻结（无图层名 = 列出；vpthaw 解冻）
     registerExact("layout", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
@@ -3488,7 +3664,49 @@ void CommandRegistry::registerBuiltins() {
                        QStringLiteral("info"));
                 return true;
             }
-            m->log(QStringLiteral("未知子命令 %1（可用：new/set/list/rename/delete/copy/vpscale）").arg(sub), QStringLiteral("error"));
+            // ---- vpfreeze / vpthaw：per-viewport 冻结（只影响该视口出图）----
+            //   layout vpfreeze <视口名>            列出该视口冻结的图层
+            //   layout vpfreeze <视口名> <图层名>    冻结（幂等，重复冻结不报错）
+            //   layout vpthaw  <视口名> <图层名>    解冻（未冻结不报错）
+            // 冻结集存于视口 frozenLayers（随布局表入档），渲染时该视口内这些图层零输出。
+            if (sub == "vpfreeze" || sub == "vpthaw" || sub == "视口冻结") {
+                if (ctx.toks.size() < 3) {
+                    m->log(QStringLiteral("用法：layout vpfreeze <视口名> [图层名]（无图层名 = 列出冻结层；vpthaw 解冻）"),
+                           QStringLiteral("error"));
+                    return false;
+                }
+                const PlotLayoutDef* def = m->currentLayoutDef();
+                if (!def) { m->log(QStringLiteral("当前处于模型空间（先 layout set <布局名>）"), QStringLiteral("error")); return false; }
+                PrintSettings s = def->settings;
+                int hit = -1;
+                for (int i = 0; i < s.viewports.size(); ++i)
+                    if (s.viewports[i].name.compare(ctx.toks[2], Qt::CaseInsensitive) == 0) { hit = i; break; }
+                if (hit < 0) { m->log(QStringLiteral("当前布局中无视口「%1」").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() == 3) {
+                    // 列出冻结层
+                    const QStringList& fl = s.viewports[hit].frozenLayers;
+                    if (fl.isEmpty())
+                        m->log(QStringLiteral("视口「%1」未冻结任何图层").arg(s.viewports[hit].name), QStringLiteral("info"));
+                    else
+                        m->log(QStringLiteral("视口「%1」冻结图层：%2").arg(s.viewports[hit].name, fl.join(QStringLiteral(", "))),
+                               QStringLiteral("info"));
+                    return true;
+                }
+                const QString layer = ctx.toks[3];
+                if (sub == "vpfreeze" || sub == "视口冻结") {
+                    if (!s.viewports[hit].frozenLayers.contains(layer))
+                        s.viewports[hit].frozenLayers.append(layer);
+                    m->updateLayout(def->name, s);
+                    m->log(QStringLiteral("视口「%1」已冻结图层「%2」（仅该视口出图隐藏）")
+                               .arg(s.viewports[hit].name, layer), QStringLiteral("info"));
+                } else {
+                    s.viewports[hit].frozenLayers.removeAll(layer);
+                    m->updateLayout(def->name, s);
+                    m->log(QStringLiteral("视口「%1」已解冻图层「%2」").arg(s.viewports[hit].name, layer), QStringLiteral("info"));
+                }
+                return true;
+            }
+            m->log(QStringLiteral("未知子命令 %1（可用：new/set/list/rename/delete/copy/vpscale/vpfreeze/vpthaw）").arg(sub), QStringLiteral("error"));
             return false;
         }));
 

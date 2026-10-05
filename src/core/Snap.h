@@ -179,17 +179,23 @@ struct TrackConfig {
 
 // 根据配置生成极轴射线方向角（度，[0,360)）。baseDir 非空且 polarRelative 时，以 baseDir 的
 // 世界角为基准叠加 0,inc,2inc…；否则从绝对 0° 起。始终额外补齐正交 0/90/180/270 作为兜底引导。
-std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir);
+// ucsOffsetDeg：当前 UCS 绕世界 Z 的旋转角（度）。极轴按 UCS X 轴为 0° 基准对齐，
+// 即所有极轴角整体偏移该值；缺省 0 = 世界轴（既有行为零回归）。
+std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir,
+                                double ucsOffsetDeg = 0.0);
 
 // 综合追踪：给定光标 w、配置 cfg、上一段方向 lastSegDir（可空）、极轴基点 polarBase（可空）、
 // 临时追踪点 trackPoints、已获取的对象追踪锚点 osnapAnchors、世界容差 tol，返回最佳追踪落点。
+// ucsAngleRad：当前 UCS 绕世界 Z 旋转角（弧度）。Polar 射线与 OTRACK/TK 的水平/垂直对齐线
+// 都按 UCS 轴方向计算（内部转 UCS 局部系做轴对齐，再转回世界系）；缺省 0 = 世界轴，零回归。
 // 命中规则（按到光标距离取最优）：
 //   - Polar：对每个极轴角，若 (w-polarBase) 在该角射线邻域（垂距 ≤ tol）且在前方，吸附到射线上；
-//   - OTRACK/TK：对每个锚点发出水平/垂直对齐线，光标落入邻域即吸附；两锚点正交对齐线交点亦参与。
+//   - OTRACK/TK：对每个锚点发出 UCS 水平/垂直对齐线，光标落入邻域即吸附；两锚点正交对齐线交点亦参与。
 TrackResult track(const Vec3& w, const TrackConfig& cfg,
                   const Vec3* lastSegDir, const Vec3* polarBase,
                   const std::vector<Vec3>& trackPoints,
-                  const std::vector<Vec3>& osnapAnchors, double tol);
+                  const std::vector<Vec3>& osnapAnchors, double tol,
+                  double ucsAngleRad = 0.0);
 
 // ======================== 输入约束（正交 ORTHO / 栅格吸附 SNAP）========================
 // 与捕捉/追踪不同：正交与栅格吸附是**强制性输入约束**，优先级高于 OSNAP——
@@ -201,15 +207,18 @@ struct InputResult {
 };
 
 // 合成输入约束。base 为「上一段终点/已放置点」（正交基准），可为空（首点无基准 → 正交不生效）。
+// ucsAngleRad：当前 UCS 绕世界 Z 旋转角（弧度）。正交锁轴与栅格量化都在 UCS 局部系内进行
+// （即正交方向 = UCS X/Y 轴、栅格沿 UCS 轴量化），完成后转回世界系；缺省 0 = 世界轴，零回归。
 // 行为规则（三者互斥关系明确定义，避免「同时开启时行为异常」）：
-//   ① 仅正交：保留 (p-base) 中绝对值较大的分量，另一分量归零 → 锁在过 base 的水平/垂直线上；
-//   ② 仅栅格：x/y 各自量化到 step 的最近整数倍（无 base 要求）；
+//   ① 仅正交：保留 (p-base) 中绝对值较大的分量，另一分量归零 → 锁在过 base 的 UCS 水平/垂直线上；
+//   ② 仅栅格：x/y 各自量化到 step 的最近整数倍（UCS 局部分量，无 base 要求）；
 //   ③ 两者同时开：**正交定方向、栅格定长度** —— 先按 ① 锁轴，再把「被保留的那个分量」
 //      量化到 step，另一分量保持 base 原值（保证点始终精确落在锁定轴上，不会因量化而偏出轴线）。
 //      这是 AutoCAD 的语义，也消除了「正交把点锁到 x=37.6、栅格又把它拽到 x=38」导致的抖动。
 //   ④ 都不开：原样返回。
 InputResult applyInputConstraints(const Vec3& p, const Vec3* base,
-                                  bool ortho, bool grid, double step);
+                                  bool ortho, bool grid, double step,
+                                  double ucsAngleRad = 0.0);
 
 } // namespace snap
 } // namespace SketchCAD

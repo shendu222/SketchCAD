@@ -620,7 +620,8 @@ SnapConfig SnapConfig::fromJson(const QJsonObject& o) {
 
 // ======================== 追踪系统几何（极轴 / 对象追踪 / 临时追踪点）========================
 
-std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir) {
+std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir,
+                                double ucsOffsetDeg) {
     std::vector<double> out;
     auto add = [&](double a) {
         a = std::fmod(a, 360.0);
@@ -630,10 +631,12 @@ std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir) {
                 std::fabs(x - a + 360.0) < 1e-6) return;
         out.push_back(a);
     };
-    double base = 0.0;
+    // 极轴角基准：UCS X 轴正向为 0°（ucsOffsetDeg = UCS 绕世界 Z 的旋转角），
+    // 再叠加「相对上一段方向」偏移（polarRelative 时）。缺省 ucsOffsetDeg=0 即世界轴基准。
+    double base = ucsOffsetDeg;
     // 相对上一段方向：以该方向的世界角为基准叠加增量角（首段无上一段则用绝对基准）
     if (cfg.polarRelative && baseDir && baseDir->len2D() > 1e-9)
-        base = baseDir->angleDeg();
+        base = baseDir->angleDeg() + ucsOffsetDeg;
     for (double a = 0.0; a < 360.0 - 1e-6; a += cfg.polarIncrement)
         add(base + a);
     // 始终补齐正交 0/90/180/270 作为兜底引导（即便增量角不整除 90°）
@@ -644,7 +647,8 @@ std::vector<double> polarAngles(const TrackConfig& cfg, const Vec3* baseDir) {
 TrackResult track(const Vec3& w, const TrackConfig& cfg,
                   const Vec3* lastSegDir, const Vec3* polarBase,
                   const std::vector<Vec3>& trackPoints,
-                  const std::vector<Vec3>& osnapAnchors, double tol) {
+                  const std::vector<Vec3>& osnapAnchors, double tol,
+                  double ucsAngleRad) {
     TrackResult best;                       // 默认 hit=false
     double bestD = tol + 1e-9;              // 仅当候选落点在容差内才视为命中
     const auto consider = [&](const Vec3& p, TrackMode m, const Vec3& dir, int axis,
@@ -656,8 +660,9 @@ TrackResult track(const Vec3& w, const TrackConfig& cfg,
     };
 
     // ---- POLAR：从基点沿各极轴角方向发出射线，光标投影到射线邻域即吸附 ----
+    // 极轴角以 UCS X 轴为 0° 基准（ucsAngleRad 转成度偏移交给 polarAngles）。
     if (cfg.polar && polarBase) {
-        const auto angs = polarAngles(cfg, lastSegDir);
+        const auto angs = polarAngles(cfg, lastSegDir, ucsAngleRad * 180.0 / M_PI);
         for (double deg : angs) {
             const double a = deg * M_PI / 180.0;
             const Vec3 dir(std::cos(a), std::sin(a), 0.0);
@@ -671,6 +676,8 @@ TrackResult track(const Vec3& w, const TrackConfig& cfg,
     }
 
     // ---- OTRACK + TK：锚点 = 已获取的对象追踪点 ∪ 用户放置的临时追踪点 ----
+    // 水平/垂直对齐线按 UCS 轴方向计算：先把锚点与光标转入 UCS 局部系做轴对齐，
+    // 命中落点再转回世界系。ucsAngleRad=0 时两次变换均为恒等，行为与既有世界轴实现完全一致。
     if (cfg.objectTrack || !trackPoints.empty()) {
         struct Tagged { Vec3 p; TrackMode m; };
         std::vector<Tagged> anchors;
@@ -678,21 +685,32 @@ TrackResult track(const Vec3& w, const TrackConfig& cfg,
             for (const auto& a : osnapAnchors) anchors.push_back({a, TrackMode::ObjectTrack});
         for (const auto& t : trackPoints) anchors.push_back({t, TrackMode::TempTK});
 
+        const double ca = std::cos(ucsAngleRad), sa = std::sin(ucsAngleRad);
+        auto ucsOf = [&](const Vec3& p) {
+            return Vec3(p.x * ca + p.y * sa, -p.x * sa + p.y * ca, p.z);
+        };
+        auto wldOf = [&](const Vec3& q) {
+            return Vec3(q.x * ca - q.y * sa, q.x * sa + q.y * ca, q.z);
+        };
+        const Vec3 dirX = wldOf(Vec3(1, 0, 0));   // UCS X 轴（世界系方向）
+        const Vec3 dirY = wldOf(Vec3(0, 1, 0));   // UCS Y 轴（世界系方向）
+        const Vec3 wU = ucsOf(w);
+
         for (size_t i = 0; i < anchors.size(); ++i) {
-            const Vec3& A = anchors[i].p;
+            const Vec3 A = ucsOf(anchors[i].p);
             const TrackMode m = anchors[i].m;
-            // 水平对齐线：y = A.y
-            if (std::fabs(w.y - A.y) <= tol)
-                consider(Vec3(w.x, A.y, 0), m, Vec3(1, 0, 0), 0, A);
-            // 垂直对齐线：x = A.x
-            if (std::fabs(w.x - A.x) <= tol)
-                consider(Vec3(A.x, w.y, 0), m, Vec3(0, 1, 0), 1, A);
-            // 与另一锚点的正交对齐线交点（A 水平 × B 垂直 → (B.x, A.y)；A 垂直 × B 水平 → (A.x, B.y)）
+            // UCS 水平对齐线：A.y = A.y（局部系）
+            if (std::fabs(wU.y - A.y) <= tol)
+                consider(wldOf(Vec3(wU.x, A.y, 0)), m, dirX, 0, anchors[i].p);
+            // UCS 垂直对齐线：x = A.x（局部系）
+            if (std::fabs(wU.x - A.x) <= tol)
+                consider(wldOf(Vec3(A.x, wU.y, 0)), m, dirY, 1, anchors[i].p);
+            // 与另一锚点的正交对齐线交点（A 水平 × B 垂直 → 局部 (B.x, A.y)；反之局部 (A.x, B.y)）
             for (size_t j = 0; j < anchors.size(); ++j) {
                 if (j == i) continue;
-                const Vec3& B = anchors[j].p;
-                consider(Vec3(B.x, A.y, 0), m, Vec3(1, 0, 0), 0, A, B);
-                consider(Vec3(A.x, B.y, 0), m, Vec3(0, 1, 0), 1, A, B);
+                const Vec3 B = ucsOf(anchors[j].p);
+                consider(wldOf(Vec3(B.x, A.y, 0)), m, dirX, 0, anchors[i].p, anchors[j].p);
+                consider(wldOf(Vec3(A.x, B.y, 0)), m, dirY, 1, anchors[i].p, anchors[j].p);
             }
         }
     }
@@ -702,38 +720,54 @@ TrackResult track(const Vec3& w, const TrackConfig& cfg,
 // ======================== 输入约束几何（正交 / 栅格吸附）========================
 
 InputResult applyInputConstraints(const Vec3& p, const Vec3* base,
-                                  bool ortho, bool grid, double step) {
+                                  bool ortho, bool grid, double step,
+                                  double ucsAngleRad) {
     InputResult r;
     r.point = p;
     if (step <= 1e-9) grid = false;               // 步长非法 → 栅格吸附退化为不生效
     const bool canOrtho = ortho && base;          // 正交需要基准点（首点无基准时不生效）
     if (!canOrtho && !grid) return r;             // ④ 都不开
 
+    // UCS 局部系下执行锁轴/量化（ucsAngleRad=0 时两次变换恒等 → 既有世界轴行为零回归）。
+    const double ca = std::cos(ucsAngleRad), sa = std::sin(ucsAngleRad);
+    auto ucsOf = [&](const Vec3& q) {
+        return Vec3(q.x * ca + q.y * sa, -q.x * sa + q.y * ca, q.z);
+    };
+    auto wldOf = [&](const Vec3& q) {
+        return Vec3(q.x * ca - q.y * sa, q.x * sa + q.y * ca, q.z);
+    };
+    const Vec3 pu = ucsOf(p);
+    Vec3 bu; const Vec3* baseU = base ? (bu = ucsOf(*base), &bu) : nullptr;
+
     if (canOrtho && !grid) {
         // ① 仅正交：保留绝对值较大的分量，另一分量归零
-        const Vec3 d = p - *base;
-        if (std::fabs(d.x) >= std::fabs(d.y)) r.point = Vec3(p.x, base->y, 0);
-        else                                  r.point = Vec3(base->x, p.y, 0);
+        const Vec3 d = pu - *baseU;
+        Vec3 lu;
+        if (std::fabs(d.x) >= std::fabs(d.y)) lu = Vec3(pu.x, baseU->y, 0);
+        else                                  lu = Vec3(baseU->x, pu.y, 0);
+        r.point = wldOf(lu);
         r.ortho = true;
         return r;
     }
     if (!canOrtho && grid) {
         // ② 仅栅格：两分量各自量化
-        const double sx = std::round(p.x / step) * step;
-        const double sy = std::round(p.y / step) * step;
-        r.point = Vec3(sx, sy, 0);
+        const double sx = std::round(pu.x / step) * step;
+        const double sy = std::round(pu.y / step) * step;
+        r.point = wldOf(Vec3(sx, sy, 0));
         r.grid = true;
         return r;
     }
     // ③ 两者同时开：正交定方向（锁轴），栅格定长度（量化保留分量）
-    const Vec3 d = p - *base;
+    const Vec3 d = pu - *baseU;
+    Vec3 lu;
     if (std::fabs(d.x) >= std::fabs(d.y)) {
-        const double sx = std::round(p.x / step) * step;
-        r.point = Vec3(sx, base->y, 0);           // 水平：x 量化、y 保持基准
+        const double sx = std::round(pu.x / step) * step;
+        lu = Vec3(sx, baseU->y, 0);               // UCS 水平：x 量化、y 保持基准
     } else {
-        const double sy = std::round(p.y / step) * step;
-        r.point = Vec3(base->x, sy, 0);           // 竖直：y 量化、x 保持基准
+        const double sy = std::round(pu.y / step) * step;
+        lu = Vec3(baseU->x, sy, 0);               // UCS 竖直：y 量化、x 保持基准
     }
+    r.point = wldOf(lu);
     r.ortho = true; r.grid = true;
     return r;
 }

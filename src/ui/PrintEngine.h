@@ -46,6 +46,23 @@ public:
 
     // 便捷：打印到 QPrinter（物理打印机或系统 PDF 虚拟打印机）
     static bool print(SketchModel* model, const PrintSettings& s, QPrinter* printer);
+
+    // ---- 发布（PUBLISH）：显式页列表出图（GUI 发布与 COM 批量出图共用同一裁决）----
+    // 一页 = 页名 + 完整页面设置；「模型空间」页 = 视口空设置；布局页 = 布局 settings 原样。
+    struct PublishPage {
+        QString name;            // 页名（布局名；模型空间页 = "模型空间"）
+        PrintSettings settings;  // 该页完整页面设置（含视口集 / 戳记 / 冻结集）
+    };
+
+    // 页列表导出单个多页 PDF：每页独立纸张/方向/边距。返回成功渲染的页数。
+    // 空页列表返回 0。exportPdfLayouts 即「布局表 → 页列表」后的本函数。
+    static int exportPagesPdf(SketchModel* model, const QList<PublishPage>& pages,
+                              const QString& filePath, const QString& title = QString());
+
+    // 页列表发送物理打印机：每页独立页面设置，页间 newPage。返回成功渲染的页数。
+    // 打印机页面参数在落笔前设置（QPrinter 语义：对下一页生效）。
+    static int printPages(SketchModel* model, const QList<PublishPage>& pages,
+                          QPrinter* printer);
 };
 
 } // namespace SketchCAD

@@ -5,6 +5,7 @@
 #include "ComError.h"
 #include "core/SketchModel.h"
 #include "core/Element.h"
+#include "core/ElementValidate.h"   // 鲁棒性守卫层：读档前图元只读校验/丢弃/修复
 #include "core/CadFormats.h"
 #include "core/Units.h"
 #include "ui/PrintEngine.h"
@@ -130,8 +131,14 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
                 scaleElementsToUnit(imported, srcUnit);
         }
         model.clear();
+        // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
+        int robSkip = 0, robFix = 0; QString robRep;
+        std::vector<SketchCAD::Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
+        if (robSkip > 0 || robFix > 0)
+            appendLog(QString(), QStringLiteral("[robust] DXF/DWG 打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+                          .arg(robSkip).arg(robFix).arg(robRep));
         model.beginEdit(QStringLiteral("自动化导入"));
-        model.addElementsQuiet(imported);
+        model.addElementsQuiet(kept);
         model.setDrawingPath(path);
         return true;
     }
@@ -147,8 +154,14 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     std::vector<Element> loaded;
     for (const auto& v : root["elements"].toArray())
         loaded.push_back(::SketchCAD::elementFromJson(v.toObject()));
+    // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
+    int robSkip = 0, robFix = 0; QString robRep;
+    std::vector<Element> kept = SketchCAD::filterElements(loaded, &robSkip, &robFix, &robRep);
+    if (robSkip > 0 || robFix > 0)
+        appendLog(QString(), QStringLiteral("[robust] 草图打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+                      .arg(robSkip).arg(robFix).arg(robRep));
     model.beginEdit(QStringLiteral("自动化打开"));
-    model.addElementsQuiet(loaded);
+    model.addElementsQuiet(kept);
     // 以下各表均容缺（旧文件无键回落默认），与交互读档逐项对齐
     model.setLayersFromJson(root["layers"].toArray());
     model.setBlocksFromJson(root["blocks"].toArray());
@@ -156,10 +169,15 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     model.setDimStylesFromJson(root["dimStyles"].toObject());   // 旧文件无此键 → 单一默认 "Standard"
     model.setSavedFiltersFromJson(root["savedFilters"].toArray());
     model.setLayoutsFromJson(root);   // 布局表（旧文件缺键 → 空表回落模型空间打印，与交互读档对齐）
-    model.setUnits(UnitsMeta::fromJson(root["units"].toObject()));
-    model.setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
-    model.setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));
-    model.setTrackConfig(snap::TrackConfig::fromJson(root["trackConfig"].toObject()));
+    // 与交互读档同源：这四项已改为随图属性（入撤销栈），此处必须抑制，
+    // 否则一次"自动化打开"会被拆成多步撤销（调用方已用 beginEdit 建立唯一编辑步）。
+    {
+        SketchModel::UndoGuard guard(&model);
+        model.setUnits(UnitsMeta::fromJson(root["units"].toObject()));
+        model.setLimits(LimitsMeta::fromJson(root["limits"].toObject()));
+        model.setSnapConfig(snap::SnapConfig::fromJson(root["snapConfig"].toObject()));
+        model.setTrackConfig(snap::TrackConfig::fromJson(root["trackConfig"].toObject()));
+    }
     model.setConstraintsFromJson(root["constraints"].toArray());
     model.setParamsFromJson(root["params"].toObject());
     // 存档比例只作元数据恢复（几何已是成品，不再缩放一次）
@@ -189,6 +207,17 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
 
     // ---- PDF 出图（QPdfWriter，offscreen 可行）----
     if (suffix == QLatin1String("pdf")) {
+        // 发布一致性：任务未显式指定页面设置且图纸带布局表 → 按布局逐页出图，
+        // 与 GUI「发布 / 导出 PDF（全部布局）」同走 PrintEngine::exportPdfLayouts
+        // （页数一致、渲染同一 renderPageBody 裁决）。显式给 settings 时维持旧单页行为。
+        if (settings.isEmpty() && model.layoutCount() > 0) {
+            const int pages = PrintEngine::exportPdfLayouts(&model, path);
+            if (pages <= 0) {
+                if (err) *err = comErrorText(SCAD_E_PLOT_FAILED) + QStringLiteral("：") + path;
+                return false;
+            }
+            return true;
+        }
         PrintSettings s = PrintSettings::defaults();
         if (!settings.isEmpty())
             s.fromJson(settings);
