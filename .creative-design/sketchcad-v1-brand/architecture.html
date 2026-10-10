@@ -1,0 +1,133 @@
+<html data-canvas-width="1200" data-canvas-height="660" style="margin:0;padding:0;">
+<title>SketchCAD 架构设计</title>
+<div style="width:1200px;box-sizing:border-box;background:#f7fafc;font-family:'Segoe UI','Microsoft YaHei',sans-serif;padding:24px 28px;">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1144" height="612" viewBox="0 0 1144 612">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#3b82f6"/>
+      </marker>
+      <marker id="arrowC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#0ea5a4"/>
+      </marker>
+    </defs>
+
+    <!-- 层标签 -->
+    <text x="24" y="44" font-size="15" font-weight="700" fill="#1e3a5f">UI 用户界面层（Qt Widgets）</text>
+    <text x="24" y="276" font-size="15" font-weight="700" fill="#1e3a5f">CORE 核心引擎层（core/，无 UI 依赖）</text>
+    <text x="24" y="516" font-size="15" font-weight="700" fill="#1e3a5f">EXT 扩展接口层</text>
+
+    <!-- 分层背景带 -->
+    <rect x="24" y="56" width="1096" height="180" rx="12" fill="#eaf2fb" stroke="#c9ddf2" stroke-width="1.5"/>
+    <rect x="24" y="288" width="1096" height="192" rx="12" fill="#e9f7f6" stroke="#bfe6e4" stroke-width="1.5"/>
+    <rect x="24" y="528" width="1096" height="64" rx="12" fill="#f3f0fa" stroke="#d9d0ef" stroke-width="1.5"/>
+
+    <!-- ========== UI 层节点 ========== -->
+    <g>
+      <rect x="80" y="92" width="230" height="64" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="195" y="120" font-size="15" font-weight="700" fill="#12304f" text-anchor="middle">MainWindow</text>
+      <text x="195" y="142" font-size="13" fill="#4b6a8a" text-anchor="middle">主窗口</text>
+    </g>
+    <g>
+      <rect x="340" y="92" width="230" height="64" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="455" y="120" font-size="15" font-weight="700" fill="#12304f" text-anchor="middle">GraphicsView</text>
+      <text x="455" y="142" font-size="13" fill="#4b6a8a" text-anchor="middle">图形视图</text>
+    </g>
+    <g>
+      <rect x="600" y="92" width="230" height="64" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="715" y="120" font-size="15" font-weight="700" fill="#12304f" text-anchor="middle">ModelMediator</text>
+      <text x="715" y="142" font-size="13" fill="#4b6a8a" text-anchor="middle">模型中介</text>
+    </g>
+    <g>
+      <rect x="860" y="92" width="230" height="64" rx="10" fill="#ffffff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="975" y="120" font-size="15" font-weight="700" fill="#12304f" text-anchor="middle">PropertyPanel</text>
+      <text x="975" y="150" font-size="13" fill="#4b6a8a" text-anchor="middle">属性面板 / 命令行</text>
+    </g>
+
+    <!-- UI 内部连线 -->
+    <path d="M310,124 L340,124" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M570,124 L600,124" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M830,124 L860,124" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- ========== CORE 层节点 ========== -->
+    <g>
+      <rect x="56" y="320" width="168" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="140" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">Element / SketchModel</text>
+      <text x="140" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">图元与数据模型</text>
+    </g>
+    <g>
+      <rect x="240" y="320" width="168" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="324" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">Geometry / Snap</text>
+      <text x="324" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">几何与捕捉</text>
+    </g>
+    <g>
+      <rect x="424" y="320" width="168" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="508" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">Modify / Trim</text>
+      <text x="508" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">编辑操作</text>
+    </g>
+    <g>
+      <rect x="608" y="320" width="168" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="692" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">CommandInterpreter</text>
+      <text x="692" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">命令解释器</text>
+    </g>
+    <g>
+      <rect x="792" y="320" width="168" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="876" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">CadFormats</text>
+      <text x="876" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">JSON·DXF·STEP·DWG</text>
+    </g>
+    <g>
+      <rect x="976" y="320" width="132" height="64" rx="10" fill="#ffffff" stroke="#0ea5a4" stroke-width="1.5"/>
+      <text x="1042" y="348" font-size="14" font-weight="700" fill="#12304f" text-anchor="middle">ConstraintSolver</text>
+      <text x="1042" y="370" font-size="13" fill="#4b6a8a" text-anchor="middle">约束求解器</text>
+    </g>
+
+    <!-- CORE 内部连线 -->
+    <path d="M224,352 L240,352" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M408,352 L424,352" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M592,352 L608,352" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M776,352 L792,352" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+
+    <!-- ========== EXT 层节点 ========== -->
+    <g>
+      <rect x="56" y="548" width="250" height="36" rx="8" fill="#ffffff" stroke="#7c6bb0" stroke-width="1.5"/>
+      <text x="181" y="571" font-size="14" fill="#12304f" text-anchor="middle">SDK Plugin（C++ API）</text>
+    </g>
+    <g>
+      <rect x="322" y="548" width="250" height="36" rx="8" fill="#ffffff" stroke="#7c6bb0" stroke-width="1.5"/>
+      <text x="447" y="571" font-size="14" fill="#12304f" text-anchor="middle">COM Automation（Windows）</text>
+    </g>
+    <g>
+      <rect x="588" y="548" width="250" height="36" rx="8" fill="#ffffff" stroke="#7c6bb0" stroke-width="1.5"/>
+      <text x="713" y="571" font-size="14" fill="#12304f" text-anchor="middle">ScriptHost（JS / Python / VBA）</text>
+    </g>
+    <g>
+      <rect x="854" y="548" width="250" height="36" rx="8" fill="#ffffff" stroke="#7c6bb0" stroke-width="1.5"/>
+      <text x="979" y="571" font-size="14" fill="#12304f" text-anchor="middle">CUIx / acad.pgp</text>
+    </g>
+
+    <!-- 跨层连线：UI → CORE -->
+    <path d="M715,156 L715,320" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M975,156 L692,256" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M692,256 L692,320" stroke="#3b82f6" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- CORE 内部：命令→编辑→模型，约束/格式→模型 -->
+    <path d="M692,384 L508,410" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M508,410 L140,410" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M1042,384 L1042,410 L140,410" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+    <path d="M876,384 L876,410 L140,410" stroke="#0ea5a4" stroke-width="2" marker-end="url(#arrowC)"/>
+
+    <!-- EXT → CORE 虚线 -->
+    <path d="M181,548 L181,500 L324,410" stroke="#7c6bb0" stroke-width="1.6" stroke-dasharray="6,5" fill="none" marker-end="url(#arrow)"/>
+    <path d="M713,548 L713,500 L692,410" stroke="#7c6bb0" stroke-width="1.6" stroke-dasharray="6,5" fill="none" marker-end="url(#arrow)"/>
+
+    <!-- 图例 -->
+    <g font-size="12" fill="#4b6a8a">
+      <line x1="100" y1="36" x2="124" y2="36" stroke="#3b82f6" stroke-width="2.5"/>
+      <text x="132" y="40">界面 → 模型调用</text>
+      <line x1="300" y1="36" x2="324" y2="36" stroke="#0ea5a4" stroke-width="2.5"/>
+      <text x="332" y="40">核心内部数据流</text>
+      <line x1="520" y1="36" x2="544" y2="36" stroke="#7c6bb0" stroke-width="1.6" stroke-dasharray="6,5"/>
+      <text x="552" y="40">扩展接口接入</text>
+    </g>
+  </svg>
+</div>
+</html>
