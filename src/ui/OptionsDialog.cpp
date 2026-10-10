@@ -126,6 +126,12 @@ QWidget* OptionsDialog::buildGeneralPage() {
         "Ctrl+Z 最多能回退多少步；超出时丢弃最旧的一步。\n"
         "调大更省心但占内存（每步都含一份图纸状态）。"));
     form->addRow(QStringLiteral("撤销栈深度："), undoDepthSpin_);
+    chkUndoDelta_ = new QCheckBox(QStringLiteral("撤销差量化存储（关则回落全量模式）"), this);
+    chkUndoDelta_->setToolTip(QStringLiteral(
+        "开启：每步仅存「变更集 + 每 50 步一个全量检查点」，大幅降低撤销内存。\n"
+        "关闭：每步存整张图纸快照（用于性能/行为对照，内存占用更高）。\n"
+        "切换会清空当前撤销历史。"));
+    form->addRow(chkUndoDelta_);
     auto* hint = new QLabel(
         QStringLiteral("语言切换需要重新启动程序后完全生效。"), this);
     hint->setStyleSheet(QStringLiteral("color: gray;"));
@@ -301,6 +307,7 @@ void OptionsDialog::loadWidgets() {
     langBox_->setCurrentIndex(comboIndexOfData(langBox_, s_->language()));
     recentSpin_->setValue(s_->recentFileCount());
     undoDepthSpin_->setValue(s_->undoDepth());
+    chkUndoDelta_->setChecked(s_->undoDelta());
     chkGrid_->setChecked(s_->showGrid());
     chkSnap_->setChecked(s_->gridSnap());
     stepSpin_->setValue(s_->gridSnapStep());
@@ -325,6 +332,7 @@ void OptionsDialog::loadWidgetsFromDefaults() {
     langBox_->setCurrentIndex(comboIndexOfData(langBox_, AppSettings::defaultValue(QLatin1String(kLanguage))));
     recentSpin_->setValue(AppSettings::defaultValue(QLatin1String(kRecentFileCount)).toInt());
     undoDepthSpin_->setValue(AppSettings::defaultValue(QLatin1String(kUndoDepth)).toInt());
+    chkUndoDelta_->setChecked(AppSettings::defaultValue(QLatin1String(kUndoDelta)).toBool());
     chkGrid_->setChecked(AppSettings::defaultValue(QLatin1String(kShowGrid)).toBool());
     chkSnap_->setChecked(AppSettings::defaultValue(QLatin1String(kGridSnap)).toBool());
     stepSpin_->setValue(AppSettings::defaultValue(QLatin1String(kGridSnapStep)).toDouble());
@@ -349,6 +357,7 @@ void OptionsDialog::collectWidgets() {
     s_->setLanguage(langBox_->currentData().toString());
     s_->setRecentFileCount(recentSpin_->value());
     s_->setUndoDepth(undoDepthSpin_->value());
+    s_->setUndoDelta(chkUndoDelta_->isChecked());
     s_->setShowGrid(chkGrid_->isChecked());
     s_->setGridSnap(chkSnap_->isChecked());
     s_->setGridSnapStep(stepSpin_->value());

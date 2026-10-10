@@ -510,7 +510,8 @@ void paintTable(QPainter* p, const Element& e, Ctx& c) {
         for (int i = 0; i < C; ++i) {
             const QString raw = e.tableCell(r, i);
             if (raw.trimmed().isEmpty()) continue;
-            QString display = resolveFields(raw, c.model);
+            // 单元格显示统一管线：公式求值（=sum/=count）→ 域替换 → 失败回落 ###
+            QString display = displayTableCell(e, r + 1, i, c.model);
             const double cellL = xs[i] + pad, cellR = xs[i + 1] - pad;
             const double avail = cellR - cellL;
             if (TextMetrics::lineWidthMm(crs, display, th) > avail)

@@ -804,7 +804,8 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
         for (int c = 0; c < C; ++c) {
             const QString raw = e.tableCell(r, c);
             if (raw.trimmed().isEmpty()) continue;
-            QString display = resolveFields(raw, model);
+            // 单元格显示统一管线：公式求值（=sum/=count）→ 域替换 → 失败回落 ###
+            QString display = displayTableCell(e, r + 1, c, model);
             const double cellL = xs[c] + pad, cellR = xs[c + 1] - pad;
             const double avail = cellR - cellL;
             // 单元格溢出省略：内容超出可用宽度则尾部加 …

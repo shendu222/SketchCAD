@@ -245,6 +245,12 @@ struct BlockDynValue {
     double  value = 0.0;      // 拉伸距离(mm) / 旋转角(度)；翻转用 0/1
     QString state;            // 可见性状态名（仅可见性参数使用）
 };
+inline bool operator==(const BlockAttrValue& a, const BlockAttrValue& b) {
+    return a.tag == b.tag && a.value == b.value;
+}
+inline bool operator==(const BlockDynValue& a, const BlockDynValue& b) {
+    return a.name == b.name && a.value == b.value && a.state == b.state;
+}
 
 // 草图图元（统一数据模型）。坐标为世界坐标，遵循标准笛卡尔右手系：X 向右为正、Y 向上为正。
 // （视图层通过 Y 轴翻转把它映射到 Qt 的屏幕坐标，模型层不感知屏幕方向。）
@@ -451,6 +457,11 @@ struct Element {
     Element() = default;
     QString typeName() const { return elementTypeName(type); }
     QString sizeDesc() const;            // 主尺寸描述
+
+    // 全字段相等比较（撤销差量化 diffElements 用，替代逐图元 JSON 序列化——
+    // O(字段数) 成员比较比 QJsonObject 构建+序列化快两个数量级，语义与
+    // elementToJson 字节级比较一致：序列化是全字段的，相等比较也必须是全字段的）。
+    bool operator==(const Element& o) const;
 
     // 折线类图元是否按闭合处理。样条一律开放，所以 closed 字段的默认 true
     // 对它无副作用；矩形/多边形被剪切后会被置成 false。

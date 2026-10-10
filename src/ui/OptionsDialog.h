@@ -70,6 +70,7 @@ private:
     QComboBox* langBox_ = nullptr;
     QSpinBox* recentSpin_ = nullptr;
     QSpinBox* undoDepthSpin_ = nullptr;
+    QCheckBox* chkUndoDelta_ = nullptr;   // 撤销差量化开关（默认开）
     // 显示
     QCheckBox* chkGrid_ = nullptr;
     QCheckBox* chkSnap_ = nullptr;

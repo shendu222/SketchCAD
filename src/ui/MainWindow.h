@@ -437,6 +437,12 @@ public:
     void applyNewDrawing(const SheetSpec& spec, double scaleRatio);
     bool writeDrawing(const QString& path, QString* err = nullptr);   // 按扩展名选格式
     bool readDrawing(const QString& path, QString* err = nullptr);
+
+    // 启动对话框流：启动页 → 首启动隐私明示 → 上次异常退出提示。
+    // 必须由 main() 在「主窗口 show() 且 splash 已销毁」之后触发——若在构造期以
+    // singleShot(0) 注册，回调会在 splash 停留等待的 wait.exec() 嵌套事件循环里
+    // 抢跑弹出模态对话框，被置顶 splash 完全遮挡（表现为"卡在启动画面"假死）。
+    void runStartupDialogFlow();
     // ---- P0-04 大图纸打开 ----
     // 大文件后台解析开关（> kAsyncLoadBytes 走线程池 + 模态进度对话框）。
     // 自测置 false 走纯同步路径（离屏环境无交互，模态对话框会阻塞）。

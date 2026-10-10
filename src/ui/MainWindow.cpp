@@ -73,6 +73,7 @@
 #include "ui/AutoSaveOptionsDialog.h"   // 自动保存设置
 #include "core/AutoSave.h"              // 自动保存核心
 #include "core/AppSettings.h"           // 全局设置（HKCU\Software\SketchCAD）
+#include "core/ConstraintSolverFacade.h" // 约束求解路由门面（注入 AppSettings 供特性开关读取）
 #include "core/I18n.h"                  // 界面语言单一入口（翻译器装载/语言解析）
 #include "core/RecentFiles.h"           // 最近文件 MRU（路径+时间+pin）
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
@@ -277,18 +278,17 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     if (appSettings_ && s_recentPersistEnabled)
         Telemetry::setEnabled(appSettings_->telemetryEnabled());
 
-    // 启动页之后排队：首启动隐私明示 + 上次异常退出提示。
-    // （singleShot(0) FIFO：先注册的 showStartupPage 先弹，模态结束后这里才执行。）
-    QTimer::singleShot(0, this, [this] {
-        maybeShowPrivacyNotice();
-        showAbnormalExitNotice();
-    });
+    // 启动对话框流（启动页/隐私明示/异常退出提示）同样不在此注册 singleShot(0)，
+    // 原因同上（构造期 zero-timer 会在 splash 停留的 wait.exec() 里抢跑）。
+    // 统一由 main() 在 w.show() 且 splash 销毁后经 runStartupDialogFlow() 触发。
 }
 
 // ---- 崩溃不丢稿：自动保存 + 恢复 ----
 
 void MainWindow::setupAutoSave() {
     appSettings_ = new SketchCAD::AppSettings(nullptr, this);
+    // 约束求解门面注入应用设置：特性开关 solver/constraintEnabled 经此读取（默认开）。
+    ConstraintSolverFacade::instance().setSettings(appSettings_);
     autoSave_ = new SketchCAD::AutoSave(this);
 
     // 最近文件 MRU：存储复用 AppSettings（键 files/recentEntries），任何增删立即持久化；
@@ -348,9 +348,10 @@ void MainWindow::setupAutoSave() {
     // （连接在 hookActiveDoc 登记：随活动文档换绑，自动保存只盯活动文档）
     autoSave_->start();
 
-    // 启动页：启动=继续上次工作——恢复项优先（P0-02 快照），其次新建/打开最近/打开其他。
-    // （原为直接弹 CrashRecoveryDialog；恢复入口已并入启动页首屏横幅。）
-    QTimer::singleShot(0, this, [this]{ showStartupPage(); });
+    // 启动页不在此注册 singleShot(0)：构造期注册的 zero-timer 会在 main() 里
+    // splash 停留等待的 wait.exec() 嵌套事件循环中抢跑，模态启动页被置顶 splash
+    // 遮挡（表现为"卡在启动画面"假死）。改由 main() 在 splash 销毁后经
+    // runStartupDialogFlow() 显式触发。
 }
 
 void MainWindow::offerCrashRecovery() {
@@ -481,6 +482,18 @@ void MainWindow::showAbnormalExitNotice() {
     }
 }
 
+void MainWindow::runStartupDialogFlow() {
+    // 启动对话框流：显式顺序执行，消除 zero-timer FIFO 的隐式耦合。
+    //   1) 启动页（恢复项优先：P0-02 快照 → 新建/打开最近/打开其他）
+    //   2) 首启动隐私明示（一次性）
+    //   3) 上次异常退出提示（session.marker 残留）
+    // 调用时机（main.cpp 保证）：主窗口已 show()、splash 已销毁——
+    // 否则模态框在置顶 splash 之下弹出即成"卡在启动画面"假死。
+    showStartupPage();
+    maybeShowPrivacyNotice();
+    showAbnormalExitNotice();
+}
+
 void MainWindow::openAutoSaveOptions() {
     if (!appSettings_ || !autoSave_) return;
     AutoSaveOptionsDialog dlg(autoSave_->intervalMinutes(),
@@ -532,6 +545,8 @@ void MainWindow::loadAppSettingsOnStartup() {
     applySettingLive(QLatin1String(kShowLineWeight), appSettings_->value(QLatin1String(kShowLineWeight)));
     // 撤销栈深度是"应用习惯"：不入撤销栈，只在启动时把值灌进模型的栈深上限
     applySettingLive(QLatin1String(kUndoDepth), appSettings_->value(QLatin1String(kUndoDepth)));
+    // 撤销差量化开关（默认开；关则回落全量 Memento 模式对照）
+    applySettingLive(QLatin1String(kUndoDelta), appSettings_->value(QLatin1String(kUndoDelta)));
     // 空闲态右键行为（AutoCAD 约定默认开）：灌进活动模型会话态
     applySettingLive(QLatin1String(kRightClickIdleRepeat),
                      appSettings_->value(QLatin1String(kRightClickIdleRepeat)));
@@ -584,6 +599,9 @@ void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
     } else if (key == QLatin1String(kUndoDepth)) {
         // 栈深是应用习惯：只改模型的上限（并即时收敛超限的栈），本身不产生撤销步
         model_->setUndoDepthLimit(v.toInt());
+    } else if (key == QLatin1String(kUndoDelta)) {
+        // 撤销差量化开关：切换会清空现有撤销历史（两种模式栈表示不互换，清空唯一安全）
+        model_->setUndoDeltaEnabled(v.toBool());
     } else if (key == QLatin1String(kRecentEntries)) {
         // 外部直接改了底层存储（选项-取消回滚 / 重置 / 导入）→ RecentFiles 重载
         if (recent_) recent_->reloadFromSettings();   // 重载后 changed → rebuildRecentMenu
@@ -4393,6 +4411,14 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
             lastOpenMs_ = (double)(QDateTime::currentMSecsSinceEpoch() - t0);
             statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
             pushRecentFile(path);   // 成功读档 → 最近文件去重置顶（上限内的持久化在函数内部）
+            // FIELD 域自动刷新（AppSettings fields/autoUpdateOnOpen，默认开）：
+            // 打开文档后对全模型含域宿主预热求值一次（只读不改几何，异常回落 ###）。
+            if (appSettings_ && appSettings_->fieldAutoUpdateOnOpen()) {
+                const int nField = model_->refreshFields();
+                if (nField > 0)
+                    model_->log(QStringLiteral("已自动刷新 %1 个域宿主（fieldupdate 可手动重算）").arg(nField),
+                                QStringLiteral("info"));
+            }
         }
         return ok;
     } catch (const std::bad_alloc&) {
@@ -4636,6 +4662,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     }
     model_->setConstraintsFromJson(root["constraints"].toArray());  // 显式几何约束（缺键 → 空表）
     model_->setParamsFromJson(root["params"].toObject());           // 命名设计变量表（缺键 → 空表，Request M 新增）
+    model_->setPropsFromJson(root["properties"].toObject());        // 自定义图纸特性表（缺键 → 空表，PROP 域数据源）
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));

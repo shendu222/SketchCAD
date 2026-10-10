@@ -60,11 +60,14 @@ set(CORE_SOURCES
     src/core/SectionCutSymbol.cpp
     src/core/SectionDrawing.cpp
     src/core/ConstraintSolver.cpp
+    src/core/LegacyConstraintSolver.cpp   # SKT 集成 Phase B：修复模型委托实现（IConstraintSolver）
+    src/core/ConstraintSolverFacade.cpp   # SKT 集成 Phase B：路由门面（特性开关+回落，单例）
     src/core/ToolRegistry.cpp
     src/core/ShapeSelect.cpp
     src/core/GripOps.cpp
     src/core/sheet_frame.cpp
     src/core/Modify.cpp
+    src/core/UndoDelta.cpp        # 撤销栈差量化（变更集 + 每 50 步全量检查点）
     src/core/Clipboard.cpp
     src/core/Cleanup.cpp
     src/core/AircraftViews.cpp
@@ -94,6 +97,16 @@ set(CORE_SOURCES
     src/core/DiagBundle.cpp    # 诊断包：Stored-ZIP 写入器 + 打包编排（纯 core 可无头直测）
     src/core/Telemetry.cpp     # 遥测出口（默认关闭零外发；开关+出口双门闩）
 )
+
+# ---- D1：DWG 外部转换器隔离层（独立静态库目标）----
+# DwgBridge 只封装 QProcess 进程外调用 + 临时文件中转，**不含任何转换器头文件/
+# 代码**（LibreDWG 是独立 GPL exe，转换器本体在 ../../thirdparty/libredwg-0.14，
+# 独立构建，绝不进入本工程的任何目标）。独立成库的目的是物理隔离：UI 层与
+# 主程序其他源文件无法绕过桥直接触碰转换器，链接边界即审计边界。
+add_library(SketchDwgBridge STATIC src/core/DwgBridge.cpp)
+# Qt6::Gui：CadFormats.h → Element.h 链上引用 QColor（仅取头路径，桥逻辑本身只用 Core）
+target_link_libraries(SketchDwgBridge PUBLIC Qt6::Core Qt6::Gui)
+target_compile_options(SketchDwgBridge PRIVATE -Wall -Wextra)
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
     src/ui/ElementPath.cpp
@@ -164,7 +177,7 @@ add_executable(SketchCAD
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
+target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
@@ -244,7 +257,7 @@ add_executable(SketchSelfTest
     src/ui/DocTab.cpp               # 多文档会话核心（仅依赖 core，供 t_multidoc 离线直测）
     src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
 )
-target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
+target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(SketchSelfTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -264,7 +277,7 @@ add_executable(SketchBenchmark
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
+target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(SketchBenchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -279,7 +292,7 @@ add_executable(PlotStyleSamples
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
+target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(PlotStyleSamples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -294,7 +307,7 @@ add_executable(ReadmeShots
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent)
+target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(ReadmeShots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -378,6 +391,7 @@ if(WIN32)
   )
   target_link_libraries(SketchCADAutomation PRIVATE
       Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml
+      SketchDwgBridge
       ole32 oleaut32 advapi32 uuid)
   target_include_directories(SketchCADAutomation PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src

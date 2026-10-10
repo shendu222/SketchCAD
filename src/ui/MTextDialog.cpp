@@ -58,6 +58,31 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
     cbField_->addItem(QStringLiteral("文件名 %<FILENAME>%"), QStringLiteral("%<FILENAME>%"));
     cbField_->addItem(QStringLiteral("文件路径 %<FILEPATH>%"), QStringLiteral("%<FILEPATH>%"));
     cbField_->addItem(QStringLiteral("图元总数 %<COUNT>%"), QStringLiteral("%<COUNT>%"));
+    // 引用型域：面积/周长优先预填当前选中的封闭图元 id（未选中时给 id 模板，用户替换）
+    {
+        QString areaCode = QStringLiteral("%<AREA:id>%");     // 占位模板（id 待用户替换）
+        QString perimCode = QStringLiteral("%<PERIM:id>%");
+        if (model_) {
+            for (int id : model_->selection()) {
+                const Element* se = model_->element(id);
+                if (!se) continue;
+                switch (se->type) {   // 与 Inquiry 封闭集一致：预填第一个封闭图元
+                    case ElementType::Circle: case ElementType::Ellipse:
+                    case ElementType::Rectangle: case ElementType::Polygon:
+                    case ElementType::Polyline: case ElementType::Spline:
+                    case ElementType::Hatch: case ElementType::Boundary:
+                        areaCode  = QStringLiteral("%<AREA:%1>%").arg(id);
+                        perimCode = QStringLiteral("%<PERIM:%1>%").arg(id);
+                        break;
+                    default: break;
+                }
+                if (areaCode != QStringLiteral("%<AREA:id>%")) break;
+            }
+        }
+        cbField_->addItem(QStringLiteral("面积 %1").arg(areaCode), areaCode);
+        cbField_->addItem(QStringLiteral("周长 %1").arg(perimCode), perimCode);
+    }
+    cbField_->addItem(QStringLiteral("图纸特性 %<PROP:名称>%"), QStringLiteral("%<PROP:名称>%"));
 
     // 预填已有图元
     if (initial) {

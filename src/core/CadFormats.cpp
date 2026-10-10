@@ -3,6 +3,7 @@
 #include "DimStyle.h"
 #include "TextStyle.h"   // resolveFields：导出前把 %<字段>% 占位解析为求值快照
 #include "Block.h"       // 外部块表读取：block::blockDefFromJson / BlockDef
+#include "DwgBridge.h"   // D1：R2000+ DWG 读写的外部转换器桥（进程外，零 GPL 链入）
 #include <QFileInfo>
 #include <QFile>
 #include <QTextStream>
@@ -590,7 +591,8 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
             // 单元格文字（居中：72/73=1/2 + 第二插入点 11/21）
             for (int r = 0; r < R; ++r) {
                 for (int c = 0; c < C; ++c) {
-                    const QString t = resolveFields(e.tableCell(r, c), nullptr);
+                    // 导出为求值后的静态快照：公式（=sum/=count）+ 域一并解析（统一管线）
+                    const QString t = displayTableCell(e, r + 1, c, nullptr);
                     if (t.trimmed().isEmpty()) continue;
                     const double cx = (xs[c] + xs[c + 1]) / 2.0;
                     const double cy = e.pts[0].y - (r + 0.5) * rh;
@@ -937,7 +939,7 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
                                        Vec3(xs[c], e.pts[0].y-nR*rh,0), layer,color);
                     for(int r=0;r<nR;++r)
                         for(int c=0;c<nC;++c){
-                            QString t = resolveFields(e.tableCell(r,c), nullptr);
+                            QString t = displayTableCell(e, r+1, c, nullptr);   // 公式+域静态快照
                             if(t.trimmed().isEmpty()) continue;
                             // R12 TEXT 无对齐组码：文字置于单元格左侧 + 1mm 内边距（近似居中观感）
                             Vec3 p(xs[c]+1.0, e.pts[0].y-(r+0.5)*rh, 0);
@@ -1030,9 +1032,55 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
     return out;
 }
 
+// ---- D1：DWG R2000 (AC1015) 导出（外部转换器桥）----
+// 路径：toDxf(R2000)（自研，注入 AcDb 标记/句柄/OBJECTS 段）→ dwgwrite --as r2000。
+// toDwg 的 R12 路径保持逐字节不变（本函数是纯新增，旧调用方零影响）。
+QByteArray toDwgR2000(const std::vector<Element>& elems, QString* err, double drawingScale) {
+    if(err) err->clear();
+    // ① 先产 R2000 DXF（复用既有原生导出链：块/标注/填充按 DxfExportOptions 默认炸开，
+    //    与 toDwg 的 R12 基元口径一致，保证几何层面 round-trip 对齐）
+    DxfExportOptions opts;              // 全默认 = 炸开行为，version=R2000
+    opts.version = DxfVersion::R2000;
+    QString dxfErr;
+    const QByteArray dxf = toDxf(elems, &dxfErr, drawingScale, 4, nullptr, &opts);
+    if (dxf.isEmpty()) {
+        if (err) *err = dxfErr.isEmpty() ? QStringLiteral("生成 R2000 DXF 失败") : dxfErr;
+        return QByteArray();
+    }
+    // ② DXF → DWG R2000（进程外；未装转换组件/超时/崩溃均归一为明确报文）
+    QByteArray dwg; QString bridgeErr;
+    if (!dwgbridge::dxfToDwgR2000(dxf, dwg, &bridgeErr)) {
+        if (err) *err = bridgeErr;
+        return QByteArray();
+    }
+    return dwg;
+}
+
 bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
     if(err) err->clear();
     if(stats) *stats = DxfImportStats();
+    // ---- D1：版本自动路由（版本串探测唯一入口 = dwgbridge::versionFromBytes）----
+    //   AC1009             → 落入下方自研 R12 原生解析（语义不动，回归保护对象）；
+    //   AC1012~AC1032      → 外部转换器桥转 DXF，复用 fromDxf 回读；
+    //   无法识别的版本串   → 明确报错（含头部原文），绝不误读。
+    {
+        const QString ver = dwgbridge::versionFromBytes(data);
+        if (!ver.isEmpty() && ver != QLatin1String("AC1009")) {
+            QByteArray dxfBytes; QString bridgeErr;
+            if (!dwgbridge::dwgToDxf(data, dxfBytes, &bridgeErr)) {
+                if (err) *err = bridgeErr;
+                return false;
+            }
+            // 桥产出的 R2000 DXF 复用既有解析链（R2000 的 100/5/330 标记被自然忽略）
+            return fromDxf(dxfBytes, out, err, stats);
+        }
+        if (ver.isEmpty() && data.size() >= 6) {
+            // 头 6 字节不是 "AC1" 开头的合法版本串：报出原文，不误读
+            if (err) *err = QStringLiteral("不是有效的 DWG 文件（头部: %1）")
+                                .arg(QString::fromLatin1(data.left(6)).toHtmlEscaped());
+            return false;
+        }
+    }
     const uint8_t* d=(const uint8_t*)data.constData(); const int n=data.size();
     if(n < (int)(kDwgPreTable + kDwgTableCount*kDwgTableposSize)){ if(err)*err=QStringLiteral("文件过短或不是 DWG"); return false; }
     if(!(d[0]=='A'&&d[1]=='C'&&d[2]=='1'&&d[3]=='0'&&d[4]=='0'&&d[5]=='9')){ if(err)*err=QStringLiteral("不是 R12 DWG (AC1009)"); return false; }

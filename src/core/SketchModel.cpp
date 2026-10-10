@@ -1,10 +1,12 @@
 #include "SketchModel.h"
 #include "Geometry.h"
 #include "ConstraintSolver.h"
+#include "ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
 #include "DimStyle.h"
 #include "Modify.h"
 #include "Section.h"    // buildClosedLoopsFromElements：填充边界重算（关联填充随动）
 #include "Xref.h"
+#include "TextStyle.h"  // FIELD 域：refreshFields 预热求值（resolveFields/displayTableCell）
 #include <algorithm>
 #include <cmath>
 #include <QJsonObject>
@@ -216,28 +218,76 @@ bool SketchModel::sameState(const Memento& a, const Memento& b) {
     return true;
 }
 
+// AuxState 精确相等（封印去重用）：与 sameState 的 aux 部分逐字段同源。
+// 字段只增不改：Memento/aux 增字段时两处必须同步，否则"只改了新字段"的
+// 无操作步会被误判为有变更（多一步无意义撤销，无害但不干净）。
+static bool sameAuxState(const AuxState& a, const AuxState& b) {
+    if (a.nextId != b.nextId || a.scale != b.scale) return false;
+    if (a.currentDimStyle != b.currentDimStyle || a.currentLayout != b.currentLayout) return false;
+    if (!(a.units == b.units) || !(a.limits == b.limits)) return false;
+    if (!(a.snapConfig == b.snapConfig) || !(a.trackConfig == b.trackConfig)) return false;
+    if (a.params != b.params) return false;                       // std::map 自带 ==
+    if (a.layers.size() != b.layers.size() || a.blocks.size() != b.blocks.size()) return false;
+    if (a.textStyles.size() != b.textStyles.size() || a.dimStyles.size() != b.dimStyles.size()) return false;
+    if (a.layouts.size() != b.layouts.size() || a.savedFilters.size() != b.savedFilters.size()) return false;
+    for (size_t i = 0; i < a.layers.size(); ++i)
+        if (!sameLayer(a.layers[i], b.layers[i])) return false;
+    for (size_t i = 0; i < a.textStyles.size(); ++i)
+        if (!sameTextStyle(a.textStyles[i], b.textStyles[i])) return false;
+    for (size_t i = 0; i < a.blocks.size(); ++i)
+        if (!sameBlockDef(a.blocks[i], b.blocks[i])) return false;
+    if (!sameDimStyles(a.dimStyles, b.dimStyles)) return false;
+    if (!sameLayouts(a.layouts, b.layouts)) return false;
+    for (size_t i = 0; i < a.savedFilters.size(); ++i)
+        if (!sameFilter(a.savedFilters[i], b.savedFilters[i])) return false;
+    return true;
+}
+
 void SketchModel::pushMemento(const QString& label) {
     // 批量载入/反序列化：调用方已 beginEdit() 建立唯一编辑步，此处禁止再入栈，
     // 否则一次「打开图纸」会被拆成若干步 Ctrl+Z（几何回了、配置还留在半路）。
     if (undoSuppressed_) return;
-    // 快照同时记录绘图比例：撤销"修改比例"时必须让几何与比例一起回退，
-    // 否则回退后再改比例会以错误的基准计算缩放因子。
-    // 也记录图层表：撤销"隐藏图层/改图层样式"等操作时，图层定义与图元需一起回退。
-    Memento m;
-    m.label = label; m.elems = elems_; m.nextId = nextId_;
-    m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
-    m.dimStyles = dimStyles_; m.currentDimStyle = currentDimStyle_;
-    // 随图属性与几何同源快照：Ctrl+Z 必须"几何与配置一起回退"，
-    // 否则用户会看到"线回来了、单位/布局没回来"的半截状态。
-    m.layouts = layouts_; m.currentLayout = currentLayout_;
-    m.units = units_; m.limits = limits_;
-    m.snapConfig = snapConfig_; m.trackConfig = trackConfig_;
-    m.savedFilters = savedFilters_;
-    // 去重：与栈顶逐字段完全相同 → 不入栈（连续空转不会攒出无意义的撤销步）。
-    // 注意"单次批量操作仍是一步"由调用方 beginEdit + *Quiet 契约保证，与去重无关。
-    if (!undoStack_.empty() && sameState(undoStack_.back(), m)) return;
-    undoStack_.push_back(std::move(m));
-    while (undoStack_.size() > (size_t)undoDepthLimit_) undoStack_.erase(undoStack_.begin());
+
+    // ---- 全量模式：保留既有行为，整张 Memento 入栈（用于与差量模式对照）----
+    if (!deltaUndoEnabled_) {
+        Memento m;
+        m.label = label; m.elems = elems_; m.nextId = nextId_;
+        m.scale = scaleRatio_; m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
+        m.dimStyles = dimStyles_; m.currentDimStyle = currentDimStyle_;
+        m.layouts = layouts_; m.currentLayout = currentLayout_;
+        m.units = units_; m.limits = limits_;
+        m.snapConfig = snapConfig_; m.trackConfig = trackConfig_;
+        m.savedFilters = savedFilters_;
+        if (!undoStack_.empty() && sameState(undoStack_.back().snap, m)) return;
+        UndoStep s; s.isCheckpoint = true; s.snap = std::move(m); s.delta.label = label;
+        undoStack_.push_back(std::move(s));
+        trimUndoStackToLimit();
+        redoStack_.clear();
+        return;
+    }
+
+    // ---- 差量模式：出向差量 + 惰性封印 ----
+    // 1) 先封印上一个未封印条目：它的出向差量 delta(E_k→E_{k+1}) 正是上一步操作的
+    //    变更集（pendingBase_ = E_k，当前 = E_{k+1}）。封印结果为空 ⟺ 上一步是无操作
+    //    （与旧 sameState 去重同义）→ 原样早退：不建新条目、不 trim、不清 redo，
+    //    栈顶条目保持未封印、基态不变，下一步真实操作的变更集仍封进同一条目。
+    // 2) 再建新条目：只捕获 label + auxBefore + 「改前」基态（elems 深拷贝一次，
+    //    与旧实现每次 push 的 currentMemento() 同价）；每 50 步仍落一个全量检查点。
+    //    出向差量留给下一次 push / undo 封印——push 从此不再 reconstruct + 全量 diff。
+    const int sealed = sealPendingStep();
+    if (sealed == 0) return;   // 无操作步：与旧 sameState 去重逐字节对应（不清 redo）
+    UndoStep s;
+    s.isCheckpoint = ((int)undoStack_.size() % kUndoCheckpointInterval == 0);
+    if (s.isCheckpoint) {
+        s.snap = currentMemento();
+        s.snap.label = label;
+    }
+    s.delta.label = label;
+    s.delta.auxBefore = captureAux();
+    undoStack_.push_back(std::move(s));
+    pendingBase_ = currentMemento();
+    unsealedStep_ = true;
+    trimUndoStackToLimit();
     redoStack_.clear();
 }
 
@@ -247,13 +297,242 @@ static constexpr int kUndoDepthMin     = 1;
 static constexpr int kUndoDepthMax     = 1000;
 static constexpr int kUndoDepthDefault = 100;
 
+void SketchModel::setUndoDeltaEnabled(bool on) {
+    if (on == deltaUndoEnabled_) return;
+    deltaUndoEnabled_ = on;
+    // 两种模式栈表示不互换，切换唯一安全做法：清空撤销历史（与 setUndoDepthLimit 收敛同理）。
+    undoStack_.clear();
+    redoStack_.clear();
+    unsealedStep_ = false;      // 未封印条目随栈一并作废
+    pendingBase_ = Memento{};
+}
+
 void SketchModel::setUndoDepthLimit(int steps) {
     int v = (steps >= kUndoDepthMin && steps <= kUndoDepthMax) ? steps : kUndoDepthDefault;
     if (v == undoDepthLimit_) return;
     undoDepthLimit_ = v;
-    // 调小后立刻收敛：丢弃最旧的（双栈同限，避免 redo 侧无界增长）
-    while (undoStack_.size() > (size_t)v) undoStack_.erase(undoStack_.begin());
-    while (redoStack_.size()  > (size_t)v) redoStack_.erase(redoStack_.begin());
+    trimUndoStackToLimit();
+    trimRedoStackToLimit();
+}
+
+// ===================== 撤销差量化内部原语 =====================
+SketchModel::Memento SketchModel::currentMemento() const {
+    Memento m;
+    m.elems = elems_; m.nextId = nextId_; m.scale = scaleRatio_;
+    m.layers = layers_; m.blocks = blocks_; m.textStyles = textStyles_; m.params = params_;
+    m.dimStyles = dimStyles_; m.currentDimStyle = currentDimStyle_;
+    m.layouts = layouts_; m.currentLayout = currentLayout_;
+    m.units = units_; m.limits = limits_; m.snapConfig = snapConfig_; m.trackConfig = trackConfig_;
+    m.savedFilters = savedFilters_;
+    return m;
+}
+
+AuxState SketchModel::captureAux() const {
+    AuxState a;
+    a.nextId = nextId_; a.scale = scaleRatio_;
+    a.layers = layers_; a.blocks = blocks_; a.textStyles = textStyles_;
+    a.params = params_; a.dimStyles = dimStyles_; a.currentDimStyle = currentDimStyle_;
+    a.layouts = layouts_; a.currentLayout = currentLayout_;
+    a.units = units_; a.limits = limits_; a.snapConfig = snapConfig_; a.trackConfig = trackConfig_;
+    a.savedFilters = savedFilters_;
+    return a;
+}
+
+void SketchModel::applyAux(const AuxState& a) {
+    nextId_ = a.nextId; scaleRatio_ = a.scale;
+    layers_ = a.layers; blocks_ = a.blocks; textStyles_ = a.textStyles;
+    params_ = a.params; dimStyles_ = a.dimStyles; currentDimStyle_ = a.currentDimStyle;
+    layouts_ = a.layouts; currentLayout_ = a.currentLayout;
+    units_ = a.units; limits_ = a.limits; snapConfig_ = a.snapConfig; trackConfig_ = a.trackConfig;
+    savedFilters_ = a.savedFilters;
+}
+
+void SketchModel::mementoAuxTo(const Memento& m, AuxState& a) {
+    a.nextId = m.nextId; a.scale = m.scale;
+    a.layers = m.layers; a.blocks = m.blocks; a.textStyles = m.textStyles;
+    a.params = m.params; a.dimStyles = m.dimStyles; a.currentDimStyle = m.currentDimStyle;
+    a.layouts = m.layouts; a.currentLayout = m.currentLayout;
+    a.units = m.units; a.limits = m.limits; a.snapConfig = m.snapConfig; a.trackConfig = m.trackConfig;
+    a.savedFilters = m.savedFilters;
+}
+
+void SketchModel::auxToMemento(const AuxState& a, Memento& m) {
+    m.nextId = a.nextId; m.scale = a.scale;
+    m.layers = a.layers; m.blocks = a.blocks; m.textStyles = a.textStyles;
+    m.params = a.params; m.dimStyles = a.dimStyles; m.currentDimStyle = a.currentDimStyle;
+    m.layouts = a.layouts; m.currentLayout = a.currentLayout;
+    m.units = a.units; m.limits = a.limits; m.snapConfig = a.snapConfig; m.trackConfig = a.trackConfig;
+    m.savedFilters = a.savedFilters;
+}
+
+SketchModel::Memento SketchModel::reconstructStep(int idx) const {
+    if (idx < 0) idx = 0;
+    if (idx >= (int)undoStack_.size()) idx = (int)undoStack_.size() - 1;
+    // 最近检查点 ≤ idx（entry 0 恒为检查点，故必然命中）
+    int cp = -1;
+    for (int i = idx; i >= 0; --i) {
+        if (undoStack_[i].isCheckpoint) { cp = i; break; }
+    }
+    Memento m;
+    if (cp >= 0) m = undoStack_[cp].snap; else m = Memento{};
+    // 出向差量链：entry i 的 delta 描述 E_i→E_{i+1}，故从 cp 连放到 idx-1 即得 E_idx。
+    // （入向差量旧语义是 cp+1..idx；改为出向后整体前移一位，且链中途的检查点条目
+    //  其出向差量同样有效，无需特判。）
+    for (int i = cp; i < idx; ++i) {
+        const UndoStep& s = undoStack_[i];
+        applyElementDeltas(m.elems, s.delta.elems, /*forward=*/true);
+        auxToMemento(s.delta.auxAfter, m);
+    }
+    m.label = undoStack_[idx].isCheckpoint ? undoStack_[idx].snap.label : undoStack_[idx].delta.label;
+    return m;
+}
+
+// 封印栈顶条目的出向差量。diff(pendingBase_, 当前) 在数学上恰好等于「上一步操作」
+// 的变更集——撤销/重做热路径从此只需把这一个变更集就地正/逆向应用（O(变更图元数)），
+// 不再做整图 reconstruct + 全量 diff（旧实现 5 万图元单步撤销 39ms 的根源）。
+int SketchModel::sealPendingStep() {
+    if (!unsealedStep_) return -1;
+    DeltaRecord d;
+    d.elems = diffElements(pendingBase_.elems, elems_);
+    mementoAuxTo(pendingBase_, d.auxBefore);
+    d.auxAfter = captureAux();
+    const bool changed = !d.elems.empty() || !sameAuxState(d.auxBefore, d.auxAfter);
+    unsealedStep_ = false;
+    pendingBase_ = Memento{};   // 及时释放基态深拷贝（大图 42MB 级）
+    if (changed) {
+        UndoStep& top = undoStack_.back();
+        top.delta.elems = std::move(d.elems);
+        top.delta.auxBefore = std::move(d.auxBefore);
+        top.delta.auxAfter = std::move(d.auxAfter);
+        // label 已在条目创建时写入 delta.label / snap.label（即该差量所描述操作的名字）
+    }
+    return changed ? 1 : 0;
+}
+
+// 就地写回 aux + 广播。信号集合与 restoreFromMemento 逐项一致（先算差异标志再写值，
+// 条件信号只在真变了时发），保证差量 undo/redo 与全量模式对外可观察行为一致。
+// elems_ 不在此处理：撤销/重做的元素部分由 applyElementDeltas 就地正/逆向应用。
+void SketchModel::restoreAuxInPlace(const AuxState& a) {
+    const bool unitsDiff  = !(a.units == units_);
+    const bool limitsDiff = !(a.limits == limits_);
+    const bool snapDiff   = !(a.snapConfig == snapConfig_);
+    const bool trackDiff  = !(a.trackConfig == trackConfig_);
+    const bool layoutDiff = (a.currentLayout != currentLayout_) || !sameLayouts(a.layouts, layouts_);
+    const bool scaleDiff  = std::fabs(a.scale - scaleRatio_) > 1e-12;
+
+    nextId_ = a.nextId; scaleRatio_ = a.scale;
+    layers_ = a.layers; blocks_ = a.blocks;
+    textStyles_ = a.textStyles; params_ = a.params;
+    dimStyles_ = a.dimStyles; currentDimStyle_ = a.currentDimStyle;
+    units_ = a.units; limits_ = a.limits; snapConfig_ = a.snapConfig; trackConfig_ = a.trackConfig;
+    layouts_ = a.layouts; currentLayout_ = a.currentLayout;
+    savedFilters_ = a.savedFilters;
+    selectedIds_.clear(); selectedId_ = -1;
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
+    if (layoutDiff) emit layoutsChanged();
+    if (unitsDiff)  emit unitsChanged();
+    if (limitsDiff) emit limitsChanged();
+    if (snapDiff)   emit snapConfigChanged();
+    if (trackDiff)  emit trackConfigChanged();
+    if (scaleDiff)  emit scaleChanged(scaleRatio_);
+}
+
+DeltaRecord SketchModel::makeDelta(const Memento& before, const Memento& after) {
+    DeltaRecord d;
+    d.elems = diffElements(before.elems, after.elems);
+    mementoAuxTo(before, d.auxBefore);
+    mementoAuxTo(after,  d.auxAfter);
+    return d;
+}
+
+SketchModel::Memento SketchModel::applyDeltaForward(const Memento& base, const DeltaRecord& d) {
+    Memento m = base;
+    applyElementDeltas(m.elems, d.elems, /*forward=*/true);
+    auxToMemento(d.auxAfter, m);
+    m.label = d.label;
+    return m;
+}
+
+void SketchModel::restoreFromMemento(Memento m) {
+    // 与既有全量撤销/重做的字段赋值 + 信号广播逐字节一致：先算差异标志，再整体替换。
+    const bool unitsDiff  = !(m.units == units_);
+    const bool limitsDiff = !(m.limits == limits_);
+    const bool snapDiff   = !(m.snapConfig == snapConfig_);
+    const bool trackDiff  = !(m.trackConfig == trackConfig_);
+    const bool layoutDiff = (m.currentLayout != currentLayout_) || !sameLayouts(m.layouts, layouts_);
+    const bool scaleDiff  = std::fabs(m.scale - scaleRatio_) > 1e-12;
+
+    elems_ = std::move(m.elems); nextId_ = m.nextId;
+    layers_ = std::move(m.layers); blocks_ = std::move(m.blocks);
+    textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
+    dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
+    units_ = m.units; limits_ = m.limits; snapConfig_ = m.snapConfig; trackConfig_ = m.trackConfig;
+    layouts_ = std::move(m.layouts); currentLayout_ = m.currentLayout;
+    savedFilters_ = std::move(m.savedFilters);
+    scaleRatio_ = m.scale;
+    selectedIds_.clear(); selectedId_ = -1;
+    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
+    if (layoutDiff) emit layoutsChanged();
+    if (unitsDiff)  emit unitsChanged();
+    if (limitsDiff) emit limitsChanged();
+    if (snapDiff)   emit snapConfigChanged();
+    if (trackDiff)  emit trackConfigChanged();
+    if (scaleDiff)  emit scaleChanged(scaleRatio_);
+}
+
+// 撤销栈按深度上限收敛：双栈同限，且保留队首检查点（其余差量均以它为回放锚点），
+// 故 erasing 时把「队首检查点 + 其后的连续差量」整块前移，把下一个检查点提升为新的队首锚点，
+// 保证任意可达步都能从某一检查点回放重建（不会因裁剪丢失锚点）。
+// 静态成员版 aux→Memento（原匿名命名空间自由函数，因访问私有 Memento 改为静态成员）
+void SketchModel::auxToMementoStatic(const AuxState& a, Memento& m) {
+    m.nextId = a.nextId; m.scale = a.scale;
+    m.layers = a.layers; m.blocks = a.blocks; m.textStyles = a.textStyles;
+    m.params = a.params; m.dimStyles = a.dimStyles; m.currentDimStyle = a.currentDimStyle;
+    m.layouts = a.layouts; m.currentLayout = a.currentLayout;
+    m.units = a.units; m.limits = a.limits; m.snapConfig = a.snapConfig; m.trackConfig = a.trackConfig;
+    m.savedFilters = a.savedFilters;
+}
+
+void SketchModel::trimStackToLimit(std::vector<UndoStep>& stk, int limit) {
+    while ((int)stk.size() > limit) {
+        // front 之后第一个检查点 i（可能不存在：i 触底）
+        size_t i = 1;
+        while (i < stk.size() && !stk[i].isCheckpoint) ++i;
+        // 吸收区间终点：有检查点则吸收到它之前的所有差量（检查点自身取代 front 成为新锚）；
+        // 无检查点则只把第一条差量合并进 front。
+        // ⚠️ 旧写法 erase(begin+1, begin+i) 在 i==1 时是空区间——size 永不缩小 → 死循环。
+        size_t last = (i < stk.size()) ? i : 1;
+        // 重建原索引 last 的状态，作为新的队首全量检查点
+        Memento m = stk.front().snap;
+        for (int k = 1; k <= (int)last; ++k) {
+            const UndoStep& s = stk[k];
+            if (s.isCheckpoint) m = s.snap;
+            else {
+                applyElementDeltas(m.elems, s.delta.elems, true);
+                auxToMementoStatic(s.delta.auxAfter, m);
+            }
+        }
+        stk.erase(stk.begin() + 1, stk.begin() + last + 1);   // 闭区间 [1, last]
+        stk.front().snap = m;
+        stk.front().isCheckpoint = true;
+    }
+}
+
+void SketchModel::trimUndoStackToLimit() { trimStackToLimit(undoStack_, undoDepthLimit_); }
+void SketchModel::trimRedoStackToLimit() { trimStackToLimit(redoStack_, undoDepthLimit_); }
+
+qint64 SketchModel::maxDeltaEntryBytes() const {
+    qint64 mx = 0;
+    auto scan = [&](const std::vector<UndoStep>& stk) {
+        for (const auto& s : stk) {
+            if (s.isCheckpoint) continue;   // 周期全量检查点单独计，不计入单步差量预算
+            qint64 b = 0;
+            for (const auto& d : s.delta.elems) b += (qint64)d.beforeJson.size() + (qint64)d.afterJson.size();
+            if (b > mx) mx = b;
+        }
+    };
+    scan(undoStack_); scan(redoStack_);
+    return mx;
 }
 
 int SketchModel::addElement(const Element& e) {
@@ -452,14 +731,14 @@ bool SketchModel::updateElementLinked(int id, std::function<void(Element&)> fn) 
     }
 
     // 约束恢复：检测修改前满足的相切/垂直/平行/同心约束，恢复被破坏的约束（需求：关联图元联动）
-    auto modifiedIds = ConstraintSolver::solveAfterChange(beforeElems, elems_, id);
+    auto modifiedIds = ConstraintSolverFacade::instance().solveAfterChange(beforeElems, elems_, id);
     for (int mid : modifiedIds) emit elementUpdated(mid);
 
     // 显式约束闭环：图元被编辑后重解一次用户声明的约束（尺寸锁定/同心/对称/…），
     // 使"拖一下端点、已声明的关系自动保持"。仅在存在显式约束时才跑，避免常态开销。
     // 注意走 updateElementQuiet（不会再触发本函数），因此不存在递归求解。
     if (!constraints_.empty()) {
-        const auto rep = ConstraintSolver::solveAll(*this);
+        const auto rep = ConstraintSolverFacade::instance().solveAll(*this);
         if (!rep.failures.empty())
             log(QStringLiteral("几何约束：%1 条未满足，可用 constraint list / check 定位")
                     .arg(rep.failures.size()), QStringLiteral("warn"));
@@ -1972,6 +2251,96 @@ int SketchModel::refreshHatchBoundaries(const std::vector<int>& changedIds) {
     return affected;
 }
 
+// ============================================================================
+// FIELD 域失效重算（applyChanges 钩子 + fieldupdate 命令 + 打开文档刷新共用）
+// ----------------------------------------------------------------------------
+// 求值是渲染期实时的（resolveFields/displayTableCell 每次渲染都算），因此"重算"
+// 的实质是三件事：① 显式标记受影响域宿主（供日志/信号扩展）；② 预热一次求值，
+// 保证异常路径在此被吞（崩溃安全约束的守卫点）；③ 为未来缓存型域值预留统一入口。
+// 命中规则：宿主自身被改（Table 公式随行内容变化）或其域引用了本次变更图元。
+// 只读不改几何、不压撤销 —— 与 refreshHatchBoundaries 同 Quiet 语义。
+// ============================================================================
+namespace {
+// 从一段文本中提取 AREA:n / PERIM:n 域引用的图元 id（两种占位语法均认）。
+// 供"宿主是否引用了本次变更图元"的精确匹配判定。
+void collectFieldRefIds(const QString& text, std::vector<int>& out) {
+    auto scanOne = [&](const QString& body) {
+        const int colon = body.indexOf(QLatin1Char(':'));
+        if (colon <= 0) return;
+        const QString head = body.left(colon).toUpper();
+        if (head != QLatin1String("AREA") && head != QLatin1String("PERIM")) return;
+        bool ok = false;
+        const int id = body.mid(colon + 1).trimmed().toInt(&ok);
+        if (ok) out.push_back(id);
+    };
+    int i = 0;
+    while ((i = text.indexOf(QLatin1Char('%'), i)) >= 0) {
+        const int b = text.indexOf(QLatin1Char('<'), i);
+        const int e = text.indexOf(QLatin1String(">%"), i);
+        if (b < 0 || e < 0) break;
+        scanOne(text.mid(b + 1, e - b - 1));
+        i = e + 2;
+    }
+    i = 0;
+    while ((i = text.indexOf(QStringLiteral("{field:"), i)) >= 0) {
+        const int e = text.indexOf(QLatin1Char('}'), i);
+        if (e < 0) break;
+        scanOne(text.mid(i + 7, e - i - 7));
+        i = e + 1;
+    }
+}
+// refs 与 changedIds 是否有交集
+bool refsHitChanged(const std::vector<int>& refs, const std::vector<int>& changedIds) {
+    for (int r : refs)
+        if (std::find(changedIds.begin(), changedIds.end(), r) != changedIds.end()) return true;
+    return false;
+}
+} // namespace
+
+int SketchModel::refreshFields(const std::vector<int>& changedIds) {
+    int hosts = 0;
+    try {
+        for (const auto& e : elems_) {
+            if (e.type == ElementType::MText) {
+                if (!e.text.contains(QStringLiteral("%<")) &&
+                    !e.text.contains(QStringLiteral("{field:")))
+                    continue;
+                if (!changedIds.empty()) {
+                    std::vector<int> refs;
+                    collectFieldRefIds(e.text, refs);
+                    const bool selfChanged =
+                        std::find(changedIds.begin(), changedIds.end(), e.id) != changedIds.end();
+                    if (!selfChanged && !refsHitChanged(refs, changedIds)) continue;
+                }
+                resolveFields(e.text, this);   // 预热：异常在 resolveFields 内部收敛为 ###
+                ++hosts;
+            } else if (e.type == ElementType::Table) {
+                bool hasField = false;
+                for (const QString& c : e.tableCells) {
+                    if (c.startsWith(QLatin1Char('=')) ||
+                        c.contains(QStringLiteral("%<")) ||
+                        c.contains(QStringLiteral("{field:"))) { hasField = true; break; }
+                }
+                if (!hasField) continue;
+                if (!changedIds.empty()) {
+                    std::vector<int> refs;
+                    for (const QString& c : e.tableCells) collectFieldRefIds(c, refs);
+                    const bool selfChanged =
+                        std::find(changedIds.begin(), changedIds.end(), e.id) != changedIds.end();
+                    if (!selfChanged && !refsHitChanged(refs, changedIds)) continue;
+                }
+                for (int r = 1; r <= e.tableRows; ++r)          // 预热全表（异常收敛 ###）
+                    for (int c = 0; c < e.tableCols; ++c)
+                        displayTableCell(e, r, c, this);
+                ++hosts;
+            }
+        }
+    } catch (...) {
+        // 崩溃安全兜底：预热阶段任何异常都不向调用方（applyChanges/命令/打开文档）扩散
+    }
+    return hosts;
+}
+
 bool SketchModel::setHatchPatternOverride(int hatchId, const QString& patName, double scale,
                                           int triStateAssoc) {
     auto it = find(hatchId);
@@ -2522,6 +2891,33 @@ void SketchModel::setParamsFromJson(const QJsonObject& o) {
         params_[it.key()] = it.value().toDouble(0.0);
 }
 
+// ---- 自定义图纸特性（PROP 域数据源）----
+QString SketchModel::drawingProp(const QString& name) const {
+    auto it = drawingProps_.find(name);
+    return it != drawingProps_.end() ? it->second : QString();
+}
+void SketchModel::setDrawingProp(const QString& name, const QString& value) {
+    if (name.isEmpty()) return;
+    if (value.isEmpty()) {          // 空值 = 移除（与"空特性无意义"语义一致）
+        if (drawingProps_.erase(name) > 0) emit modelChanged();
+        return;
+    }
+    auto it = drawingProps_.find(name);
+    if (it != drawingProps_.end() && it->second == value) return;   // 幂等
+    drawingProps_[name] = value;
+    emit modelChanged();
+}
+QJsonObject SketchModel::propsToJson() const {
+    QJsonObject o;
+    for (const auto& kv : drawingProps_) o[kv.first] = kv.second;
+    return o;
+}
+void SketchModel::setPropsFromJson(const QJsonObject& o) {
+    drawingProps_.clear();
+    for (auto it = o.begin(); it != o.end(); ++it)
+        drawingProps_[it.key()] = it.value().toString();
+}
+
 void SketchModel::checkElementLimits(const Element& e) {
     // 告警而非拦截：越界图元仍正常入模（与 AutoCAD LIMITS 语义一致——
     // 越界只是提示，用户可能刻意画到图框外）；检查只看「锚点/特征点」，
@@ -2791,68 +3187,69 @@ void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged
 // 也从不发信号，过滤器管理界面在打开时读取），故此处不额外广播，与既有行为一致。
 void SketchModel::undo() {
     if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
-    // 先算差异：下面 std::move 会掏空 m，之后再比就晚了。
-    Memento& top = undoStack_.back();
-    const bool unitsDiff  = !(top.units == units_);
-    const bool limitsDiff = !(top.limits == limits_);
-    const bool snapDiff   = !(top.snapConfig == snapConfig_);
-    const bool trackDiff  = !(top.trackConfig == trackConfig_);
-    const bool layoutDiff = (top.currentLayout != currentLayout_) || !sameLayouts(top.layouts, layouts_);
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
-    rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
-    rb.layouts = layouts_; rb.currentLayout = currentLayout_; rb.units = units_; rb.limits = limits_;
-    rb.snapConfig = snapConfig_; rb.trackConfig = trackConfig_; rb.savedFilters = savedFilters_;
-    redoStack_.push_back(std::move(rb));
-    while (redoStack_.size() > (size_t)undoDepthLimit_) redoStack_.erase(redoStack_.begin());
-    auto m = undoStack_.back(); undoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
-    dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
-    // 随图属性回退（与几何同一步）：用户心智里的 Ctrl+Z 是"整体回到上一步"
-    units_ = m.units; limits_ = m.limits; snapConfig_ = m.snapConfig; trackConfig_ = m.trackConfig;
-    layouts_ = std::move(m.layouts); currentLayout_ = m.currentLayout; savedFilters_ = std::move(m.savedFilters);
-    const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
-    scaleRatio_ = m.scale;
-    selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
-    // 只在真变化时发信号（与既有 scaleChanged 同理）：撤销不应引发无谓的面板重绘
-    if (layoutDiff) emit layoutsChanged();
-    if (unitsDiff)  emit unitsChanged();
-    if (limitsDiff) emit limitsChanged();
-    if (snapDiff)   emit snapConfigChanged();
-    if (trackDiff)  emit trackConfigChanged();
-    if (scaleDiff)  emit scaleChanged(scaleRatio_);
-    log(QStringLiteral("已撤销: ") + m.label);
+    if (!deltaUndoEnabled_) {
+        // 全量模式（既有行为，逐字节保留）：当前态存入 redo，回退到栈顶整张 Memento
+        Memento m = std::move(undoStack_.back().snap);
+        undoStack_.pop_back();
+        UndoStep rs; rs.isCheckpoint = true; rs.snap = currentMemento();
+        redoStack_.push_back(std::move(rs));
+        trimRedoStackToLimit();
+        restoreFromMemento(std::move(m));
+        log(QStringLiteral("已撤销: ") + m.label);
+        return;
+    }
+    // 差量模式：栈顶条目的出向差量 delta(E_{n-1}→E_n)（未封印则此刻封印）就是本次
+    // 撤销的变更集——就地逆向应用即可回到 E_{n-1}，O(变更图元数)。
+    // 空出向差量 = 无操作步（与旧 sameState 去重同源）：丢弃不消耗撤销步，继续向下找
+    // 最近的真实变更条目；全部为空则与空栈同样处理。
+    sealPendingStep();
+    while (!undoStack_.empty()) {
+        UndoStep rs = std::move(undoStack_.back());
+        undoStack_.pop_back();
+        if (rs.delta.elems.empty() && sameAuxState(rs.delta.auxBefore, rs.delta.auxAfter))
+            continue;   // 无操作步：直接丢弃
+        const QString undoneLabel = rs.isCheckpoint ? rs.snap.label : rs.delta.label;
+        applyElementDeltas(elems_, rs.delta.elems, /*forward=*/false);
+        restoreAuxInPlace(rs.delta.auxBefore);
+        unsealedStep_ = false;
+        pendingBase_ = Memento{};
+        redoStack_.push_back(std::move(rs));
+        trimRedoStackToLimit();
+        log(QStringLiteral("已撤销: ") + undoneLabel);
+        return;
+    }
+    unsealedStep_ = false;
+    pendingBase_ = Memento{};
+    log(QStringLiteral("无可撤销操作"), "warn");
 }
+
 void SketchModel::redo() {
     if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
-    Memento& top = redoStack_.back();
-    const bool unitsDiff  = !(top.units == units_);
-    const bool limitsDiff = !(top.limits == limits_);
-    const bool snapDiff   = !(top.snapConfig == snapConfig_);
-    const bool trackDiff  = !(top.trackConfig == trackConfig_);
-    const bool layoutDiff = (top.currentLayout != currentLayout_) || !sameLayouts(top.layouts, layouts_);
-    Memento rb; rb.elems = elems_; rb.nextId = nextId_; rb.scale = scaleRatio_; rb.layers = layers_; rb.blocks = blocks_; rb.textStyles = textStyles_; rb.params = params_;
-    rb.dimStyles = dimStyles_; rb.currentDimStyle = currentDimStyle_;
-    rb.layouts = layouts_; rb.currentLayout = currentLayout_; rb.units = units_; rb.limits = limits_;
-    rb.snapConfig = snapConfig_; rb.trackConfig = trackConfig_; rb.savedFilters = savedFilters_;
-    undoStack_.push_back(std::move(rb));
-    while (undoStack_.size() > (size_t)undoDepthLimit_) undoStack_.erase(undoStack_.begin());
-    auto m = redoStack_.back(); redoStack_.pop_back();
-    elems_ = std::move(m.elems); nextId_ = m.nextId; layers_ = std::move(m.layers); blocks_ = std::move(m.blocks); textStyles_ = std::move(m.textStyles); params_ = std::move(m.params);
-    dimStyles_ = std::move(m.dimStyles); currentDimStyle_ = m.currentDimStyle;
-    units_ = m.units; limits_ = m.limits; snapConfig_ = m.snapConfig; trackConfig_ = m.trackConfig;
-    layouts_ = std::move(m.layouts); currentLayout_ = m.currentLayout; savedFilters_ = std::move(m.savedFilters);
-    const bool scaleDiff = std::fabs(m.scale - scaleRatio_) > 1e-12;
-    scaleRatio_ = m.scale;
-    selectedIds_.clear(); selectedId_ = -1;
-    emit modelChanged(); emit selectionChanged(-1); emit layersChanged(); emit blocksChanged(); emit textStylesChanged(); emit paramsChanged();
-    if (layoutDiff) emit layoutsChanged();
-    if (unitsDiff)  emit unitsChanged();
-    if (limitsDiff) emit limitsChanged();
-    if (snapDiff)   emit snapConfigChanged();
-    if (trackDiff)  emit trackConfigChanged();
-    if (scaleDiff)  emit scaleChanged(scaleRatio_);
-    log(QStringLiteral("已重做: ") + m.label);
+    if (!deltaUndoEnabled_) {
+        Memento m = std::move(redoStack_.back().snap);
+        redoStack_.pop_back();
+        UndoStep us; us.isCheckpoint = true; us.snap = currentMemento();
+        undoStack_.push_back(std::move(us));
+        trimUndoStackToLimit();
+        restoreFromMemento(std::move(m));
+        log(QStringLiteral("已重做: ") + m.label);
+        return;
+    }
+    // 差量模式：redo 栈顶 = 刚被撤销的条目，其出向差量 delta(E_{n-1}→E_n) 描述被撤销
+    // 的操作本身——正向就地应用即回到 E_n，条目原样压回撤销栈：检查点属性/快照/出向
+    // 差量在新栈语义下全部继续有效，无需重算 %50 检查点、无需 makeDelta 重建。
+    // （压回后栈顶条目已封印、unsealedStep_=false：恰好是「push 前夜」的合法形态，
+    //   下一次 push 的 sealPendingStep 会因无未封印条目而直接跳到建新条目。）
+    UndoStep rs = std::move(redoStack_.back());
+    redoStack_.pop_back();
+    const QString redoneLabel = rs.delta.label;
+    applyElementDeltas(elems_, rs.delta.elems, /*forward=*/true);
+    restoreAuxInPlace(rs.delta.auxAfter);
+    undoStack_.push_back(std::move(rs));
+    trimUndoStackToLimit();
+    unsealedStep_ = false;
+    pendingBase_ = Memento{};
+    log(QStringLiteral("已重做: ") + redoneLabel);
 }
 
 void SketchModel::copySelected() {
@@ -3053,6 +3450,81 @@ void SketchModel::setDimStylesFromJson(const QJsonObject& o) {
 }
 
 // ============================================================================
+// 快速标注（QDIM）：框选平行线 / 圆阵列 → 一次性生成基线或连续标注串
+// ============================================================================
+// 设计要点（复用 dim 基线/连续引擎，不重写几何）：
+//   - 锚点：圆/弧取圆心 pts[0]；其余取首末点中点。去重容差 1e-6。
+//   - 按主轴（bbox 较长轴）排序锚点，保证基线/连续沿正确方向展开。
+//   - 基线：共用首锚点为基点，依次连到其后各点；连续：链式连相邻点。
+//   - 每条标注 dtype = Baseline/Continue，e.radius = 层叠序号(0,1,2…)，
+//     引擎 buildBaseline/buildContinue 据 e.radius 把尺寸线逐层外移 defOffset+i*(textH+4)。
+//   - 记当前样式名（dimStyleName）+ 当前标准，故切样式/切标准时随全图联动。
+std::vector<int> SketchModel::quickDimSelected(const QString& mode) {
+    std::vector<int> created;
+    const auto& sel = selection();
+    if (sel.empty()) { log(QStringLiteral("qdim: 请先框选一组平行线或圆阵列"), QStringLiteral("warn")); return created; }
+
+    // 1) 从选择集提取锚点（圆/弧→圆心；其余→首末点中点），去重
+    struct AP { Vec3 p; int srcId; };
+    std::vector<AP> pts;
+    for (int id : sel) {
+        const Element* e = element(id);
+        if (!e || !e->visible) continue;
+        Vec3 p;
+        if (e->type == ElementType::Circle || e->type == ElementType::Arc) {
+            if (e->pts.empty()) continue;
+            p = e->pts[0];
+        } else if (e->pts.size() >= 2) {
+            p = (e->pts.front() + e->pts.back()) * 0.5;
+        } else {
+            continue;
+        }
+        bool dup = false;
+        for (const auto& q : pts) if (q.p.distTo(p) < 1e-6) { dup = true; break; }
+        if (!dup) pts.push_back({p, id});
+    }
+    if (pts.size() < 2) { log(QStringLiteral("qdim: 选择集中可标注的有效几何不足 2 个"), QStringLiteral("warn")); return created; }
+
+    // 2) 按主轴（bbox 较长轴）排序
+    double minx = 1e18, miny = 1e18, maxx = -1e18, maxy = -1e18;
+    for (const auto& q : pts) {
+        minx = std::min(minx, q.p.x); maxx = std::max(maxx, q.p.x);
+        miny = std::min(miny, q.p.y); maxy = std::max(maxy, q.p.y);
+    }
+    const bool byX = (maxx - minx) >= (maxy - miny);
+    std::sort(pts.begin(), pts.end(), [byX](const AP& a, const AP& b) {
+        return byX ? a.p.x < b.p.x : a.p.y < b.p.y;
+    });
+
+    const QString m = mode.toLower();
+    const bool cont = (m == QStringLiteral("continue") || m == QStringLiteral("cont") || m == QStringLiteral("c"));
+    const DimensionType dt = cont ? DimensionType::Continue : DimensionType::Baseline;
+    const QString curStyle = currentDimStyle_;
+    const DimensionStandard std = dimensionStandard();
+
+    // 3) 生成标注串（基线=共基点；连续=链式）
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const Vec3 a = cont ? pts[i - 1].p : pts[0].p;
+        const Vec3 b = pts[i].p;
+        if (a.distTo(b) < 1e-9) continue;        // 跳过重合锚点
+        Element e;
+        e.type = ElementType::Dimension;
+        e.dtype = dt;
+        e.pts = { a, b };
+        e.radius = (double)(i - 1);              // 层叠序号：0,1,2…
+        e.standard = std;
+        e.dimStyleName = curStyle;               // 记当前样式 → 随样式切换全图联动
+        if (geo::measureDimension(e) < 1e-9) continue;
+        const int id = addElement(e);
+        if (id >= 0) created.push_back(id);
+    }
+    log(QStringLiteral("qdim: 已生成 %1 个%2标注（%3 个锚点）")
+            .arg(created.size()).arg(cont ? QStringLiteral("连续") : QStringLiteral("基线"))
+            .arg(pts.size()), QStringLiteral("info"));
+    return created;
+}
+
+// ============================================================================
 // 布局表（多布局；不入撤销栈，随图存档）
 // ============================================================================
 
@@ -3183,6 +3655,7 @@ QJsonObject SketchModel::toDrawingJson() const {
     root["trackConfig"] = trackConfig().toJson();
     root["constraints"] = constraintsToJson();
     root["params"] = paramsToJson();
+    root["properties"] = propsToJson();   // 自定义图纸特性（PROP 域数据源；旧档缺键 → 空表）
     return root;
 }
 

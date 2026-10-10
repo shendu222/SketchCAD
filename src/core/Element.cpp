@@ -120,6 +120,46 @@ QString Element::sizeDesc() const {
 }
 
 // ============================================================================
+// 全字段相等比较（撤销差量化 diffElements 用）
+// 与 elementToJson 的字段集一一对应：序列化是全字段的，相等比较也必须是全字段的，
+// 否则会出现「JSON 不同但 == 相等」或「JSON 相同但 == 不等」的漂移。
+// 新增 Element 字段时：elementToJson 与本函数必须同步补齐（两处同源清单）。
+// ============================================================================
+bool Element::operator==(const Element& o) const {
+    if (id != o.id || type != o.type) return false;
+    if (name != o.name || layer != o.layer || color != o.color) return false;
+    if (lineWidth != o.lineWidth || lineStyle != o.lineStyle || lineWidthAuto != o.lineWidthAuto) return false;
+    if (pts != o.pts) return false;
+    if (radius != o.radius || startAngle != o.startAngle || endAngle != o.endAngle) return false;
+    if (radiusY != o.radiusY || rotation != o.rotation || closed != o.closed) return false;
+    if (splineSubType != o.splineSubType || ctype != o.ctype || dtype != o.dtype) return false;
+    if (standard != o.standard) return false;
+    if (text != o.text || tolUpper != o.tolUpper || tolLower != o.tolLower) return false;
+    if (dimTextHeight != o.dimTextHeight || fitCode != o.fitCode || symbolLibrary != o.symbolLibrary) return false;
+    if (refA != o.refA || refB != o.refB || visible != o.visible || byLayer != o.byLayer) return false;
+    if (dimValue != o.dimValue || dimDriven != o.dimDriven) return false;
+    if (dimParam != o.dimParam || dimLinked != o.dimLinked) return false;
+    if (widthFactor != o.widthFactor || textAlign != o.textAlign) return false;
+    if (styleName != o.styleName || lineSpacing != o.lineSpacing || mtextWidth != o.mtextWidth) return false;
+    if (groupName != o.groupName) return false;
+    if (tableRows != o.tableRows || tableCols != o.tableCols || rowHeight != o.rowHeight) return false;
+    if (colWidths != o.colWidths || tableCells != o.tableCells) return false;
+    if (dimStyleName != o.dimStyleName) return false;
+    if (mleaderStyleName != o.mleaderStyleName) return false;
+    if (mleaderLanding != o.mleaderLanding || mleaderArrowLen != o.mleaderArrowLen) return false;
+    if (fcfSymbol != o.fcfSymbol || fcfModifier != o.fcfModifier || fcfTolerance != o.fcfTolerance) return false;
+    if (fcfDatums != o.fcfDatums) return false;
+    if (arcFlags != o.arcFlags) return false;
+    if (holes != o.holes) return false;
+    if (sectionExempt != o.sectionExempt || sectionMaterial != o.sectionMaterial) return false;
+    if (hatchSrcIds != o.hatchSrcIds || hatchPattern != o.hatchPattern) return false;
+    if (hatchScale != o.hatchScale || hatchAssociative != o.hatchAssociative || hatchInvalid != o.hatchInvalid) return false;
+    if (blockName != o.blockName || scaleX != o.scaleX || scaleY != o.scaleY) return false;
+    if (blockAttrs != o.blockAttrs || dynValues != o.dynValues) return false;
+    return true;
+}
+
+// ============================================================================
 // 图元序列化（与 MainWindow 原实现字段一一对应，并新增块引用字段）
 // ============================================================================
 QJsonObject elementToJson(const Element& e) {

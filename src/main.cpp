@@ -240,5 +240,14 @@ int main(int argc, char** argv) {
         splash->close();
         delete splash;                                    // 主窗口已显示后关闭 → 平滑切换、无闪烁
     }
+
+    // ---- 启动对话框流（修复"卡在 splash"假死）----
+    // 此刻主窗口已 show、splash 已销毁，才允许弹出启动页/隐私明示/异常退出提示。
+    // ❌ 旧实现的缺陷：这三个模态对话框在 MainWindow 构造期以 singleShot(0) 注册，
+    //    zero-timer 在上方 wait.exec()（splash 最短停留的嵌套事件循环）里立即抢跑，
+    //    模态框被置顶（WindowStaysOnTopHint）的 splash 完全遮挡——用户看到的是
+    //    "永远停在启动画面"，实际是在等一个看不见的模态框（异常退出提示必弹）。
+    // ✅ 现改为 app.exec() 首拍（splash 已不存在）经 runStartupDialogFlow 显式触发。
+    QTimer::singleShot(0, &w, &SketchCAD::MainWindow::runStartupDialogFlow);
     return app.exec();
 }

@@ -65,6 +65,10 @@ TableDialog::TableDialog(SketchModel* model, QWidget* parent, const Element* ini
     auto* tip = new QLabel(
         QStringLiteral("单元格支持 %<DATE>% / %<FILENAME>% 等字段占位，\n"
                        "渲染与打印时自动求值。\n\n"
+                       "公式列：单元格以 = 开头即公式，\n"
+                       "=sum(2,9) 求第 2~9 行本列之和，\n"
+                       "=count(2,9) 统计非空单元格数（明细栏\n"
+                       "数量/重量列末行常用，上游改动自动重算）。\n\n"
                        "表格可整体选中/移动，\n双击表格重新打开本编辑器。"), this);
     tip->setWordWrap(true);
     top->addWidget(tip, 1);

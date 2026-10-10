@@ -1,5 +1,6 @@
 #include "ConstraintBar.h"
 #include "core/ConstraintSolver.h"
+#include "core/ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
 #include "core/Element.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -89,7 +90,7 @@ void ConstraintBar::refresh() {
     }
 
     // 过约束 / 冲突横幅：与图形视图高亮共用 diagnose 结论
-    const auto diag = ConstraintSolver::diagnose(*model_);
+    const auto diag = ConstraintSolverFacade::instance().diagnose(*model_);
     if (!diag.overconstrainedIds.empty() ||
         diag.state == ConstraintDiagnosis::OverConstrained ||
         diag.state == ConstraintDiagnosis::Conflicting) {

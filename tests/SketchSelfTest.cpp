@@ -12,10 +12,13 @@
 #include <cstdio>
 #include <cmath>
 #include <vector>
+#include <random>
+#include <chrono>
 #include "Element.h"
 #include "ElementValidate.h"   // 鲁棒性守卫层：t_robustness / t_fileFuzz 直测
 #include "SketchModel.h"
 #include "ConstraintSolver.h"
+#include "ConstraintSolverFacade.h"   // SKT 集成 Phase B：约束求解路由门面
 #include "Geometry.h"
 #include "Snap.h"
 #include "Vec.h"
@@ -49,6 +52,7 @@
 #include <QDate>
 #include "Section.h"         // 分层测试网：剖面引擎纯函数层
 #include "Inquiry.h"         // 分层测试网：查询测量纯函数层
+#include "TextStyle.h"       // FIELD 域：resolveFields/displayTableCell（t_fields 直测）
 #include "SpatialIndex.h"     // 均匀网格空间索引（纯 core 直测）
 #include "PlotStyle.h"        // 打印样式表：灰度/抖动/GB预设/CTB导入（纯 core 直测）
 #include "LinePattern.h"      // 线型虚线规格：dashSpecFor / dashSpecScaled（LTSCALE）
@@ -328,6 +332,154 @@ static bool t_snapDescriptors() {
     auto sd = snap::snapTypeDescriptors();
     // 14 种非 None 捕捉（端点/圆心/交点/切点/中点/象限/垂足/插入/节点/最近/外观/平行/延伸/两点中点）
     return sd.size() == 14;
+}
+
+// ===================== SKT 集成：门面路由缝（Phase B）=====================
+// 验证 ConstraintSolverFacade 作为唯一路由入口，行为与直接调用 ConstraintSolver 等价，
+// 覆盖：显式约束映射路由、诊断（欠/过/完全）、尺寸驱动联动、特性开关回落、错误透传。
+static bool t_sktIntegration() {
+    ConstraintSolverFacade& facade = ConstraintSolverFacade::instance();
+    const int fail0 = g_fail;   // 进入前失败计数，用于整体返回
+
+    // ---- 1) 显式约束映射路由（经门面 addConstraint）----
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0); int b = addLine(m, 5, 5, 15, 5);
+        QString e = facade.addConstraint(m, ConstraintType::Coincident, a, b, 0, -1, 1, 0);
+        CHECK(e.isEmpty() && lastSat(m), "Facade: Coincident 路由");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 2, 4, 2); int b = addLine(m, 0, 1, 4, 1);
+        int ax = addAxis(m, -10, 0, 10, 0);
+        facade.addConstraint(m, ConstraintType::Fixed, a, a);
+        facade.addConstraint(m, ConstraintType::Fixed, ax, ax);
+        QString e = facade.addConstraint(m, ConstraintType::Symmetric, a, b, 0, ax);
+        const Element* eb = m.element(b);
+        CHECK(e.isEmpty() && lastSat(m) &&
+              eb && eb->pts[0].distTo(Vec3(0, -2, 0)) < 0.5 && eb->pts[1].distTo(Vec3(4, -2, 0)) < 0.5,
+              "Facade: Symmetric 路由+几何镜像");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 1, 0); int b = addLine(m, 0, 0, 10, 0);
+        QString e = facade.addConstraint(m, ConstraintType::Dimensional, a, b, 7.0);
+        const Element* eb = m.element(b);
+        CHECK(e.isEmpty() && lastSat(m) && eb && std::fabs(eb->pts[0].distTo(eb->pts[1]) - 7.0) < 0.5,
+              "Facade: Dimensional 路由+长度解算");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 1, 0); int b = addLine(m, 0, 3, 10, 6);
+        QString e = facade.addConstraint(m, ConstraintType::Horizontal, a, b);
+        CHECK(e.isEmpty() && lastSat(m), "Facade: Horizontal 路由");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 1, 0); int b = addLine(m, 3, 0, 6, 10);
+        QString e = facade.addConstraint(m, ConstraintType::Vertical, a, b);
+        CHECK(e.isEmpty() && lastSat(m), "Facade: Vertical 路由");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0);
+        QString e = facade.addConstraint(m, ConstraintType::Fixed, a, a);
+        CHECK(e.isEmpty() && lastSat(m), "Facade: Fixed 路由");
+    }
+    {
+        SketchModel m; int a = addPoint(m, 0, 0); int b = addPoint(m, 10, 0);
+        facade.addConstraint(m, ConstraintType::Fixed, a, a);
+        QString e = facade.addConstraint(m, ConstraintType::Distance, a, b, 7.0);
+        const Element* eb = m.element(b);
+        CHECK(e.isEmpty() && lastSat(m) && eb && std::fabs(eb->pts[0].distTo(Vec3(0,0,0)) - 7.0) < 0.5,
+              "Facade: Distance 路由+联动");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0); int b = addLine(m, 0, 0, 10, 0);
+        facade.addConstraint(m, ConstraintType::Fixed, a, a);
+        QString e = facade.addConstraint(m, ConstraintType::Angle, a, b, 45.0);
+        CHECK(e.isEmpty() && lastSat(m), "Facade: Angle 路由");
+    }
+
+    // ---- 2) 诊断路由（欠/过/完全）----
+    {
+        SketchModel m; addLine(m, 0, 0, 10, 0);
+        int b = addLine(m, 5, 5, 15, 5);
+        facade.addConstraint(m, ConstraintType::Horizontal, m.elements()[0].id, b);
+        const auto d = facade.diagnose(m);
+        CHECK(d.state == ConstraintDiagnosis::UnderConstrained, "Facade: diagnose 欠约束");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0);
+        facade.addConstraint(m, ConstraintType::FixedPoint, a, -1, 0, -1, 0, -1);
+        facade.addConstraint(m, ConstraintType::FixedPoint, a, -1, 0, -1, 1, -1);
+        const auto d = facade.diagnose(m);
+        CHECK(d.state == ConstraintDiagnosis::WellConstrained && d.underconstrainedIds.empty(),
+              "Facade: diagnose 完全约束");
+    }
+    {
+        SketchModel m;
+        int ph1 = addLine(m, 0, 0, 1, 0); int ph2 = addLine(m, 0, 0, 1, 0);
+        int ln = addLine(m, 0, 0, 10, 0);
+        facade.addConstraint(m, ConstraintType::Dimensional, ph1, ln, 10.0);
+        facade.addConstraint(m, ConstraintType::Dimensional, ph2, ln, 20.0);  // 矛盾 → 过/冲突
+        const auto d = facade.diagnose(m);
+        const bool over = (d.state == ConstraintDiagnosis::Conflicting ||
+                           d.state == ConstraintDiagnosis::Mixed ||
+                           d.state == ConstraintDiagnosis::OverConstrained);
+        bool found = false;
+        for (int id : d.overconstrainedIds) if (id == ln) found = true;
+        CHECK(over && found, "Facade: diagnose 过约束(冲突)定位");
+    }
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0); int b = addLine(m, 5, 5, 15, 5);
+        facade.addConstraint(m, ConstraintType::Coincident, a, b, 0, -1, 1, 0);
+        facade.addConstraint(m, ConstraintType::Parallel, a, b);
+        const auto rep = facade.solveAll(m);
+        const auto diag = facade.diagnose(m);
+        CHECK(rep.failures.empty() && diag.totalDof >= 0, "Facade: solveAll + diagnose DOF 一致");
+    }
+
+    // ---- 3) 改标注值 → 几何联动（尺寸驱动经门面）----
+    {
+        SketchModel m; int l = addLine(m, 0, 0, 10, 0);   // 长度 10
+        int d = addDim(m, DimensionType::Aligned, l);
+        QString e1 = facade.linkDimension(m, d);
+        QString e2 = facade.setDimensionValue(m, d, 25.0);
+        const Element* el = m.element(l);
+        const double len = el ? el->pts[0].distTo(el->pts[1]) : -1.0;
+        const Element* pd = m.element(d);
+        CHECK(e1.isEmpty() && e2.isEmpty() && el && std::fabs(len - 25.0) < 1e-2 &&
+              pd && std::fabs(pd->dimValue - 25.0) < 1e-6,
+              "Facade: 标注联动 link+setDimensionValue→几何/数值");
+    }
+
+    // ---- 4) 参数表联动路由（driveParameter 经门面）----
+    {
+        SketchModel m; int c = addCircle(m, 0, 0, 5);
+        int d = addDim(m, DimensionType::Radius, c);
+        QString e1 = facade.linkDimension(m, d, QStringLiteral("R"));
+        QString e2 = facade.driveParameter(m, QStringLiteral("R"), 12.0);
+        const Element* ec = m.element(c);
+        CHECK(e1.isEmpty() && e2.isEmpty() && ec && std::fabs(ec->radius - 12.0) < 1e-3,
+              "Facade: driveParameter 参数联动");
+    }
+
+    // ---- 5) 特性开关回落：关闭后仍可经修复模型求解 ----
+    {
+        QSettings st(QSettings::IniFormat, QSettings::UserScope, "SketchCADTest", "skt");
+        AppSettings asp(&st);
+        asp.setConstraintSolverEnabled(false);
+        facade.setSettings(&asp);
+        bool enabled = facade.featureEnabled();
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0); int b = addLine(m, 5, 5, 15, 5);
+        QString e = facade.addConstraint(m, ConstraintType::Coincident, a, b, 0, -1, 1, 0);
+        facade.setSettings(nullptr);   // 还原默认（无设置 → 默认开）
+        CHECK(!enabled && e.isEmpty() && lastSat(m), "Facade: 特性关→回落修复模型仍可用");
+    }
+
+    // ---- 6) 错误经门面透传（非法 Symmetric 缺轴 → 非空错误）----
+    {
+        SketchModel m; int a = addLine(m, 0, 0, 10, 0); int b = addLine(m, 0, 5, 10, 5);
+        QString e = facade.addConstraint(m, ConstraintType::Symmetric, a, b);  // 缺 axisId
+        CHECK(!e.isEmpty(), "Facade: 非法约束错误透传");
+    }
+
+    return g_fail == fail0;   // 本测试整体是否通过（任何 CHECK 失败则该值 != fail0）
 }
 
 // ===================== 8 类捕捉命中 =====================
@@ -4001,6 +4153,193 @@ static void t_hatchLinkage() {
     }
 }
 
+// ===================== FIELD 域 + Table 公式列（明细栏自动维护）=====================
+// 验证：① 面积域随边界变更联动（applyChanges 钩子 + 渲染期 resolveFields）；
+//        ② 花括号语法 {field:area:id} 与 %<AREA:id>% 语义等价；
+//        ③ 周长域；④ 断链/非封闭 → ### 占位；⑤ Table =sum/=count 公式列 + 防递归；
+//        ⑥ PROP 自定义特性域 + prop 命令；⑦ 序列化向后兼容（properties 顶层键/缺键回落）；
+//        ⑧ fieldupdate 命令端到端；⑨ AppSettings fields/autoUpdateOnOpen 默认与读写。
+static void t_fields() {
+    // ---- ① 面积域随边界变更联动（含 refreshFields 命中计数）----
+    {
+        SketchModel m;
+        const int rid = addRectPolyline(m, 0, 0, 10, 8);   // 10×8 闭合四边形
+        Element mt; mt.type = ElementType::MText;
+        mt.pts = { Vec3(0, -5, 0) }; mt.radius = 3.5;
+        mt.text = QStringLiteral("面积 = %<AREA:%1>% mm²").arg(rid);
+        const int mid = m.addElement(mt);
+        CHECK(resolveFields(m.element(mid)->text, &m) == QStringLiteral("面积 = 80.00 mm²"),
+              "FIELD① 面积域初始求值 10×8=80.00");
+        // 改边界（applyChanges 路径，内部挂 refreshFields 钩子）→ 域联动重算
+        Element np; np.type = ElementType::Polyline; np.closed = true; np.id = rid;
+        np.pts = { Vec3(0,0,0), Vec3(20,0,0), Vec3(20,8,0), Vec3(0,8,0) };  // → 20×8
+        modify::Change c; c.id = rid; c.replacement = np; c.note = QStringLiteral("改边界");
+        m.beginEdit(QStringLiteral("改边界"));
+        modify::applyChanges(&m, { c }, QString());
+        CHECK(resolveFields(m.element(mid)->text, &m) == QStringLiteral("面积 = 160.00 mm²"),
+              "FIELD① 改边界后面积域联动(80→160.00)");
+        CHECK(m.refreshFields({ rid }) == 1, "FIELD① refreshFields([边界id]) 命中 1 个域宿主");
+        CHECK(m.refreshFields({ mid + 777 }) == 0, "FIELD① refreshFields([无关id]) 命中 0 个宿主");
+        CHECK(m.refreshFields() >= 1, "FIELD① refreshFields(全模型扫描) 至少命中本宿主");
+    }
+
+    // ---- ② 花括号语法与 %<..>% 语义等价 ----
+    {
+        SketchModel m;
+        const int rid = addRectPolyline(m, 0, 0, 10, 8);
+        const QString brace = QStringLiteral("{field:area:%1}").arg(rid);
+        const QString pct   = QStringLiteral("%<AREA:%1>%").arg(rid);
+        CHECK(resolveFields(brace, &m) == resolveFields(pct, &m),
+              "FIELD② {field:area:id} 与 %<AREA:id>% 求值一致");
+        CHECK(resolveFields(brace, &m) == QStringLiteral("80.00"),
+              "FIELD② 花括号语法求值 80.00");
+    }
+
+    // ---- ③ 周长域 + ④ 断链/非封闭回落 ### ----
+    {
+        SketchModel m;
+        const int rid = addRectPolyline(m, 0, 0, 10, 8);
+        CHECK(resolveFields(QStringLiteral("%<PERIM:%1>%").arg(rid), &m) == QStringLiteral("36.00"),
+              "FIELD③ 周长域 2×(10+8)=36.00");
+        CHECK(resolveFields(QStringLiteral("%<AREA:99999>%"), &m) == QStringLiteral("###"),
+              "FIELD④ 断链域(不存在id)回落 ###");
+        Element ln; ln.type = ElementType::Line;
+        ln.pts = { Vec3(0,0,0), Vec3(10,0,0) };
+        const int lid = m.addElement(ln);
+        CHECK(resolveFields(QStringLiteral("%<AREA:%1>%").arg(lid), &m) == QStringLiteral("###"),
+              "FIELD④ 非封闭图元(直线)面积域回落 ###");
+        CHECK(resolveFields(QStringLiteral("%<AREA:abc>%"), &m) == QStringLiteral("###"),
+              "FIELD④ 非法 id 参数回落 ###");
+        CHECK(resolveFields(QStringLiteral("温度 %<NOSUCH:x>%!"), &m) == QStringLiteral("温度 ###!"),
+              "FIELD④ 未知域码回落 ### 且不破坏其余文本");
+        CHECK(resolveFields(QStringLiteral("无域纯文本"), &m) == QStringLiteral("无域纯文本"),
+              "FIELD④ 无域纯文本原样返回（快速路径，向后兼容）");
+    }
+
+    // ---- ⑤ Table =sum/=count 公式列（明细栏数量列）+ 防递归 ----
+    {
+        SketchModel m;
+        Element tbl; tbl.type = ElementType::Table;
+        tbl.pts = { Vec3(0, 0, 0) };
+        tbl.tableRows = 4; tbl.tableCols = 2;
+        tbl.tableCells = {   // 行主序 4×2：第 1 列名称，第 2 列数量
+            QStringLiteral("序"), QStringLiteral("数量"),
+            QStringLiteral("螺钉"), QStringLiteral("4"),
+            QStringLiteral("垫片"), QStringLiteral("2"),
+            QStringLiteral("合计"), QStringLiteral("=sum(2,3)"),
+        };
+        const int tid = m.addElement(tbl);
+        const Element* t = m.element(tid);
+        CHECK(t && displayTableCell(*t, 4, 1, &m) == QStringLiteral("6.00"),
+              "FIELD⑤ =sum(2,3) 明细栏数量合计 4+2=6.00");
+        tbl.tableCells[7] = QStringLiteral("=count(2,3)");
+        m.updateElementQuiet(tid, [&](Element& d) { d.tableCells = tbl.tableCells; });
+        t = m.element(tid);
+        CHECK(t && displayTableCell(*t, 4, 1, &m) == QStringLiteral("2"),
+              "FIELD⑤ =count(2,3) 非空单元格计数 = 2");
+        // 防递归：公式引用公式单元格 → ###
+        tbl.tableCells[7] = QStringLiteral("=sum(1,4)");   // 第 4 行本列自身是公式
+        m.updateElementQuiet(tid, [&](Element& d) { d.tableCells = tbl.tableCells; });
+        t = m.element(tid);
+        CHECK(t && displayTableCell(*t, 4, 1, &m) == QStringLiteral("###"),
+              "FIELD⑤ 公式引用公式单元格防递归回落 ###");
+        // 行号越界 → ###
+        tbl.tableCells[7] = QStringLiteral("=sum(2,99)");
+        m.updateElementQuiet(tid, [&](Element& d) { d.tableCells = tbl.tableCells; });
+        t = m.element(tid);
+        CHECK(t && displayTableCell(*t, 4, 1, &m) == QStringLiteral("###"),
+              "FIELD⑤ 行号越界公式回落 ###");
+        // 非公式单元格原样 + 域替换仍生效（统一管线两段式）
+        tbl.tableCells[3] = QStringLiteral("%<COUNT>%");
+        m.updateElementQuiet(tid, [&](Element& d) { d.tableCells = tbl.tableCells; });
+        t = m.element(tid);
+        CHECK(t && displayTableCell(*t, 2, 1, &m) == QString::number(m.elementCount()),
+              "FIELD⑤ 非公式单元格走域替换管线（COUNT 全模型计数）");
+    }
+
+    // ---- ⑥ PROP 自定义特性域 + prop 命令 ----
+    {
+        SketchModel m;
+        m.setDrawingProp(QStringLiteral("材料"), QStringLiteral("Q235-B"));
+        CHECK(m.drawingProp(QStringLiteral("材料")) == QStringLiteral("Q235-B"),
+              "FIELD⑥ setDrawingProp 写入读回");
+        CHECK(resolveFields(QStringLiteral("材料：%<PROP:材料>%"), &m) == QStringLiteral("材料：Q235-B"),
+              "FIELD⑥ %<PROP:材料>% 域求值");
+        CHECK(resolveFields(QStringLiteral("%<PROP:不存在>%"), &m) == QStringLiteral("###"),
+              "FIELD⑥ 缺名特性回落 ###");
+        m.setDrawingProp(QStringLiteral("材料"), QStringLiteral("45#"));   // 覆盖
+        CHECK(m.drawingProp(QStringLiteral("材料")) == QStringLiteral("45#"),
+              "FIELD⑥ 同名覆盖");
+        m.setDrawingProp(QStringLiteral("材料"), QString());               // 空值=移除
+        CHECK(m.drawingProp(QStringLiteral("材料")).isEmpty(),
+              "FIELD⑥ 空值移除特性");
+        // prop 命令端到端（设置/查询/删除）
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("prop 图号 JT-2026-01")), "FIELD⑥ prop 设置命令成功");
+        CHECK(m.drawingProp(QStringLiteral("图号")) == QStringLiteral("JT-2026-01"),
+              "FIELD⑥ prop 命令写入生效");
+        CHECK(interp.execute(QStringLiteral("prop 图号")), "FIELD⑥ prop 查询命令成功");
+        CHECK(interp.execute(QStringLiteral("prop -r 图号")), "FIELD⑥ prop 删除命令成功");
+        CHECK(m.drawingProp(QStringLiteral("图号")).isEmpty(), "FIELD⑥ prop 删除后特性为空");
+    }
+
+    // ---- ⑦ 序列化向后兼容（properties 顶层键 + 缺键回落 + 域文本原文往返）----
+    {
+        SketchModel m;
+        m.setDrawingProp(QStringLiteral("项目"), QStringLiteral("减速器"));
+        const int rid = addRectPolyline(m, 0, 0, 10, 8);
+        Element mt; mt.type = ElementType::MText;
+        mt.pts = { Vec3(0, -5, 0) }; mt.radius = 3.5;
+        mt.text = QStringLiteral("{field:area:%1}").arg(rid);
+        m.addElement(mt);
+        const QJsonObject root = m.toDrawingJson();
+        CHECK(root.contains(QStringLiteral("properties")) &&
+              root[QStringLiteral("properties")].toObject()[QStringLiteral("项目")] == QStringLiteral("减速器"),
+              "FIELD⑦ toDrawingJson 顶层 properties 键写入");
+        CHECK(root[QStringLiteral("elements")].toArray().at(1).toObject()[QStringLiteral("text")]
+                  .toString().contains(QStringLiteral("{field:")),
+              "FIELD⑦ 域文本按原文入档（渲染期求值，序列化零改动）");
+        // 旧档模拟：无 properties 键（或缺 elements 域文本）→ 读回空表不崩溃
+        SketchModel m2;
+        m2.setPropsFromJson(QJsonObject());
+        CHECK(m2.drawingProps().empty(), "FIELD⑦ 旧档缺 properties 键读回空表（向后兼容）");
+    }
+
+    // ---- ⑧ fieldupdate 命令端到端 ----
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        addRectPolyline(m, 0, 0, 10, 8);
+        CHECK(interp.execute(QStringLiteral("fieldupdate")), "FIELD⑧ fieldupdate 命令成功");
+        Element tbl; tbl.type = ElementType::Table;
+        tbl.pts = { Vec3(0, 0, 0) }; tbl.tableRows = 2; tbl.tableCols = 1;
+        tbl.tableCells = { QStringLiteral("头"), QStringLiteral("=count(1,1)") };
+        m.addElement(tbl);
+        CHECK(interp.execute(QStringLiteral("fieldupdate")), "FIELD⑧ 含公式表格时执行成功");
+    }
+
+    // ---- ⑨ AppSettings fields/autoUpdateOnOpen（默认开 + 注入读写）----
+    {
+        QTemporaryDir td;
+        const QString ini = td.filePath(QStringLiteral("fields.ini"));
+        {
+            QSettings s(ini, QSettings::IniFormat);
+            AppSettings as(&s);
+            CHECK(as.fieldAutoUpdateOnOpen() == true,
+                  "FIELD⑨ fields/autoUpdateOnOpen 默认开");
+            as.setFieldAutoUpdateOnOpen(false);
+            CHECK(as.fieldAutoUpdateOnOpen() == false,
+                  "FIELD⑨ setFieldAutoUpdateOnOpen(false) 读回 false");
+        }
+        {
+            QSettings s(ini, QSettings::IniFormat);   // 重开：持久化往返
+            AppSettings as(&s);
+            CHECK(as.fieldAutoUpdateOnOpen() == false,
+                  "FIELD⑨ 开关值持久化往返一致");
+        }
+    }
+}
+
 // ===================== GD&T：命名标注样式 + 多重引线 + 形位公差框格（任务 F）=====================
 // 验证：① 12 类既有标注回归不破坏（每类 dim::build 仍产出有效几何）；② DimStyle 表多实例化 +
 //        样式切换全图联动（引用式：改样式 → 引用它的标注实时联动）；③ 旧档（单全局 DimStyle）
@@ -4127,6 +4466,113 @@ static void t_gdt() {
             if (!fcfSymbolValid(i) || qstrcmp(fcfSymbolName((FcfSymbol)i), "未知") == 0) allNamed = false;
         CHECK(allNamed, "GD&T④ GB/T 1182 符号集 11 类均有名称");
         CHECK(!fcfSymbolValid(fcfSymbolCount()) && !fcfSymbolValid(-1), "GD&T④ 符号索引越界被拒");
+    }
+}
+
+// ===================== QDIM 快速标注（复用 dim 基线/连续引擎）=====================
+// 验证：① 圆阵列基线标注的【生成计数】+【测量值】+【层叠位置】；② 连续标注链式测量；
+//       ③ 平行线阵列基线标注；④ 选择集不足返回空不崩溃；⑤ 生成标注经 dimStyleName
+//          绑定当前命名样式 → 改样式定义后联动（一图多标准）。
+// 共 14 条 CHECK（≥ 验收要求的 12 条）。
+static void t_qdim() {
+    // ---- ① 圆阵列 QDIM 基线标注：计数 + 测量值 + 层叠位置 ----
+    {
+        SketchModel m;
+        const int c0 = addCircle(m, 0, 0, 3);
+        const int c1 = addCircle(m, 10, 0, 3);
+        const int c2 = addCircle(m, 20, 0, 3);
+        const int c3 = addCircle(m, 30, 0, 3);
+        m.setSelection({c0, c1, c2, c3});
+        const auto ids = m.quickDimSelected(QStringLiteral("baseline"));
+        CHECK(ids.size() == 3, "QDIM① 4 个圆 → 基线标注 3 条（N-1）");
+        const dim::Style st = m.dimStyle();
+        const double expectMeas[] = {10.0, 20.0, 30.0};   // 共基点(0,0)到各圆心距离
+        bool measOk = true, posOk = true, named = true;
+        Vec3 n = (ids.size() > 0)
+                     ? (m.element(ids[0])->pts[1] - m.element(ids[0])->pts[0]).normalized().perp()
+                     : Vec3(0,1,0);
+        const Vec3 baseMid = (m.element(ids[0])->pts[0] + m.element(ids.back())->pts[1]) * 0.5;
+        for (int i = 0; i < (int)ids.size(); ++i) {
+            const Element* e = m.element(ids[i]);
+            const dim::Geom g = dim::build(*e, st);
+            if (!g.valid || g.line.empty() || std::fabs(g.measured - expectMeas[i]) > 1e-6) measOk = false;
+            // 层叠：第 i 条尺寸线相对基线的法向偏移 = defOffset + i*(textHeight+4)
+            const Vec3 lineMid = (g.line[0].first + g.line[0].second) * 0.5;
+            const double offset = (lineMid - baseMid).dot2D(n);
+            const double expectOff = st.defOffset + i * (st.textHeight + 4.0);
+            if (std::fabs(std::fabs(offset) - expectOff) > 1e-6) posOk = false;
+            if (e->dimStyleName != m.currentDimStyle()) named = false;
+        }
+        CHECK(measOk, "QDIM① 基线各标注测量值=10/20/30（共基点）");
+        CHECK(posOk,  "QDIM① 基线标注按 e.radius 逐层偏移 defOffset+i*(textH+4)");
+        CHECK(named,  "QDIM① 生成标注记当前样式名（随样式切换全图联动）");
+    }
+
+    // ---- ② 圆阵列 QDIM 连续标注：链式测量 + 计数 ----
+    {
+        SketchModel m;
+        const int c0 = addCircle(m, 0, 0, 3);
+        const int c1 = addCircle(m, 10, 0, 3);
+        const int c2 = addCircle(m, 20, 0, 3);
+        const int c3 = addCircle(m, 30, 0, 3);
+        m.setSelection({c0, c1, c2, c3});
+        const auto ids = m.quickDimSelected(QStringLiteral("continue"));
+        CHECK(ids.size() == 3, "QDIM② 连续标注 3 条（N-1）");
+        const dim::Style st = m.dimStyle();
+        bool measOk = true;
+        for (int i = 0; i < (int)ids.size(); ++i) {
+            const dim::Geom g = dim::build(*m.element(ids[i]), st);
+            if (!g.valid || std::fabs(g.measured - 10.0) > 1e-6) measOk = false;  // 相邻间距均 10
+        }
+        CHECK(measOk, "QDIM② 连续标注测量值=10/10/10（相邻间距）");
+    }
+
+    // ---- ③ 平行线阵列 QDIM 基线标注 ----
+    {
+        SketchModel m;
+        const int l0 = addLine(m, 0, 0, 50, 0);
+        const int l1 = addLine(m, 0, 10, 50, 10);
+        const int l2 = addLine(m, 0, 20, 50, 20);
+        m.setSelection({l0, l1, l2});
+        const auto ids = m.quickDimSelected(QStringLiteral("baseline"));
+        CHECK(ids.size() == 2, "QDIM③ 3 条平行线 → 基线标注 2 条");
+        const dim::Style st = m.dimStyle();
+        const double expectMeas[] = {10.0, 20.0};   // 线中点 y=0,10,20 → 基线(0)到10/20
+        bool measOk = true;
+        for (int i = 0; i < (int)ids.size(); ++i) {
+            const dim::Geom g = dim::build(*m.element(ids[i]), st);
+            if (!g.valid || std::fabs(g.measured - expectMeas[i]) > 1e-6) measOk = false;
+        }
+        CHECK(measOk, "QDIM③ 平行线基线标注测量=10/20");
+    }
+
+    // ---- ④ 选择集不足 / 空 → 返回空，不崩溃 ----
+    {
+        SketchModel m;
+        const int l0 = addLine(m, 0, 0, 10, 0);
+        m.setSelection({l0});
+        const auto ids = m.quickDimSelected(QStringLiteral("baseline"));
+        CHECK(ids.empty(), "QDIM④ 仅 1 个有效几何 → 返回空（不生成）");
+        m.clearSelection();
+        const auto ids2 = m.quickDimSelected(QStringLiteral("baseline"));
+        CHECK(ids2.empty(), "QDIM④ 空选择集 → 返回空");
+    }
+
+    // ---- ⑤ QDIM 标注经 dimStyleName 绑定当前命名样式 → 改样式定义后联动（一图多标准）----
+    {
+        SketchModel m;
+        const int c0 = addCircle(m, 0, 0, 3);
+        const int c1 = addCircle(m, 15, 0, 3);
+        m.setSelection({c0, c1});
+        const auto ids = m.quickDimSelected(QStringLiteral("baseline"));
+        CHECK(ids.size() == 1, "QDIM⑤ 2 圆 → 1 条基线标注");
+        CHECK(m.element(ids[0])->dimStyleName == m.currentDimStyle(), "QDIM⑤ 生成标注记当前样式名(Standard)");
+        // 改 Standard 样式定义 → 引用它的 QDIM 标注联动
+        dim::DimStyleEntry st = *m.findDimStyle("Standard");
+        st.style.textHeight = 2.0;
+        CHECK(m.updateDimStyle(st), "QDIM⑤ 修改 Standard 样式");
+        CHECK(std::fabs(m.dimStyleFor(*m.element(ids[0])).textHeight - 2.0) <= 1e-9,
+              "QDIM⑤ 改 Standard 后 QDIM 标注经 dimStyleName 联动读到字高 2.0");
     }
 }
 
@@ -4284,6 +4730,250 @@ static void t_groupFilter() {
         j.remove("groupName");
         const Element e3 = elementFromJson(j);
         CHECK(e3.groupName.isEmpty(), "GROUP⑧ 旧档缺键 → 回落未编组");
+    }
+}
+
+// ===================== 图层治理五件套：LAYISO / LAYUNISO / LAYMCH（命令路径 + 退化） =====================
+// 验收：每命令 ≥8 断言（含退化：无选中 / 目标层不存在 / 空图层 / 模型无图层），命令路径与 makeXxx 同源
+static void t_layerGovernance() {
+    const QColor RED(QStringLiteral("#ff0000"));
+    const QColor BLUE(QStringLiteral("#0000ff"));
+    auto mkLine = [](SketchModel& mm, const QString& layer, double x0, double y0, double x1, double y1) -> int {
+        Element e; e.type = ElementType::Line;
+        e.pts = { Vec3(x0, y0, 0), Vec3(x1, y1, 0) }; e.layer = layer;
+        return mm.addElement(e);
+    };
+    auto frozenCount = [](SketchModel& mm) -> int {
+        int n = 0;
+        for (int i = 0; i < mm.layerCount(); ++i) if (mm.layerAt(i).frozen) ++n;
+        return n;
+    };
+    auto inLayerCount = [](SketchModel& mm, const QString& name) -> int {
+        int n = 0;
+        for (const auto& e : mm.elements()) if (e.layer == name) ++n;
+        return n;
+    };
+
+    // ---------- LAYISO：隔离选中图元所属图层（冻结其余） ----------
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        m.addLayer(QStringLiteral("LB"), BLUE);
+        const int a = addLine(m, 0, 0, 10, 0);    // 层 "0"
+        const int b = mkLine(m, QStringLiteral("LA"), 0, 5, 10, 5);
+        const int c = addLine(m, 20, 0, 30, 0);   // 层 "0"
+        (void)a;
+        m.setSelection({ b });                     // 选中层 LA 的图元
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layiso")), "LAYISO① 执行成功");
+        const Layer* L0  = m.findLayer(QStringLiteral("0"));
+        const Layer* LA  = m.findLayer(QStringLiteral("LA"));
+        const Layer* LB  = m.findLayer(QStringLiteral("LB"));
+        CHECK(LA && !LA->frozen,  "LAYISO① 选中层 LA 保持可见（不冻结）");
+        CHECK(L0 && L0->frozen,   "LAYISO① 其余层 0 被冻结");
+        CHECK(LB && LB->frozen,   "LAYISO① 其余层 LB 被冻结");
+        CHECK(frozenCount(m) == 2, "LAYISO① 冻结计数 = 2（仅保留 LA）");
+        CHECK(!m.elementPickable(*m.element(c)), "LAYISO① 冻结层图元不可命中");
+        CHECK(m.elementPickable(*m.element(b)),  "LAYISO① 保留层图元可命中");
+        // layuniso 可逆
+        CHECK(interp.execute(QStringLiteral("layuniso")), "LAYISO① layuniso 执行成功");
+        CHECK(frozenCount(m) == 0, "LAYISO① layuniso 后全部解冻");
+        CHECK(m.elementPickable(*m.element(c)), "LAYISO① 解冻后图元恢复可命中");
+    }
+    // LAYISO②：无选中 → 孤立当前活动层；退化空模型（仅 "0"）不崩溃
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        m.addLayer(QStringLiteral("LB"), BLUE);
+        m.setCurrentLayer(QStringLiteral("0"));
+        m.setSelection({});                        // 无选中
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layiso")), "LAYISO② 无选中执行成功（孤立当前层）");
+        const QString cur = m.currentLayer();
+        CHECK(m.findLayer(cur) && !m.findLayer(cur)->frozen, "LAYISO② 当前层保持可见");
+        CHECK(m.findLayer(QStringLiteral("LA"))->frozen, "LAYISO② 其余层 LA 冻结");
+        CHECK(m.findLayer(QStringLiteral("LB"))->frozen, "LAYISO② 其余层 LB 冻结");
+        // 退化：空模型（仅基础层 "0"）无选中 → 无层可冻结，n=0 不崩溃
+        SketchModel empty;
+        CommandInterpreter ei(&empty);
+        CHECK(ei.execute(QStringLiteral("layiso")), "LAYISO② 空模型 layiso 不崩溃");
+        CHECK(frozenCount(empty) == 0, "LAYISO② 空模型 layiso 冻结计数 = 0");
+    }
+    // LAYISO③：隔离后新建图层不被自动冻结（隔离为调用时点语义）
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        m.setSelection({ mkLine(m, QStringLiteral("LA"), 0, 0, 5, 0) });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layiso")), "LAYISO③ 执行成功");
+        m.addLayer(QStringLiteral("LC"), BLUE);
+        CHECK(m.findLayer(QStringLiteral("LC")) && !m.findLayer(QStringLiteral("LC"))->frozen,
+              "LAYISO③ 隔离后新建层 LC 不自动冻结（时点语义）");
+    }
+
+    // ---------- LAYUNISO：解冻所有图层 ----------
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        m.addLayer(QStringLiteral("LB"), BLUE);
+        m.setLayerFrozen(QStringLiteral("LA"), true);
+        m.setLayerFrozen(QStringLiteral("LB"), true);
+        CommandInterpreter interp(&m);
+        CHECK(frozenCount(m) == 2, "LAYUNISO① 前置：2 层冻结");
+        CHECK(interp.execute(QStringLiteral("layuniso")), "LAYUNISO① 执行成功");
+        CHECK(frozenCount(m) == 0, "LAYUNISO① 全部解冻");
+        CHECK(m.elementPickable(*m.element(mkLine(m, QStringLiteral("LA"), 0, 0, 1, 0))),
+              "LAYUNISO① 解冻后 LA 图元可命中");
+    }
+    // LAYUNISO②：本就全解冻 → 幂等不崩溃；连跑两次仍 0
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layuniso")), "LAYUNISO② 全解冻态执行成功");
+        CHECK(frozenCount(m) == 0, "LAYUNISO② 全解冻态冻结计数仍 0");
+        CHECK(interp.execute(QStringLiteral("layuniso")), "LAYUNISO② 幂等二次执行成功");
+        CHECK(frozenCount(m) == 0, "LAYUNISO② 幂等后仍 0");
+    }
+
+    // ---------- LAYMCH：把选中图元移到目标图层 ----------
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), RED);
+        m.addLayer(QStringLiteral("LB"), BLUE);
+        const int a = mkLine(m, QStringLiteral("LA"), 0, 0, 10, 0);
+        const int b = mkLine(m, QStringLiteral("LA"), 0, 5, 10, 5);
+        m.setSelection({ a, b });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("laymch LB")), "LAYMCH① 执行成功（目标 LB）");
+        CHECK(m.element(a) && m.element(a)->layer == QStringLiteral("LB"), "LAYMCH① 图元 a 改属 LB");
+        CHECK(m.element(b) && m.element(b)->layer == QStringLiteral("LB"), "LAYMCH① 图元 b 改属 LB");
+        CHECK(inLayerCount(m, QStringLiteral("LA")) == 0, "LAYMCH① 源层 LA 已无图元");
+        CHECK(inLayerCount(m, QStringLiteral("LB")) == 2, "LAYMCH① 目标层 LB 含 2 图元");
+    }
+    // LAYMCH②：退化—无选中 → 拒绝且零改动
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LB"), BLUE);
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelection({});
+        CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("laymch LB")), "LAYMCH② 无选中被拒");
+        CHECK(m.element(a) && m.element(a)->layer == QStringLiteral("0"), "LAYMCH② 拒绝后图元层不变");
+    }
+    // LAYMCH③：退化—目标层不存在 → 拒绝
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelection({ a });
+        CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("laymch NOSUCH")), "LAYMCH③ 目标层不存在被拒");
+        CHECK(m.element(a)->layer == QStringLiteral("0"), "LAYMCH③ 拒绝后图元层不变");
+    }
+    // LAYMCH④：退化—移入空图层（目标层原本无图元）
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LE"), BLUE);    // 空图层
+        CHECK(inLayerCount(m, QStringLiteral("LE")) == 0, "LAYMCH④ 目标空层 LE 初始 0 图元");
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelection({ a });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("laymch LE")), "LAYMCH④ 移入空层执行成功");
+        CHECK(m.element(a)->layer == QStringLiteral("LE"), "LAYMCH④ 图元改属空层 LE");
+        CHECK(inLayerCount(m, QStringLiteral("LE")) == 1, "LAYMCH④ 空层纳入后含 1 图元");
+    }
+    // LAYMCH⑤：adoptStyle=false → 不改图元原色
+    {
+        SketchModel m;
+        m.addLayer(QStringLiteral("LA"), BLUE);
+        Element e; e.type = ElementType::Line; e.pts = { Vec3(0,0,0), Vec3(9,0,0) };
+        e.layer = QStringLiteral("0"); e.byLayer = false; e.color = RED;
+        const int id = m.addElement(e);
+        m.setSelection({ id });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("laymch LA")), "LAYMCH⑤ 执行成功");
+        const Element* me = m.element(id);
+        CHECK(me && me->layer == QStringLiteral("LA"), "LAYMCH⑤ 图元改属 LA");
+        CHECK(me && me->color == RED, "LAYMCH⑤ adoptStyle=false → 原色(红)保留未套用层色");
+    }
+    // LAYMCH⑥：退化为同层移动（no-op 仍成功）
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 10, 0);   // 层 "0"
+        m.setSelection({ a });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("laymch 0")), "LAYMCH⑥ 同层移动成功");
+        CHECK(m.element(a)->layer == QStringLiteral("0"), "LAYMCH⑥ 同层移动后层不变");
+    }
+}
+
+// ===================== 命令路径直测：join / arrayrect / arraypolar / arraypath / ltscale =====================
+// 验证「ModifyCommand / LambdaCommand 分发 → selectedElems → makeXxx → applyChanges」整条命令链路（此前仅单测 makeXxx）
+static void t_commandDispatch() {
+    // JOIN 端到端：两条相接直线 → 1 条 Polyline
+    {
+        SketchModel m;
+        const int l1 = addLine(m, 0, 0, 10, 0);
+        const int l2 = addLine(m, 10, 0, 10, 8);
+        m.setSelection({ l1, l2 });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("join")), "JOIN命令 执行成功");
+        CHECK(m.elementCount() == 1, "JOIN命令 落盘 2 源 → 1 Polyline");
+        const Element* p = nullptr;
+        for (const auto& e : m.elements()) if (e.type == ElementType::Polyline) p = &e;
+        CHECK(p && p->pts.size() == 3, "JOIN命令 Polyline 顶点数 = 3（接缝无重复）");
+    }
+    // JOIN 无选中 → 拒绝
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 10, 0);
+        m.setSelection({});
+        CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("join")), "JOIN命令 无选中被拒");
+    }
+    // ARRAYRECT 端到端：圆 2×3 → 6 图元
+    {
+        SketchModel m;
+        const int c = addCircle(m, 0, 0, 1);
+        m.setSelection({ c });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("arrayrect 2 3 10 20")), "ARRAYRECT命令 执行成功");
+        CHECK(m.elementCount() == 6, "ARRAYRECT命令 1+5=6 图元");
+    }
+    // ARRAYPOLAR 端到端：圆绕 (0,0) 4 份/180° → 4 图元
+    {
+        SketchModel m;
+        const int c = addCircle(m, 10, 0, 2);
+        m.setSelection({ c });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("arraypolar 0,0 4 180")), "ARRAYPOLAR命令 执行成功");
+        CHECK(m.elementCount() == 4, "ARRAYPOLAR命令 1+3=4 图元");
+    }
+    // ARRAYPATH 端到端：沿 100 长折线、间距 25 → 4 副本（共 6 图元）
+    {
+        SketchModel m;
+        Element path; path.type = ElementType::Polyline;
+        path.pts = { Vec3(0,0,0), Vec3(100,0,0) };
+        path.closed = false;   // 开放折线：避免被当作闭合（默认 closed=true）导致路径长翻倍
+        const int pathId = m.addElement(path);
+        const int c = addCircle(m, 10, 0, 1);
+        m.setSelection({ c });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("arraypath %1 25").arg(pathId)), "ARRAYPATH命令 执行成功");
+        CHECK(m.elementCount() == 6, "ARRAYPATH命令 路径100/间距25 → 4 副本（共 6 图元）");
+    }
+    // LTSCALE 命令：0.5 / 2.0 生效，非法值被拒且保持
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("ltscale 0.5")), "LTSCALE命令 0.5 成功");
+        CHECK(std::fabs(m.ltscale() - 0.5) < 1e-9, "LTSCALE命令 生效 0.5");
+        CHECK(!interp.execute(QStringLiteral("ltscale 0")), "LTSCALE命令 非法(0)被拒");
+        CHECK(std::fabs(m.ltscale() - 0.5) < 1e-9, "LTSCALE命令 非法后仍保持 0.5");
+        CHECK(interp.execute(QStringLiteral("ltscale 2")), "LTSCALE命令 2.0 成功");
+        CHECK(std::fabs(m.ltscale() - 2.0) < 1e-9, "LTSCALE命令 生效 2.0");
+        CHECK(!interp.execute(QStringLiteral("ltscale -1")), "LTSCALE命令 负值被拒");
+        CHECK(std::fabs(m.ltscale() - 2.0) < 1e-9, "LTSCALE命令 负值后仍保持 2.0");
     }
 }
 
@@ -6735,6 +7425,202 @@ static bool t_diag() {
     return true;
 }
 
+// ============================================================================
+// t_dwg —— D1：DWG 版本路由 + 外部转换器桥（DwgBridge）+ R12 回归
+// 覆盖：版本串探测 / 读取白名单 / 人类可读名 / 桥可用性探测 / 错误报文含版本
+// 串原文 / fromDwg 路由 / toDwgR2000 未装组件报错 / R12 自研读写回归。
+// 真转换器 round-trip（黄金差分）由环境变量门控：SKETCHCAD_DWGTOOLS 指向
+// 转换器目录且 SKETCHCAD_DWG_SAMPLE 指向 .dwg 样本时执行，否则跳过。
+// ============================================================================
+#include "DwgBridge.h"
+#include <QProcess>   // t_dwg D7：子进程环境探测（受限沙箱下跳过真转断言）
+
+static bool t_dwg() {
+    using namespace SketchCAD;
+    using namespace SketchCAD::cadfmt;   // fromDwg/toDwg/toDwgR2000
+    using dwgbridge::available;
+    using dwgbridge::canReadVersion;
+    using dwgbridge::dxfToDwgR2000;
+    using dwgbridge::dwgToDxf;
+    using dwgbridge::setToolsDirForTest;
+    using dwgbridge::versionFromBytes;
+    using dwgbridge::versionHuman;
+
+    // ---- D1 版本串探测（唯一入口）----
+    QByteArray r12 = toDwg({});                  // 自产 R12 头作样本
+    CHECK(versionFromBytes(r12) == QLatin1String("AC1009"), "DWG D1 版本探测：toDwg 产物头部=AC1009");
+
+    QByteArray fake = QByteArray("AC1015") + QByteArray(30, '\0');
+    CHECK(versionFromBytes(fake) == QLatin1String("AC1015"), "DWG D1 版本探测：AC1015 识别");
+    CHECK(versionFromBytes(QByteArray("AC10")) == QString(), "DWG D1 版本探测：过短回落空串");
+    CHECK(versionFromBytes(QByteArray("SketchCAD is great")) == QString(),
+          "DWG D1 版本探测：非 DWG 头回落空串");
+
+    // ---- D2 读取白名单（AC1009 走自研不经桥；AC1012~AC1032 经桥）----
+    CHECK(!canReadVersion(QLatin1String("AC1009")), "DWG D2 白名单：AC1009 不经桥（自研 R12 保护）");
+    CHECK(canReadVersion(QLatin1String("AC1015")) && canReadVersion(QLatin1String("AC1018")),
+          "DWG D2 白名单：R2000/2000i 放行");
+    CHECK(canReadVersion(QLatin1String("AC1021")) && canReadVersion(QLatin1String("AC1024")) &&
+              canReadVersion(QLatin1String("AC1027")) && canReadVersion(QLatin1String("AC1032")),
+          "DWG D2 白名单：R2004/2007/2013/2018 放行");
+    CHECK(!canReadVersion(QLatin1String("AC1999")) && !canReadVersion(QString()),
+          "DWG D2 白名单：未知版本串拒绝");
+
+    // ---- D2 人类可读名（错误报文共用 cadVerToHuman）----
+    CHECK(versionHuman(QLatin1String("AC1021")) == QStringLiteral("DWG 2004") &&
+              versionHuman(QLatin1String("AC1024")) == QStringLiteral("DWG 2007"),
+          "DWG D2 版本串→人类可读名一致");
+
+    // ---- D3 桥可用性探测（临时目录注入，无副作用）----
+    QTemporaryDir emptyTools;
+    CHECK(emptyTools.isValid(), "DWG D3 临时工具目录创建成功");
+    setToolsDirForTest(emptyTools.path());
+    CHECK(!available(), "DWG D3 空工具目录 → 桥不可用");
+
+    {
+        QFile f1(QDir(emptyTools.path()).filePath(QStringLiteral("dwg2dxf.exe")));
+        QFile f2(QDir(emptyTools.path()).filePath(QStringLiteral("dwgwrite.exe")));
+        const bool made = f1.open(QIODevice::WriteOnly) && f2.open(QIODevice::WriteOnly);
+        CHECK(made, "DWG D3 假转换器 exe 落盘成功");
+    }
+    CHECK(available(), "DWG D3 双转换器 exe 齐备 → 桥可用");
+
+    // ---- D3 桥不可用时错误报文含版本串原文 ----
+    const QByteArray ac1021bytes = QByteArray("AC1021") + QByteArray(200, '\0');
+    QByteArray dxfOut; QString bridgeErr;
+    CHECK(!dwgToDxf(ac1021bytes, dxfOut, &bridgeErr), "DWG D3 桥不可用 → dwgToDxf 失败");
+    const QByteArray d3msg = bridgeErr.toUtf8();
+    CHECK(bridgeErr.contains(QLatin1String("AC1021")) && bridgeErr.contains(QStringLiteral("DWG 2004")),
+          "DWG D3 错误报文含版本串原文+人类可读名");
+
+    // ---- D4 fromDwg 路由：R2000+ 经桥，桥不可用 → 明确报错不误读 ----
+    {
+        std::vector<Element> out; QString err;
+        CHECK(!fromDwg(ac1021bytes, out, &err) && out.empty(),
+              "DWG D4 fromDwg(AC1021)：桥不可用 → 拒绝");
+        const QByteArray d4msg = err.toUtf8();
+        CHECK(err.contains(QLatin1String("AC1021")), "DWG D4 fromDwg 错误报文含版本串原文");
+
+        out.clear(); err.clear();
+        const QByteArray unknownVer = QByteArray("AC1999") + QByteArray(200, '\0');
+        CHECK(!fromDwg(unknownVer, out, &err), "DWG D4 fromDwg(AC1999)：未知版本拒绝");
+        CHECK(err.contains(QLatin1String("AC1999")), "DWG D4 未知版本报文含原文");
+
+        out.clear(); err.clear();
+        const QByteArray notDwg = QByteArray("Sketch") + QByteArray(200, '\0');
+        CHECK(!fromDwg(notDwg, out, &err), "DWG D4 fromDwg(非DWG头)拒绝");
+        CHECK(err.contains(QLatin1String("Sketch")), "DWG D4 非DWG报文含头部原文");
+    }
+
+    // ---- D5 toDwgR2000：桥不可用 → 空数组+指引报文 ----
+    // 注：注入**不存在的目录**（test 注入优先级最高，不受环境变量影响），
+    // 复现"转换组件未安装"；不能用 D3 的假 exe 目录（会走"无法启动"分支）。
+    {
+        Element line; line.type = ElementType::Line;
+        line.pts = { Vec3(0, 0, 0), Vec3(10, 10, 0) };
+        setToolsDirForTest(QStringLiteral("Z:/__no_such_dwg_tools__"));
+        QString err;
+        const QByteArray dwg = toDwgR2000({ line }, &err);
+        CHECK(dwg.isEmpty() && err.contains(QStringLiteral("未安装")),
+              "DWG D5 toDwgR2000 桥不可用 → 空数组+未安装指引");
+        const QByteArray d5msg = err.toUtf8();
+        CHECK(err.contains(QStringLiteral("R2000")) || err.contains(QStringLiteral("tools")),
+              "DWG D5 未安装报文含版本上下文或指引路径");
+        setToolsDirForTest(QString());   // 立即恢复，防污染 D6/D7
+    }
+
+    // ---- D6 R12 自研回归（升级前后语义不动）----
+    {
+        Element line; line.type = ElementType::Line;
+        line.pts = { Vec3(0, 0, 0), Vec3(10, 10, 0) };
+        Element circle; circle.type = ElementType::Circle;
+        circle.pts = { Vec3(5, 5, 0) }; circle.radius = 3.0;
+        const std::vector<Element> elems = { line, circle };
+
+        const QByteArray dwg12 = toDwg(elems);
+        CHECK(dwg12.left(6) == QByteArray("AC1009"), "DWG D6 toDwg 仍输出 AC1009（逐字节兼容）");
+
+        std::vector<Element> back; QString err;
+        CHECK(fromDwg(dwg12, back, &err), "DWG D6 R12 自研回读成功");
+        CHECK((int)back.size() == (int)elems.size(),
+              "DWG D6 R12 round-trip 实体数一致（回归保护）");
+
+        // 坏指针 R12：头部合法但实体段指针无效 → 原有报文原样触发（强校验语义不动）
+        QByteArray corrupt = QByteArray("AC1009") + QByteArray(400, '\0');
+        back.clear(); err.clear();
+        CHECK(!fromDwg(corrupt, back, &err), "DWG D6 R12 坏实体段指针 → 拒绝");
+        CHECK(err == QStringLiteral("实体段指针无效"), "DWG D6 R12 强校验报文原样（语义未动）");
+    }
+
+    // ---- D7 真转换器 round-trip（黄金差分；环境变量门控 + 子进程环境探测）----
+    // 双重门控：① SKETCHCAD_DWGTOOLS + SKETCHCAD_DWG_SAMPLE 指向转换器与样本；
+    // ② 当前进程允许创建子进程（部分受限环境/CI 沙箱禁止任何 CreateProcess，
+    //    连 cmd.exe 都 FailedToStart——此时跳过真转断言；转换器 CLI 的读写
+    //    闭环已由外部冒烟验证，见 docs/dwg-r2000-bridge-design-analysis.md）。
+    const QString toolsEnv = qEnvironmentVariable("SKETCHCAD_DWGTOOLS");
+    const QString sampleEnv = qEnvironmentVariable("SKETCHCAD_DWG_SAMPLE");
+    bool procEnvOk = false;
+    {
+        QProcess probe;
+        probe.setProgram(QStringLiteral("cmd.exe"));
+        probe.setArguments({ QStringLiteral("/c"), QStringLiteral("echo ok") });
+        probe.start();
+        procEnvOk = probe.waitForStarted(3000);
+        if (procEnvOk) { probe.kill(); probe.waitForFinished(2000); }
+    }
+    if (!procEnvOk)
+        CHECK(true, "DWG D7 真转断言跳过：当前环境禁止子进程创建（CLI 冒烟已覆盖）");
+    else if (!toolsEnv.isEmpty() && !sampleEnv.isEmpty()
+        && QFile::exists(sampleEnv)) {
+        setToolsDirForTest(toolsEnv);
+        CHECK(available(), "DWG D7 门控真转：转换器可用");
+
+        // 读：黄金样本 DWG → dwg2dxf → fromDxf 解析
+        QFile sample(sampleEnv);
+        const bool sampleOpened = sample.open(QIODevice::ReadOnly);
+        CHECK(sampleOpened, "DWG D7 门控真转：黄金样本可读");
+        const QByteArray sampleBytes = sampleOpened ? sample.readAll() : QByteArray();
+        QByteArray goldDxf; QString goldErr;
+        const bool goldOk = dwgToDxf(sampleBytes, goldDxf, &goldErr);
+        if (!goldOk)
+            fprintf(stderr, "[dwg-diag] goldErr=%s\n", goldErr.toUtf8().constData());
+        CHECK(goldOk, "DWG D7 黄金样本 dwg2dxf 转换成功");
+        if (!goldDxf.isEmpty()) {
+            std::vector<Element> parsed; QString parseErr;
+            CHECK(fromDwg(sampleBytes, parsed, &parseErr), "DWG D7 黄金样本经 fromDwg 全链解析成功");
+            CHECK((int)parsed.size() > 0, "DWG D7 黄金样本解析出图元");
+        }
+
+        // 写：自绘图元 → toDxf(R2000) → dwgwrite --as r2000 → dwg2dxf 回读差分
+        Element line; line.type = ElementType::Line;
+        line.pts = { Vec3(0, 0, 0), Vec3(42, 17, 0) };
+        Element circle; circle.type = ElementType::Circle;
+        circle.pts = { Vec3(5, 5, 0) }; circle.radius = 3.0;
+        const std::vector<Element> elems = { line, circle };
+        QString err;
+        const QByteArray dwg2000 = toDwgR2000(elems, &err);
+        if (dwg2000.isEmpty())
+            fprintf(stderr, "[dwg-diag] writeErr=%s\n", err.toUtf8().constData());
+        CHECK(!dwg2000.isEmpty(), "DWG D7 toDwgR2000 真转换成功");
+        if (!dwg2000.isEmpty()) {
+            CHECK(dwg2000.left(6) == QByteArray("AC1015"),
+                  "DWG D7 产物头部版本串 = AC1015（R2000）");
+            QByteArray rtDxf; QString rtErr;
+            CHECK(dwgToDxf(dwg2000, rtDxf, &rtErr), "DWG D7 自产 R2000 DWG 可被转换器回读");
+            if (!rtDxf.isEmpty()) {
+                std::vector<Element> back; QString bErr;
+                CHECK(fromDwg(dwg2000, back, &bErr), "DWG D7 自产 R2000 DWG 经 fromDwg 全链回读");
+                CHECK((int)back.size() == (int)elems.size(),
+                      "DWG D7 写→读 round-trip 实体数差分为零");
+            }
+        }
+        setToolsDirForTest(QString());   // 恢复默认，防污染其他测试
+    }
+
+    setToolsDirForTest(QString());       // 无条件恢复默认
+    return true;
+}
+
 static bool t_cmdParity() {
     using namespace SketchCAD;
     // 默认别名在 GUI 启动时由 aliasreload 加载到 AliasTable 单例；无头测试需手动灌入，
@@ -7102,6 +7988,279 @@ static bool t_undoTables() {
         CHECK(m.elementCount() == n0, "撤销表/回归：撤销删除恢复");
         m.redo();
         CHECK(m.elementCount() == n0 - 1, "撤销表/回归：重做删除生效");
+    }
+
+    return true;
+}
+
+// ===================== 撤销栈差量化（t_undoDelta） =====================
+// 验收：差量模式（默认）与全量模式（回落）在随机 500 步序列下撤销/重做终态图元集全等；
+// 5 万图元场景单步撤销差量内存 ≤1MB、平均撤销耗时 ≤16ms；id 复用 / 联动同一步 /
+// 检查点回放 / 模式切换清栈等行为正确。
+
+// 图元 → 紧凑 JSON 字节（与 UndoDelta 同源，做逐图元字节级比较）
+static QByteArray undoDeltaElemBytes(const Element& e) {
+    return QJsonDocument(elementToJson(e)).toJson(QJsonDocument::Compact);
+}
+// 两模型「终态全等」：图元集（id + 字节）一致，且关键 aux 状态一致。
+static bool modelsEquivalent(const SketchModel& a, const SketchModel& b) {
+    if (a.elementCount() != b.elementCount()) return false;
+    const auto& ea = a.elements();
+    const auto& eb = b.elements();
+    for (size_t i = 0; i < ea.size(); ++i) {
+        if (ea[i].id != eb[i].id) return false;
+        if (undoDeltaElemBytes(ea[i]) != undoDeltaElemBytes(eb[i])) return false;
+    }
+    if (!(a.units() == b.units())) return false;
+    if (!(a.limits() == b.limits())) return false;
+    if (!(a.snapConfig() == b.snapConfig())) return false;
+    if (!(a.trackConfig() == b.trackConfig())) return false;
+    if (a.layoutCount() != b.layoutCount()) return false;
+    if (a.savedFilters().size() != b.savedFilters().size()) return false;
+    return true;
+}
+
+static bool t_undoDelta() {
+    using namespace SketchCAD;
+
+    // ---------- A. 差量 vs 全量：随机 500 步序列，撤销/重做终态逐字节全等 ----------
+    {
+        SketchModel mDelta, mFull;
+        mFull.setUndoDeltaEnabled(false);   // 回落全量模式（清栈后开始编辑）
+        mDelta.setUndoDepthLimit(1000);     // 放宽栈深：覆盖全部 500 步（全量 500 快照 ≈ 36MB）
+        mFull.setUndoDepthLimit(1000);
+        std::mt19937 rng(0x9E3779B1u);
+        std::uniform_int_distribution<int> pick(0, 5);
+        auto rnd = [&]() -> double { return (double)rng() / (double)rng.max(); };
+
+        const int N = 500;
+        for (int i = 0; i < N; ++i) {
+            int choice = pick(rng);
+            double x0 = rnd()*200, y0 = rnd()*200, x1 = rnd()*200, y1 = rnd()*200;
+            int lp = 2 + (int)(rng() % 4);
+            switch (choice) {
+            case 0: addLine(mDelta, x0, y0, x1, y1);  addLine(mFull, x0, y0, x1, y1); break;
+            case 1: { double cx = rnd()*200, cy = rnd()*200, r = 1 + rnd()*50;
+                      addCircle(mDelta, cx, cy, r); addCircle(mFull, cx, cy, r); } break;
+            case 2: addPoint(mDelta, x0, y0); addPoint(mFull, x0, y0); break;
+            case 3:
+                if (mDelta.elementCount() > 0) {
+                    int idx = (int)(rng() % mDelta.elementCount());
+                    int id = mDelta.elements()[idx].id;
+                    mDelta.removeElement(id); mFull.removeElement(id);
+                }
+                break;
+            case 4:
+                if (mDelta.elementCount() > 0) {
+                    int idx = (int)(rng() % mDelta.elementCount());
+                    int id = mDelta.elements()[idx].id;
+                    mDelta.beginEdit("modify"); mDelta.updateElementQuiet(id, [](Element& e){ e.pts[0].x += 1.0; });
+                    mFull.beginEdit("modify");  mFull.updateElementQuiet(id,  [](Element& e){ e.pts[0].x += 1.0; });
+                }
+                break;
+            case 5: {
+                UnitsMeta u = mDelta.units(); u.lengthPrec = lp; mDelta.setUnits(u);
+                UnitsMeta u2 = mFull.units(); u2.lengthPrec = lp; mFull.setUnits(u2);
+            } break;
+            }
+        }
+        CHECK(modelsEquivalent(mDelta, mFull), "差量vs全量：500步编辑后终态全等");
+        CHECK(mDelta.undoStackSize() == mFull.undoStackSize(),
+              "差量vs全量：撤销步数一致（两模式 push 同频）");
+
+        // 连续撤销：逐层对照（覆盖检查点回放 / 差量重建）
+        int undoN = 0;
+        while (mDelta.canUndo() && mFull.canUndo()) {
+            mDelta.undo(); mFull.undo(); ++undoN;
+            CHECK(modelsEquivalent(mDelta, mFull), "差量vs全量：撤销过程逐层终态全等");
+        }
+        CHECK(undoN > 400, "差量vs全量：可撤销步数充足（>400）");
+        CHECK(mDelta.elementCount() == 0 && mFull.elementCount() == 0,
+              "差量vs全量：全部撤销后图元清空");
+
+        // 连续重做：逐层对照
+        int redoN = 0;
+        while (mDelta.canRedo() && mFull.canRedo()) {
+            mDelta.redo(); mFull.redo(); ++redoN;
+            CHECK(modelsEquivalent(mDelta, mFull), "差量vs全量：重做过程逐层终态全等");
+        }
+        CHECK(redoN == undoN, "差量vs全量：重做步数等于撤销步数");
+        CHECK(modelsEquivalent(mDelta, mFull), "差量vs全量：重做到底终态与编辑后一致");
+    }
+
+    // ---------- B. 检查点回放：跨第 50 步检查点边界撤销/重做一致 ----------
+    {
+        SketchModel mDelta, mFull;
+        mFull.setUndoDeltaEnabled(false);
+        mDelta.setUndoDepthLimit(1000);     // 覆盖全部 120 步，不受默认栈深 100 裁剪干扰
+        mFull.setUndoDepthLimit(1000);
+        for (int i = 0; i < 120; ++i) addLine(mDelta, (double)i, 0, (double)i, 10);
+        for (int i = 0; i < 120; ++i) addLine(mFull, (double)i, 0, (double)i, 10);
+        CHECK(mDelta.undoStackSize() == 120 && mFull.undoStackSize() == 120, "检查点：两模式各 120 步");
+        for (int k = 0; k < 70; ++k) { mDelta.undo(); mFull.undo(); }   // 跨越第 50 步检查点
+        CHECK(modelsEquivalent(mDelta, mFull), "检查点：跨边界撤销 70 步后两模式一致");
+        for (int k = 0; k < 70; ++k) { mDelta.redo(); mFull.redo(); }
+        CHECK(modelsEquivalent(mDelta, mFull), "检查点：跨边界重做 70 步后两模式一致");
+    }
+
+    // ---------- C. 差量引擎单元：id 复用 / 删除后新建 / 乱序 / 通用 round-trip ----------
+    {
+        auto mkLine = [](int id, double x0, double y0, double x1, double y1) {
+            Element e; e.type = ElementType::Line; e.id = id;
+            e.pts = { Vec3(x0, y0, 0), Vec3(x1, y1, 0) }; return e;
+        };
+        auto seqEq = [](const std::vector<Element>& got, const std::vector<Element>& want) {
+            if (got.size() != want.size()) return false;
+            for (size_t i = 0; i < want.size(); ++i)
+                if (!(got[i].id == want[i].id && undoDeltaElemBytes(got[i]) == undoDeltaElemBytes(want[i])))
+                    return false;
+            return true;
+        };
+
+        // ① 同位 id 复用：图元 id 不变、内容变（建模器"重建同身份图元"场景）→ Modified
+        {
+            std::vector<Element> before = { mkLine(1,0,0,1,0), mkLine(2,2,0,3,0), mkLine(3,4,0,5,0) };
+            std::vector<Element> after  = { mkLine(1,0,0,1,0), mkLine(2,9,9,10,9), mkLine(3,4,0,5,0) };
+            std::vector<ElementDelta> d = diffElements(before, after);
+            std::vector<Element> fwd = before; applyElementDeltas(fwd, d, true);
+            CHECK(seqEq(fwd, after), "差量引擎/id复用：同位重建正向还原（Modified 原位替换）");
+            std::vector<Element> rev = after; applyElementDeltas(rev, d, false);
+            CHECK(seqEq(rev, before), "差量引擎/id复用：同位重建反向还原");
+        }
+
+        // ② 删除后新建（id 单调不复用，位置敏感）：删 id2 + 末尾加 id5 → Removed+Added
+        {
+            std::vector<Element> before = { mkLine(1,0,0,1,0), mkLine(2,2,0,3,0), mkLine(3,4,0,5,0), mkLine(4,6,0,7,0) };
+            std::vector<Element> after  = { mkLine(1,0,0,1,0), mkLine(3,4,0,5,0), mkLine(4,6,0,7,0), mkLine(5,9,9,10,9) };
+            std::vector<ElementDelta> d = diffElements(before, after);
+            std::vector<Element> fwd = before; applyElementDeltas(fwd, d, true);
+            CHECK(seqEq(fwd, after), "差量引擎/删除后新建：正向还原（删除+新增各归其位）");
+            std::vector<Element> rev = after; applyElementDeltas(rev, d, false);
+            CHECK(seqEq(rev, before), "差量引擎/删除后新建：反向还原（被删图元回插原位）");
+        }
+
+        // ③ 乱序（reorder 后两向量不再按 id 有序 → 慢路径）：保序回放
+        {
+            std::vector<Element> before = { mkLine(1,0,0,1,0), mkLine(2,2,0,3,0), mkLine(3,4,0,5,0) };
+            std::vector<Element> after  = { mkLine(2,2,0,3,0), mkLine(1,0,0,1,0), mkLine(3,4,0,5,0) };
+            std::vector<ElementDelta> d = diffElements(before, after);
+            std::vector<Element> fwd = before; applyElementDeltas(fwd, d, true);
+            CHECK(seqEq(fwd, after), "差量引擎/乱序：正向还原（reorder 保序）");
+            std::vector<Element> rev = after; applyElementDeltas(rev, d, false);
+            CHECK(seqEq(rev, before), "差量引擎/乱序：反向还原");
+        }
+
+        // ④ 通用混合：删除 + 修改 + 新增
+        {
+            std::vector<Element> b2 = { mkLine(1,0,0,1,0), mkLine(2,2,0,3,0), mkLine(3,4,0,5,0) };
+            std::vector<Element> a2 = { mkLine(1,0,0,9,9), mkLine(3,4,0,5,0), mkLine(5,7,7,8,8) };
+            std::vector<ElementDelta> d2 = diffElements(b2, a2);
+            std::vector<Element> f2 = b2; applyElementDeltas(f2, d2, true);
+            CHECK(seqEq(f2, a2), "差量引擎/混合：正向 round-trip 一致");
+            std::vector<Element> r2 = a2; applyElementDeltas(r2, d2, false);
+            CHECK(seqEq(r2, b2), "差量引擎/混合：反向 round-trip 一致");
+        }
+    }
+
+    // ---------- D. 复合步 / 联动同一步：多操作合并为单步撤销 ----------
+    {
+        SketchModel m;
+        int base = m.elementCount();
+        m.beginEdit("复合步");
+        std::vector<Element> parts(3);
+        for (int k = 0; k < 3; ++k) { parts[k].type = ElementType::Line; parts[k].pts = { Vec3((double)k,0,0), Vec3((double)k,1,0) }; }
+        m.addElementsQuiet(parts);
+        m.updateElementQuiet(m.elements()[0].id, [](Element& e){ e.pts[1].y += 5.0; });
+        CHECK(m.elementCount() == base + 3, "复合步：一次 beginEdit 加入 3 图元");
+        CHECK(m.undoStackSize() == 1, "复合步：整组操作合并为单步撤销（步数=1）");
+        m.undo();
+        CHECK(m.elementCount() == base, "复合步：单步撤销还原整组（3 图元全撤）");
+        m.redo();
+        CHECK(m.elementCount() == base + 3, "复合步：单步重做恢复整组（3 图元全回）");
+    }
+
+    // ---------- E. 模式切换清空历史 ----------
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 1, 1);
+        m.undo();
+        CHECK(m.canUndo() == false, "模式切换：撤销一步后置空（前置条件）");
+        CHECK(m.canRedo() == true, "模式切换：撤销后有可重做项（前置条件）");
+        m.setUndoDeltaEnabled(false);
+        CHECK(m.canUndo() == false && m.canRedo() == false, "模式切换：setUndoDeltaEnabled 清空撤销/重做历史");
+        m.setUndoDeltaEnabled(true);
+        CHECK(m.canUndo() == false && m.canRedo() == false, "模式切换：再次切换仍保持清空");
+    }
+
+    // ---------- F. 内存 + 耗时基准：5 万图元 / 200 步 ----------
+    {
+        const int N0 = 50000;
+        SketchModel m;
+        // 栈深用默认 100：检查点是整图快照（5 万图元 ≈ 42MB/个），窗口内 ≤2 个检查点
+        // 即可覆盖「每 50 步一个全量锚点 + 中间差量」的验收口径；开到 1000 会同时驻留
+        // 5 个检查点（210MB+），在受限环境（沙箱进程内存上限）会触发资源守卫被杀。
+        m.setUndoDepthLimit(100);
+        // 5 万图元**单步整体载入**（beginEdit + 一次 Quiet 批量加，等同"打开图纸/批量导入"
+        // 生成一个撤销步）：载入本身不应被拆成几十个可撤销步——那会让撤销末段回放
+        // 几十万次 elementFromJson，是基准失真。超大宗量步随后会被栈深裁剪自然淘汰，
+        // 稳态栈内只剩小幅编辑差量，正是验收要度量的场景。
+        {
+            std::vector<Element> parts(N0);
+            for (int k = 0; k < N0; ++k) {
+                parts[k].type = ElementType::Line;
+                parts[k].pts = { Vec3((double)k, 0, 0), Vec3((double)k, 1, 0) };
+            }
+            m.beginEdit("批量载入");
+            m.addElementsQuiet(parts);
+        }
+        CHECK(m.elementCount() == N0, "内存基准：载入 5 万图元成功");
+        for (int i = 0; i < 200; ++i) {
+            int id = m.elements()[i % m.elementCount()].id;
+            m.beginEdit("编辑");
+            m.updateElementQuiet(id, [](Element& e){ e.pts[0].y += 0.001; });
+        }
+        // 差量模式的栈深收敛呈锯齿（检查点锚吸收后回到 51，再涨到 101 再裁），
+        // 故断言「≤ 上限且保留足够步数」而非精确值。
+        CHECK(m.undoStackSize() <= 100 && m.undoStackSize() >= 50,
+              "内存基准：250 步 push 后按栈深 100 上限收敛（裁剪保锚）");
+
+        const qint64 maxBytes = m.maxDeltaEntryBytes();
+        QByteArray oneElem = undoDeltaElemBytes(m.elements()[0]);
+        qint64 fullSnapEst = (qint64)m.elementCount() * oneElem.size();
+        fprintf(stdout, "  [undo-delta] 内存基准：单步最大差量 = %lld 字节，5万图元全量快照估值 = %lld 字节\n",
+                (long long)maxBytes, (long long)fullSnapEst);
+        CHECK(maxBytes <= 1024 * 1024, "内存基准：单步撤销差量内存 <= 1MB");
+        CHECK(maxBytes > 0, "内存基准：存在差量记录");
+        CHECK(maxBytes < fullSnapEst / 5, "内存基准：单步差量 << 全量快照（差量化生效）");
+
+        // 撤销耗时：连续撤销栈内保留的编辑步（LIFO，先到的是最近 100 步编辑）
+        int n = 0; double maxMs = 0;
+        auto tAll0 = std::chrono::steady_clock::now();
+        while (m.canUndo()) {
+            auto a = std::chrono::steady_clock::now();
+            m.undo(); ++n;
+            auto b = std::chrono::steady_clock::now();
+            double dd = std::chrono::duration<double, std::milli>(b - a).count();
+            if (dd > maxMs) maxMs = dd;
+        }
+        auto tAll1 = std::chrono::steady_clock::now();
+        double avgMs = std::chrono::duration<double, std::milli>(tAll1 - tAll0).count() / (double)std::max(1, n);
+        fprintf(stdout, "  [undo-delta] 耗时基准：平均 %.3f ms/步，最慢 %.3f ms/步（基准 <=16ms，共 %d 步）\n",
+                avgMs, maxMs, n);
+        CHECK(n >= 50, "撤销耗时：成功撤销栈内全部保留步");
+        CHECK(avgMs <= 16.0, "撤销耗时：5万图元下平均单步撤销 <= 16ms");
+    }
+
+    // ---------- G. 单步 / 组合步 / redo 基本语义（差量模式默认）----------
+    {
+        SketchModel m;
+        int base = m.elementCount();
+        addLine(m, 0, 0, 1, 0);
+        CHECK(m.elementCount() == base + 1, "语义：新增图元生效");
+        m.undo();
+        CHECK(m.elementCount() == base, "语义：单步撤销删除新增");
+        m.redo();
+        CHECK(m.elementCount() == base + 1, "语义：单步重做恢复新增");
     }
 
     return true;
@@ -7776,6 +8935,19 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
     fprintf(stdout, "=== SketchCAD 约束/捕捉自测 ===\n");
 
+    // --undo：撤销专项快速通道（t_undoTables + t_undoDelta）。
+    // 存在理由：t_goldenSamples/t_dwg 等用例依赖 QProcess 调外部工具（LibreDWG），
+    // 沙箱管道耗尽（"QProcess: CreateFile failed: 所有的管道范例都在使用中"）时
+    // spawn 会无限期挂起，全量流程根本到不了撤销用例；此开关绕开外部依赖段，
+    // 专验撤销体系。全量回归仍走无参流程（外部工具可用时）。
+    if (argc > 1 && QByteArray(argv[1]) == QByteArray("--undo")) {
+        fprintf(stdout, "--- 撤销专项（--undo）：撤销表 + 撤销差量化 ---\n");
+        CHECK(t_undoTables(), "撤销表 UndoTables(布局/单位/界限/捕捉/追踪/过滤器/去重/栈深/混合用例)");
+        CHECK(t_undoDelta(),  "撤销栈差量化(差量vs全量终态全等/检查点回放/id复用/联动同一步/切换清栈/内存与耗时基准)");
+        fprintf(stdout, "=== 撤销专项完成：通过 %d / 失败 %d ===\n", g_pass, g_fail);
+        return g_fail == 0 ? 0 : 1;
+    }
+
     // P0-01：仅在显式设置环境变量时，由真实 toDxf/toDwg 生成 tests/golden/ 静态样本。
     // 生成后由 t_formatsGolden 长期校验；此分支不进入正常自测流程。
     if (std::getenv("SKETCHCAD_GEN_GOLDEN")) {
@@ -7815,6 +8987,7 @@ int main(int argc, char** argv) {
     CHECK(t_snapDescriptors(),"snapTypeDescriptors 注册表");
     CHECK(t_constraintInvolving(), "constraintsInvolving 命中");
     CHECK(t_serializeRoundTrip(),   "serialize RoundTrip (序列化幂等)");
+    CHECK(t_sktIntegration(),       "SKT 集成：约束求解门面路由(Phase B) 映射/诊断/联动/回落");
 
     CHECK(t_scriptHost(),           "ScriptHost 脚本宿主(JS 加载/执行/异常/日志)");
     CHECK(t_pluginManager(),        "PluginManager 原生SDK(桥接/外部命令/插件加载卸载)");
@@ -7849,8 +9022,12 @@ int main(int argc, char** argv) {
     t_layerDynamic();      // 图层动态语义：ByLayer / 冻结 / 打印 / 透明度 / LTSCALE（逐条 CHECK 计数）
     t_blockEdit();         // 块在位编辑(BEDIT)：N 处引用同步 / 嵌套传播 / Esc 不落盘 / 保留动态参数 / 外部块表
     t_hatchLinkage();      // 填充边界联动：随动/失效/静态/hatchedit撤销/序列化往返/比例图案生效
+    t_fields();            // FIELD 域 + Table 公式列：面积联动/花括号等价/断链###/公式列/PROP/兼容/命令/开关
     t_gdt();               // GD&T：12类标注回归 / DimStyle表联动 / 旧档兼容 / MLEADER+FCF 往返
+    t_qdim();              // QDIM 快速标注：圆/平行线阵列基线·连续 / 计数·位置·样式联动（14 CHECK）
     t_groupFilter();       // 编组+FILTER：整组选中/撤销还原/命令行/Xref禁止/预选器过滤/fence组合
+    t_layerGovernance();   // 图层治理：LAYISO/LAYUNISO/LAYMCH 命令路径+退化（逐条 CHECK 计数）
+    t_commandDispatch();   // 命令路径直测：join/arrayrect/arraypolar/arraypath/ltscale 端到端（逐条 CHECK 计数）
     t_layout();            // 布局体系：paperRect往返/布局CRUD/旧档回落/1:2与2:1/平铺像素/PDF样张/命令行
     CHECK(t_plotPublish(), "打印发布体系(视口冻结/发布页列表/戳记/视口旋转/GUI-COM一致)");
     CHECK(t_multidoc(),    "多文档标签 DocTab(独立undo/脏标记隔离/cycle循环/拖拽重排/跨文档粘贴/历史互换/关闭夹取)");
@@ -7860,7 +9037,9 @@ int main(int argc, char** argv) {
     CHECK(t_cmdParity(),   "命令补齐 CommandParity(三态/别名/typo建议/单步撤销)");
     CHECK(t_help(),        "命令发现与容错帮助(面板过滤/help详情/总数一致/未知候选/冲突自检)");
     CHECK(t_diag(),        "崩溃诊断包(ZIP结构/自解析CRC/包内容齐全/会话标记/遥测零外发)");
+    CHECK(t_dwg(),         "DWG R2000+ 桥接(版本探测/路由白名单/错误报文含版本串/R12回归/round-trip差分)");
     CHECK(t_undoTables(),  "撤销表 UndoTables(布局/单位/界限/捕捉/追踪/过滤器/去重/栈深/混合用例)");
+    CHECK(t_undoDelta(),    "撤销栈差量化(差量vs全量终态全等/检查点回放/id复用/联动同一步/切换清栈/内存与耗时基准)");
 
     // ---- 鲁棒性 / Fuzz 回归：任何输入都不崩溃/卡死/写坏文件 ----
     fprintf(stdout, "--- 鲁棒性 / Fuzz 回归 ---\n");

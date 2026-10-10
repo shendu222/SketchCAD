@@ -1096,6 +1096,10 @@ std::vector<int> applyChanges(SketchModel* model, const std::vector<Change>& cha
     // 3) 边界联动：被改/被删的图元若是某关联填充的边界来源，就地重算该填充
     //    （不压撤销 —— 与本批改动同属调用方那一个 beginEdit 快照 = 单步撤销）。
     model->refreshHatchBoundaries(touchedIds);
+    // 4) 域失效重算：被改/被删图元若是 FIELD 域引用源（AREA:id/PERIM:id），
+    //    或域宿主自身被编辑（Table 公式随行内容变化），就地预热重算。
+    //    （不压撤销 —— 同上，域求值只读不改几何，与边界联动同一 Quiet 语义。）
+    model->refreshFields(touchedIds);
     return newIds;
 }
 

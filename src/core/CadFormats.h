@@ -25,9 +25,11 @@
 //          二进制容器（文件头 + 图层表 + 实体记录，每记录附 CRC16），可被
 //          AutoCAD / LibreCAD / QCAD / BricsCAD 等读取。详见 CadFormats.cpp。
 //
-//  第三方内核说明（详见 docs/third-party-dxf-license.md）：
-//   libredwg 为 GPL 许可，禁止引入；ODA Drawings SDK 为商业授权且未接入。
-//   故 R2000 采用自研「R12 token 流派生」方案，DWG R2000 二进制（ODA 私有、无公开规范）暂不实现。
+//  第三方内核说明（详见 docs/third-party-dxf-license.md 与
+//  docs/dwg-r2000-bridge-design-analysis.md）：
+//   D1 起读取 R2000+ DWG 经**进程外** LibreDWG 转换器（GPLv3，独立 exe +
+//   QProcess 桥接，主程序零 GPL 代码链入，见 src/core/DwgBridge.h）。
+//   ODA Drawings SDK 为商业授权，未接入。
 //
 // 编码约定（重要）：
 //   DXF 的编码由文件内 $DWGCODEPAGE 声明，**不是** UTF-8（UTF-8 只有 R2007+ 才支持）。
@@ -120,6 +122,15 @@ QByteArray toDwg (const std::vector<Element>& elems, QString* err = nullptr,
 //   封装进原生 R12 二进制容器（含图层表、实体记录、每记录 CRC16），
 //   可被 AutoCAD / LibreCAD / QCAD / BricsCAD 作为 .dwg 直接打开。
 
+// DWG R2000 (AC1015) 导出（D1：经外部转换器桥，见 DwgBridge.h）。
+//   路径：内部先 toDxf(R2000) 生成 DXF → dwgwrite --as r2000 进程外转换。
+//   失败返回空并把原因写入 *err（含转换器 stderr 摘要）。
+//   ⚠️ LibreDWG 写能力上限即 R2000：R2004/R2007 的 DWG 写不支持（业界惯例是
+//   交付 R2000 DWG 或 R2007 DXF），本函数**不虚标**更高版本。
+//   转换组件未安装时也走此错误通道（报文含指引）。
+QByteArray toDwgR2000 (const std::vector<Element>& elems, QString* err = nullptr,
+                       double drawingScale = 1.0);
+
 // STEP 导出统计（供日志说明"哪些内容未随 STEP 导出"）
 struct StepStats {
     int curves = 0;    // 写出的曲线实体数
@@ -156,9 +167,14 @@ bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = n
 bool fromDxfBinary(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
                    DxfImportStats* stats = nullptr);
 
-// DWG 回读：支持 R12 (AC1009) 原生二进制。成功返回 true（out 追加解析到的图元）。
-// 解析图层表得到图层名，实体记录的图层索引映射回图层名；颜色由 ACI 还原为 RGB。
-// 文本按 UTF-8 解码（R12 无真彩色组码，颜色经 62→ACI→RGB 近似）。
+// DWG 回读（D1 版本自动路由）：
+//   * AC1009 (R12) —— 自研原生二进制解析（下述既有实现，语义不动）；
+//   * AC1012~AC1032 (R13~R2018) —— 经外部转换器桥（DwgBridge::dwgToDxf）
+//     转为 DXF 后复用 fromDxf 回读；转换组件未安装/版本超界时返回 false，
+//     *err 含版本串原文（如"不支持的 DWG 版本：AC1021（DWG 2004）"）。
+// 成功返回 true（out 追加解析到的图元）。
+// R12 路径：解析图层表得到图层名，实体记录的图层索引映射回图层名；颜色由
+// ACI 还原为 RGB。文本按 UTF-8 解码（R12 无真彩色组码，颜色经 62→ACI→RGB 近似）。
 bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);
 

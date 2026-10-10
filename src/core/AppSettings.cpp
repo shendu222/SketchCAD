@@ -12,6 +12,8 @@ namespace SketchCAD {
 using SettingKeys::kLanguage;
 using SettingKeys::kRecentFileCount;
 using SettingKeys::kUndoDepth;
+using SettingKeys::kUndoDelta;
+using SettingKeys::kFieldAutoUpdate;
 using SettingKeys::kShowGrid;
 using SettingKeys::kGridSnap;
 using SettingKeys::kGridSnapStep;
@@ -20,6 +22,7 @@ using SettingKeys::kDynMode;
 using SettingKeys::kShowLineWeight;
 using SettingKeys::kGpuAcceleration;
 using SettingKeys::kOffscreenFallback;
+using SettingKeys::kConstraintSolver;
 using SettingKeys::kHighDpiRounding;
 using SettingKeys::kDefaultSaveDir;
 using SettingKeys::kDefaultTemplate;
@@ -166,6 +169,8 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         // 撤销栈深度（步）：上下限与 SketchModel 的 kUndoDepthMin/Max/Default 保持一致。
         // 下限为 1（0 步=关掉撤销，会让 Ctrl+Z 变成"什么都没发生"，比留 1 步更难理解）。
         { kUndoDepth, 100, [](const QVariant& v) { return intRangeVal(v, 1, 1000); } },
+        // 撤销差量化开关：默认开；关则回落全量 Memento 模式（性能/行为对照用）。
+        { kUndoDelta, true, boolVal },
         // ---- display ----
         { kShowGrid, true,  boolVal },
         { kGridSnap, false, boolVal },
@@ -175,6 +180,8 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         { kShowLineWeight, false, boolVal },
         { kGpuAcceleration, true, boolVal },
         { kOffscreenFallback, false, boolVal },
+        // ---- solver（约束求解特性开关，默认开）----
+        { kConstraintSolver, true, boolVal },
         { kHighDpiRounding, QStringLiteral("Round"),
           [](const QVariant& v) {
               return stringWhitelistVal(v, { QLatin1String("Round"), QLatin1String("Floor"),
@@ -197,6 +204,8 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         // 空闲态（select 且无进行中手势）右键行为：true = AutoCAD 约定（重复上一命令），
         // false = 既有上下文菜单。默认取 AutoCAD 值（用户任务约定）。
         { kRightClickIdleRepeat, true, boolVal },
+        // ---- fields（FIELD 域自动刷新；默认开）----
+        { kFieldAutoUpdate, true, boolVal },
         // ---- privacy ----
         // 遥测默认关闭（用户任务硬边界：默认不得有任何网络外发）；
         // 诊断包导出不依赖此键——只在用户主动点击时生成本地 ZIP。
@@ -464,6 +473,8 @@ void AppSettings::setRecentFileCount(int n) { setValue(QLatin1String(kRecentFile
 
 int AppSettings::undoDepth() const { return value(QLatin1String(kUndoDepth)).toInt(); }
 void AppSettings::setUndoDepth(int n) { setValue(QLatin1String(kUndoDepth), n); }
+bool AppSettings::undoDelta() const { return value(QLatin1String(kUndoDelta)).toBool(); }
+void AppSettings::setUndoDelta(bool b) { setValue(QLatin1String(kUndoDelta), b); }
 
 int AppSettings::backupCount() const { return value(QLatin1String(kBackupCount)).toInt(); }
 void AppSettings::setBackupCount(int n) { setValue(QLatin1String(kBackupCount), n); }
@@ -488,6 +499,12 @@ void AppSettings::setGpuAcceleration(bool b) { setValue(QLatin1String(kGpuAccele
 
 bool AppSettings::offscreenFallback() const { return value(QLatin1String(kOffscreenFallback)).toBool(); }
 void AppSettings::setOffscreenFallback(bool b) { setValue(QLatin1String(kOffscreenFallback), b); }
+
+bool AppSettings::constraintSolverEnabled() const { return value(QLatin1String(kConstraintSolver)).toBool(); }
+void AppSettings::setConstraintSolverEnabled(bool b) { setValue(QLatin1String(kConstraintSolver), b); }
+
+bool AppSettings::fieldAutoUpdateOnOpen() const { return value(QLatin1String(kFieldAutoUpdate)).toBool(); }
+void AppSettings::setFieldAutoUpdateOnOpen(bool b) { setValue(QLatin1String(kFieldAutoUpdate), b); }
 
 bool AppSettings::telemetryEnabled() const { return value(QLatin1String(kTelemetryEnabled)).toBool(); }
 void AppSettings::setTelemetryEnabled(bool b) { setValue(QLatin1String(kTelemetryEnabled), b); }

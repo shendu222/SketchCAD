@@ -20,6 +20,10 @@ inline bool almostEqual(const Vec3& a, const Vec3& b, double tol) {
     return a.distTo(b) <= tol;
 }
 
+// 约束检测/恢复时的重合判定容差（mm）。与现有修复模型 ConstraintSolver 的默认
+// tol 一致；新代码统一引用此命名常量，禁止把 0.5 这类魔数散落到多处。
+inline constexpr double kConstraintDetectTol = 0.5;
+
 // 角度规整
 double wrapDeg180(double d);   // -> (-180, 180]
 double wrapDeg360(double d);   // -> [0, 360)

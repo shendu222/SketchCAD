@@ -17,6 +17,7 @@
 #include "Clipboard.h"
 #include "Xref.h"
 #include "ConstraintSolver.h"
+#include "ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
 #include "AircraftViews.h"
 #include "CadFormats.h"        // P0-01：dxfout 命令行导出（版本协商 / 原生实体）
 #include "CommandCatalog.h"    // help <cmd>：命令元数据目录（用法/参数/样例/相关）
@@ -2251,7 +2252,7 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
             bool ok = false; const int dimId = ctx.toks[3].toInt(&ok);
             if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
             const QString param = (ctx.toks.size() > 4) ? ctx.toks[4] : QString();
-            const QString err = ConstraintSolver::linkDimension(*m, dimId, param);
+            const QString err = ConstraintSolverFacade::instance().linkDimension(*m, dimId, param);
             if (!err.isEmpty()) { m->log(QStringLiteral("关联尺寸标注失败：%1").arg(err), "error"); return false; }
             m->log(QStringLiteral("已关联尺寸标注 #%1%2，修改其数值即可驱动几何重构")
                        .arg(dimId).arg(param.isEmpty() ? QString() : QStringLiteral("（参数 %1）").arg(param)), "info");
@@ -2263,7 +2264,7 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
             if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
             bool okv = false; const double val = ctx.toks[4].toDouble(&okv);
             if (!okv) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
-            const QString err = ConstraintSolver::setDimensionValue(*m, dimId, val);
+            const QString err = ConstraintSolverFacade::instance().setDimensionValue(*m, dimId, val);
             if (!err.isEmpty()) { m->log(QStringLiteral("设置标注值失败：%1").arg(err), "error"); return false; }
             m->log(QStringLiteral("已将标注 #%1 设为 %2，几何已联动重构").arg(dimId).arg(val, 0, 'f', 3), "info");
             return true;
@@ -2292,7 +2293,7 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
             const QString name = ctx.toks[3];
             bool ok = false; const double val = ctx.toks[4].toDouble(&ok);
             if (!ok) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
-            const QString err = ConstraintSolver::driveParameter(*m, name, val);
+            const QString err = ConstraintSolverFacade::instance().driveParameter(*m, name, val);
             if (!err.isEmpty()) { m->log(QStringLiteral("参数驱动失败：%1").arg(err), "warn"); return false; }
             m->log(QStringLiteral("已将参数 %1 设为 %2 并联动驱动全部关联标注/几何").arg(name).arg(val, 0, 'f', 3), "info");
             return true;
@@ -2361,7 +2362,7 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     }
     if (ctx.toks.size() > argPos) { bool ok=false; idxB = ctx.toks[argPos].toInt(&ok); if (!ok) idxB = -1; ++argPos; }
 
-    const QString err = ConstraintSolver::addConstraint(*m, ct, idA, idB, value, axisId, idxA, idxB);
+    const QString err = ConstraintSolverFacade::instance().addConstraint(*m, ct, idA, idB, value, axisId, idxA, idxB);
     if (!err.isEmpty()) { m->log(QStringLiteral("约束添加失败：%1").arg(err), "error"); return false; }
     m->log(QStringLiteral("已添加「%1」约束：主动#%2 → 被动#%3%4%5%6，并已求解")
                .arg(cname(ct)).arg(idA).arg(idB)
@@ -3237,6 +3238,78 @@ void CommandRegistry::registerBuiltins() {
     registerExact("massprop", std::make_shared<MassPropCommand>());
     registerExact("id",       std::make_shared<IdCommand>());
 
+    // ---- FIELD 域更新：全模型重算域宿主（MText/Table；渲染期同源预热求值）----
+    // 用法: FIELDUPDATE —— 扫描全部含域图元并预热求值（异常回落 ###）；
+    // 求值只读不改几何、不压撤销。打开文档时按 AppSettings fields/autoUpdateOnOpen
+    // 自动执行同一逻辑；applyChanges 也会对受影响域自动失效重算（钩子）。
+    registerExact("fieldupdate", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (!m) return false;
+            if (ctx.toks.size() > 1) {
+                m->log(QStringLiteral("用法: fieldupdate（无参数，重算全部域）"), QStringLiteral("warn"));
+                return false;
+            }
+            const int n = m->refreshFields();
+            m->log(n > 0
+                    ? QStringLiteral("已更新 %1 个域宿主（MText/Table）").arg(n)
+                    : QStringLiteral("未发现含域的 MText/Table 图元"),
+                   QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- 自定义图纸特性（PROP 域数据源）：prop [名 [值]] / prop -r <名> ----
+    registerExact("prop", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (!m) return false;
+            // prop            → 列出全部特性
+            if (ctx.toks.size() == 1) {
+                const auto& props = m->drawingProps();
+                if (props.empty()) {
+                    m->log(QStringLiteral("当前图纸无自定义特性（用法: prop <名称> <值> 设置，%<PROP:名称>% 引用）"),
+                           QStringLiteral("info"));
+                    return true;
+                }
+                m->log(QStringLiteral("自定义特性共 %1 项：").arg((int)props.size()), QStringLiteral("info"));
+                for (const auto& kv : props)
+                    m->log(QStringLiteral("  %1 = %2").arg(kv.first, kv.second), QStringLiteral("info"));
+                return true;
+            }
+            // prop -r <名>    → 删除
+            if (ctx.toks[1] == QStringLiteral("-r")) {
+                if (ctx.toks.size() < 3) {
+                    m->log(QStringLiteral("用法: prop -r <名称>"), QStringLiteral("warn"));
+                    return false;
+                }
+                const QString name = ctx.toks[2];
+                if (m->drawingProp(name).isEmpty()) {
+                    m->log(QStringLiteral("特性「%1」不存在").arg(name), QStringLiteral("warn"));
+                    return false;
+                }
+                m->setDrawingProp(name, QString());   // 空值 = 移除
+                m->log(QStringLiteral("已删除特性「%1」").arg(name), QStringLiteral("info"));
+                return true;
+            }
+            // prop <名>       → 查询
+            if (ctx.toks.size() == 2) {
+                const QString v = m->drawingProp(ctx.toks[1]);
+                if (v.isEmpty()) {
+                    m->log(QStringLiteral("特性「%1」不存在").arg(ctx.toks[1]), QStringLiteral("warn"));
+                    return false;
+                }
+                m->log(QStringLiteral("%1 = %2").arg(ctx.toks[1], v), QStringLiteral("info"));
+                return true;
+            }
+            // prop <名> <值>  → 设置（值含空格用引号或由 toks 剩余拼接）
+            QString val = ctx.toks[2];
+            for (int i = 3; i < (int)ctx.toks.size(); ++i) val += QLatin1Char(' ') + ctx.toks[i];
+            m->setDrawingProp(ctx.toks[1], val);
+            m->log(QStringLiteral("已设置特性 %1 = %2（MText/Table 中以 %<PROP:%1>% 引用）")
+                            .arg(ctx.toks[1], val), QStringLiteral("info"));
+            return true;
+        }));
+
     // ---- 修改菜单：所有 modify_* 子命令 + 顶层 modify_ 系别名 ----
     // 与 Edit 菜单 + LibreCAD Modify 菜单语义对齐：
     //   move, copy, duplicate, rotate, scale, mirror, revert, lengthen,
@@ -3289,6 +3362,23 @@ void CommandRegistry::registerBuiltins() {
     registerExact("dim",        std::make_shared<DimCommand>());
     registerExact("dims",       std::make_shared<DimSmartCommand>());
     registerExact("dim_smart",  std::make_shared<DimSmartCommand>());
+    // ---- qdim：快速标注（框选平行线/圆阵列 → 一次性基线或连续标注）----
+    registerExact("qdim", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QString mode = QStringLiteral("baseline");
+            if (ctx.toks.size() >= 2) {
+                const QString t = ctx.toks[1].toLower();
+                if (t == QStringLiteral("baseline") || t == QStringLiteral("base") || t == QStringLiteral("b"))
+                    mode = QStringLiteral("baseline");
+                else if (t == QStringLiteral("continue") || t == QStringLiteral("cont") || t == QStringLiteral("c"))
+                    mode = QStringLiteral("continue");
+                else { m->log(QStringLiteral("用法：qdim [baseline|continue]（先框选一组平行线/圆阵列）"), QStringLiteral("error")); return false; }
+            }
+            const auto ids = m->quickDimSelected(mode);
+            if (ids.empty()) return false;     // 具体原因已由 quickDimSelected 记录
+            return true;
+        }));
     registerExact("constraint", std::make_shared<ConstraintCommand>());
     // ---- 约束自动生成（几何关系自动计算 + 生成）----
     registerExact("perp",     std::make_shared<PerpCommand>());       // 过指定点作垂线

@@ -180,6 +180,7 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     }
     model.setConstraintsFromJson(root["constraints"].toArray());
     model.setParamsFromJson(root["params"].toObject());
+    model.setPropsFromJson(root["properties"].toObject());   // 自定义图纸特性（缺键 → 空表，与交互读档对齐）
     // 存档比例只作元数据恢复（几何已是成品，不再缩放一次）
     if (root.contains("scaleRatio"))
         model.setScaleRatioValue(root["scaleRatio"].toDouble(1.0));

@@ -7,6 +7,7 @@
 #   ./build.sh test     构建并运行核心层自测
 #   ./build.sh dist     构建并打包可独立运行的 dist/ 目录
 #   ./build.sh package  构建商业安装包 → dist/SketchCAD-<版本>-Setup.exe + checksums.sha256
+#                       （可选双签名：PKG_CERT/PKG_CERT_PWD 环境变量注入证书；未设则跳过并告警）
 set -euo pipefail
 
 QT_ROOT="/c/Qt/6.10.1/mingw_64"
@@ -140,8 +141,13 @@ fi
 # =============================================================================
 #  package —— 构建商业安装包
 # =============================================================================
-#  流程：Release 构建 → 读版本号 → 汇集到 stage/ → ISCC 编译 → sha256 校验和
+#  流程：Release 构建 → 读版本号 → 汇集到 stage/ → 包内 exe 预签名 → ISCC 编译
+#        → Setup.exe 签名 → sha256 校验和（签名后哈希）
 #  产物：dist/SketchCAD-<版本>-Setup.exe + dist/checksums.sha256
+#
+#  签名（可选，双签名）：PKG_CERT / PKG_CERT_PWD 环境变量注入证书（PFX）与口令，
+#  对「包内 SketchCAD.exe」（ISCC 嵌入前）与「Setup.exe」（编译后）分别签名；
+#  PKG_CERT 未设 → 跳过签名并醒目告警，打包继续；已设但签名失败 → 中止不出包。
 #
 #  版本号单一来源：CMakeLists.txt 的 project(SketchCAD VERSION x.y.z)。
 #  从 build/generated/version.h 解析（该文件由 CMake configure_file 从同一版本号
@@ -189,6 +195,62 @@ if [ "$MODE" = "package" ]; then
     fi
     echo "[OK] ISCC: $ISCC"
 
+    # ---- Authenticode 代码签名（双签名：包内 SketchCAD.exe + Setup.exe）----
+    # 签名工具 signtool 探测顺序：PKG_SIGNTOOL → PATH → 默认 Windows SDK 路径。
+    # 证书与口令**只**经环境变量 PKG_CERT / PKG_CERT_PWD 注入，绝不写入脚本或仓库文件。
+    #   · PKG_CERT 未设置 → 跳过签名，打印醒目告警「产物未签名」，继续打包（EXIT=0），
+    #     满足「无证书环境也能产出正常包」的验收；
+    #   · PKG_CERT 已设置但签名失败（或口令缺失 / signtool 缺失 / 签名命令失败）→ 立即 exit 1，
+    #     绝不产出「看起来成功却无签名」的包。
+    # 时间戳服务器默认用公共 DigiCert 时间戳，可用 PKG_TIMESTAMP_SERVER 覆盖。
+    sign_file() {
+        local file="$1"
+        if [ -z "${PKG_CERT:-}" ]; then
+            echo "" >&2
+            echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+            echo "[警告] 未设置 PKG_CERT —— 产物 ${file##*/} **未签名**！" >&2
+            echo "        如需 Authenticode 签名，请在调用前导出环境变量：" >&2
+            echo "          export PKG_CERT='/path/to/cert.pfx'   # 证书文件路径" >&2
+            echo "          export PKG_CERT_PWD='证书口令'         # 仅经环境变量注入" >&2
+            echo "        继续打包（产物将不带数字签名）。" >&2
+            echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+            return 0
+        fi
+        if [ -z "${PKG_CERT_PWD:-}" ]; then
+            echo "[错误] 已设置 PKG_CERT 但缺少 PKG_CERT_PWD，无法签名 ${file##*/}。" >&2
+            exit 1
+        fi
+        # 探测 signtool.exe
+        local SIGNTOOL=""
+        for cand in \
+            "${PKG_SIGNTOOL:-}" \
+            "$(command -v signtool 2>/dev/null || true)" \
+            "/c/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/signtool.exe" \
+            "/c/Program Files (x86)/Windows Kits/10/bin/x64/signtool.exe"; do
+            if [ -n "$cand" ] && [ -f "$cand" ]; then SIGNTOOL="$cand"; break; fi
+        done
+        if [ -z "$SIGNTOOL" ]; then
+            echo "[错误] 已设置 PKG_CERT 但找不到 signtool.exe，无法签名 ${file##*/}。" >&2
+            echo "       请安装 Windows SDK（含 signtool），或用 PKG_SIGNTOOL 指定其完整路径。" >&2
+            exit 1
+        fi
+        local TS="${PKG_TIMESTAMP_SERVER:-http://timestamp.digicert.com}"
+        echo "[签名] signtool sign /fd SHA256 /tr $TS /td SHA256 /f <PKG_CERT> ${file##*/}"
+        # 签名命令失败 = 签名缺失，必须中止，绝不产出无签包。
+        if ! "$SIGNTOOL" sign /fd SHA256 /tr "$TS" /td SHA256 /f "$PKG_CERT" /p "$PKG_CERT_PWD" "$file" >&2; then
+            echo "[错误] 签名失败：${file##*/}。已中止打包，避免产出无签名安装包。" >&2
+            exit 1
+        fi
+        # 签名落地自检（信息性）：signtool sign 成功即已嵌入有效签名；
+        # verify /pa 额外要求构建机信任完整证书链，属环境相关，故失败仅告警不中止。
+        # 最终验收请在签名机上手动运行：signtool verify /pa <文件>
+        if ! "$SIGNTOOL" verify /pa "$file" >&2; then
+            echo "[提示] signtool verify /pa 未在构建机通过（可能缺中间 CA），但最终用户端可正常验证。" >&2
+        else
+            echo "[OK] 已签名并通过 verify /pa: ${file##*/}"
+        fi
+    }
+
     # ---- 汇集到 staging 目录（安装器的 Source 根目录）----
     # 用**独立且每次全新**的目录，而不是固定 stage/：
     #   · 独立于 dist/ —— 安装器要的是「干净的程序目录」；dist/ 里可能有旧版本
@@ -224,6 +286,11 @@ if [ "$MODE" = "package" ]; then
 
     echo "[OK] 打包目录已就绪（$STAGE，$(find "$STAGE" -type f | wc -l) 个文件）"
 
+    # ---- 对包内 SketchCAD.exe 预签名（ISCC 嵌入前）----
+    # 安装器会把 STAGE 目录原样打包，故先在「进包前」对 exe 签名，
+    # 这样最终用户安装出来的 SketchCAD.exe 自带 Authenticode 签名。
+    sign_file "$STAGE/SketchCAD.exe"
+
     # ---- 编译安装包 ----
     mkdir -p "$ROOT/dist"
     WISS="$(cd "$ROOT/packaging" && pwd -W)/installer.iss"
@@ -244,8 +311,15 @@ if [ "$MODE" = "package" ]; then
         exit 1
     fi
 
+    # ---- 双签名：Setup.exe ----
+    # 安装包引导程序本身也需签名，否则下载后 SmartScreen / 杀软会拦截安装。
+    # 必须在 SETUP 存在性校验之后、校验和计算之前签名，
+    # 这样 checksums.sha256 记录的是「已签名」Setup.exe 的哈希。
+    sign_file "$SETUP"
+
     # checksums.sha256：只含本次安装包（不含 dist/ 里的 PDF/图片等其它文件），
     # 便于下游脚本 `sha256sum -c checksums.sha256` 直接校验分发完整性。
+    # 注意：此处位于双签名之后，哈希对象是「已签名」的产物。
     ( cd "$ROOT/dist" && sha256sum "SketchCAD-$APP_VERSION-Setup.exe" > checksums.sha256 )
 
     # ---- 版本一致性自检（验收标准：关于对话框 = exe 属性 = 安装包文件名）----
@@ -277,6 +351,11 @@ if [ "$MODE" = "package" ]; then
     echo "  校验和   : $ROOT/dist/checksums.sha256"
     echo "  大小     : $(du -h "$SETUP" | cut -f1)"
     echo "  SHA-256  : $(cut -d' ' -f1 < "$ROOT/dist/checksums.sha256")"
+    if [ -n "${PKG_CERT:-}" ]; then
+        echo "  签名     : 已双签名（包内 SketchCAD.exe + Setup.exe，Authenticode SHA256 + RFC3161 时间戳）"
+    else
+        echo "  签名     : 【未签名】本次未设置 PKG_CERT，产物无数字签名（详见上方告警）"
+    fi
     echo "  静默安装 : SketchCAD-$APP_VERSION-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
     echo "  指定目录 : ... /DIR=\"D:\\Apps\\SketchCAD\""
     echo "  含文件关联: ... /TASKS=\"fileassoc\""

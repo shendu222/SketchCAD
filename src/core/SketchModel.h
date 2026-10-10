@@ -10,6 +10,7 @@
 #include "DimStyle.h"
 #include "Layer.h"
 #include "Block.h"
+#include "UndoDelta.h"   // 撤销栈差量化：ElementDelta / DeltaRecord / AuxState
 #include "Xref.h"
 #include "TextStyle.h"
 #include "QSelect.h"
@@ -499,6 +500,11 @@ public:
     // 序列化：样式表 + 当前样式名（随图存档；旧档无此字段 → 自动生成默认 "Standard"）
     QJsonObject dimStylesToJson() const;
     void       setDimStylesFromJson(const QJsonObject& o);
+    // 快速标注（QDIM）：对当前选择集（平行线 / 圆阵列等）一次性生成基线或连续标注串，
+    // 复用 dim 基线/连续引擎（DimensionType::Baseline / Continue + e.radius 层叠）。
+    // 锚点提取：圆/弧取圆心、其余取首末点中点；去重后按主轴排序；不足 2 点返回空。
+    // 生成标注记当前样式名（dimStyleName），故随样式切换全图联动。
+    std::vector<int> quickDimSelected(const QString& mode = QStringLiteral("baseline"));
     void   setScaleRatio(double r, bool allowUndo = true);
     // 只改比例值、不缩放图元。用于读档：存档里的几何已经是按该比例画好的成品，
     // 若再走 setScaleRatio 会被二次缩放。allowUndo=false 时纯赋值（不压撤销）。
@@ -539,6 +545,23 @@ public:
     // 渲染（penFor）与打印（makePen）两侧共用 model_->ltscale()，保证屏幕与图纸比例一致。
     double ltscale() const { return ltscale_; }
     void   setLtscale(double v);   // 与现值相同/非法(≤0)则静默忽略；变化发 ltscaleChanged()
+
+    // ---- 自定义图纸特性（FIELD 域 PROP:name 的数据源；随图存档，不入撤销栈）----
+    // 名称→值的字符串表，随顶层 JSON "properties" 键存档（旧档缺键 → 空表，向后兼容）。
+    // 典型键：项目名称/图号/材料/设计者——供 MText/Table 以 %<PROP:项目名称>% 引用。
+    const std::map<QString,QString>& drawingProps() const { return drawingProps_; }
+    QString drawingProp(const QString& name) const;   // 缺名 → 空串
+    void setDrawingProp(const QString& name, const QString& value);  // 空值 = 移除；幂等
+    QJsonObject propsToJson() const;
+    void setPropsFromJson(const QJsonObject& o);      // 读档（旧文件无此键 → 空表）
+
+    // ---- 域失效重算（FIELD：applyChanges 钩子 + fieldupdate 命令 + 打开文档刷新共用）----
+    // 扫描 MText/Table 中的域宿主（含 %<...>%、{field:...} 或 =公式单元格）并预热求值：
+    //   * changedIds 非空 → 只统计引用了这些图元的宿主（AREA:id / PERIM:id 精确匹配）；
+    //   * changedIds 为空 → 全模型扫描（fieldupdate 无参 / 打开文档自动刷新）。
+    // 求值走 resolveFields / evalTableCellFormula（渲染期同源），异常回落 "###"；
+    // 只读不改几何、不压撤销（与 refreshHatchBoundaries 同 Quiet 语义）。返回宿主数。
+    int refreshFields(const std::vector<int>& changedIds = {});
 
     // ---- 绘制前样式（新建图元的默认颜色 / 线宽）----
     // 放在模型里而不是某个面板里，是为了让工具条、菜单、属性面板、命令行
@@ -638,6 +661,15 @@ public:
     // 只读诊断/自测：栈内当前快照数（不是深度上限）
     int  undoStackSize() const { return (int)undoStack_.size(); }
     int  redoStackSize() const { return (int)redoStack_.size(); }
+    // 诊断：差量模式下，单个差量步所存「元素变更 JSON 字节数」的上限（不含周期全量检查点）。
+    // 用于验收「单步撤销内存 ≤1MB」：典型编辑只动个别图元，远小于 1MB。
+    qint64 maxDeltaEntryBytes() const;
+
+    // ---- 撤销差量化特性开关 ----
+    // 默认开（差量存储）；可在 AppSettings 对照回落全量模式。运行时切换会清空现有撤销历史
+    // （两种模式的栈表示不互换，清空是唯一安全做法，见设计文档）。
+    bool undoDeltaEnabled() const { return deltaUndoEnabled_; }
+    void setUndoDeltaEnabled(bool on);
 
     // ---- 撤销快照抑制（RAII）----
     // 反序列化/批量载入专用：打开图纸时调用方已 beginEdit("打开草图") 建立唯一编辑步，
@@ -719,6 +751,24 @@ private:
         // 注：Xref 附加表**没有单列字段**——外部参照本身就是块表记录（BlockDef::isXref），
         // 已由上方 blocks 完整覆盖；再存一份会制造第二个真相源。见设计文档。
     };
+
+    // ---- 撤销栈差量化：单步存储（出向差量语义）----
+    // 每个条目表示「某一步操作之前的状态」，并存两样东西：
+    //   * 状态表示   ：isCheckpoint=true 时 snap 存整张 Memento（全量检查点，每 50 步一个）；
+    //   * 出向差量   ：delta 描述「该状态 → 下一步之后状态」的元素变更集（E_i→E_{i+1}），
+    //                  即**刚执行完的那步操作**本身。条目创建（push，改前）时差量未知，
+    //                  延迟到下一次 push / undo / redo 时封印（见 sealPendingStep）。
+    // 撤销 = 弹出栈顶条目并**逆向应用**其出向差量（就地改 elems_，O(变更图元数)）；
+    // 重做 = 从 redo 栈取回条目**正向应用**其出向差量并原样压回（检查点属性自动保留）。
+    // 二者不再需要整图 reconstruct + 全量 diff——那是旧实现（入向差量）单步撤销
+    // 5 万图元 39ms 的根源；新实现实测 <1ms。reconstructStep 保留为检查点回放工具。
+    struct UndoStep {
+        bool       isCheckpoint = false;
+        Memento    snap;          // 有效 iff isCheckpoint（全量检查点锚）
+        DeltaRecord delta;        // 出向差量（封印后有效；空 elems+aux 全等 = 无操作步）
+    };
+    // 全量检查点间隔（步）。内存/回放代价权衡：回放最多回退 kCheckpointInterval-1 个差量。
+    static constexpr int kUndoCheckpointInterval = 50;
     std::vector<Element> elems_;
     int nextId_ = 1;
     int selectedId_ = -1;               // 主选择（属性面板编辑对象 / 约束等单对象操作）
@@ -758,6 +808,7 @@ private:
     QString currentDimStyle_ = QStringLiteral("Standard");  // 当前标注样式（dimStyleName 为空者用它）
     std::vector<FilterDef> savedFilters_; // 命名过滤器（FILTER 保存/复用；随图存档 + 入撤销栈）
     FilterDef activePickFilter_;          // FILTER 预选器（瞬态，作用于随后一次选择，用后即清）
+    std::map<QString,QString> drawingProps_;   // 自定义图纸特性表（PROP 域数据源；随图存档）
     std::vector<PlotLayoutDef> layouts_;  // 布局表（多布局；随图存档 + 入撤销栈；切页签不单独入栈）
     QString currentLayout_;               // 当前布局名（空 = 模型空间）
     UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
@@ -773,13 +824,57 @@ private:
     std::map<QString,double> params_;   // 命名设计变量表（参数化建模，Request M 新增）
     Element clipboard_;
     bool hasClip_ = false;
-    std::vector<Memento> undoStack_, redoStack_;
+    std::vector<UndoStep> undoStack_, redoStack_;
     bool undoSuppressed_ = false;   // UndoGuard 置起：为 true 时 pushMemento 直接返回
     int  undoDepthLimit_ = 100;     // 栈深上限（步）；setUndoDepthLimit 校验后写入
+    bool deltaUndoEnabled_ = true;  // 撤销差量化开关（默认开）
+    // ---- 出向差量 + 惰性封印（O(变更数) 撤销/重做的关键）----
+    // push 时只捕获「改前」基态（elems 深拷贝一次，与旧实现每次 push 的
+    // currentMemento() 同价）；栈顶条目的出向差量延迟到下一次 push / undo 时封印。
+    // 封印前 pendingBase_ 即栈顶条目所代表状态的唯一凭据。
+    Memento pendingBase_;           // 有效 iff unsealedStep_：栈顶条目的「改前」基态
+    bool unsealedStep_ = false;     // 栈顶条目尚无出向差量
     void pushMemento(const QString& label);
     // 精确相等判定（快照去重用）：只有**逐字段全部相同**才返回 true。
     // 安全方向约定：无法证明相同即判为不同（照常入栈）——宁可少去重，绝不吞掉一个撤销步。
     static bool sameState(const Memento& a, const Memento& b);
+
+    // ---- 撤销差量化内部原语（仅 delta 模式使用）----
+    // 由当前模型字段构造一份完整 Memento（用于差量计算与正向回放基底）。
+    Memento currentMemento() const;
+    // 由当前模型字段构造 AuxState（aux 整段快照）。
+    AuxState captureAux() const;
+    // 把 AuxState 写回当前模型字段（差量回放/还原时复用）。
+    void applyAux(const AuxState& a);
+    // 把 Memento 的 aux 字段写入 a（Memento → AuxState）。
+    static void mementoAuxTo(const Memento& m, AuxState& a);
+    // 把 AuxState 写入 Memento 的 aux 字段（AuxState → Memento）。
+    static void auxToMemento(const AuxState& a, Memento& m);
+    // 从 undo/redo 栈的 [0, idx] 回放，重建第 idx 步的整图状态 Memento
+    // （最近检查点 + 顺序回放出向差量链；检查点回放工具，undo/redo 热路径不依赖它）。
+    Memento reconstructStep(int idx) const;
+    // 封印栈顶条目的出向差量：diff(pendingBase_, 当前) 即上一步操作的变更集。
+    // 返回 -1=无未封印条目；0=封印后为空（上一步是无操作，与旧 sameState 去重同义）；
+    // 1=封印了真实变更集。
+    int sealPendingStep();
+    // 把 AuxState 就地写回模型字段 + 广播信号（信号集合与 restoreFromMemento 逐项一致，
+    // 供差量 undo/redo 的就地还原复用；elems_ 由 applyElementDeltas 单独处理）。
+    void restoreAuxInPlace(const AuxState& a);
+    // 计算 before → after 的 DeltaRecord（元素差量 + aux 双快照）。
+    static DeltaRecord makeDelta(const Memento& before, const Memento& after);
+    // 把 DeltaRecord 正向应用到 base，产出「结果态」Memento。
+    static Memento applyDeltaForward(const Memento& base, const DeltaRecord& d);
+    // 用给定 Memento 还原模型（字段赋值 + 信号广播），undo/redo 共用，保证与全量模式逐字节一致。
+    // 按值接收以便调用方 std::move，避免一次整图 vector 拷贝。
+    void restoreFromMemento(Memento m);
+    // 撤销/重做栈按深度上限收敛（双栈同限，且保留队首检查点，确保重建有锚点）。
+    void trimUndoStackToLimit();
+    void trimRedoStackToLimit();
+    // 以下两个原写在 .cpp 匿名命名空间内的自由函数，因需访问私有 Memento/UndoStep，
+    // 收敛为静态成员（等价能力，且不破坏封装）。
+    static void auxToMementoStatic(const AuxState& a, Memento& m);
+    static void trimStackToLimit(std::vector<UndoStep>& stk, int limit);
+
     std::vector<Element>::iterator find(int id);
     // 从种子图元沿「共享端点」连通性收集整条轮廓（selectContour/toggleContour 共用）
     std::vector<int> collectContourIds(int seedId) const;
