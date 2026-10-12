@@ -278,15 +278,25 @@ bool PrintEngine::exportPdf(SketchModel* model, const PrintSettings& s, const QS
     return render(model, &pdf, s);
 }
 
+// 零布局（模型空间）发布的页面设置：纸张与方向跟随图纸幅面规格（applySheetSpecToPage
+// 单一入口），视口清空 + fit-to-page。无幅面规格 → 旧行为（默认 A4 纵向）。
+PrintSettings PrintEngine::modelSpacePageSettings(const SketchModel* model) {
+    PrintSettings s;          // 视口空 = 模型空间打印；fitToPage 默认 true
+    s.viewports.clear();
+    s.fitToPage = true;
+    if (model && model->hasSheetSpec())
+        applySheetSpecToPage(model->sheetSpec(), s);
+    return s;
+}
+
 // 按布局表导出 PDF：每布局一页（各布局独立纸张/方向/边距，视口按 paperRect 平铺）。
-// 布局表为空 → 回落单页模型空间打印（fit-to-page），与历史单页出图行为等价（走 exportPdf
-// 原路径逐字节不变），返回 1。多布局委托 exportPagesPdf（与 GUI 发布/COM 批量同一裁决）。
+// 布局表为空 → 回落单页模型空间打印（fit-to-page），页面尺寸与方向跟随图纸幅面
+// （修复：曾恒为默认 A4 纵向，与新建时选择的横向不符）。多布局委托 exportPagesPdf
+// （与 GUI 发布 / COM 批量同一裁决）。
 int PrintEngine::exportPdfLayouts(SketchModel* model, const QString& filePath) {
     if (!model) return 0;
     if (model->layoutCount() == 0) {
-        PrintSettings s;          // 视口空 = 模型空间打印；fitToPage 默认 true
-        s.viewports.clear();
-        s.fitToPage = true;
+        PrintSettings s = modelSpacePageSettings(model);
         return exportPdf(model, s, filePath) ? 1 : 0;
     }
     QList<PublishPage> pages;

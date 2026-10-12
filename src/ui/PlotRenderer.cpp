@@ -7,6 +7,7 @@
 #include "core/Gdt.h"              // buildMLeader / buildFcf：多重引线与形位公差框格打印
 #include "core/DimensionStandard.h"// DimensionStandardConfig / ArrowForm
 #include "core/SheetSpec.h"        // standardTextHeightMm / currentSheetFormat
+#include "core/ProjectionSymbol.h" // isProjectionSymbolElement：辅助说明元素打印过滤
 #include <QPainterPath>
 #include "core/TextStyle.h"         // resolveTextStyle / resolveFields / wrapText
 #include "core/TextMetrics.h"     // 文字度量单一数据源：屏幕/打印/取景三处同源
@@ -142,6 +143,9 @@ void paintTable(QPainter* p, const Element& e, Ctx& c);
 
 void paintOne(QPainter* p, const Element& e, Ctx& c) {
     if (e.type == ElementType::Constraint) return;   // 求解约束标记不打印
+    // 辅助说明元素零输出：投影法识别符号（"第一角/第三角画法"图标+文字）仅屏幕显示，
+    // 打印/预览/PDF/物理打印/COM 批量出图均经此咽喉统一过滤（对墨迹与取景零影响）
+    if (isProjectionSymbolElement(e)) return;
     // per-viewport 冻结：该视口内冻结层零输出（模型空间与其他视口不受影响）；
     // 块引用展开后逐子图元走 paintOne，冻结语义对块内同层子图元同样生效
     if (c.frozenLayers && c.frozenLayers->contains(e.layer)) return;

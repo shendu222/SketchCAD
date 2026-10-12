@@ -17,6 +17,7 @@
 #include "Units.h"
 #include "Snap.h"
 #include "Layout.h"   // PlotLayoutDef / PrintSettings（布局表）
+#include "SheetSpec.h"   // SheetSpec / SheetFormat：图纸幅面规格（打印页面尺寸与方向的数据源）
 #include "ConstraintSolver.h"   // 显式几何约束表（ConstraintRecord）
 #include "Ucs.h"      // 用户坐标系（输入/显示变换，不改图元世界坐标语义）
 
@@ -337,7 +338,23 @@ public:
     void setUnits(const UnitsMeta& u);                 // 与现值相同则不发信号
     const LimitsMeta& limits() const { return limits_; }
     void setLimits(const LimitsMeta& l);
-    // 格式化便捷口（状态栏 / 属性面板 / 查询结果统一走此，杜绝两处口径漂移）
+
+    // ---- 图纸幅面规格（打印/预览/PDF 页面尺寸与方向的唯一数据源）----
+    // 新建图纸时由 MainWindow::applyNewDrawing 写入；随图存档顶层 JSON "sheet"
+    // （{"format":0..5, "landscape":bool}；缺键 = 旧档 → 读档后按「图框」图层
+    // 纸张矩形推断自愈，见 inferSheetSpecFromFrame）。
+    // 语义边界：与单位/界限同级——**不入撤销栈**（新建/读档时设定，运行期无修改入口）；
+    // 修复的缺陷即「新建 A4 横向 → 打印预览/导出 PDF 却出 A4 纵向」：页面设置
+    // 必须从图纸幅面派生（applySheetSpecToPage），而不是各站点各自默认 A4 纵向。
+    bool hasSheetSpec() const { return hasSheetSpec_; }
+    const SheetSpec& sheetSpec() const { return sheetSpec_; }   // 仅 hasSheetSpec() 为真时有效
+    void setSheetSpec(const SheetSpec& s);                      // format 越界 → 拒绝（保持原值）
+    void clearSheetSpec() { hasSheetSpec_ = false; }            // clear() 内部调用
+    // 从「图框」图层面积最大的矩形（纸张外边界）推断幅面与方向；
+    // 无矩形 / 非标尺寸 → nullopt（调用方放弃推断，绝不猜）
+    std::optional<SheetSpec> inferSheetSpecFromFrame() const;
+    QJsonObject sheetSpecToJson() const;                        // 无规格 → 空对象（不写 "sheet" 键）
+    static std::optional<SheetSpec> sheetSpecFromJson(const QJsonObject& o);   // 缺键/非法 → nullopt    // 格式化便捷口（状态栏 / 属性面板 / 查询结果统一走此，杜绝两处口径漂移）
     QString formatLength(double mm) const { return formatLengthMm(mm, units_); }
     // 注意：同名自由函数被类内成员遮蔽，须 SketchCAD:: 限定才能命中双参版本
     QString formatLengthWithUnit(double mm) const { return SketchCAD::formatLengthWithUnit(mm, units_); }
@@ -813,6 +830,8 @@ private:
     QString currentLayout_;               // 当前布局名（空 = 模型空间）
     UnitsMeta  units_;                    // 单位设置（显示/输入口径；几何恒为 mm）
     LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
+    SheetSpec  sheetSpec_;                // 图纸幅面规格（hasSheetSpec_ 为真时有效；打印页面尺寸/方向数据源）
+    bool       hasSheetSpec_ = false;     // 是否已设定幅面（空白图/外部导入未推断出 → false）
     snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档 + 入撤销栈）
     snap::TrackConfig trackConfig_;       // 追踪全局配置（随图存档 + 入撤销栈）
     std::vector<Vec3> trackPoints_;       // 临时追踪点（TK，瞬态，不随图存档）

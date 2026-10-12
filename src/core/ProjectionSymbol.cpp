@@ -1,5 +1,7 @@
 #include "ProjectionSymbol.h"
 
+#include <QString>
+
 namespace SketchCAD {
 
 std::vector<Element> buildProjectionSymbol(const Vec3& center, double r,
@@ -8,8 +10,9 @@ std::vector<Element> buildProjectionSymbol(const Vec3& center, double r,
     if (r <= 0.0) return out;
 
     const bool first = (method == ProjectionMethod::FirstAngle);
-    const QString tag = first ? QStringLiteral("投影符号:第一角")
-                              : QStringLiteral("投影符号:第三角");
+    // tag 由共享前缀常量派生（改后缀只动此处，谓词与生成永不失配）
+    const QString tag = QString::fromUtf8(kProjectionSymbolTagPrefix) +
+                        (first ? QStringLiteral("第一角") : QStringLiteral("第三角"));
 
     auto line = [&](double x1, double y1, double x2, double y2) {
         Element e;
@@ -60,6 +63,13 @@ std::vector<Element> buildProjectionSymbol(const Vec3& center, double r,
     }
 
     return out;
+}
+
+bool isProjectionSymbolElement(const Element& e) {
+    // ⚠️ 前缀是 UTF-8 字面量（含中文）：必须 fromUtf8 解码为 QString 再比较。
+    // 用 QLatin1String 会按拉丁一逐字节解码，与 UTF-16 的 name 永不匹配
+    // （过滤静默失效——符号照常打印，正是本轮自测抓到的回归）。
+    return e.name.startsWith(QString::fromUtf8(kProjectionSymbolTagPrefix));
 }
 
 } // namespace SketchCAD

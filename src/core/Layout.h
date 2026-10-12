@@ -8,6 +8,7 @@
 #include <QList>
 #include <QJsonObject>
 #include "core/PlotStyle.h"
+#include "SheetSpec.h"   // SheetSpec / SheetFormat：幅面规格 → 页面设置映射
 
 namespace SketchCAD {
 
@@ -128,5 +129,22 @@ struct PlotLayoutDef {
 //   否则 fitToPage → 适配可打印区（留 2% 边距），再否则用布局整体 scale。
 double viewportScaleMm(const PrintSettings& s, const PlotViewport& vp,
                        const QRectF& mb, double printW, double printH);
+
+// ============================================================================
+// 幅面规格 → 页面设置（纸张 + 方向）的**唯一入口**
+// ----------------------------------------------------------------------------
+// 历史缺陷：打印预览 / 导出 PDF 的页面设置来自 MainWindow::currentPrintSettings_
+// （默认构造 = A4 纵向）或零布局导出时临时 new 的 PrintSettings（同样 A4 纵向），
+// 从不读取新建图纸时用户选择的幅面与方向 → 「新建 A4 横向，打印/PDF 却出纵向」。
+// 现在所有「页面从图纸幅面派生」的站点（新建/打开同步、零布局导出、COM 批出图、
+// 新建布局默认页）一律走这两个函数，杜绝各处默认值漂移。
+// ============================================================================
+
+// SheetFormat → QPageSize 标准页 id（A0~A5 一一对应；越界回落 A4）
+QPageSize::PageSizeId pageSizeIdForSheet(SheetFormat f);
+
+// 把幅面规格写进页面设置的纸张与方向（**只动这两个字段**：边距/比例/样式/视口不动）。
+// spec 非法 format 时保持 s 原样（不猜）。
+void applySheetSpecToPage(const SheetSpec& spec, PrintSettings& s);
 
 } // namespace SketchCAD

@@ -2044,6 +2044,18 @@ void MainWindow::openFilterDialog() {
 // ============================================================================
 // 打印 / 出图模块入口
 // ============================================================================
+// 把活动图纸的幅面规格同步到「当前打印设置」的纸张与方向。
+// 修复「新建 A4 横向 → 打印预览/导出 PDF 却出 A4 纵向」：currentPrintSettings_
+// 历史只来自默认构造（A4 纵向）/ 上次退出快照 / 用户手改，从不读取新建时选择的
+// 幅面；现在页面尺寸与方向一律从图纸幅面派生（applySheetSpecToPage 单一入口），
+// 且多文档下跟随活动图纸。**只覆盖 pageSize/orientation 两个字段**——
+// 边距/比例/线宽/样式/视口/戳记一律保持用户既有值，不被幅面同步抹掉。
+// 无幅面规格的图纸（出厂空白、外部导入且未推断出）→ 不动（保持旧行为）。
+void MainWindow::syncPrintSettingsToSheet() {
+    if (!model_ || !model_->hasSheetSpec()) return;
+    applySheetSpecToPage(model_->sheetSpec(), currentPrintSettings_);
+}
+
 void MainWindow::openPrintSettings() {
     PrintSettingsDialog dlg(model_, currentPrintSettings_, this);
     if (dlg.exec() == QDialog::Accepted)
@@ -3869,6 +3881,9 @@ void MainWindow::switchToDoc(int idx, bool forceHook) {
         { QSignalBlocker b(docs_); docs_->setActive(idx); }   // 本函数负责同步 UI
         const DocPage pg = docPages_.value(d);
         model_  = d->model();
+        // 页面尺寸与方向跟随新活动图纸创建时选择的幅面（多文档各自独立；
+        // 只覆盖 pageSize/orientation，不碰用户的边距/比例/样式设置）
+        syncPrintSettingsToSheet();
         view_   = pg.view;
         hRuler_ = pg.hRuler;
         vRuler_ = pg.vRuler;
@@ -4273,9 +4288,17 @@ void MainWindow::applyNewDrawing(const SheetSpec& spec, double scaleRatio) {
         model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
     model_->beginEdit(QStringLiteral("新建图纸"));
     model_->addElementsQuiet(buildSheetFrame(spec));   // 整张图框只占一次撤销
+    model_->setSheetSpec(spec);                        // 幅面规格随图存档（打印页面尺寸/方向的数据源）
     syncTitleBlockScale();                             // 标题栏「比例」栏预填当前比例
-    model_->log(QStringLiteral("已新建 %1 图纸（比例 %2）：已生成图框与标准标题栏")
+    // 坐标原点置于图纸中央：坐标系图标（drawAxes）/网格/键盘坐标输入都以幅面中心为
+    // 原点（UCS 语义）。图框几何与视图模板的坐标系共享不变（世界坐标仍从左下角起），
+    // 仅输入与显示基准平移；UCS 为会话态不随图存档，旧档打开行为不变。
+    model_->setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"),
+                              Vec3(spec.width / 2.0, spec.height / 2.0, 0.0), 0.0));
+    model_->log(QStringLiteral("已新建 %1 图纸（比例 %2）：已生成图框与标准标题栏；坐标原点已置于图纸中央")
                     .arg(spec.formatName()).arg(model_->scaleLabel()));
+    // 打印/预览/PDF 的页面尺寸与方向跟随本次新建选择（修复「新建横向、出图纵向」）
+    syncPrintSettingsToSheet();
     view_->fitToRect(QRectF(0.0, 0.0, spec.width, spec.height));
 }
 
@@ -4411,6 +4434,8 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
             lastOpenMs_ = (double)(QDateTime::currentMSecsSinceEpoch() - t0);
             statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
             pushRecentFile(path);   // 成功读档 → 最近文件去重置顶（上限内的持久化在函数内部）
+            // 打印/预览/PDF 的页面尺寸与方向跟随刚打开图纸创建时选择的幅面
+            syncPrintSettingsToSheet();
             // FIELD 域自动刷新（AppSettings fields/autoUpdateOnOpen，默认开）：
             // 打开文档后对全模型含域宿主预热求值一次（只读不改几何，异常回落 ###）。
             if (appSettings_ && appSettings_->fieldAutoUpdateOnOpen()) {
@@ -4523,6 +4548,10 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         } else {
             view_->fitView();
         }
+        // 幅面自愈：外部文件若带标准尺寸「图框」矩形 → 推断幅面，使打印/预览/PDF
+        // 页面方向与该图一致（推断不出 → 放弃，打印设置保持默认，绝不猜）。
+        if (auto inf = model_->inferSheetSpecFromFrame())
+            model_->setSheetSpec(*inf);
         return true;
     }
 
@@ -4572,6 +4601,9 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         } else {
             view_->fitView();
         }
+        // 幅面自愈：同 DXF 分支（标准尺寸「图框」矩形 → 推断；推断不出 → 放弃）
+        if (auto inf = model_->inferSheetSpecFromFrame())
+            model_->setSheetSpec(*inf);
         return true;
     }
 
@@ -4663,6 +4695,14 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     model_->setConstraintsFromJson(root["constraints"].toArray());  // 显式几何约束（缺键 → 空表）
     model_->setParamsFromJson(root["params"].toObject());           // 命名设计变量表（缺键 → 空表，Request M 新增）
     model_->setPropsFromJson(root["properties"].toObject());        // 自定义图纸特性表（缺键 → 空表，PROP 域数据源）
+    // 图纸幅面规格（打印/预览/PDF 页面尺寸与方向的数据源）：
+    //   ① 显式 "sheet" 键（新档）→ 直接采用；
+    //   ② 旧档缺键 → 按「图框」图层纸张矩形推断自愈（本程序所画旧档由此恢复正确方向；
+    //      外部导入/无框图推断不出 → 放弃，打印设置保持原值，绝不猜）。
+    if (auto sp = SketchModel::sheetSpecFromJson(root["sheet"].toObject()))
+        model_->setSheetSpec(*sp);
+    else if (auto inf = model_->inferSheetSpecFromFrame())
+        model_->setSheetSpec(*inf);
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));

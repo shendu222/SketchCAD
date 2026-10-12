@@ -121,6 +121,28 @@ PrintSettings PrintSettings::defaults() {
     return s;
 }
 
+// ----------------------------------------------------------------------------
+// 幅面规格 → 页面设置（纸张 + 方向）唯一入口
+// ----------------------------------------------------------------------------
+QPageSize::PageSizeId pageSizeIdForSheet(SheetFormat f) {
+    switch (f) {
+    case SheetFormat::A0: return QPageSize::A0;
+    case SheetFormat::A1: return QPageSize::A1;
+    case SheetFormat::A2: return QPageSize::A2;
+    case SheetFormat::A3: return QPageSize::A3;
+    case SheetFormat::A4: return QPageSize::A4;
+    case SheetFormat::A5: return QPageSize::A5;
+    }
+    return QPageSize::A4;   // 不可达（枚举闭合）；防御性回落
+}
+
+void applySheetSpecToPage(const SheetSpec& spec, PrintSettings& s) {
+    const int fi = (int)spec.format;
+    if (fi < 0 || fi > (int)SheetFormat::A5) return;   // 非法幅面 → 保持原样（不猜）
+    s.pageSize = QPageSize(pageSizeIdForSheet(spec.format));
+    s.orientation = spec.landscape ? QPageLayout::Landscape : QPageLayout::Portrait;
+}
+
 PlotStyleTable PrintSettings::effectivePlotStyle() const {
     // 黑白总开关开启且用户未提供自定义表 → 套用 GB 预设（按当前线宽组 G1..G5 分粗/细）。
     // 用户已自定义表时以自定义表为准（黑白开关不覆盖，避免抹掉手工线宽分组）。

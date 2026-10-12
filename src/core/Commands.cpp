@@ -38,7 +38,7 @@ namespace SketchCAD {
 // CommandContext 实现
 // ============================================================
 
-bool CommandContext::tryParsePoint(const QString& s, Vec3& out) {
+bool CommandContext::tryParsePointRaw(const QString& s, Vec3& out) {
     QStringList parts = s.split(QRegularExpression("[,\\s]+"), Qt::SkipEmptyParts);
     if (parts.size() < 2) return false;
     bool ok1, ok2, ok3 = true;
@@ -48,6 +48,15 @@ bool CommandContext::tryParsePoint(const QString& s, Vec3& out) {
     if (parts.size() >= 3) { z = parts[2].toDouble(&ok3); }
     if (!ok1 || !ok2 || !ok3) return false;
     out = Vec3(x, y, z);
+    return true;
+}
+
+// UCS 感知：数字坐标一律按当前 UCS 解释后落到世界系（唯一换算入口 Ucs::toWorld）。
+// 与 CommandLine 分段式输入（parsePointToWorld）的绝对坐标语义同源——
+// 新建图纸把 UCS 原点放在幅面中心时，「整行命令」与「工具激活后键入」行为一致。
+bool CommandContext::tryParsePoint(const QString& s, Vec3& out) const {
+    if (!tryParsePointRaw(s, out)) return false;
+    out = model->toWorld(out);
     return true;
 }
 
@@ -225,7 +234,7 @@ bool PolySplineCommand::execute(const CommandContext& ctx) {
     if (ctx.toks.size() < 3) { m->log("用法: " + ctx.cmd + " p1 p2 ...", "warn"); return false; }
     std::vector<Vec3> ps;
     for (int i = 1; i < ctx.toks.size(); ++i) {
-        Vec3 p; if (!CommandContext::tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败: " + ctx.toks[i], "warn"); return false; }
+        Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败: " + ctx.toks[i], "warn"); return false; }
         ps.push_back(p);
     }
     Element e = ElementFactory::create(type_, name_, m); e.pts = ps;
@@ -360,7 +369,7 @@ bool LineModeCommand::execute(const CommandContext& ctx) {
         if (ctx.toks.size() < 3) { m->log("用法: line_snake p1 p2 ...", "warn"); return false; }
         std::vector<Vec3> snakePts;
         for (int i = 1; i < ctx.toks.size(); ++i) {
-            Vec3 p; if (!CommandContext::tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败", "warn"); return false; }
+            Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败", "warn"); return false; }
             snakePts.push_back(p);
         }
         bool xFirst = (lm == line::Mode::SnakeX) ? true : (lm == line::Mode::SnakeY) ? false : true;
@@ -659,7 +668,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
         std::vector<Vec3> pts;
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
-            if (!CommandContext::tryParsePoint(ctx.toks[i], p)) {
+            if (!ctx.tryParsePoint(ctx.toks[i], p)) {
                 m->log(QStringLiteral("点解析失败: ") + ctx.toks[i], "warn");
                 return false;
             }
@@ -696,7 +705,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
         // 可变点数模式（spline_through_points）：解析全部 token 为点，≥2 个
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
-            if (!CommandContext::tryParsePoint(ctx.toks[i], p)) {
+            if (!ctx.tryParsePoint(ctx.toks[i], p)) {
                 m->log(QStringLiteral("点解析失败: ") + ctx.toks[i], "warn");
                 return false;
             }
@@ -1821,8 +1830,10 @@ bool UcsCommand::execute(const CommandContext& ctx) {
     if (sub == "3p" || sub == "three") {
         if (t.size() < 4) { m->log("用法: ucs 3p <原点x,y> <X正向点x,y> [Y侧点x,y]", "warn"); return false; }
         Vec3 p1, p2, p3;
-        if (!ctx.parsePoint(2, p1) || !ctx.parsePoint(3, p2)) { m->log("点解析失败", "warn"); return false; }
-        if (t.size() >= 5 && !ctx.parsePoint(4, p3)) { m->log("点解析失败", "warn"); return false; }
+        // UCS 定义锚点一律按世界系解释（tryParsePointRaw）：定义坐标系是坐标管理
+        // 层操作，不做"用当前 UCS 定义新 UCS"的链式换算，避免歧义与读数不一致。
+        if (!CommandContext::tryParsePointRaw(t[2], p1) || !CommandContext::tryParsePointRaw(t[3], p2)) { m->log("点解析失败", "warn"); return false; }
+        if (t.size() >= 5 && !CommandContext::tryParsePointRaw(t[4], p3)) { m->log("点解析失败", "warn"); return false; }
         const Vec3 d = p2 - p1;
         if (d.len2D() < 1e-12) { m->log("X 正向点与原点重合，无法定义 UCS", "warn"); return false; }
         m->setCurrentUcs(Ucs("UCS3P", p1, d.angleRad()));
@@ -1846,7 +1857,7 @@ bool UcsCommand::execute(const CommandContext& ctx) {
     if (sub == "z" || sub == "zaxis") {
         if (t.size() < 4) { m->log("用法: ucs z <原点x,y> <绕Z旋转角°>", "warn"); return false; }
         Vec3 p;
-        if (!ctx.parsePoint(2, p)) { m->log("点解析失败", "warn"); return false; }
+        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log("点解析失败", "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
         bool ok = false;
         const double deg = t[3].toDouble(&ok);
         if (!ok) { m->log("角度解析失败: " + t[3], "warn"); return false; }
@@ -1858,7 +1869,7 @@ bool UcsCommand::execute(const CommandContext& ctx) {
     if (sub == "origin" || sub == "org") {
         if (t.size() < 3) { m->log("用法: ucs origin <x,y> [旋转角°]", "warn"); return false; }
         Vec3 p;
-        if (!ctx.parsePoint(2, p)) { m->log("点解析失败", "warn"); return false; }
+        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log("点解析失败", "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
         double deg = 0.0;
         if (t.size() >= 4) {
             bool ok = false;
@@ -2094,7 +2105,7 @@ bool DimCommand::execute(const CommandContext& ctx) {
             m->log("用法: dim " + t + " x1,y1 x2,y2 [尺寸线位置 px,py]", "warn"); return false;
         }
         e.pts = {a, b};
-        if (ctx.toks.size() >= 5 && CommandContext::tryParsePoint(ctx.toks[4], pos)) e.pts.push_back(pos);
+        if (ctx.toks.size() >= 5 && ctx.tryParsePoint(ctx.toks[4], pos)) e.pts.push_back(pos);
     }
 
     const double mv = geo::measureDimension(e);
@@ -2628,7 +2639,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
         if (t.size() >= 4) a.prompt = t[3];
         a.defaultValue = a.tag;                       // 默认值 = 标签（便于插入后立即辨认）
         Vec3 pos(0, 0, 0);
-        if (t.size() >= 5) { Vec3 p; if (CommandContext::tryParsePoint(t[4], p)) pos = p; }
+        if (t.size() >= 5) { Vec3 p; if (ctx.tryParsePoint(t[4], p)) pos = p; }
         a.pos = pos;
         if (t.size() >= 6) { bool ok; double h = t[5].toDouble(&ok); if (ok) a.height = h; }
         // 通过整份定义替换触发一次可撤销写入
@@ -2780,7 +2791,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
             if (a == "delete") { deleteSource = true;  continue; }
             if (a == "keep")   { deleteSource = false; continue; }
             Vec3 p;
-            if (CommandContext::tryParsePoint(t[i], p)) { base = p; baseSet = true; }
+            if (ctx.tryParsePoint(t[i], p)) { base = p; baseSet = true; }
         }
         if (!baseSet) {
             QRectF b;
@@ -2809,7 +2820,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
             return false;
         }
         Vec3 pos;
-        if (!CommandContext::tryParsePoint(t[3], pos)) {
+        if (!ctx.tryParsePoint(t[3], pos)) {
             m->log(QStringLiteral("无效插入点: %1").arg(t[3]), "warn");
             return false;
         }
@@ -2975,7 +2986,7 @@ bool XrefCommand::execute(const CommandContext& ctx) {
             const XrefPathType cand = xrefPathTypeFromName(t[i], &asType);
             if (asType) { pt = cand; continue; }
             Vec3 p;
-            if (CommandContext::tryParsePoint(t[i], p)) { ins = p; continue; }
+            if (ctx.tryParsePoint(t[i], p)) { ins = p; continue; }
             bool ok = false; const double v = t[i].toDouble(&ok);
             if (!ok) continue;                       // 无法识别的 token 忽略（保持宽松）
             if (rot == 0.0)      rot = v;             // 第 1 个裸数值 = 旋转角
@@ -3672,7 +3683,10 @@ void CommandRegistry::registerBuiltins() {
             const QString sub = ctx.toks[1].toLower();
             if (sub == "new" || sub == "新建") {
                 if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout new <布局名>"), QStringLiteral("error")); return false; }
-                if (!m->addLayout(ctx.toks[2], PrintSettings())) {
+                // 新布局默认页跟随图纸幅面（新建 A4 横向 → 布局页也是 A4 横向，避免打印回落纵向）
+                PrintSettings fresh;
+                if (m->hasSheetSpec()) applySheetSpecToPage(m->sheetSpec(), fresh);
+                if (!m->addLayout(ctx.toks[2], fresh)) {
                     m->log(QStringLiteral("新建布局失败（名字为空或已存在）"), QStringLiteral("error"));
                     return false;
                 }
@@ -3813,8 +3827,12 @@ void CommandRegistry::registerBuiltins() {
                 return false;
             }
             if (m->currentLayout().isEmpty()) {
-                if (!m->hasLayout(QStringLiteral("布局1")))
-                    m->addLayout(QStringLiteral("布局1"), PrintSettings());
+                if (!m->hasLayout(QStringLiteral("布局1"))) {
+                    // 自动布局同样按图纸幅面 seeding 默认页（与 layout new 同源）
+                    PrintSettings fresh;
+                    if (m->hasSheetSpec()) applySheetSpecToPage(m->sheetSpec(), fresh);
+                    m->addLayout(QStringLiteral("布局1"), fresh);
+                }
                 m->setCurrentLayout(QStringLiteral("布局1"));
                 m->log(QStringLiteral("已自动创建并切换到布局「布局1」"), QStringLiteral("info"));
             }

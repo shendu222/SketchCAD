@@ -63,6 +63,10 @@
 #include "RecentFiles.h"      // 最近文件 MRU（路径+时间+pin，注入临时 ini 离线直测）
 #include "Diagnostics.h"      // 崩溃不丢稿：日志滚动落盘 + 崩溃转储
 #include "core/TextMetrics.h" // 文字度量单一数据源（屏幕/打印/取景 三处同源）自测
+#include "SheetSpec.h"        // 标题栏表格化：buildSheetFrame / InsertedTitleBlock（t_titleBlockAux）
+#include "ProjectionSymbol.h" // 辅助元素打印过滤：isProjectionSymbolElement 谓词（t_titleBlockAux）
+#include "TitleBlockLayout.h" // 单元格文字自适应 + 网格重建（t_titleBlockAux 直测）
+#include "ui/PlotRenderer.h"  // 端到端出图：renderModel 直渲染 QImage（t_titleBlockAux 墨迹断言）
 #include <QDebug>
 #include <algorithm>
 #include <map>
@@ -8736,6 +8740,224 @@ static bool t_textMetrics() {
 }
 
 // ===========================================================================
+// 标题栏表格化 + 辅助元素打印过滤（t_titleBlockAux）
+// 验收：① 新建图纸标题栏全部文本块落入各自网格单元格（并证明对旧「标签越顶
+//        1mm」bug 有捕获力）② 插入/自动套框标题栏长图名生成期收缩适配
+//        （下限 1.5mm、绝不截断；短值不收缩）③ isProjectionSymbolElement
+//        谓词：符号全命中、普通图元零误报 ④ 端到端出图：投影符号区域零墨迹
+//        + 去标签对照组有墨（证明零墨迹确由过滤而非渲染空转）
+// 运行环境持 QApplication，但本组锚定无头确定性度量（size*height*0.62），
+// 与 t_textMetrics 同口径；组尾还原，不影响其它测试组。
+// ===========================================================================
+static bool t_titleBlockAux() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- 标题栏表格化 + 辅助元素打印过滤 ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    TextMetrics::setHeadlessOverride(true);
+
+    // 文本块世界包围盒——与 GraphicsView / PlotRenderer 同一锚点语义：
+    // plain Text 锚点 = 块左下角，块自锚点向右上延伸 heightMm（单行 lineH=h）。
+    auto textBlock = [](const Element& e) {
+        const ResolvedTextStyle rs;   // 默认构造 = 无样式名图元的渲染解析结果
+        const double w = TextMetrics::lineWidthMm(rs, e.text, e.radius);
+        return QRectF(e.pts[0].x, e.pts[0].y, w, e.radius);
+    };
+    // 块是否落入单元格（QRectF 语义：top()=最小 Y、bottom()=最大 Y）
+    auto blockInCell = [](const QRectF& b, const QRectF& c) {
+        constexpr double kEps = 1e-6;
+        return b.left() >= c.left() - kEps && b.right() <= c.right() + kEps &&
+               b.top()  >= c.top()  - kEps && b.bottom() <= c.bottom() + kEps;
+    };
+
+    // ---- ① 新建图纸标题栏：全部文本块落入各自单元格（A3 横放 + A5 竖放）----
+    const SheetSpec specs[] = { SheetSpec::make(SheetFormat::A3, true),
+                                SheetSpec::make(SheetFormat::A5, false) };
+    for (const SheetSpec& spec : specs) {
+        SketchModel m;
+        for (const auto& e : buildSheetFrame(spec)) m.addElement(e);
+
+        int labelCount = 0, fieldCount = 0, escape = 0, noCell = 0, badY = 0, badX = 0;
+        QRectF firstLabelCell;
+        for (const auto& e : m.elements()) {
+            if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
+            const bool isField = e.name.startsWith(QLatin1String("tb:field:"));
+            if (isField) ++fieldCount; else ++labelCount;
+            if (e.pts.empty()) continue;
+            const QRectF cell = titleBlockCellAt(&m, e.pts[0].x, e.pts[0].y);
+            if (!cell.isValid()) { ++noCell; continue; }
+            if (labelCount == 1 && !isField) firstLabelCell = cell;
+            if (!blockInCell(textBlock(e), cell)) {
+                ++escape;
+                fprintf(stderr, "  FAIL: TB① 文本越界 name=%s\n", e.name.toUtf8().constData());
+            }
+            // 规范放置：标签贴顶（顶边-1mm-字高）、字段贴底（底边+1mm）、水平左内边距 2mm
+            const bool isLabel = e.name.isEmpty();
+            const double expectY = isLabel ? (cell.bottom() - 1.0 - e.radius)
+                                           : (cell.top() + 1.0);
+            if (std::fabs(e.pts[0].y - expectY) > 1e-9) ++badY;
+            if (std::fabs(e.pts[0].x - (cell.left() + 2.0)) > 1e-9) ++badX;
+        }
+        CHECK(noCell == 0, "TB① 每个标题栏文本都能重建所在单元格（网格线可解析）");
+        CHECK(escape == 0, "TB① 全部标签/字段文本块落入各自单元格（零越界）");
+        CHECK(badY == 0, "TB① 垂直放置规范：标签贴顶/字段贴底，呼吸边 1mm");
+        CHECK(badX == 0, "TB① 水平放置规范：左内边距 2mm");
+        CHECK(labelCount == 12 && fieldCount == 12, "TB① 标签 12 + 字段 12（栏目无丢失）");
+
+        // 捕获力证明：复现旧实现放置（锚点=单元格顶边-2mm）→ 必越界；
+        // 若此断言失败，说明上面的包含性断言对旧 bug 没有捕获力。
+        if (firstLabelCell.isValid()) {
+            for (const auto& e : m.elements()) {
+                if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
+                if (!e.name.isEmpty() || e.text.isEmpty() || e.pts.empty()) continue;
+                Element old = e;
+                old.pts[0].y = firstLabelCell.bottom() - 2.0;   // 旧 labelOff=2
+                CHECK(!blockInCell(textBlock(old), firstLabelCell),
+                      "TB① 捕获力：旧「顶边-2mm」放置必越界（断言能抓旧 bug）");
+                break;
+            }
+        }
+    }
+
+    // ---- ② 插入/自动套框标题栏：长图名生成期收缩适配 ----
+    {
+        const SheetSpec spec = SheetSpec::make(SheetFormat::A3, true);
+        InsertedTitleBlock data;
+        data.drawingName   = QString(60, QChar(L'图'));   // 60 字长图名：无头估算 148.8mm > 单元格可用 113mm
+        data.drawingNumber = QStringLiteral("ABC-1234-2026");
+        data.scale         = QStringLiteral("1:1");
+        data.designDate    = QStringLiteral("2026-10-10");
+        SketchModel m;
+        for (const auto& e : buildAutoFrameTitleBlock(QRectF(0, 0, 100, 60), spec, data))
+            m.addElement(e);
+
+        int escape = 0, noCell = 0, checked = 0;
+        for (const auto& e : m.elements()) {
+            if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
+            if (e.pts.empty()) continue;
+            const QRectF cell = titleBlockCellAt(&m, e.pts[0].x, e.pts[0].y);
+            if (!cell.isValid()) { ++noCell; continue; }
+            ++checked;
+            if (!blockInCell(textBlock(e), cell)) ++escape;
+            if (e.name == QStringLiteral("tb:field:drawingName")) {
+                CHECK(e.radius < 4.0 - 1e-9, "TB② 长图名触发收缩（字高 < 设计值 4.0）");
+                CHECK(e.radius >= 1.5 - 1e-9, "TB② 收缩不低于下限 1.5mm（绝不截断）");
+            }
+        }
+        CHECK(checked > 0 && noCell == 0, "TB② 插入标题栏文本全部可定位单元格");
+        CHECK(escape == 0, "TB② 收缩后全部文本块落入各自单元格（含预填值）");
+
+        // 对照：短图名不收缩（保持设计字高 4.0）
+        InsertedTitleBlock shortData = data;
+        shortData.drawingName = QStringLiteral("短图名");
+        SketchModel m2;
+        for (const auto& e : buildAutoFrameTitleBlock(QRectF(0, 0, 100, 60), spec, shortData))
+            m2.addElement(e);
+        for (const auto& e : m2.elements()) {
+            if (e.name == QStringLiteral("tb:field:drawingName"))
+                CHECK(std::fabs(e.radius - 4.0) < 1e-9, "TB② 短图名不收缩（字高=设计值 4.0）");
+        }
+    }
+
+    // ---- ③ 谓词单测：投影符号全命中、普通图元零误报 ----
+    {
+        const auto sym = buildProjectionSymbol(Vec3(0, 0, 0), 5.0, ProjectionMethod::FirstAngle);
+        CHECK(sym.size() == 5, "TB③ 投影符号图元数 = 外圆 + 3 线 + 文本 = 5");
+        bool allTagged = true;
+        for (const auto& e : sym) if (!isProjectionSymbolElement(e)) allTagged = false;
+        CHECK(allTagged, "TB③ 第一角符号全部图元命中谓词");
+        const auto sym3 = buildProjectionSymbol(Vec3(0, 0, 0), 5.0, ProjectionMethod::ThirdAngle);
+        bool allTagged3 = true;
+        for (const auto& e : sym3) if (!isProjectionSymbolElement(e)) allTagged3 = false;
+        CHECK(allTagged3, "TB③ 第三角符号同样命中（同一前缀事实源）");
+
+        Element line; line.type = ElementType::Line;
+        line.pts = { Vec3(0, 0, 0), Vec3(1, 0, 0) };
+        CHECK(!isProjectionSymbolElement(line), "TB③ 普通直线零误报");
+        Element fld; fld.type = ElementType::Text; fld.name = QStringLiteral("tb:field:scale");
+        CHECK(!isProjectionSymbolElement(fld), "TB③ 标题栏域文本零误报");
+        Element noName; noName.type = ElementType::Text;
+        CHECK(!isProjectionSymbolElement(noName), "TB③ 无名文本零误报");
+        Element fake; fake.type = ElementType::Text;
+        fake.name = QStringLiteral("x投影符号:第一角");
+        CHECK(!isProjectionSymbolElement(fake), "TB③ 「含而非始于」前缀 → 零误报");
+        Element hand; hand.type = ElementType::Text;
+        hand.name = QStringLiteral("投影符号:第三角");
+        CHECK(isProjectionSymbolElement(hand), "TB③ 手写同前缀标签亦命中（单一事实源）");
+    }
+
+    // ---- ④ 端到端出图：符号区零墨迹 + 去标签对照组有墨 ----
+    {
+        const SheetSpec spec = SheetSpec::make(SheetFormat::A3, true);
+        const double W = spec.width, H = spec.height;   // 420 × 297
+        const auto frame = buildSheetFrame(spec);
+
+        double cx = 0.0, cy = 0.0;
+        bool foundSym = false;
+        for (const auto& e : frame) {
+            if (e.type == ElementType::Circle && isProjectionSymbolElement(e)) {
+                cx = e.pts[0].x; cy = e.pts[0].y; foundSym = true; break;
+            }
+        }
+        CHECK(foundSym, "TB④ 新建图纸图框中含投影符号（圆）");
+
+        const double s = 8.0;   // 8 px/mm（≈203dpi）
+        auto render = [&](SketchModel& m) {
+            QImage img((int)std::lround(W * s) + 1, (int)std::lround(H * s) + 1,
+                       QImage::Format_RGB32);
+            img.setDotsPerMeterX((int)std::lround(s * 1000.0));
+            img.setDotsPerMeterY((int)std::lround(s * 1000.0));
+            img.fill(Qt::white);
+            QPainter p(&img);
+            // 世界(Y 向上) → 设备(Y 向下)：device = (x*s, H*s - y*s)
+            p.setTransform(QTransform(s, 0, 0, -s, 0, H * s));
+            PlotRenderer::renderModel(&p, &m, s, QRectF(0, 0, W, H),
+                                      PlotStyleTable::defaultTable(), 0.5, nullptr);
+            p.end();
+            return img;
+        };
+        auto inkIn = [&](const QImage& img, double x0, double x1, double y0, double y1) {
+            if (img.isNull()) return false;
+            const int c0 = std::max(0, (int)std::lround(x0 * s));
+            const int c1 = std::min(img.width()  - 1, (int)std::lround(x1 * s));
+            const int r0 = std::max(0, (int)std::lround((H - y1) * s));
+            const int r1 = std::min(img.height() - 1, (int)std::lround((H - y0) * s));
+            for (int r = r0; r <= r1; ++r)
+                for (int c = c0; c <= c1; ++c)
+                    if (qGray(img.pixel(c, r)) < 100) return true;
+            return false;
+        };
+
+        SketchModel mFiltered;
+        for (const auto& e : frame) mFiltered.addElement(e);
+        SketchModel mControl;
+        for (const auto& e : frame) {
+            Element c = e;
+            if (isProjectionSymbolElement(c)) c.name.clear();   // 去标签 → 不过滤（对照组）
+            mControl.addElement(c);
+        }
+
+        const QImage imgF = render(mFiltered);
+        const QImage imgC = render(mControl);
+        CHECK(!imgF.isNull() && !imgC.isNull(), "TB④ 两张端到端渲染成功");
+        // 符号圆盘区域（cx±5.5, cy±5.5）：该区域除符号外无任何图线
+        CHECK(!inkIn(imgF, cx - 5.5, cx + 5.5, cy - 5.5, cy + 5.5),
+              "TB④ 投影符号区域零墨迹（打印/PDF 不输出辅助说明）");
+        CHECK(inkIn(imgC, cx - 5.5, cx + 5.5, cy - 5.5, cy + 5.5),
+              "TB④ 对照组（去标签）同区域有墨 → 零墨迹确由过滤生效");
+        // 渲染管线本身有输出（标题栏横向分隔线 y=17 一带）
+        CHECK(inkIn(imgF, 300, 400, 16.5, 17.5),
+              "TB④ 对照组管道 sanity：标题栏网格线有墨（非整体空转）");
+    }
+
+    TextMetrics::setHeadlessOverride(false);   // 还原真实判定，避免影响后续测试组
+    fprintf(stdout, "  (标题栏/辅助元素自测: 通过 %d / 失败 %d)\n",
+            g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ===========================================================================
 // 用户坐标系 UCS 自测（t_ucs）
 // 验收：① 默认=世界系（零回归） ② Ucs 数学往返 ③ 45° UCS 下 @100<0 落点（≤1e-6）
 //       ④ ucs 命令五种定义 + CRUD ⑤ 极轴按 UCS 对齐 ⑥ 正交/栅格按 UCS 轴
@@ -8930,6 +9152,329 @@ static bool t_ucs() {
     return (g_fail - failBefore) == 0;
 }
 
+// 新建图纸「坐标原点置于幅面中心」语义：命令参数坐标（CommandContext 单一入口）
+// 与 CommandLine 分段式输入（parsePointToWorld）均按当前 UCS 解释；
+// 世界系下恒等（既有行为零回归）；raw 纯解析不受 UCS 影响。
+static bool t_ucsSheetCenter() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- UCS 幅面中心（新建图纸原点语义） ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    // ① A4 横向（297×210）中心 (148.5,105)：整行命令的参数坐标随 UCS
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        m.setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"), Vec3(148.5, 105.0, 0), 0.0));
+        CHECK(std::fabs(m.currentUcs().origin.x - 148.5) < 1e-9 &&
+              std::fabs(m.currentUcs().origin.y - 105.0) < 1e-9,
+              "ucsCenter: UCS 原点=幅面中心设置生效");
+        CHECK(interp.execute(QStringLiteral("line 0,0 100,100")), "ucsCenter: line 命令执行成功");
+        const Element* ln = nullptr;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Line) { ln = &e; break; }
+        CHECK(ln && ln->pts.size() == 2 &&
+              std::fabs(ln->pts[0].x - 148.5) < 1e-9 && std::fabs(ln->pts[0].y - 105.0) < 1e-9 &&
+              std::fabs(ln->pts[1].x - 248.5) < 1e-9 && std::fabs(ln->pts[1].y - 205.0) < 1e-9,
+              "ucsCenter: line 0,0 100,100 → 世界端点 (148.5,105)-(248.5,205)");
+        CHECK(interp.execute(QStringLiteral("circle 0,0 10")), "ucsCenter: circle 命令执行成功");
+        const Element* ci = nullptr;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Circle) { ci = &e; break; }
+        CHECK(ci && std::fabs(ci->pts[0].x - 148.5) < 1e-9 &&
+                   std::fabs(ci->pts[0].y - 105.0) < 1e-9 && std::fabs(ci->radius - 10.0) < 1e-9,
+              "ucsCenter: circle 0,0 10 → 圆心=幅面中心、半径不变（位移/尺寸类参数不受 UCS 平移）");
+        CHECK(interp.execute(QStringLiteral("point 10,20")), "ucsCenter: point 命令执行成功");
+        const Element* pt = nullptr;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Point) { pt = &e; break; }
+        CHECK(pt && std::fabs(pt->pts[0].x - 158.5) < 1e-9 && std::fabs(pt->pts[0].y - 125.0) < 1e-9,
+              "ucsCenter: point 10,20 → 世界 (158.5,125)");
+    }
+
+    // ② 与 CommandLine 分段式同源：parsePointToWorld 绝对坐标同语义
+    {
+        SketchModel m;
+        m.setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"), Vec3(148.5, 105.0, 0), 0.0));
+        Vec3 w;
+        CHECK(m.parsePointToWorld(QStringLiteral("0,0"), Vec3(), w) &&
+              w.distTo(Vec3(148.5, 105.0, 0)) < 1e-9,
+              "ucsCenter: parsePointToWorld(\"0,0\")=幅面中心（两路输入同源）");
+    }
+
+    // ③ raw 纯解析回归：tryParsePointRaw 不做任何换算
+    {
+        Vec3 p;
+        CHECK(CommandContext::tryParsePointRaw(QStringLiteral("3,4"), p) &&
+              p.x == 3.0 && p.y == 4.0,
+              "ucsCenter: tryParsePointRaw 纯解析语义不变");
+    }
+
+    // ④ 世界系恒等回归：默认 UCS 下既有命令行为不变
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("line 5,5 15,15")), "ucsCenter: 世界系 line 执行成功");
+        const Element* ln = nullptr;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Line) { ln = &e; break; }
+        CHECK(ln && ln->pts.size() == 2 && ln->pts[0] == Vec3(5, 5, 0) && ln->pts[1] == Vec3(15, 15, 0),
+              "ucsCenter: 世界系下命令坐标恒等（既有行为零回归）");
+    }
+
+    // ⑤ move 位移量（toDouble 直解）不随 UCS 平移（绝对点语义已在 ① 覆盖）
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        m.setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"), Vec3(100.0, 50.0, 0), 0.0));
+        CHECK(interp.execute(QStringLiteral("circle 0,0 20")), "ucsCenter: 建圆成功");
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Circle) { m.selectEntity(e.id); break; }
+        CHECK(interp.execute(QStringLiteral("move 10 0")), "ucsCenter: move 执行成功");
+        const Element* ci = nullptr;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Circle) { ci = &e; break; }
+        CHECK(ci && std::fabs(ci->pts[0].x - 110.0) < 1e-9 && std::fabs(ci->pts[0].y - 50.0) < 1e-9,
+              "ucsCenter: move 位移量 Δ=(10,0) 为纯增量（(100,50)→(110,50)，不叠加 UCS 原点）");
+    }
+
+    fprintf(stdout, "  (UCS 幅面中心自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ============================================================================
+// 新建图纸幅面驱动打印页面设置（t_sheetPageSync）
+// ----------------------------------------------------------------------------
+// 根因回归：新建 A4 横向 → 打印预览/导出 PDF 曾恒为默认 A4 纵向。
+// 传递链断点：PrintSettings 默认构造即 QPageSize(A4)+Portrait（Layout.h），
+// 而 currentPrintSettings_ 只来自默认构造/上次退出快照/打印设置对话框，
+// 从不与新建图纸的 SheetSpec 同步；applyNewDrawing 建完图框即失（幅面只存为
+// 几何）；exportPdfLayouts 零布局分支另 new 临时 PrintSettings（同病第二例）；
+// BatchPlotEngine 用 PrintSettings::defaults()（第三例）；layout new / mview
+// 自动建布局用 PrintSettings()（第四例）。
+// 修复链路：SheetSpec 随图存档（顶层 "sheet" 键）→ applySheetSpecToPage 单一
+// 入口只覆盖 pageSize/orientation → 新建/读档（含旧档图框自愈）/切文档/
+// 零布局导出/COM 批出图/布局创建 六处消费点全部经它派生。
+// ============================================================================
+static bool t_sheetPageSync() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- 新建图纸幅面驱动页面设置（打印/预览/PDF 方向一致） ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    // PDF MediaBox 解析辅助：返回 [w h]（磅）。QPdfWriter 页面对象为明文。
+    auto mediaBoxOf = [](const QString& path, double& w, double& h) -> bool {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) return false;
+        const QByteArray data = f.readAll();
+        f.close();
+        const int k = data.indexOf("/MediaBox");
+        if (k < 0) return false;
+        const int lb = data.indexOf('[', k);
+        const int rb = data.indexOf(']', k);
+        if (lb < 0 || rb < 0 || rb <= lb) return false;
+        const QList<QByteArray> raw = data.mid(lb + 1, rb - lb - 1).simplified().split(' ');
+        if (raw.size() < 4) return false;
+        bool okW = false, okH = false;
+        w = raw[2].toDouble(&okW);
+        h = raw[3].toDouble(&okH);
+        return okW && okH;
+    };
+
+    // ---- ① pageSizeIdForSheet 六幅面映射 + applySheetSpecToPage 只动两字段 ----
+    {
+        struct Ent { SheetFormat f; QPageSize::PageSizeId id; };
+        const Ent ents[] = {
+            {SheetFormat::A0, QPageSize::A0},
+            {SheetFormat::A1, QPageSize::A1},
+            {SheetFormat::A2, QPageSize::A2},
+            {SheetFormat::A3, QPageSize::A3},
+            {SheetFormat::A4, QPageSize::A4},
+            {SheetFormat::A5, QPageSize::A5},
+        };
+        for (const auto& e : ents)
+            CHECK(pageSizeIdForSheet(e.f) == e.id, "sheetPage: pageSizeIdForSheet 六幅面映射");
+        PrintSettings s = PrintSettings::defaults();
+        s.marginsMm = QMarginsF(7, 8, 9, 10);
+        s.scale = 2.5; s.fitToPage = false; s.drawBorder = false;
+        const QMarginsF m0 = s.marginsMm;
+        applySheetSpecToPage(SheetSpec::make(SheetFormat::A4, true), s);
+        CHECK(s.pageSize.id() == QPageSize::A4 && s.orientation == QPageLayout::Landscape,
+              "sheetPage: A4 横向 → A4 + Landscape（核心断言）");
+        CHECK(s.marginsMm == m0 && std::fabs(s.scale - 2.5) < 1e-9 && !s.fitToPage && !s.drawBorder,
+              "sheetPage: 只覆盖 pageSize/orientation，边距/比例/样式不动");
+        applySheetSpecToPage(SheetSpec::make(SheetFormat::A4, false), s);
+        CHECK(s.orientation == QPageLayout::Portrait, "sheetPage: A4 纵向 → Portrait");
+        SheetSpec bad = SheetSpec::make(SheetFormat::A3, true);
+        bad.format = (SheetFormat)42;
+        applySheetSpecToPage(bad, s);
+        CHECK(s.pageSize.id() == QPageSize::A4 && s.orientation == QPageLayout::Portrait,
+              "sheetPage: format 越界 → 页面设置保持原样（不猜）");
+    }
+
+    // ---- ② SketchModel 幅面存取 + 随图存档往返 ----
+    {
+        SketchModel m;
+        CHECK(!m.hasSheetSpec(), "sheetPage: 新建模型默认无幅面规格");
+        CHECK(m.sheetSpecToJson().isEmpty(), "sheetPage: 无规格 → sheetSpecToJson 空对象");
+        CHECK(!m.toDrawingJson().contains(QStringLiteral("sheet")),
+              "sheetPage: 无规格 → 顶层不写 sheet 键（旧档零回归）");
+        m.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+        CHECK(m.hasSheetSpec() && m.sheetSpec().format == SheetFormat::A4 && m.sheetSpec().landscape,
+              "sheetPage: setSheetSpec A4 横向生效");
+        const QJsonObject sj = m.toDrawingJson()["sheet"].toObject();
+        CHECK(sj["format"].toInt() == (int)SheetFormat::A4 && sj["landscape"].toBool(),
+              "sheetPage: 有规格 → 顶层 sheet = {format,landscape}");
+        auto sp = SketchModel::sheetSpecFromJson(sj);
+        CHECK(sp && sp->format == SheetFormat::A4 && sp->landscape, "sheetPage: FromJson 往返一致");
+        CHECK(!SketchModel::sheetSpecFromJson(QJsonObject()), "sheetPage: 空对象 → nullopt");
+        QJsonObject oBad; oBad["format"] = 99;
+        CHECK(!SketchModel::sheetSpecFromJson(oBad), "sheetPage: format 越界 → nullopt");
+        QJsonObject oDef; oDef["format"] = (int)SheetFormat::A5;
+        const auto spDef = SketchModel::sheetSpecFromJson(oDef);
+        CHECK(spDef && spDef->format == SheetFormat::A5 && spDef->landscape,
+              "sheetPage: landscape 缺省 true（工程图惯例）");
+        SketchModel m2;
+        m2.setSheetSpec(SheetSpec::make(SheetFormat::A5, false));
+        SheetSpec bad2 = SheetSpec::make(SheetFormat::A5, false);
+        bad2.format = (SheetFormat)-3;
+        m2.setSheetSpec(bad2);
+        CHECK(m2.sheetSpec().format == SheetFormat::A5 && !m2.sheetSpec().landscape,
+              "sheetPage: setSheetSpec 越界拒绝（保持原值）");
+        m2.clear();
+        CHECK(!m2.hasSheetSpec(), "sheetPage: clear() 丢弃幅面规格");
+    }
+
+    // ---- ③ inferSheetSpecFromFrame：旧档缺 sheet 键按图框自愈 ----
+    {
+        SketchModel m;   // A4 横向旧档：buildSheetFrame 产物（含纸张外边界矩形）
+        for (const auto& e : buildSheetFrame(SheetSpec::make(SheetFormat::A4, true)))
+            m.addElement(e);
+        auto inf = m.inferSheetSpecFromFrame();
+        CHECK(inf && inf->format == SheetFormat::A4 && inf->landscape,
+              "sheetPage: 图框推断 A4 横向（旧档自愈）");
+        SketchModel m5;
+        for (const auto& e : buildSheetFrame(SheetSpec::make(SheetFormat::A5, false)))
+            m5.addElement(e);
+        auto inf5 = m5.inferSheetSpecFromFrame();
+        CHECK(inf5 && inf5->format == SheetFormat::A5 && !inf5->landscape,
+              "sheetPage: 图框推断 A5 纵向（方向由长短边定）");
+        SketchModel me;
+        CHECK(!me.inferSheetSpecFromFrame(), "sheetPage: 空模型 → 放弃推断");
+        SketchModel mn;   // 非标尺寸 → 绝不猜
+        Element r; r.type = ElementType::Rectangle;
+        r.pts = {Vec3(0, 0, 0), Vec3(123.4, 456.7, 0)};
+        r.layer = QStringLiteral("图框");
+        mn.addElement(r);
+        CHECK(!mn.inferSheetSpecFromFrame(), "sheetPage: 非标图框矩形 → 放弃推断");
+        Element small; small.type = ElementType::Rectangle;   // 同层小矩形不干扰取最大
+        small.pts = {Vec3(0, 0, 0), Vec3(10, 10, 0)};
+        small.layer = QStringLiteral("图框");
+        m.addElement(small);
+        auto inf2 = m.inferSheetSpecFromFrame();
+        CHECK(inf2 && inf2->format == SheetFormat::A4 && inf2->landscape,
+              "sheetPage: 同层小矩形不干扰（取最大面积）");
+    }
+
+    // ---- ④ PrintEngine::modelSpacePageSettings 跟随与回落 ----
+    {
+        SketchModel m;
+        m.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+        const PrintSettings s = PrintEngine::modelSpacePageSettings(&m);
+        CHECK(s.pageSize.id() == QPageSize::A4 && s.orientation == QPageLayout::Landscape
+              && s.viewports.isEmpty() && s.fitToPage,
+              "sheetPage: modelSpacePageSettings 跟随 A4 横向（视口空+fitToPage）");
+        SketchModel m2;
+        const PrintSettings s2 = PrintEngine::modelSpacePageSettings(&m2);
+        CHECK(s2.pageSize.id() == QPageSize::A4 && s2.orientation == QPageLayout::Portrait,
+              "sheetPage: 无幅面 → 旧行为 A4 纵向（空白图/外部导入）");
+        const PrintSettings s3 = PrintEngine::modelSpacePageSettings(nullptr);
+        CHECK(s3.orientation == QPageLayout::Portrait, "sheetPage: nullptr 模型 → 旧行为");
+    }
+
+    // ---- ⑤ 端到端：exportPdfLayouts 零布局 → MediaBox 横竖断言 ----
+    {
+        SketchModel mL;
+        addLine(mL, 0, 0, 100, 0);
+        mL.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+        const QString pL = QDir::temp().absoluteFilePath(QStringLiteral("sheetpage_a4L.pdf"));
+        QFile::remove(pL);
+        CHECK(PrintEngine::exportPdfLayouts(&mL, pL) == 1, "sheetPage: 零布局导出 1 页（横向）");
+        double w = 0, h = 0;
+        CHECK(mediaBoxOf(pL, w, h), "sheetPage: 横向 PDF 含 /MediaBox");
+        CHECK(w > h && std::fabs(w - 841.89) < 2.0 && std::fabs(h - 595.28) < 2.0,
+              "sheetPage: MediaBox 842×595pt 横向（A4 横向端到端）");
+        SketchModel mP;
+        addLine(mP, 0, 0, 100, 0);
+        mP.setSheetSpec(SheetSpec::make(SheetFormat::A4, false));
+        const QString pP = QDir::temp().absoluteFilePath(QStringLiteral("sheetpage_a4P.pdf"));
+        QFile::remove(pP);
+        CHECK(PrintEngine::exportPdfLayouts(&mP, pP) == 1, "sheetPage: 零布局导出 1 页（纵向对照）");
+        double w2 = 0, h2 = 0;
+        CHECK(mediaBoxOf(pP, w2, h2), "sheetPage: 纵向 PDF 含 /MediaBox");
+        CHECK(w2 < h2 && std::fabs(w2 - 595.28) < 2.0 && std::fabs(h2 - 841.89) < 2.0,
+              "sheetPage: MediaBox 595×842pt 纵向（对照组）");
+    }
+
+    // ---- ⑥ 命令层：layout new / mview 自动布局按幅面 seeding 默认页 ----
+    {
+        SketchModel m;
+        m.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("layout new L1")), "sheetPage: layout new 执行成功");
+        const PlotLayoutDef* d = m.findLayout(QStringLiteral("L1"));
+        CHECK(d && d->settings.pageSize.id() == QPageSize::A4
+              && d->settings.orientation == QPageLayout::Landscape,
+              "sheetPage: layout new 默认页跟随 A4 横向");
+        SketchModel m2;
+        m2.setSheetSpec(SheetSpec::make(SheetFormat::A3, false));
+        CommandInterpreter i2(&m2);
+        CHECK(i2.execute(QStringLiteral("mview 10 10 90 60")), "sheetPage: mview 执行成功");
+        const PlotLayoutDef* d2 = m2.findLayout(QStringLiteral("布局1"));
+        CHECK(d2 && d2->settings.pageSize.id() == QPageSize::A3
+              && d2->settings.orientation == QPageLayout::Portrait,
+              "sheetPage: mview 自动布局默认页跟随 A3 纵向");
+        SketchModel m3;
+        CommandInterpreter i3(&m3);
+        CHECK(i3.execute(QStringLiteral("layout new L2")), "sheetPage: 无幅面 layout new 仍成功");
+        const PlotLayoutDef* d3 = m3.findLayout(QStringLiteral("L2"));
+        CHECK(d3 && d3->settings.pageSize.id() == QPageSize::A4
+              && d3->settings.orientation == QPageLayout::Portrait,
+              "sheetPage: 无幅面 → 旧默认 A4 纵向");
+    }
+
+    // ---- ⑦ COM 批量出图：sheet 键随档恢复 + 无显式 settings 时 PDF 横向 ----
+    {
+        using namespace SketchCAD::comauto;
+        SketchModel m;
+        addLine(m, 0, 0, 100, 0);
+        m.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+        const QString src = QDir::temp().absoluteFilePath(QStringLiteral("sheetpage_com_src.json"));
+        QFile::remove(src);
+        QString err;
+        CHECK(BatchPlotEngine::exportDrawing(m, src, QJsonObject(), &err),
+              "sheetPage: COM 源图纸 JSON 落盘（含 sheet 键）");
+        SketchModel back;
+        CHECK(BatchPlotEngine::loadDrawing(back, src, &err), "sheetPage: 引擎读档成功");
+        CHECK(back.hasSheetSpec() && back.sheetSpec().format == SheetFormat::A4
+              && back.sheetSpec().landscape,
+              "sheetPage: sheet 键随档恢复（引擎读档路径）");
+        const QString pdf = QDir::temp().absoluteFilePath(QStringLiteral("sheetpage_com.pdf"));
+        QFile::remove(pdf);
+        QJsonObject t; t["source"] = src; t["output"] = pdf;   // 无 settings → 跟随幅面
+        QJsonObject batch; QJsonArray arr; arr.append(t); batch["tasks"] = arr;
+        const BatchResult r = BatchPlotEngine::runBatch(
+            QString::fromUtf8(QJsonDocument(batch).toJson(QJsonDocument::Compact)), QString());
+        CHECK(r.allOk && r.succeeded == 1, "sheetPage: COM 批量任务成功");
+        double w = 0, h = 0;
+        CHECK(mediaBoxOf(pdf, w, h), "sheetPage: COM PDF 含 /MediaBox");
+        CHECK(w > h, "sheetPage: COM 批量 PDF 横向（无显式 settings 跟随幅面）");
+    }
+
+    fprintf(stdout, "  (幅面驱动页面设置自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -9030,6 +9575,7 @@ int main(int argc, char** argv) {
     t_commandDispatch();   // 命令路径直测：join/arrayrect/arraypolar/arraypath/ltscale 端到端（逐条 CHECK 计数）
     t_layout();            // 布局体系：paperRect往返/布局CRUD/旧档回落/1:2与2:1/平铺像素/PDF样张/命令行
     CHECK(t_plotPublish(), "打印发布体系(视口冻结/发布页列表/戳记/视口旋转/GUI-COM一致)");
+    CHECK(t_titleBlockAux(), "标题栏表格化+辅助元素打印过滤(单元格包含/收缩适配/谓词/端到端零墨迹)");
     CHECK(t_multidoc(),    "多文档标签 DocTab(独立undo/脏标记隔离/cycle循环/拖拽重排/跨文档粘贴/历史互换/关闭夹取)");
     CHECK(t_i18n(), "国际化+高DPI(语言解析/.qm装载/上下文存在/切换翻译底座/缺翻译回落中文/卸载回落源语言/DPI换算一致/QLocale口径)");
     CHECK(t_interaction(), "AutoCAD 交互对齐(空格/回车重复命令/↑↓历史/Tab补齐/坐标注入/未知命令3候选/历史持久化/右键行为配置)");
@@ -9047,6 +9593,8 @@ int main(int argc, char** argv) {
     CHECK(t_fileFuzz(),    "文件 Fuzz 200 随机损坏样本零崩溃零死锁单样本≤5s(JSON/DXF/DWG/二进制DXF)");
     CHECK(t_textMetrics(), "文字度量三处同源(真实度量/LRU缓存/无头降级/9点对齐/折行/列宽/堆叠提示)");
     CHECK(t_ucs(),         "用户坐标系 UCS(往返换算/45°@100<0落点≤1e-6/ucs命令定义+CRUD/极轴正交栅格UCS对齐/读数切换/网格方向/不入档)");
+    CHECK(t_ucsSheetCenter(), "UCS 幅面中心(新建图纸原点=图纸中央/命令参数坐标随UCS/两路输入同源/raw纯解析回归/世界系恒等/move位移不受UCS)");
+    CHECK(t_sheetPageSync(), "新建图纸幅面驱动页面设置(六幅面映射/只动两字段/随图存档往返/图框自愈/零布局PDF横竖端到端/布局seeding/COM批出图)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");

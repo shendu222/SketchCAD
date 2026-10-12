@@ -56,6 +56,7 @@ set(CORE_SOURCES
     src/core/LineWidthGroup.cpp
     src/core/LinePattern.cpp
     src/core/ProjectionSymbol.cpp
+    src/core/TitleBlockLayout.cpp  # 标题栏单元格文字自适应（度量→收缩→定位）+ 网格重建（编辑期/自测共用）
     src/core/SurfaceRoughness.cpp
     src/core/SectionCutSymbol.cpp
     src/core/SectionDrawing.cpp

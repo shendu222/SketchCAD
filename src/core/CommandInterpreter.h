@@ -58,9 +58,11 @@ public:
     QStringList externalCommandNames() const;
     void addHistory(const QString& line);
     static QStringList commandNames();
-    /// 公开点解析：供 CommandLine 在交互模式下判断输入是否为坐标
+    /// 公开点解析：纯解析（不换算，无 UCS 语义）。UCS 感知入口在
+    /// CommandContext::tryParsePoint（成员，经 model->toWorld）与
+    /// SketchModel::parsePointToWorld（CommandLine 分段式，含 @/极坐标语法）。
     static bool tryParsePoint(const QString& s, Vec3& out) {
-        return CommandContext::tryParsePoint(s, out);
+        return CommandContext::tryParsePointRaw(s, out);
     }
 
 private:

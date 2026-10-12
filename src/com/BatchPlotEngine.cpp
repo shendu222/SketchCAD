@@ -181,6 +181,13 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     model.setConstraintsFromJson(root["constraints"].toArray());
     model.setParamsFromJson(root["params"].toObject());
     model.setPropsFromJson(root["properties"].toObject());   // 自定义图纸特性（缺键 → 空表，与交互读档对齐）
+    // 图纸幅面规格（打印/预览/PDF 页面尺寸与方向的数据源）：显式 "sheet" 键优先，
+    // 旧档缺键 → 按「图框」图层纸张矩形推断自愈（与 MainWindow::readDrawing 同语义；
+    // 推断不出 → 放弃，出图设置保持默认，绝不猜）。
+    if (auto sp = SketchModel::sheetSpecFromJson(root["sheet"].toObject()))
+        model.setSheetSpec(*sp);
+    else if (auto inf = model.inferSheetSpecFromFrame())
+        model.setSheetSpec(*inf);
     // 存档比例只作元数据恢复（几何已是成品，不再缩放一次）
     if (root.contains("scaleRatio"))
         model.setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
@@ -222,6 +229,8 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
         PrintSettings s = PrintSettings::defaults();
         if (!settings.isEmpty())
             s.fromJson(settings);
+        else if (model.hasSheetSpec())
+            applySheetSpecToPage(model.sheetSpec(), s);   // 未显式指定页面 → 跟随图纸幅面（与 GUI 导出一致）
         // 打印样式表透传：ctbText 优先于 preset；两者都空则沿用 settings/默认。
         if (!ctbText.isEmpty()) {
             PlotStyleTable t;
@@ -288,30 +297,11 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
         break;
     case cadfmt::CadFormat::Json:
     default: {
+        // 收敛单一序列化入口：与 MainWindow::writeDrawing / AutoSave 同源
+        // （SketchModel::toDrawingJson）——曾在此处手工拼装根对象，漏写 sheet/properties
+        // 等键导致「COM 导出再导入丢幅面、丢图纸特性」，本轮消除第二组装点。
         fmt = cadfmt::CadFormat::Json;
-        QJsonObject root;
-        root["app"] = QStringLiteral("SketchCAD");
-        root["formatVersion"] = 1;
-        root["scaleRatio"] = model.scaleRatio();
-        root["ltscale"] = model.ltscale();
-        QJsonArray arr;
-        for (const auto& e2 : model.elements())
-            arr.append(::SketchCAD::elementToJson(e2));
-        root["elements"]    = arr;
-        root["layers"]      = model.layersToJson();
-        root["blocks"]      = model.blocksToJson();
-        root["textStyles"]  = model.textStylesToJson();
-        root["dimStyles"]   = model.dimStylesToJson();
-        root["savedFilters"] = model.savedFiltersToJson();
-        root["layouts"]      = model.layoutsToJson();
-        root["currentLayout"] = model.currentLayout();
-        root["units"]       = model.units().toJson();
-        root["limits"]      = model.limits().toJson();
-        root["snapConfig"]  = model.snapConfig().toJson();
-        root["trackConfig"] = model.trackConfig().toJson();
-        root["constraints"] = model.constraintsToJson();
-        root["params"]      = model.paramsToJson();
-        out = QJsonDocument(root).toJson(QJsonDocument::Indented);
+        out = model.toDrawingBytes();
         break;
     }
     }

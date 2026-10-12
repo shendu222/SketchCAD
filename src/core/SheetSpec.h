@@ -2,6 +2,7 @@
 #include <QString>
 #include <QVector>
 #include <QRectF>
+#include <optional>
 #include "Element.h"
 #include "Vec.h"
 
@@ -60,6 +61,12 @@ const QVector<TitleBlockField>& titleBlockFields();
 //     便于「填写标题栏」表单按 key 检索并写回。
 // 坐标系：图纸左下角为原点 (0,0)，X 向右、Y 向上（与模型世界坐标一致，单位 mm）。
 std::vector<Element> buildSheetFrame(const SheetSpec& spec);
+
+// 由纸张矩形尺寸(mm)反推标准幅面（容差 1mm；竖放/横放均可命中，方向由调用方按 w/h 判）。
+// 用途：旧档缺顶层 "sheet" 键时，从「图框」图层的纸张外边界矩形自愈推断幅面，
+// 使打印/预览/PDF 的页面方向与创建时的选择一致（详见「新建图纸幅面驱动页面设置」设计）。
+// 非标尺寸（用户自画框、无框）→ nullopt：调用方必须放弃推断，**绝不猜**。
+std::optional<SheetFormat> sheetFormatFromSize(double w, double h);
 
 // 插入到「当前图纸」的标准标题栏所需字段（由调用方从目标图纸文件/当前比例等取得）
 struct InsertedTitleBlock {

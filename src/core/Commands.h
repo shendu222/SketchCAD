@@ -29,11 +29,16 @@ struct CommandContext {
     CommandInterpreter* interp = nullptr; ///< 所属解释器（宏/脚本命令回放用）
 
     // ---- 公共解析工具（消除重复 lambda） ----
-    bool parsePoint(int idx, Vec3& out) const;             ///< 解析 toks[idx] 为 Vec3
-    std::vector<Vec3> parsePts(int start, int n) const;    ///< 从 start 连续解析 n 个点
+    bool parsePoint(int idx, Vec3& out) const;             ///< 解析 toks[idx] 为 Vec3（UCS 感知：数字坐标按当前 UCS 解释）
+    std::vector<Vec3> parsePts(int start, int n) const;    ///< 从 start 连续解析 n 个点（UCS 感知）
     std::vector<int>  parseRefs(int start, int n) const;   ///< 从 start 连续解析 n 个图元 ID
     void makeLine(const Vec3& a, const Vec3& b) const;     ///< 创建直线并记录日志
-    static bool tryParsePoint(const QString& s, Vec3& out);///< 字符串 → Vec3（静态，供外部调用）
+    // 字符串 → Vec3，随后经 model->toWorld 换算到世界系（与 CommandLine 分段式
+    // parsePointToWorld 的绝对坐标语义同源：数字坐标一律按当前 UCS 解释，
+    // 默认世界系下为恒等变换）。位移/长度/角度类参数不走此入口（用 toDouble 直解）。
+    bool tryParsePoint(const QString& s, Vec3& out) const;
+    // 纯解析（不换算）：字符串 → Vec3，仅供确需原始数值的场合（如自测回归锚点）
+    static bool tryParsePointRaw(const QString& s, Vec3& out);
 };
 
 /// 命令接口（Command Pattern）

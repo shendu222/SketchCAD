@@ -2,6 +2,7 @@
 #include "Element.h"
 #include "ElementFactory.h"
 #include "ProjectionSymbol.h"
+#include "TitleBlockLayout.h"   // fitCellText：标题栏单元格文字自适应（度量→收缩→定位）
 #include "Vec.h"
 #include <cmath>
 #include <algorithm>
@@ -19,6 +20,17 @@ static const SheetDim kDims[] = {
     {210.0,  297.0},   // A4
     {148.0,  210.0},   // A5
 };
+
+std::optional<SheetFormat> sheetFormatFromSize(double w, double h) {
+    const double aw = std::fabs(w), ah = std::fabs(h);
+    for (int i = 0; i < (int)(sizeof(kDims) / sizeof(kDims[0])); ++i) {
+        const SheetDim& d = kDims[i];
+        if ((std::fabs(aw - d.shortSide) < 1.0 && std::fabs(ah - d.longSide) < 1.0) ||
+            (std::fabs(aw - d.longSide)  < 1.0 && std::fabs(ah - d.shortSide) < 1.0))
+            return (SheetFormat)i;
+    }
+    return std::nullopt;
+}
 
 SheetSpec SheetSpec::make(SheetFormat f, bool landscape) {
     const SheetDim& d = kDims[(int)f];
@@ -152,7 +164,7 @@ std::vector<Element> buildSheetFrame(const SheetSpec& spec) {
     const double by1 = c + tbH;           // 上
 
     // 列宽：随标题栏宽度自适应；A4 及以上保持充裕，A5 等小幅面自动收窄。
-    const double inset = 2.0;             // 文字距单元格左内边距
+    // （文字左内边距由 fitCellText 的 inset 参数统一掌管，此处不再单列。）
     const double sw = std::clamp(tbW * 0.35, 40.0, 70.0); // 签名栏宽度
     const double fw = tbW - sw;           // 字段栏宽度
     const double xMid = bx1 - sw;         // 字段栏 | 签名栏 分隔
@@ -166,15 +178,20 @@ std::vector<Element> buildSheetFrame(const SheetSpec& spec) {
     const double y2 = by0 + 24.0;         // 材料/审核 带
     const double y3 = by0 + 36.0;         // 图号比例/设计 带（其上为图纸名称/单位）
 
-    // 文本垂直定位：标签贴单元格顶部，字段贴单元格底部，二者不重叠
-    const double labelOff = 2.0;          // 标签距单元格顶边
-    const double fieldOff = 4.0;          // 字段距单元格底边
-
-    auto labelInCell = [&](double left, double top, const QString& s, double h) {
-        label(left + inset, top - labelOff, s, h);
+    // 文本放置：一律走 fitCellText（TitleBlockLayout 单一入口）——
+    //   plain Text 锚点 = 块左下角，块自锚点向右上延伸；标签贴顶、字段贴底，
+    //   超宽按比例降字高（下限 1.5mm，绝不截断）。修复旧实现的两类溢出：
+    //   ① 标签锚点曾取「顶边-2mm」，块向上延伸 ~1mm 越出单元格顶边；
+    //   ② 长值按固定字高渲染横向冲出单元格右边界。
+    auto labelInCell = [&](double left, double right, double bottom, double top,
+                           const QString& s, double h) {
+        const CellTextFit f = fitCellText(s, h, left, right, bottom, top, true);
+        label(f.x, f.y, s, f.height);
     };
-    auto fieldInCell = [&](double left, double bottom, const QString& key, double h) {
-        field(left + inset, bottom + fieldOff, key, h);
+    auto fieldInCell = [&](double left, double right, double bottom, double top,
+                           const QString& key, double h) {
+        const CellTextFit f = fitCellText(QString(), h, left, right, bottom, top, false);
+        field(f.x, f.y, key, f.height);
     };
 
     // 标题栏外框（粗实线）
@@ -192,37 +209,37 @@ std::vector<Element> buildSheetFrame(const SheetSpec& spec) {
 
     // ---- 文本：标签（灰） + 可编辑字段（黑）----
     // 图纸名称（高带）
-    labelInCell(bx0, by1, QStringLiteral("图纸名称"), 3.0);
-    fieldInCell(bx0, y3, QStringLiteral("drawingName"), 4.0);
+    labelInCell(bx0, xMid, y3, by1, QStringLiteral("图纸名称"), 3.0);
+    fieldInCell(bx0, xMid, y3, by1, QStringLiteral("drawingName"), 4.0);
     // 图号 / 比例
-    labelInCell(bx0, y3, QStringLiteral("图号"), 3.0);
-    fieldInCell(bx0, y2, QStringLiteral("drawingNumber"), 3.5);
-    labelInCell(xNum, y3, QStringLiteral("比例"), 3.0);
-    fieldInCell(xNum, y2, QStringLiteral("scale"), 3.5);
+    labelInCell(bx0, xNum, y2, y3, QStringLiteral("图号"), 3.0);
+    fieldInCell(bx0, xNum, y2, y3, QStringLiteral("drawingNumber"), 3.5);
+    labelInCell(xNum, xMid, y2, y3, QStringLiteral("比例"), 3.0);
+    fieldInCell(xNum, xMid, y2, y3, QStringLiteral("scale"), 3.5);
     // 材料
-    labelInCell(bx0, y2, QStringLiteral("材料"), 3.0);
-    fieldInCell(bx0, y1, QStringLiteral("material"), 3.5);
+    labelInCell(bx0, xMid, y1, y2, QStringLiteral("材料"), 3.0);
+    fieldInCell(bx0, xMid, y1, y2, QStringLiteral("material"), 3.5);
     // 共X张第X张
-    labelInCell(bx0, y1, QStringLiteral("共 张 第 张"), 3.0);
-    fieldInCell(bx0, by0, QStringLiteral("sheets"), 3.5);
+    labelInCell(bx0, xMid, by0, y1, QStringLiteral("共 张 第 张"), 3.0);
+    fieldInCell(bx0, xMid, by0, y1, QStringLiteral("sheets"), 3.5);
     // 单位名称（签名栏上方高带）
-    labelInCell(xMid, by1, QStringLiteral("单位名称"), 3.0);
-    fieldInCell(xMid, y3, QStringLiteral("organization"), 3.5);
+    labelInCell(xMid, bx1, y3, by1, QStringLiteral("单位名称"), 3.0);
+    fieldInCell(xMid, bx1, y3, by1, QStringLiteral("organization"), 3.5);
     // 设计
-    labelInCell(xMid, y3, QStringLiteral("设计"), 3.0);
-    fieldInCell(xMid, y2, QStringLiteral("design"), 3.5);
-    labelInCell(xNameDate, y3, QStringLiteral("日期"), 3.0);
-    fieldInCell(xNameDate, y2, QStringLiteral("designDate"), 3.5);
+    labelInCell(xMid, xNameDate, y2, y3, QStringLiteral("设计"), 3.0);
+    fieldInCell(xMid, xNameDate, y2, y3, QStringLiteral("design"), 3.5);
+    labelInCell(xNameDate, bx1, y2, y3, QStringLiteral("日期"), 3.0);
+    fieldInCell(xNameDate, bx1, y2, y3, QStringLiteral("designDate"), 3.5);
     // 审核
-    labelInCell(xMid, y2, QStringLiteral("审核"), 3.0);
-    fieldInCell(xMid, y1, QStringLiteral("review"), 3.5);
-    labelInCell(xNameDate, y2, QStringLiteral("日期"), 3.0);
-    fieldInCell(xNameDate, y1, QStringLiteral("reviewDate"), 3.5);
+    labelInCell(xMid, xNameDate, y1, y2, QStringLiteral("审核"), 3.0);
+    fieldInCell(xMid, xNameDate, y1, y2, QStringLiteral("review"), 3.5);
+    labelInCell(xNameDate, bx1, y1, y2, QStringLiteral("日期"), 3.0);
+    fieldInCell(xNameDate, bx1, y1, y2, QStringLiteral("reviewDate"), 3.5);
     // 批准
-    labelInCell(xMid, y1, QStringLiteral("批准"), 3.0);
-    fieldInCell(xMid, by0, QStringLiteral("approve"), 3.5);
-    labelInCell(xNameDate, y1, QStringLiteral("日期"), 3.0);
-    fieldInCell(xNameDate, by0, QStringLiteral("approveDate"), 3.5);
+    labelInCell(xMid, xNameDate, by0, y1, QStringLiteral("批准"), 3.0);
+    fieldInCell(xMid, xNameDate, by0, y1, QStringLiteral("approve"), 3.5);
+    labelInCell(xNameDate, bx1, by0, y1, QStringLiteral("日期"), 3.0);
+    fieldInCell(xNameDate, bx1, by0, y1, QStringLiteral("approveDate"), 3.5);
 
     // 注：原此处绘制 GB/T 14689 6.1 的「对中符号」——图纸四边中点各一条自纸边界伸入
     //      图框内 5mm 的短线（线宽 0.5）。这些短线在新建图纸时于图框四周形成视觉噪声
@@ -346,7 +363,6 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
     };
 
     const double tbW = bx1 - bx0;
-    const double inset = 2.0;
     const double sw = std::clamp(tbW * 0.35, 40.0, 70.0);   // 右侧信息列宽
     const double xMid = bx1 - sw;                            // 左字段列 | 右列 分隔
     const double scaleW = std::clamp(tbW * 0.22, 22.0, 45.0);
@@ -357,13 +373,17 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
     const double y2 = by0 + 24.0;   // 图号比例/绘制日期 带
     const double y3 = by0 + 36.0;   // 图纸名称 带（其上为高带）
 
-    const double labelOff = 2.0;    // 标签距单元格顶边
-    const double fieldOff = 4.0;    // 字段距单元格底边
-    auto labelInCell = [&](double left, double top, const QString& s, double h) {
-        label(left + inset, top - labelOff, s, h);
+    // 文本放置：与 buildSheetFrame 同一入口 fitCellText（标签贴顶 / 字段贴底 /
+    // 超宽按比例降字高）。此处字段带 data 预填值，长图名在生成期即收缩适配。
+    auto labelInCell = [&](double left, double right, double bottom, double top,
+                           const QString& s, double h) {
+        const CellTextFit f = fitCellText(s, h, left, right, bottom, top, true);
+        label(f.x, f.y, s, f.height);
     };
-    auto fieldInCell = [&](double left, double bottom, const QString& key, const QString& val, double h) {
-        field(left + inset, bottom + fieldOff, key, val, h);
+    auto fieldInCell = [&](double left, double right, double bottom, double top,
+                           const QString& key, const QString& val, double h) {
+        const CellTextFit f = fitCellText(val, h, left, right, bottom, top, false);
+        field(f.x, f.y, key, val, f.height);
     };
 
     // 标题栏外框（粗实线）
@@ -378,24 +398,24 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
     line(xNum, y2, xNum, y3, QStringLiteral("标题栏"), 1.0);
 
     // ---- 文本：标签（灰）+ 字段值（黑，按 data 填充）----
-    // 图纸名称（高带，全宽）
-    labelInCell(bx0, by1, QStringLiteral("图纸名称"), 3.0);
-    fieldInCell(bx0, y3, QStringLiteral("drawingName"), data.drawingName, 4.0);
+    // 图纸名称（高带）
+    labelInCell(bx0, xMid, y3, by1, QStringLiteral("图纸名称"), 3.0);
+    fieldInCell(bx0, xMid, y3, by1, QStringLiteral("drawingName"), data.drawingName, 4.0);
     // 图号 / 比例
-    labelInCell(bx0, y3, QStringLiteral("图号"), 3.0);
-    fieldInCell(bx0, y2, QStringLiteral("drawingNumber"), data.drawingNumber, 3.5);
-    labelInCell(xNum, y3, QStringLiteral("比例"), 3.0);
-    fieldInCell(xNum, y2, QStringLiteral("scale"), data.scale, 3.5);
+    labelInCell(bx0, xNum, y2, y3, QStringLiteral("图号"), 3.0);
+    fieldInCell(bx0, xNum, y2, y3, QStringLiteral("drawingNumber"), data.drawingNumber, 3.5);
+    labelInCell(xNum, xMid, y2, y3, QStringLiteral("比例"), 3.0);
+    fieldInCell(xNum, xMid, y2, y3, QStringLiteral("scale"), data.scale, 3.5);
     // 绘制日期 / 单位名称
-    labelInCell(bx0, y2, QStringLiteral("绘制日期"), 3.0);
-    fieldInCell(bx0, y1, QStringLiteral("designDate"), data.designDate, 3.5);
-    labelInCell(xMid, y2, QStringLiteral("单位名称"), 3.0);
-    fieldInCell(xMid, y1, QStringLiteral("organization"), QString(), 3.5);
+    labelInCell(bx0, xMid, y1, y2, QStringLiteral("绘制日期"), 3.0);
+    fieldInCell(bx0, xMid, y1, y2, QStringLiteral("designDate"), data.designDate, 3.5);
+    labelInCell(xMid, bx1, y1, y2, QStringLiteral("单位名称"), 3.0);
+    fieldInCell(xMid, bx1, y1, y2, QStringLiteral("organization"), QString(), 3.5);
     // 设计 / 审核（底部带）
-    labelInCell(bx0, y1, QStringLiteral("设计"), 3.0);
-    fieldInCell(bx0, by0, QStringLiteral("design"), QString(), 3.5);
-    labelInCell(xMid, y1, QStringLiteral("审核"), 3.0);
-    fieldInCell(xMid, by0, QStringLiteral("review"), QString(), 3.5);
+    labelInCell(bx0, xMid, by0, y1, QStringLiteral("设计"), 3.0);
+    fieldInCell(bx0, xMid, by0, y1, QStringLiteral("design"), QString(), 3.5);
+    labelInCell(xMid, bx1, by0, y1, QStringLiteral("审核"), 3.0);
+    fieldInCell(xMid, bx1, by0, y1, QStringLiteral("review"), QString(), 3.5);
 }
 
 // ----------------------------- 按幅面自动套框 + 标题栏（追加到当前图纸）-----------------------------

@@ -379,6 +379,11 @@ private:
     void exportPdfDirect();                             // 直接导出 PDF（QPdfWriter）
     void exportPdfLayoutsDirect();                      // 按布局表导出 PDF（每布局一页；空表回落模型空间单页）
     void openPublish();                                 // 发布（PUBLISH）：勾选布局批量出图
+    // 把活动图纸的幅面规格同步到「当前打印设置」的纸张与方向（只动这两个字段）。
+    // 修复「新建 A4 横向 → 打印预览/导出 PDF 却出 A4 纵向」：页面设置必须从图纸
+    // 幅面派生。调用点 = 新建图纸落幅面后 / 读档成功后 / 切换活动文档后，
+    // 保证多文档下也始终跟随当前图纸创建时选择的幅面与方向。
+    void syncPrintSettingsToSheet();
     // ---- 区域拾取模式的响应（由 GraphicsView 的信号驱动）----
     void onRegionPickRequested(double x, double y);   // 左键点选：识别→填充该点所在封闭区域
     void onRegionHover(double x, double y);           // 光标移动：实时高亮"将要填充的区域"

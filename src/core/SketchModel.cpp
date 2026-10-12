@@ -2782,6 +2782,48 @@ void SketchModel::setLimits(const LimitsMeta& l) {
     emit limitsChanged();
 }
 
+// ---- 图纸幅面规格（打印页面尺寸/方向数据源；随图存档顶层 "sheet"）----
+// 与单位/界限同级：新建/读档时设定，**不入撤销栈**（运行期无修改入口，故无需快照语义）。
+void SketchModel::setSheetSpec(const SheetSpec& s) {
+    const int fi = (int)s.format;
+    if (fi < 0 || fi > (int)SheetFormat::A5) return;      // 非法幅面 → 拒绝（保持原值）
+    sheetSpec_ = s;
+    hasSheetSpec_ = true;
+}
+
+std::optional<SheetSpec> SketchModel::inferSheetSpecFromFrame() const {
+    const QString frameLayer = QStringLiteral("图框");
+    double bestArea = -1.0, bw = 0.0, bh = 0.0;
+    for (const auto& e : elems_) {
+        if (e.layer != frameLayer || e.type != ElementType::Rectangle) continue;
+        if (e.pts.size() < 2) continue;
+        const double w = std::fabs(e.pts[1].x - e.pts[0].x);
+        const double h = std::fabs(e.pts[1].y - e.pts[0].y);
+        const double area = w * h;
+        if (area > bestArea) { bestArea = area; bw = w; bh = h; }
+    }
+    if (bestArea <= 0.0) return std::nullopt;             // 无图框矩形 → 放弃推断
+    const auto fmt = sheetFormatFromSize(bw, bh);
+    if (!fmt) return std::nullopt;                        // 非标尺寸 → 放弃推断（不猜）
+    return SheetSpec::make(*fmt, bw > bh);                // 方向由矩形长短边决定
+}
+
+QJsonObject SketchModel::sheetSpecToJson() const {
+    QJsonObject o;
+    if (!hasSheetSpec_) return o;                         // 无规格 → 空对象（调用方不写键）
+    o["format"]    = (int)sheetSpec_.format;
+    o["landscape"] = sheetSpec_.landscape;
+    return o;
+}
+
+std::optional<SheetSpec> SketchModel::sheetSpecFromJson(const QJsonObject& o) {
+    if (o.isEmpty() || !o.contains("format")) return std::nullopt;
+    const int fi = o.value("format").toInt(-1);
+    if (fi < 0 || fi > (int)SheetFormat::A5) return std::nullopt;   // 越界 → 视为缺键
+    SheetSpec s = SheetSpec::make((SheetFormat)fi, o.value("landscape").toBool(true));
+    return s;
+}
+
 void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
     if (c == snapConfig_) return;                 // 相同不发信号、也不入栈（幂等）
     pushMemento(QStringLiteral("修改捕捉设置"));
@@ -3284,6 +3326,8 @@ void SketchModel::reorderElement(int id, int beforeId) {
 }
 void SketchModel::clear() {
     scaleRatio_ = 1.0;          // 清空即回到默认 1:1（新建图纸契约）
+    hasSheetSpec_ = false;      // 幅面规格随 clear 一并丢弃（新图由 applyNewDrawing 重设；
+                                // 读档路径在 clear 之后按 "sheet" 键/图框推断重设）
     trackPoints_.clear();       // 临时追踪点属瞬态会话状态，新建/清空图纸时一并丢弃
     if (elems_.empty()) return;
     pushMemento(QStringLiteral("清空"));
@@ -3656,6 +3700,8 @@ QJsonObject SketchModel::toDrawingJson() const {
     root["constraints"] = constraintsToJson();
     root["params"] = paramsToJson();
     root["properties"] = propsToJson();   // 自定义图纸特性（PROP 域数据源；旧档缺键 → 空表）
+    // 图纸幅面规格（打印/预览/PDF 页面尺寸与方向的数据源；旧档缺键 → 读档按图框推断）
+    if (hasSheetSpec_) root["sheet"] = sheetSpecToJson();
     return root;
 }
 

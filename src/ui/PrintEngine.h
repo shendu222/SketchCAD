@@ -44,6 +44,13 @@ public:
     // 布局表为空 → 回落单页模型空间打印（fit-to-page），返回 1。
     static int exportPdfLayouts(SketchModel* model, const QString& filePath);
 
+    // 零布局（模型空间）发布的页面设置：纸张与方向**跟随图纸幅面规格**
+    // （model->hasSheetSpec() 为真时经 applySheetSpecToPage 派生），其余默认、
+    // 视口清空 + fit-to-page。无幅面规格（空白图/外部导入）→ 旧行为（A4 纵向默认）。
+    // exportPdfLayouts 的空表回落分支与 COM 批出图共用本函数，保证同一裁决；
+    // 提为公开静态以便无头自测直接断言（不必解析 PDF 字节）。
+    static PrintSettings modelSpacePageSettings(const SketchModel* model);
+
     // 便捷：打印到 QPrinter（物理打印机或系统 PDF 虚拟打印机）
     static bool print(SketchModel* model, const PrintSettings& s, QPrinter* printer);
 
