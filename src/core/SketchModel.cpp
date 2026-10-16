@@ -751,22 +751,25 @@ bool SketchModel::updateElementLinked(int id, std::function<void(Element&)> fn) 
 
 bool SketchModel::driveDimension(int dimId, double value) {
     const Element* dimEl = element(dimId);
-    if (!dimEl || dimEl->type != ElementType::Dimension || dimEl->refA < 0) return false;
-    const Element* srcEl = element(dimEl->refA);
-    if (!srcEl) return false;
+    if (!dimEl || dimEl->type != ElementType::Dimension) return false;
+    // 半径/直径/直线类标注须 refA 绑定源图元；角度标注按坐标锚定（创建时 refA 可为 -1）
+    const Element* srcEl = dimEl->refA >= 0 ? element(dimEl->refA) : nullptr;
+    if (dimEl->refA >= 0 && !srcEl) return false;
 
     const int srcId = dimEl->refA;
     const DimensionType dt = dimEl->dtype;
     Vec3 newPos;
     double newRadius = 0;
-    bool isLineDrive = false, isCircleDrive = false;
+    bool isLineDrive = false, isCircleDrive = false, isAngleDrive = false;
+    Vec3 angleNewP2;   // 角度驱动：边2点新位置（绕顶点旋到目标角，保持原半径）
 
     // ---- 根据标注类型计算目标几何 ----
     switch (dt) {
         case DimensionType::Aligned:
         case DimensionType::Distance: {
             // 对齐/线性标注：保持方向，改长度。起点不动，终点沿原方向走到新长度。
-            if (srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
+            if (value <= 1e-9) return false;   // 长度必须为正
+            if (!srcEl || srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
             const Vec3 dir = srcEl->pts[1] - srcEl->pts[0];
             const double oldLen = std::hypot(dir.x, dir.y);
             if (oldLen < 1e-9) return false;
@@ -778,7 +781,8 @@ bool SketchModel::driveDimension(int dimId, double value) {
         }
         case DimensionType::Horizontal: {
             // 水平标注：只改 Δx，Y 保持不变
-            if (srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
+            if (value <= 1e-9) return false;
+            if (!srcEl || srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
             const double sign = (srcEl->pts[1].x >= srcEl->pts[0].x) ? 1.0 : -1.0;
             newPos = Vec3(srcEl->pts[0].x + sign * value, srcEl->pts[1].y, 0);
             isLineDrive = true;
@@ -786,28 +790,50 @@ bool SketchModel::driveDimension(int dimId, double value) {
         }
         case DimensionType::Vertical: {
             // 竖直标注：只改 Δy，X 保持不变
-            if (srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
+            if (value <= 1e-9) return false;
+            if (!srcEl || srcEl->type != ElementType::Line || srcEl->pts.size() < 2) return false;
             const double sign = (srcEl->pts[1].y >= srcEl->pts[0].y) ? 1.0 : -1.0;
             newPos = Vec3(srcEl->pts[1].x, srcEl->pts[0].y + sign * value, 0);
             isLineDrive = true;
             break;
         }
         case DimensionType::Radius:
-            if (srcEl->type != ElementType::Circle && srcEl->type != ElementType::Arc) return false;
+            if (!srcEl || (srcEl->type != ElementType::Circle && srcEl->type != ElementType::Arc)) return false;
             newRadius = std::max(1e-6, value);
             isCircleDrive = true;
             break;
         case DimensionType::Diameter:
-            if (srcEl->type != ElementType::Circle && srcEl->type != ElementType::Arc) return false;
+            if (!srcEl || (srcEl->type != ElementType::Circle && srcEl->type != ElementType::Arc)) return false;
             newRadius = std::max(1e-6, value / 2.0);
             isCircleDrive = true;
             break;
+        case DimensionType::Angle: {
+            // 角度驱动：顶点 pts[0] 与边1点 pts[1] 不动，边2点 pts[2] 绕顶点旋转到
+            // 目标角（度）。保持原旋向（当前有符号角为负则反向旋转）与 |p2-顶点| 半径。
+            if (dimEl->pts.size() < 3) return false;
+            if (std::abs(value) < 1e-9 || std::abs(value) >= 360.0) return false;
+            const Vec3 vtx = dimEl->pts[0];
+            const Vec3 p1  = dimEl->pts[1];
+            const Vec3 p2o = dimEl->pts[2];
+            const double r2 = std::hypot(p2o.x - vtx.x, p2o.y - vtx.y);
+            if (r2 < 1e-9) return false;
+            const double a1  = std::atan2(p1.y - vtx.y,  p1.x - vtx.x);
+            const double cur = std::atan2(p2o.y - vtx.y, p2o.x - vtx.x) - a1;
+            const double target = (cur < 0 ? -std::abs(value) : std::abs(value)) * M_PI / 180.0;
+            angleNewP2 = Vec3(vtx.x + r2 * std::cos(a1 + target),
+                              vtx.y + r2 * std::sin(a1 + target), 0);
+            isAngleDrive = true;
+            break;
+        }
         default:
-            return false;  // 角度标注暂不支持驱动
+            return false;  // 基线/连续/弧长/引线/坐标为注释型标注，不参与驱动
     }
 
     // ---- 统一执行：一次快照、一次 modelChanged ----
+    const auto beforeElems = elems_;   // 修改前快照：隐式约束恢复检测（solveAfterChange）用
     pushMemento(QStringLiteral("驱动尺寸"));
+    std::vector<int> touched;          // 受影响图元集合：联动传播/约束修复/填充随动/域同步共用
+    touched.push_back(dimId);
 
     // 直线类标注：修改终点 + 联动传播
     if (isLineDrive) {
@@ -815,42 +841,110 @@ bool SketchModel::driveDimension(int dimId, double value) {
         std::vector<Vec3> oldHandles = geo::elementHandles(*find(srcId));
         // 修改源图元终点
         updateElementQuiet(srcId, [newPos](Element& e) { e.pts[1] = newPos; });
+        touched.push_back(srcId);
         // 传播到相连图元
         std::vector<Vec3> newHandles = geo::elementHandles(*find(srcId));
         const double tol = 1e-6;
+        const double kRelTolDeg = 0.5;   // 隐式垂直/平行关系判定容差（度），与求解器同量级
         for (size_t i = 0; i < oldHandles.size() && i < newHandles.size(); ++i) {
             if (oldHandles[i].distTo(newHandles[i]) < 1e-9) continue;
+            const Vec3 delta = newHandles[i] - oldHandles[i];
             auto linked = collectLinked(oldHandles[i], tol);
             for (const auto& ref : linked) {
                 if (ref.elemId == srcId) continue;
                 auto lit = find(ref.elemId);
                 if (lit == elems_.end()) continue;
-                if (geo::setElementHandle(*lit, ref.index, newHandles[i]))
-                    emit elementUpdated(ref.elemId);
+                // 刚体平移优先：驱动前与源线隐式垂直/平行的相邻直线，整体平移跟随
+                // （方向保持 ⇒ 垂直/平行关系自动成立、端点贴合不破坏），
+                // 避免 solveAfterChange 以"绕自身中点旋转"修复造成邻线脱开。
+                if (lit->type == ElementType::Line && lit->pts.size() >= 2) {
+                    const Element* sb = nullptr;
+                    const Element* nb = nullptr;
+                    for (const auto& be : beforeElems) {
+                        if (be.id == srcId) sb = &be;
+                        if (be.id == ref.elemId) nb = &be;
+                    }
+                    if (sb && nb &&
+                        (geo::checkConstraint(*sb, *nb, ConstraintType::Perpendicular, kRelTolDeg) ||
+                         geo::checkConstraint(*sb, *nb, ConstraintType::Parallel, kRelTolDeg))) {
+                        for (auto& p : lit->pts) { p.x += delta.x; p.y += delta.y; }
+                        emit elementUpdated(ref.elemId);
+                        touched.push_back(ref.elemId);
+                        continue;
+                    }
+                }
+                if (!geo::setElementHandle(*lit, ref.index, newHandles[i])) continue;
+                emit elementUpdated(ref.elemId);
+                touched.push_back(ref.elemId);
+                // 文字同步：被联动的标注若带覆盖文本，清除覆盖使显示值跟随真实几何
+                if (lit->type == ElementType::Dimension && !lit->text.isEmpty())
+                    updateElementQuiet(ref.elemId, [](Element& x) { x.text.clear(); });
             }
         }
     }
     // 圆/弧类标注：修改半径
     if (isCircleDrive) {
         updateElementQuiet(srcId, [newRadius](Element& e) { e.radius = newRadius; });
+        touched.push_back(srcId);
+    }
+    // 角度标注：与旧边2点重合的所有端点一并旋到新位置（相邻图元联动）
+    if (isAngleDrive) {
+        auto linked = collectLinked(dimEl->pts[2], 1e-6);
+        for (const auto& ref : linked) {
+            auto lit = find(ref.elemId);
+            if (lit == elems_.end()) continue;
+            if (!geo::setElementHandle(*lit, ref.index, angleNewP2)) continue;
+            emit elementUpdated(ref.elemId);
+            touched.push_back(ref.elemId);
+            if (lit->type == ElementType::Dimension && !lit->text.isEmpty())
+                updateElementQuiet(ref.elemId, [](Element& x) { x.text.clear(); });
+        }
+        // 标注自身边2点跟随（若未被联动命中则在此显式写回）
+        updateElementQuiet(dimId, [angleNewP2](Element& d) {
+            d.text.clear();  // 清除手动覆盖，让显示跟随实测值
+            if (d.pts.size() >= 3) d.pts[2] = angleNewP2;
+        });
     }
 
-    // 同步标注自身的测量点与字段，使标注文字跟随更新
-    updateElementQuiet(dimId, [this, srcId, dt, newRadius, isLineDrive](Element& d) {
-        d.text.clear();  // 清除手动覆盖，让显示跟随实测值
-        const Element* s = element(srcId);
-        if (!s) return;
-        if (isLineDrive) {
-            if (s->pts.size() >= 2 && d.pts.size() >= 2) {
-                d.pts[0] = s->pts[0];
-                d.pts[1] = s->pts[1];
+    // 同步标注自身的测量点与字段，使标注文字跟随更新（直线/圆弧类）
+    if (isLineDrive || isCircleDrive) {
+        updateElementQuiet(dimId, [this, srcId, newRadius, isLineDrive](Element& d) {
+            d.text.clear();  // 清除手动覆盖，让显示跟随实测值
+            const Element* s = element(srcId);
+            if (!s) return;
+            if (isLineDrive) {
+                if (s->pts.size() >= 2 && d.pts.size() >= 2) {
+                    d.pts[0] = s->pts[0];
+                    d.pts[1] = s->pts[1];
+                }
+            } else {
+                d.radius = newRadius;
+                if (d.pts.size() >= 2 && !d.pts.empty())
+                    d.pts[1] = Vec3(d.pts[0].x + newRadius, d.pts[0].y, 0);
             }
-        } else {
-            d.radius = newRadius;
-            if (d.pts.size() >= 2 && !d.pts.empty())
-                d.pts[1] = Vec3(d.pts[0].x + newRadius, d.pts[0].y, 0);
+        });
+    }
+
+    // 约束闭环（与 updateElementLinked 同规）：
+    //   ① 隐式约束恢复：修改前满足的相切/垂直/平行/同心约束，驱动破坏后自动恢复；
+    //   ② 显式约束重解：用户声明的尺寸锁定/几何约束在驱动后仍保持。
+    {
+        const int anchorId = srcId >= 0 ? srcId : dimId;
+        auto modifiedIds = ConstraintSolverFacade::instance().solveAfterChange(beforeElems, elems_, anchorId);
+        for (int mid : modifiedIds) { emit elementUpdated(mid); touched.push_back(mid); }
+        if (!constraints_.empty()) {
+            const auto rep = ConstraintSolverFacade::instance().solveAll(*this);
+            if (!rep.failures.empty())
+                log(QStringLiteral("尺寸驱动：%1 条约束未满足，可用 constraint list / check 定位")
+                        .arg(rep.failures.size()), QStringLiteral("warn"));
         }
-    });
+    }
+
+    // 关联填充随动（边界图元几何变更）+ FIELD 域同步（PERIM/AREA/PROP 引用受影响图元）
+    std::sort(touched.begin(), touched.end());
+    touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+    refreshHatchBoundaries(touched);
+    refreshFields(touched);
 
     emit modelChanged();
     emit elementUpdated(dimId);
@@ -1373,6 +1467,11 @@ void SketchModel::setGridSnapStep(double mm) {
     if (std::fabs(gridSnapStep_ - mm) < 1e-9) return;
     gridSnapStep_ = mm;
     emit gridSnapChanged();
+}
+void SketchModel::setDimensionDriven(bool on) {
+    if (dimensionDriven_ == on) return;        // 幂等：同值不重复发信号
+    dimensionDriven_ = on;
+    emit dimensionDrivenChanged(on);
 }
 void SketchModel::setViewScale(double s) {
     if (viewScale_ != s) { viewScale_ = s; emit viewChanged(); }

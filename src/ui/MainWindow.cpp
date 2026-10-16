@@ -4,6 +4,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QFileInfo>
+#include <QRegularExpression>   // 双击标注：纯数值判定（驱动几何）vs 文本（覆盖显示）
 #include "core/SketchModel.h"
 #include "ui/TableDialog.h"         // 表格编辑器（双击 Table / 表格创建共用）
 #include "ui/GroupManagerDialog.h"  // 编组管理器（GROUP）
@@ -543,6 +544,8 @@ void MainWindow::loadAppSettingsOnStartup() {
     applySettingLive(QLatin1String(kOrtho),          appSettings_->value(QLatin1String(kOrtho)));
     applySettingLive(QLatin1String(kDynMode),        appSettings_->value(QLatin1String(kDynMode)));
     applySettingLive(QLatin1String(kShowLineWeight), appSettings_->value(QLatin1String(kShowLineWeight)));
+    // 尺寸驱动主开关（需求 D-③，默认开）：灌进活动模型单一状态源
+    applySettingLive(QLatin1String(kDimensionDrive), appSettings_->value(QLatin1String(kDimensionDrive)));
     // 撤销栈深度是"应用习惯"：不入撤销栈，只在启动时把值灌进模型的栈深上限
     applySettingLive(QLatin1String(kUndoDepth), appSettings_->value(QLatin1String(kUndoDepth)));
     // 撤销差量化开关（默认开；关则回落全量 Memento 模式对照）
@@ -586,6 +589,9 @@ void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
         model_->setDynMode(v.toBool());
     } else if (key == QLatin1String(kShowLineWeight)) {
         model_->setShowLineWeight(v.toBool());
+    } else if (key == QLatin1String(kDimensionDrive)) {
+        // 尺寸驱动主开关（需求 D-③，默认开）：开→改标注值联动几何；关→仅覆盖显示文本
+        model_->setDimensionDriven(v.toBool());
     } else if (key == QLatin1String(kAutosaveInterval)) {
         if (!autoSave_) return;
         autoSave_->setIntervalMinutes(v.toInt());
@@ -635,6 +641,8 @@ void MainWindow::saveAppSettingsOnClose() {
     appSettings_->setOrthoMode(model_->orthoMode());
     appSettings_->setDynMode(model_->dynMode());
     appSettings_->setShowLineWeight(model_->showLineWeight());
+    // 尺寸驱动主开关（需求 D-③）从模型单一状态源抄回配置
+    appSettings_->setDimensionDrive(model_->dimensionDriven());
     // 最近文件由 RecentFiles 在每次变更时立即持久化（崩溃也不丢），退出时无需重写
     // 打印页面设置快照（下次启动作为「打印设置」对话框的起始值）
     appSettings_->setPrintDefaultsJson(
@@ -841,6 +849,7 @@ void MainWindow::rebuildMenusForLanguage() {
     menuBar()->clear();
     for (QMenu* m : olds) delete m;
     buildMenu();
+    applyWorkspaceVisibility();   // 重建会把动作可见性重置为「全显」，按当前工作空间收敛
 }
 
 // ---- 命令面板（Ctrl+Shift+P）：薄壳，过滤/排序/最近使用逻辑在 CommandPaletteModel ----
@@ -926,29 +935,29 @@ void MainWindow::buildMenu() {
     mk(f, tr("填写标题栏..."), QKeySequence(), [this] {
             TitleBlockForm dlg(model_, this);
             dlg.exec();
-        });
+        })->setIcon(icons::make("titleblock"));
     mk(f, tr("插入标准标题栏..."), QKeySequence(), [this] {
             insertStandardTitleBlock();
-        });
+        })->setIcon(icons::make("titleblock"));
     mk(f, tr("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
             generateFramedTitleBlock();
-        });
+        })->setIcon(icons::make("titleblock"));
     // 绘图比例属于「图纸属性」而非视图属性，故放在文件菜单（GB/T 14690 技术制图 比例）
     mk(f, tr("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
             changeDrawingScale();
-        });
+        })->setIcon(icons::make("scale"));
     // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档
     mk(f, tr("单位与图纸界限..."), QKeySequence(), [this] {
             openUnitsLimits();
-        });
+        })->setIcon(icons::make("limits"));
     // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档
     mk(f, tr("捕捉设置..."), QKeySequence(), [this] {
             openSnapSettings();
-        });
+        })->setIcon(icons::make("snap"));
     // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）
     mk(f, tr("自动保存设置..."), QKeySequence(), [this] {
             openAutoSaveOptions();
-        });
+        })->setIcon(icons::make("save"));
     mk(f, tr("打开..."),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
     mk(f, tr("保存..."),      QKeySequence::Save, [this] { saveFile(); })
@@ -957,6 +966,7 @@ void MainWindow::buildMenu() {
     // 缺失文件灰显提示、点击移除单条；右键条目 → 固定/取消固定、从列表删除）
     recentMenu_ = new QMenu(tr("最近打开(&R)"), f);
     recentMenu_->setObjectName("menuRecent");
+    recentMenu_->setIcon(icons::make("open"));
     recentMenu_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(recentMenu_, &QWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
         QAction* a = recentMenu_->actionAt(pos);
@@ -977,20 +987,27 @@ void MainWindow::buildMenu() {
     mk(f, tr("导出 DXF..."),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
         ->setIcon(icons::make("export"));
     f->addSeparator();
-    mk(f, tr("退出"),        QKeySequence::Quit, [this] { close(); });
+    mk(f, tr("退出"),        QKeySequence::Quit, [this] { close(); })
+        ->setIcon(icons::make("exit"));
     bar->addMenu(f);
 
     // ---- 顶级菜单：打印（页面设置 + 简化 CTB 样式 + 视口/布局 MVP + 预览/PDF/物理打印）----
     QMenu* pr = new QMenu(tr("打印(&P)"), this);
     pr->setObjectName("menuPrint");
-    mk(pr, tr("打印设置..."), QKeySequence(), [this] { openPrintSettings(); });
-    mk(pr, tr("打印预览..."), QKeySequence(), [this] { openPrintPreview(); });
-    mk(pr, tr("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); });
-    mk(pr, tr("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); });
+    mk(pr, tr("打印设置..."), QKeySequence(), [this] { openPrintSettings(); })
+        ->setIcon(icons::make("print"));
+    mk(pr, tr("打印预览..."), QKeySequence(), [this] { openPrintPreview(); })
+        ->setIcon(icons::make("print"));
+    mk(pr, tr("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); })
+        ->setIcon(icons::make("export"));
+    mk(pr, tr("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); })
+        ->setIcon(icons::make("export"));
     pr->addSeparator();
-    mk(pr, tr("发布... (PUBLISH)"), QKeySequence(), [this] { openPublish(); });
+    mk(pr, tr("发布... (PUBLISH)"), QKeySequence(), [this] { openPublish(); })
+        ->setIcon(icons::make("print"));
     pr->addSeparator();
-    mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); });
+    mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); })
+        ->setIcon(icons::make("print"));
     bar->addMenu(pr);
 
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
@@ -1006,6 +1023,7 @@ void MainWindow::buildMenu() {
     aPolar->setCheckable(true);
     aPolar->setChecked(model_->trackConfig().polar);
     aPolar_ = aPolar;   // 勾选态连接随活动文档换（hookActiveDoc 登记）
+    aPolar->setIcon(icons::make("track"));
     QAction* aOtrack = mk(k, QStringLiteral("对象捕捉追踪 (OTRACK)"), QKeySequence("F11"), [this] {
             snap::TrackConfig c = model_->trackConfig();
             c.objectTrack = !c.objectTrack;
@@ -1015,14 +1033,15 @@ void MainWindow::buildMenu() {
     aOtrack->setCheckable(true);
     aOtrack->setChecked(model_->trackConfig().objectTrack);
     aOtrack_ = aOtrack;
+    aOtrack->setIcon(icons::make("track"));
     k->addSeparator();
     mk(k, QStringLiteral("清除临时追踪点"), QKeySequence(), [this] {
             model_->clearTrackPoints();
             model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
-        });
+        })->setIcon(icons::make("track"));
     mk(k, QStringLiteral("追踪设置..."), QKeySequence(), [this] {
             openSnapSettings();   // 追踪配置并入捕捉设置面板（同一数据源，随图存档）
-        });
+        })->setIcon(icons::make("snap"));
     // 勾选态随配置变化实时刷新（连接在 hookActiveDoc 登记，随活动文档换绑）
     bar->addMenu(k);
 
@@ -1517,12 +1536,18 @@ void MainWindow::buildMenu() {
     }
 
     // ---- 命令补齐：修改类命令（与命令行共用 interp_->execute）----
-    mk(mod, QStringLiteral("多段线编辑(&P)..."), QKeySequence(), [this] { interp_->execute("pedit"); });
-    mk(mod, QStringLiteral("特性匹配(&M)"),       QKeySequence(), [this] { interp_->execute("matchprop"); });
-    mk(mod, QStringLiteral("删除重复对象(&O)"),   QKeySequence(), [this] { interp_->execute("overkill"); });
-    mk(mod, QStringLiteral("写块(&W)..."),        QKeySequence(), [this] { interp_->execute("wblock"); });
-    mk(mod, QStringLiteral("插入块(&I)..."),      QKeySequence(), [this] { interp_->execute("insert"); });
-    mk(mod, QStringLiteral("清理(&U)"),           QKeySequence(), [this] { interp_->execute("purge"); });
+    mk(mod, QStringLiteral("多段线编辑(&P)..."), QKeySequence(), [this] { interp_->execute("pedit"); })
+        ->setIcon(icons::make("polyline"));
+    mk(mod, QStringLiteral("特性匹配(&M)"),       QKeySequence(), [this] { interp_->execute("matchprop"); })
+        ->setIcon(icons::make("attributes"));
+    mk(mod, QStringLiteral("删除重复对象(&O)"),   QKeySequence(), [this] { interp_->execute("overkill"); })
+        ->setIcon(icons::make("cleanup"));
+    mk(mod, QStringLiteral("写块(&W)..."),        QKeySequence(), [this] { interp_->execute("wblock"); })
+        ->setIcon(icons::make("block"));
+    mk(mod, QStringLiteral("插入块(&I)..."),      QKeySequence(), [this] { interp_->execute("insert"); })
+        ->setIcon(icons::make("block"));
+    mk(mod, QStringLiteral("清理(&U)"),           QKeySequence(), [this] { interp_->execute("purge"); })
+        ->setIcon(icons::make("cleanup"));
 
     e->addSeparator();
     // 挂到【编辑】菜单下（不再作为顶级菜单），保持「编辑类功能一个入口」
@@ -1535,7 +1560,9 @@ void MainWindow::buildMenu() {
     // 共享高亮/互斥状态），即时命令（全选等）由 mk() 单独构造。
     QMenu* sel = new QMenu(tr("选择(&N)"), this);
     sel->setObjectName("menuSelect");
-    mk(sel, QStringLiteral("全部不选"), QKeySequence("Ctrl+K"), [this] { model_->clearSelection(); })
+    // 快捷键：Ctrl+K 已绑给【编辑>修改>缩放】（ApplicationShortcut 全局生效，
+    // 两处同绑会导致后者永不触发 / Qt ambiguous 警告），故「全部不选」改用 Ctrl+Shift+K
+    mk(sel, QStringLiteral("全部不选"), QKeySequence("Ctrl+Shift+K"), [this] { model_->clearSelection(); })
         ->setIcon(icons::make("deselect_all"));
     mk(sel, QStringLiteral("全选"),     QKeySequence("Ctrl+A"), [this] { model_->selectAll(); })
         ->setIcon(icons::make("select_all"));
@@ -1610,13 +1637,20 @@ void MainWindow::buildMenu() {
     s->setObjectName("menuDraw");
     buildSketchMenu(s);
     // ---- 命令补齐：绘图类命令（与命令行共用 interp_->execute）----
-    mk(s, QStringLiteral("图案填充(&H)..."), QKeySequence(), [this] { interp_->execute("hatch"); });
-    mk(s, QStringLiteral("边界填充(&B)..."), QKeySequence(), [this] { interp_->execute("bhatch"); });
-    mk(s, QStringLiteral("单行文字(&T)..."), QKeySequence(), [this, dlgText] { dlgText(false); });
-    mk(s, QStringLiteral("多行文字(&M)..."), QKeySequence(), [this, dlgText] { dlgText(true); });
-    mk(s, QStringLiteral("编辑文字(&E)..."), QKeySequence(), [this, dlgDdedit] { dlgDdedit(); });
-    mk(s, QStringLiteral("定距等分(&D)..."), QKeySequence(), [this] { interp_->execute("measure"); });
-    mk(s, QStringLiteral("形位公差(&G)..."), QKeySequence(), [this] { interp_->execute("tol"); });
+    mk(s, QStringLiteral("图案填充(&H)..."), QKeySequence(), [this] { interp_->execute("hatch"); })
+        ->setIcon(icons::make("hatch"));
+    mk(s, QStringLiteral("边界填充(&B)..."), QKeySequence(), [this] { interp_->execute("bhatch"); })
+        ->setIcon(icons::make("boundary"));
+    mk(s, QStringLiteral("单行文字(&T)..."), QKeySequence(), [this, dlgText] { dlgText(false); })
+        ->setIcon(icons::make("mtext"));
+    mk(s, QStringLiteral("多行文字(&M)..."), QKeySequence(), [this, dlgText] { dlgText(true); })
+        ->setIcon(icons::make("mtext"));
+    mk(s, QStringLiteral("编辑文字(&E)..."), QKeySequence(), [this, dlgDdedit] { dlgDdedit(); })
+        ->setIcon(icons::make("mtext"));
+    mk(s, QStringLiteral("定距等分(&D)..."), QKeySequence(), [this] { interp_->execute("measure"); })
+        ->setIcon(icons::make("divide"));
+    mk(s, QStringLiteral("形位公差(&G)..."), QKeySequence(), [this] { interp_->execute("tol"); })
+        ->setIcon(icons::make("dim"));
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
@@ -1647,6 +1681,7 @@ void MainWindow::buildMenu() {
     // 绘图比例入口已迁至【文件】菜单（属图纸属性），此处不再重复提供，避免同一功能两处出现
 
     QMenu* plane = new QMenu(tr("视图方向"), this);
+    plane->setIcon(icons::make("plane_xy"));
     mk(plane, QStringLiteral("XY 平面（俯视）"), QKeySequence("Ctrl+1"), [this] { model_->setPlane(Plane::XY); })
         ->setIcon(icons::make("plane_xy"));
     mk(plane, QStringLiteral("YZ 平面（左视）"), QKeySequence("Ctrl+2"), [this] { model_->setPlane(Plane::YZ); })
@@ -1658,6 +1693,7 @@ void MainWindow::buildMenu() {
 
     // 面板显隐切换：关闭后可在此重新勾选（QDockWidget::toggleViewAction 自带勾选态同步）
     QMenu* panels = new QMenu(tr("面板"), this);
+    panels->setIcon(icons::make("panel"));
     panels->addAction(bomDock_->toggleViewAction());
     panels->addAction(elemDock_->toggleViewAction());
     panels->addAction(layerDock_->toggleViewAction());
@@ -1676,7 +1712,8 @@ void MainWindow::buildMenu() {
         model_->log(QStringLiteral("已恢复全部面板"));
     });
     v->addMenu(panels);
-    mk(v, QStringLiteral("重生成(&R)"), QKeySequence("F5"), [this] { interp_->execute("regen"); });
+    mk(v, QStringLiteral("重生成(&R)"), QKeySequence("F5"), [this] { interp_->execute("regen"); })
+        ->setIcon(icons::make("regen"));
     bar->addMenu(v);
 
     // ---- 脚本（二次开发宿主）----
@@ -1688,7 +1725,7 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("script"));
     mk(scr, QStringLiteral("可用脚本引擎"), QKeySequence(), [this] {
         model_->log(QStringLiteral("可用脚本引擎：%1").arg(scriptHost_->availableLanguages().join(", ")));
-    });
+    })->setIcon(icons::make("script"));
 
     // ---- 动作宏 / SCR 脚本批处理（录制 → 保存 → 回放）----
     scr->addSeparator();
@@ -1738,10 +1775,12 @@ void MainWindow::buildMenu() {
     cui->addSeparator();
     // 工作空间子菜单：切换项在展开时动态重建（反映当前工作空间列表与勾选态）
     QMenu* wsMenu = new QMenu(tr("工作空间"), this);
+    wsMenu->setIcon(icons::make("panel"));
     cui->addMenu(wsMenu);
     connect(wsMenu, &QMenu::aboutToShow, this, [this, wsMenu] {
         wsMenu->clear();
-        QAction* def = wsMenu->addAction(QStringLiteral("（默认 / 全部显示）"));
+        QAction* def = wsMenu->addAction(icons::make("panel"),
+                                         QStringLiteral("（默认 / 全部显示）"));
         def->setCheckable(true);
         def->setChecked(CuiManager::instance().currentWorkspace().isEmpty());
         connect(def, &QAction::triggered, this, [this] {
@@ -1760,11 +1799,13 @@ void MainWindow::buildMenu() {
         }
         wsMenu->addSeparator();
         {
-            QAction* a = wsMenu->addAction(QStringLiteral("新建工作空间（保存当前视图）..."));
+            QAction* a = wsMenu->addAction(icons::make("panel"),
+                                           QStringLiteral("新建工作空间（保存当前视图）..."));
             connect(a, &QAction::triggered, this, [this] { saveCurrentAsWorkspaceDialog(); });
         }
         {
-            QAction* a = wsMenu->addAction(QStringLiteral("工作空间列表"));
+            QAction* a = wsMenu->addAction(icons::make("panel"),
+                                           QStringLiteral("工作空间列表"));
             connect(a, &QAction::triggered, this, [this] { interp_->execute("wslist"); });
         }
     });
@@ -1789,11 +1830,11 @@ void MainWindow::buildMenu() {
     QMenu* plug = new QMenu(tr("插件(&X)"), this);
     plug->setObjectName("menuPlugin");
     mk(plug, QStringLiteral("加载插件文件..."), QKeySequence(), [this] { onLoadPlugin(); })
-        ->setIcon(icons::make("properties"));
+        ->setIcon(icons::make("plugin"));
     mk(plug, QStringLiteral("重新加载插件目录"), QKeySequence(), [this] { onReloadPlugins(); })
-        ->setIcon(icons::make("properties"));
+        ->setIcon(icons::make("plugin"));
     pluginLoadedSub_ = new QMenu(tr("已加载插件"), this);
-    pluginLoadedSub_->setIcon(icons::make("properties"));
+    pluginLoadedSub_->setIcon(icons::make("plugin"));
     plug->addMenu(pluginLoadedSub_);
     refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
     bar->addMenu(plug);
@@ -1801,21 +1842,27 @@ void MainWindow::buildMenu() {
     // ---- 工具（统一「选项」入口：应用级配置持久化 + 分类树表单）----
     QMenu* tools = new QMenu(tr("工具(&T)"), this);
     tools->setObjectName("menuTools");
-    mk(tools, QStringLiteral("选项..."), QKeySequence(), [this] { openOptionsDialog(); });
+    mk(tools, QStringLiteral("选项..."), QKeySequence(), [this] { openOptionsDialog(); })
+        ->setIcon(icons::make("options"));
+    tools->addSeparator();
     // ---- 命令补齐：格式/工具类命令（与命令行共用 interp_->execute）----
-    mk(tools, QStringLiteral("线型(&L)..."), QKeySequence(), [this] { interp_->execute("linetype"); });
-    mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); });
+    mk(tools, QStringLiteral("线型(&L)..."), QKeySequence(), [this] { interp_->execute("linetype"); })
+        ->setIcon(icons::lineStyleIcon(LineStyle::DashDot));
+    mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); })
+        ->setIcon(icons::make("properties"));
     bar->addMenu(tools);
 
     QMenu* h = new QMenu(tr("帮助(&H)"), this);
     h->setObjectName("menuHelp");
-    mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); });
+    mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); })
+        ->setIcon(icons::make("help"));
     // 崩溃可复现诊断包：一键导出（异常退出启动提示与此共用 DiagnosticsDialog）
-    mk(h, QStringLiteral("导出诊断包..."), QKeySequence(), [this] { exportDiagnosticBundle(); });
+    mk(h, QStringLiteral("导出诊断包..."), QKeySequence(), [this] { exportDiagnosticBundle(); })
+        ->setIcon(icons::make("log"));
     mk(h, QStringLiteral("打开日志目录"), QKeySequence(), [this] {
         QDesktopServices::openUrl(
             QUrl::fromLocalFile(SketchCAD::Diagnostics::logDir()));
-    });
+    })->setIcon(icons::make("log"));
     mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
         // 版本号来自 version.h（CMake project VERSION 生成的宏），
         // 与 exe 文件属性（app.rc）、安装包名（installer.iss）同源于同一个版本号，
@@ -1832,8 +1879,20 @@ void MainWindow::buildMenu() {
                 .arg(QString::fromLatin1(SKETCHCAD_VERSION),
                      QString::fromLatin1(SKETCHPAD_VERSION),
                      QString::fromUtf8(SKETCHCAD_COPYRIGHT)));
-    });
+    })->setIcon(icons::make("about"));
     bar->addMenu(h);
+
+    // ---- 顶级菜单排序：创建顺序 ≠ 显示顺序，按「核心 → 输出 → 辅助 → 帮助」的
+    // CAD 惯例统一重排。逐个把 want[i] 插到 want[i+1] 之前（从后往前），即可把
+    // 乱序的菜单栏收敛为目标顺序；不 clear、不 delete，动作可见性（工作空间
+    // 按 objectName 显隐）与快捷键绑定均不受影响，语言切换重建后同样经此排序。
+    {
+        const QList<QMenu*> ordered{ f, e, s, v, q, pr, k, tools, scr, cui, plug, h };
+        QList<QAction*> want;
+        for (QMenu* m : ordered) want << m->menuAction();
+        for (int i = want.size() - 1; i >= 0; --i)
+            bar->insertAction(i + 1 < want.size() ? want[i + 1] : nullptr, want[i]);
+    }
 }
 
 void MainWindow::openInquiry() {
@@ -1977,14 +2036,51 @@ void MainWindow::editElementText(int id) {
         return;
     }
 
-    // ---- 标注/引线/形位公差：就地编辑覆盖文本（AutoCAD 双击标注约定）----
-    // 标注文字 el.text 为空时显示测量值；写入覆盖文本后由标注渲染器优先显示。
-    if (e->type == ElementType::Dimension || e->type == ElementType::MLeader
-        || e->type == ElementType::Fcf) {
+    // ---- 尺寸标注：双击 = 数值驱动编辑（输入数值 → 几何联动调整）----
+    // 输入纯数值 → driveDimension（图元与相邻关联图元联动、标注/文字/域同步）；
+    // 留空     → 清除覆盖文本，恢复显示测量值；
+    // 其它文本 → 旧行为：写入覆盖文本（仅改显示，不动几何）。
+    if (e->type == ElementType::Dimension) {
+        bool ok = false;
+        const QString cur = e->text.isEmpty()
+            ? QString::number(geo::measureDimension(*e), 'f', 2) : e->text;
+        const QString txt = QInputDialog::getText(
+            this, QStringLiteral("编辑尺寸"),
+            QStringLiteral("数值→驱动几何联动调整；留空→恢复测量值；文字→覆盖显示文本："),
+            QLineEdit::Normal, cur, &ok);
+        if (!ok) return;
+        const QString trimmed = txt.trimmed();
+        static const QRegularExpression numRe(QStringLiteral("^[+-]?\\d+(?:\\.\\d+)?$"));
+        if (!trimmed.isEmpty() && numRe.match(trimmed).hasMatch()) {
+            const double v = trimmed.toDouble();
+            if (model_->dimensionDriven()) {
+                if (!model_->driveDimension(id, v)) {
+                    QMessageBox::warning(this, QStringLiteral("尺寸驱动"),
+                        QStringLiteral("该标注类型不支持尺寸驱动（支持：对齐/距离/水平/竖直/半径/直径/角度）"));
+                    return;
+                }
+                model_->log(QStringLiteral("尺寸驱动 #%1 → %2（关联几何与标注已联动更新）").arg(id).arg(v, 0, 'f', 2));
+            } else {
+                // 尺寸驱动主开关关闭（需求 D-③）：仅覆盖显示文本，不改动任何图元几何
+                model_->beginEdit(QStringLiteral("编辑标注数值(仅显示)"));
+                model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
+                model_->log(QStringLiteral("尺寸驱动已关闭：仅更新标注显示文本 #%1 → %2（几何未改动）")
+                                .arg(id).arg(txt));
+            }
+            return;
+        }
+        model_->beginEdit(QStringLiteral("编辑标注文字"));
+        model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
+        model_->log(QStringLiteral("已更新标注文字 #%1").arg(id));
+        return;
+    }
+
+    // ---- 引线/形位公差：就地编辑覆盖文本（无几何驱动语义）----
+    if (e->type == ElementType::MLeader || e->type == ElementType::Fcf) {
         bool ok = false;
         const QString txt = QInputDialog::getMultiLineText(
             this, QStringLiteral("编辑文字"),
-            QStringLiteral("覆盖文本（留空恢复测量值/默认内容）："), e->text, &ok);
+            QStringLiteral("覆盖文本（留空恢复默认内容）："), e->text, &ok);
         if (!ok) return;
         model_->beginEdit(QStringLiteral("编辑标注文字"));
         model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
@@ -2345,6 +2441,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     // 航空制图与机械制图模板
     m->addSection(QStringLiteral("制图模板"));
     QAction* aircraftAct = m->addAction(QStringLiteral("飞机三面图..."));
+    aircraftAct->setIcon(icons::make("views"));
     aircraftAct->setToolTip(QStringLiteral("按默认或自定义尺寸生成飞机正面图、侧面图、俯视图"));
     aircraftAct->setStatusTip(aircraftAct->toolTip());
     connect(aircraftAct, &QAction::triggered, this, [this] {
@@ -2353,6 +2450,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     });
 
     QAction* flangeAct = m->addAction(QStringLiteral("法兰盘三面图..."));
+    flangeAct->setIcon(icons::make("views"));
     flangeAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘主视图、俯视图、左视图"));
     flangeAct->setStatusTip(flangeAct->toolTip());
     connect(flangeAct, &QAction::triggered, this, [this] {
@@ -2361,6 +2459,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     });
 
     QAction* bearingAct = m->addAction(QStringLiteral("轴承座三面图..."));
+    bearingAct->setIcon(icons::make("views"));
     bearingAct->setToolTip(QStringLiteral("按默认或自定义参数生成轴承座主视图、俯视图、左视图（左视图全剖）"));
     bearingAct->setStatusTip(bearingAct->toolTip());
     connect(bearingAct, &QAction::triggered, this, [this] {
@@ -2369,6 +2468,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     });
 
     QAction* housingAct = m->addAction(QStringLiteral("箱体视图..."));
+    housingAct->setIcon(icons::make("views"));
     housingAct->setToolTip(QStringLiteral("按默认或自定义参数生成箱体主视图（全剖）、俯视图 B、A—A 断面、C 向视图（含剖切符号与粗糙度）"));
     housingAct->setStatusTip(housingAct->toolTip());
     connect(housingAct, &QAction::triggered, this, [this] {
@@ -2377,7 +2477,8 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     });
 
     QAction* flangeHubAct = m->addAction(QStringLiteral("法兰盘轮毂视图..."));
-    flangeHubAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘轮毂主视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）"));
+    flangeHubAct->setIcon(icons::make("views"));
+    flangeHubAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘轮毂视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）"));
     flangeHubAct->setStatusTip(flangeHubAct->toolTip());
     connect(flangeHubAct, &QAction::triggered, this, [this] {
         FlangeHubViewsDialog dlg(model_, this);
@@ -2385,6 +2486,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     });
 
     QAction* floorPlanAct = m->addAction(QStringLiteral("户型平面图..."));
+    floorPlanAct->setIcon(icons::make("views"));
     floorPlanAct->setToolTip(QStringLiteral("按默认或自定义参数生成建筑户型平面图：墙体（剪力墙涂黑/双线内墙）、门（开启弧）、窗、家具图块、房间标注、四周建筑尺寸链与右侧图签"));
     floorPlanAct->setStatusTip(floorPlanAct->toolTip());
     connect(floorPlanAct, &QAction::triggered, this, [this] {
@@ -2410,6 +2512,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     // ambiguous shortcut（按键被吞掉、谁也不响应）。画布内的 Esc 由
     // GraphicsView::keyPressEvent 统一处理，这里只提供一个鼠标入口。
     QAction* cancel = m->addAction(QStringLiteral("取消当前绘制  (Esc)"));
+    cancel->setIcon(icons::make("cancel"));
     connect(cancel, &QAction::triggered, this, [this] { view_->cancelDrawing(); });
     // 注：原「编辑与视图」分组（editGroups_）已按语义拆分——
     // 编辑类即时命令归【编辑】菜单，视图 / 工作平面类本就在【视图】菜单中，此处不再重复挂载。
@@ -3610,6 +3713,7 @@ void MainWindow::connectSignals() {
             break;
         }
         case StatusBar::Toggle::Lwt:   model_->setShowLineWeight(on); break;
+        case StatusBar::Toggle::DimDrive: model_->setDimensionDriven(on); break;
         }
     });
 
@@ -3677,6 +3781,8 @@ void MainWindow::hookActiveDoc() {
     });
     modelConns_ << connect(model_, &SketchModel::showLineWeightChanged, this,
             [this](bool on) { statusBar_->setToggleState(StatusBar::Toggle::Lwt, on); });
+    modelConns_ << connect(model_, &SketchModel::dimensionDrivenChanged, this,
+            [this](bool on) { statusBar_->setToggleState(StatusBar::Toggle::DimDrive, on); });
 
     // ---- 选项提示区：分段命令的可选项关键字（如 [C/闭合 U/放弃]）----
     modelConns_ << connect(model_, &SketchModel::commandOptionsChanged, this,
@@ -3781,6 +3887,7 @@ void MainWindow::hookActiveDoc() {
     statusBar_->setToggleState(StatusBar::Toggle::Polar, model_->trackConfig().polar);
     statusBar_->setToggleState(StatusBar::Toggle::Track, model_->trackConfig().objectTrack);
     statusBar_->setToggleState(StatusBar::Toggle::Lwt,   model_->showLineWeight());
+    statusBar_->setToggleState(StatusBar::Toggle::DimDrive, model_->dimensionDriven());
     statusBar_->setOptions(model_->commandOptions());
     statusBar_->setCount(model_->elementCount());
     statusBar_->setDrawScale(model_->scaleLabel());
@@ -5474,7 +5581,7 @@ void MainWindow::initCui() {
     const QStringList menus = {
         "menuFile", "menuPrint", "menuTrack", "menuEdit", "menuModify",
         "menuSelect", "menuDraw", "menuInquiry", "menuView", "menuScript",
-        "menuPlugin", "menuHelp", "menuCui"
+        "menuPlugin", "menuTools", "menuHelp", "menuCui"
     };
     for (const QString& m : menus) cm.registerBuiltinMenu(m);
     // 命令改动界面配置后请求实时刷新（避免 Qt 信号耦合进纯 C++ 核心层）

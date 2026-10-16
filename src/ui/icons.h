@@ -901,6 +901,151 @@ inline void paintGlyph(QPainter& g, const QString& id)
         return;
     }
 
+    // ================= 菜单补齐（顶级菜单/菜单项此前缺失或 id 未定义） =================
+    if (id == "script") {                       // 脚本：文档 + 代码尖括号
+        g.drawRoundedRect(QRectF(4.5, 3.5, 15, 17), 2.0, 2.0);
+        g.save();
+        g.setPen(QPen(mark, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawLine(QPointF(10.0, 9.0),  QPointF(7.0, 12.5));   // <
+        g.drawLine(QPointF(7.0, 12.5),  QPointF(10.0, 16.0));
+        g.drawLine(QPointF(14.0, 9.0),  QPointF(17.0, 12.5));  // >
+        g.drawLine(QPointF(17.0, 12.5), QPointF(14.0, 16.0));
+        g.restore();
+        return;
+    }
+    if (id == "track") {                        // 追踪：虚线十字 + 极轴角度弧与方向箭头
+        dash(12, 3.0, 12, 21.0);
+        dash(3.0, 12, 21.0, 12);
+        g.save();
+        g.setPen(QPen(mark, 1.5, Qt::SolidLine, Qt::RoundCap));
+        g.drawArc(QRectF(6.0, 6.0, 12.0, 12.0), 0, -45 * 16);   // 极轴角弧
+        g.restore();
+        arrow(18.0, 6.0, -0.7854, mark);                       // 追踪方向
+        dot(12, 12, mark, 1.5);
+        return;
+    }
+    if (id == "titleblock") {                   // 图框与标题栏：图纸 + 右下角图签格
+        g.drawRect(QRectF(3.5, 4.5, 17, 15));
+        g.save();
+        g.setPen(QPen(mark, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawRect(QRectF(11.0, 14.0, 9.5, 5.5));
+        g.drawLine(QPointF(11.0, 16.7), QPointF(20.5, 16.7));
+        g.drawLine(QPointF(15.8, 14.0), QPointF(15.8, 19.5));
+        g.restore();
+        return;
+    }
+    if (id == "limits") {                       // 图纸界限：虚线范围框 + 四角实心角标
+        QPen p(guide, 1.4); p.setStyle(Qt::DashLine); p.setDashPattern({3, 2});
+        g.save(); g.setPen(p); g.drawRect(QRectF(4.5, 5.5, 15, 13)); g.restore();
+        g.save();
+        g.setPen(QPen(mark, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawLine(QPointF(4.5, 9.0),   QPointF(4.5, 5.5));  g.drawLine(QPointF(4.5, 5.5),   QPointF(8.0, 5.5));
+        g.drawLine(QPointF(16.0, 5.5),  QPointF(19.5, 5.5)); g.drawLine(QPointF(19.5, 5.5),  QPointF(19.5, 9.0));
+        g.drawLine(QPointF(4.5, 15.0),  QPointF(4.5, 18.5)); g.drawLine(QPointF(4.5, 18.5),  QPointF(8.0, 18.5));
+        g.drawLine(QPointF(16.0, 18.5), QPointF(19.5, 18.5));g.drawLine(QPointF(19.5, 18.5), QPointF(19.5, 15.0));
+        g.restore();
+        return;
+    }
+    if (id == "snap") {                         // 捕捉：磁铁（栅格/对象吸附）
+        g.save();
+        g.setPen(QPen(mark, 3.0, Qt::SolidLine, Qt::RoundCap));
+        g.drawArc(QRectF(7.0, 5.0, 10.0, 10.0), 180 * 16, 180 * 16);   // 马蹄半圆
+        g.drawLine(QPointF(7.0, 10.0),  QPointF(7.0, 16.5));
+        g.drawLine(QPointF(17.0, 10.0), QPointF(17.0, 16.5));
+        g.restore();
+        g.save();
+        g.setPen(QPen(ink, 3.0, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(7.0, 17.5),  QPointF(7.0, 20.0));   // 磁极
+        g.drawLine(QPointF(17.0, 17.5), QPointF(17.0, 20.0));
+        g.restore();
+        return;
+    }
+    if (id == "panel") {                        // 面板/工作空间：窗口 + 左侧停靠栏
+        g.drawRect(QRectF(3.5, 4.5, 17, 15));
+        g.save();
+        g.setPen(QPen(mark, 1.5, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(9.0, 4.5), QPointF(9.0, 19.5));
+        g.drawLine(QPointF(11.5, 8.5),  QPointF(18.5, 8.5));
+        g.drawLine(QPointF(11.5, 12.0), QPointF(18.5, 12.0));
+        g.drawLine(QPointF(11.5, 15.5), QPointF(16.0, 15.5));
+        g.restore();
+        return;
+    }
+    if (id == "regen") {                        // 重生成：环形刷新箭头
+        g.save();
+        g.setPen(QPen(ink, 1.7, Qt::SolidLine, Qt::RoundCap));
+        g.drawArc(QRectF(5.5, 5.5, 13.0, 13.0), -70 * 16, 300 * 16);   // 留 60° 缺口
+        g.restore();
+        arrow(9.4, 5.7, -0.698, mark);          // 缺口处沿弧切向的箭头
+        return;
+    }
+    if (id == "views") {                        // 制图模板：三视图（主/俯/侧）
+        g.drawRect(QRectF(4.5, 4.5, 9.0, 7.0));     // 主视图
+        g.drawRect(QRectF(4.5, 13.5, 9.0, 6.0));    // 俯视图
+        g.save();
+        g.setPen(QPen(mark, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        g.drawRect(QRectF(15.5, 4.5, 4.5, 7.0));    // 侧视图（强调）
+        g.restore();
+        return;
+    }
+    if (id == "cancel") {                       // 取消当前绘制：圆圈斜杠
+        g.drawEllipse(QPointF(12, 12), 7.5, 7.5);
+        g.save();
+        g.setPen(QPen(mark, 2.0, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(7.0, 17.0), QPointF(17.0, 7.0));
+        g.restore();
+        return;
+    }
+    if (id == "plugin") {                       // 插件：拼图块
+        QPainterPath piece;
+        piece.moveTo(4.5, 7.5);
+        piece.lineTo(9.5, 7.5);
+        piece.cubicTo(9.5, 3.5, 14.5, 3.5, 14.5, 7.5);   // 上方凸榫
+        piece.lineTo(19.5, 7.5);
+        piece.lineTo(19.5, 16.5);
+        piece.lineTo(4.5, 16.5);
+        piece.closeSubpath();
+        g.drawPath(piece);
+        dot(12.0, 13.0, mark, 1.6);
+        return;
+    }
+    if (id == "options") {                      // 选项：三档滑杆
+        const double ys[3] = {7.0, 12.0, 17.0};
+        const double kx[3] = {9.0, 15.0, 11.5};
+        for (int i = 0; i < 3; ++i) {
+            g.save();
+            g.setPen(QPen(guide, 1.6, Qt::SolidLine, Qt::RoundCap));
+            g.drawLine(QPointF(4.5, ys[i]), QPointF(19.5, ys[i]));
+            g.restore();
+            dot(kx[i], ys[i], mark, 2.3);
+        }
+        return;
+    }
+    if (id == "log") {                          // 日志：文档 + 条目行
+        g.drawRoundedRect(QRectF(5.0, 3.5, 14.0, 17.0), 2.0, 2.0);
+        g.save();
+        g.setPen(QPen(guide, 1.5, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(8.0, 8.5),  QPointF(16.0, 8.5));
+        g.drawLine(QPointF(8.0, 12.0), QPointF(16.0, 12.0));
+        g.drawLine(QPointF(8.0, 15.5), QPointF(13.0, 15.5));
+        g.restore();
+        return;
+    }
+    if (id == "about") {                        // 关于：信息圆标
+        g.drawEllipse(QPointF(12, 12), 8.0, 8.0);
+        text(QStringLiteral("i"), mark, 14, QRectF(5.0, 4.0, 14.0, 16.0));
+        return;
+    }
+    if (id == "exit") {                         // 退出：箭头穿门而出
+        g.drawRect(QRectF(4.5, 4.0, 9.0, 16.0));
+        g.save();
+        g.setPen(QPen(mark, 1.8, Qt::SolidLine, Qt::RoundCap));
+        g.drawLine(QPointF(13.5, 12.0), QPointF(16.5, 12.0));
+        g.restore();
+        arrow(20.5, 12.0, 0.0, mark);
+        return;
+    }
+
     // 兜底：画个空心方块，避免"看不见的按钮"
     g.drawRect(QRectF(5.5, 5.5, 13, 13));
 }

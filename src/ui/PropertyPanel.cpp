@@ -311,8 +311,9 @@ void PropertyPanel::load(int id) {
         // 角度标注用度作后缀，其余用毫米
         sDimValue->setSuffix(e->dtype == DimensionType::Angle
                                  ? QStringLiteral(" °") : QStringLiteral(" mm"));
-        // 没有关联源图元(refA)的标注不可驱动几何，只读显示
-        sDimValue->setEnabled(e->refA >= 0);
+        // 没有关联源图元(refA)的标注通常不可驱动几何；但角度标注通过坐标锚定（pts 与图元端点重合）
+        // 即可驱动，故 refA<0 时仅角度标注仍允许编辑（与 driveDimension 角度分支一致）。
+        sDimValue->setEnabled(e->refA >= 0 || e->dtype == DimensionType::Angle);
 
         // 公差字段与单标注标准覆盖
         QSignalBlocker b1(sTolUp), b2(sTolLo), b3(eFit), b4(cDimStd);
@@ -508,14 +509,21 @@ void PropertyPanel::applyPolar() {
     sX2->setValue(newEnd.x);   sY2->setValue(newEnd.y);
 }
 
-// 标注尺寸值被编辑 → 驱动源图元几何并联动传播到相连图元
+// 标注尺寸值被编辑 → 按尺寸驱动主开关（需求 D-③）分派：
+//   开 → driveDimension 驱动源图元几何并联动传播到相连图元；
+//   关 → 仅覆盖显示文本（写 text），不改动任何图元几何。
 void PropertyPanel::applyDimValue() {
     if (updating_ || curId_ < 0) return;
     const Element* e = model_->element(curId_);
-    if (!e || e->type != ElementType::Dimension || e->refA < 0) return;
+    if (!e || e->type != ElementType::Dimension) return;
     const double v = sDimValue->value();
-    if (!model_->driveDimension(curId_, v))
-        model_->log(QStringLiteral("该标注类型暂不支持驱动几何"), "warn");
+    if (model_->dimensionDriven()) {
+        if (!model_->driveDimension(curId_, v))
+            model_->log(QStringLiteral("该标注类型暂不支持驱动几何"), "warn");
+    } else {
+        model_->updateElementLinked(curId_, [this](Element& el) { el.text = sDimValue->text(); });
+        model_->log(QStringLiteral("尺寸驱动已关闭：仅更新标注显示文本 #%1").arg(curId_));
+    }
 }
 
 // 公差字段 / 单标注标准被编辑 → 写回并刷新标注文字（label 由 dim::formatTolerance 重新生成）

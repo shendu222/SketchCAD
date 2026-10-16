@@ -2820,23 +2820,53 @@ DimensionType GraphicsView::dimToolType(const QString& tool, bool& ok) {
 void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
     const QString tname = QString::fromUtf8(dimensionTypeName(dt));
 
-    // ---- 角度标注：保留原有三点拾取流程 ----
+    // ---- 角度标注：选两条相交直线，自动以交点为顶点生成夹角标注 ----
     if (dt == DimensionType::Angle) {
-        pendingPts_.push_back(w);
-        if (pendingPts_.size() == 1) { model_->log(tname + QStringLiteral("：已拾取角顶点，请拾取第 1 条边上的点")); return; }
-        if (pendingPts_.size() == 2) { model_->log(tname + QStringLiteral("：请拾取第 2 条边上的点")); return; }
+        const int hit = hitTest(mapFromScene(QPointF(w.x, w.y)));
+        if (pickedIds_.empty()) {
+            // 第 1 步：点选第一条直线
+            if (hit < 0) { model_->log(tname + QStringLiteral("：请点选第一条直线"), "warn"); return; }
+            const Element* e0 = model_->element(hit);
+            if (!e0 || e0->type != ElementType::Line || e0->pts.size() < 2) {
+                model_->log(tname + QStringLiteral("：请点选直线图元作为第 1 条边"), "warn"); return;
+            }
+            pickedIds_.push_back(hit);
+            model_->log(tname + QStringLiteral("：已选第 1 条直线 #%1，请点选第 2 条相交直线").arg(hit));
+            return;
+        }
+        // 第 2 步：点选第二条直线（须与第一条相交）
+        if (hit < 0) { model_->log(tname + QStringLiteral("：请点选第 2 条直线"), "warn"); return; }
+        const Element* b = model_->element(hit);
+        if (!b || b->type != ElementType::Line || b->pts.size() < 2) {
+            model_->log(tname + QStringLiteral("：请点选直线图元作为第 2 条边"), "warn"); return;
+        }
+        bool dup = false;
+        for (int id : pickedIds_) if (id == hit) dup = true;
+        if (dup) { model_->log(tname + QStringLiteral("：请勿重复选择同一条直线，请点选另一条直线"), "warn"); return; }
+        const Element* a = model_->element(pickedIds_.front());
+        if (!a) { resetPending(); return; }
+        const auto ips = geo::intersectElements(*a, *b);
+        if (ips.empty()) {
+            model_->log(tname + QStringLiteral("：所选两条直线不相交，无法标注夹角"), "warn");
+            resetPending();
+            return;
+        }
+        const Vec3 v  = ips.front();
+        const Vec3 p1 = (a->pts[0].distTo(v) < 1e-6) ? a->pts[1] : a->pts[0];
+        const Vec3 p2 = (b->pts[0].distTo(v) < 1e-6) ? b->pts[1] : b->pts[0];
         Element el = ElementFactory::create(ElementType::Dimension, tname, model_);
         el.dtype = dt;
         el.standard = model_->dimensionStandard();
-        el.pts = {pendingPts_[0], pendingPts_[1], pendingPts_[2]};
+        el.pts = {v, p1, p2};
         const dim::Geom g = dim::build(el);
         if (!g.valid) {
-            model_->log(tname + QStringLiteral("：两边重合或长度为零，无法标注"), "warn");
+            model_->log(tname + QStringLiteral("：几何退化，无法标注"), "warn");
             resetPending();
             return;
         }
         const int id = commitElement(el);
         model_->log(QString("已创建%1 #%2 = %3").arg(tname).arg(id).arg(g.label));
+        resetPending();
         return;
     }
 

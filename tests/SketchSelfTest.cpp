@@ -7621,6 +7621,30 @@ static bool t_dwg() {
         setToolsDirForTest(QString());   // 恢复默认，防污染其他测试
     }
 
+    // ---- D8 原生实体不炸开（导入解析层，无需外部转换器）----
+    // 直接喂一段含 DIMENSION + HATCH 的 DXF 文本给 fromDxf，验证其按 ElementType::Dimension /
+    // Hatch 原生还原（而非降级为 LINE+TEXT 或边界线）。这正是 R2000 经桥接导入时
+    // "原生实体不炸开" 所依赖的解析能力（DwgBridge::dwgToDxf → fromDxf 的末端链路）。
+    {
+        const QByteArray nativeDxf =
+            "0\nSECTION\n2\nENTITIES\n"
+            "0\nDIMENSION\n70\n1\n13\n0.0\n23\n0.0\n14\n10.0\n24\n0.0\n"
+            "0\nHATCH\n91\n1\n92\n2\n93\n4\n"
+            "10\n0.0\n20\n0.0\n10\n10.0\n20\n0.0\n"
+            "10\n10.0\n20\n10.0\n10\n0.0\n20\n10.0\n"
+            "0\nENDSEC\n0\nEOF\n";
+        std::vector<Element> nat;
+        QString natErr;
+        CHECK(fromDxf(nativeDxf, nat, &natErr), "DWG D8 原生 DXF(含 DIMENSION/HATCH) 解析成功");
+        int nDim = 0, nHatch = 0;
+        for (const auto& e : nat) {
+            if (e.type == ElementType::Dimension) ++nDim;
+            if (e.type == ElementType::Hatch)     ++nHatch;
+        }
+        CHECK(nDim   >= 1, "DWG D8 导入层将 DIMENSION 还原为原生 ElementType::Dimension（不炸开）");
+        CHECK(nHatch >= 1, "DWG D8 导入层将 HATCH 还原为原生 ElementType::Hatch（不炸开）");
+    }
+
     setToolsDirForTest(QString());       // 无条件恢复默认
     return true;
 }
@@ -9243,6 +9267,213 @@ static bool t_ucsSheetCenter() {
 }
 
 // ============================================================================
+// 尺寸驱动编辑（t_dimDriven）
+// ----------------------------------------------------------------------------
+// 需求：直接修改图元上的标注数值 → 该图元及相连/受约束相邻图元按几何关联
+// 自动调整；所有受影响图元的标注、引线、文字内容同步更新（数值=真实几何）。
+// 链路：driveDimension（驱动源几何）→ collectLinked（端点重合联动传播，含
+// 其它标注/引线）→ 被联动标注清除覆盖文本（显示值跟随实测）→ solveAfterChange
+// （隐式约束恢复）+ solveAll（显式约束重解）→ refreshHatchBoundaries（填充随动）
+// → refreshFields（PERIM/AREA/PROP 域同步）。单次 pushMemento，一步撤销全恢复。
+// ============================================================================
+static bool t_dimDriven() {
+    const int passBefore = g_pass, failBefore = g_fail;
+
+    // ---- ① 对齐标注驱动直线 + 相邻图元联动 + 文本同步 + 单步撤销 ----
+    {
+        SketchModel m;
+        const int lid = addLine(m, 0, 0, 100, 0);
+        // 相邻图元：竖线底端与 l1 终点重合（端点重合即视为相连）
+        Element l2; l2.type = ElementType::Line;
+        l2.pts = { Vec3(100,0,0), Vec3(100,40,0) };
+        const int l2id = m.addElement(l2);
+        // 驱动标注：对齐、refA=lid、测点与线端点重合、带覆盖文本
+        Element d; d.type = ElementType::Dimension; d.dtype = DimensionType::Aligned;
+        d.refA = lid; d.pts = { Vec3(0,0,0), Vec3(100,0,0) };
+        d.text = QStringLiteral("一百");
+        const int did = m.addElement(d);
+        // 第二个标注：同测点（无覆盖文本），验证受影响标注测量同步
+        Element d2; d2.type = ElementType::Dimension; d2.dtype = DimensionType::Horizontal;
+        d2.refA = lid; d2.pts = { Vec3(0,0,0), Vec3(100,0,0) };
+        const int d2id = m.addElement(d2);
+
+        CHECK(m.driveDimension(did, 50.0), "① 驱动对齐标注 100→50 成功");
+        CHECK(std::abs(m.element(lid)->pts[1].x - 50.0) < 1e-6, "① 源直线终点 x 100→50");
+        CHECK(std::abs(m.element(l2id)->pts[0].x - 50.0) < 1e-6 &&
+              std::abs(m.element(l2id)->pts[0].y) < 1e-6, "① 相邻竖线底端随动 (100,0)→(50,0)");
+        CHECK(m.element(did)->text.isEmpty(), "① 驱动标注覆盖文本已清除");
+        CHECK(std::abs(geo::measureDimension(*m.element(did)) - 50.0) < 1e-6, "① 驱动标注实测=50");
+        CHECK(std::abs(geo::measureDimension(*m.element(d2id)) - 50.0) < 1e-6, "① 同测点标注实测同步=50");
+        m.undo();
+        CHECK(std::abs(m.element(lid)->pts[1].x - 100.0) < 1e-6, "① 单步撤销恢复源直线");
+        CHECK(std::abs(m.element(l2id)->pts[0].x - 100.0) < 1e-6, "① 单步撤销恢复相邻图元");
+    }
+
+    // ---- ② 半径驱动圆 + PERIM 域同步 ----
+    {
+        SketchModel m;
+        const int cid = addCircle(m, 0, 0, 20);
+        Element d; d.type = ElementType::Dimension; d.dtype = DimensionType::Radius;
+        d.refA = cid; d.pts = { Vec3(0,0,0), Vec3(20,0,0) };
+        const int did = m.addElement(d);
+        Element mt; mt.type = ElementType::MText;
+        mt.pts = { Vec3(0,-40,0) }; mt.radius = 3.5;
+        mt.text = QStringLiteral("周长 = %<PERIM:%1>%").arg(cid);
+        const int mid = m.addElement(mt);
+
+        CHECK(m.driveDimension(did, 50.0), "② 驱动半径标注 20→50 成功");
+        CHECK(std::abs(m.element(cid)->radius - 50.0) < 1e-6, "② 圆半径 20→50");
+        CHECK(std::abs(geo::measureDimension(*m.element(did)) - 50.0) < 1e-6, "② 标注实测=50");
+        CHECK(resolveFields(m.element(mid)->text, &m) == QStringLiteral("周长 = 314.16"),
+              "② PERIM 域随驱动同步（2π×50=314.16）");
+        m.undo();
+        CHECK(std::abs(m.element(cid)->radius - 20.0) < 1e-6, "② 单步撤销恢复圆半径");
+    }
+
+    // ---- ③ 角度驱动 + 相邻边线端点联动 ----
+    {
+        SketchModel m;
+        (void)addLine(m, 0, 0, 30, 0);                       // 边1（不动腿）
+        Element l2; l2.type = ElementType::Line;
+        l2.pts = { Vec3(0,0,0), Vec3(0,30,0) };              // 边2：与标注边2点重合
+        const int l2id = m.addElement(l2);
+        Element d; d.type = ElementType::Dimension; d.dtype = DimensionType::Angle;
+        d.refA = -1;   // 角度标注创建时不绑定源图元，按坐标锚定
+        d.pts = { Vec3(0,0,0), Vec3(30,0,0), Vec3(0,30,0) };
+        const int did = m.addElement(d);
+
+        CHECK(m.driveDimension(did, 60.0), "③ 驱动角度标注 90°→60° 成功");
+        const Vec3& p = m.element(l2id)->pts[1];
+        CHECK(std::abs(p.x - 15.0) < 1e-6, "③ 边2端点 x → 30·cos60°=15");
+        CHECK(std::abs(p.y - 30.0*std::sqrt(3.0)/2.0) < 1e-6, "③ 边2端点 y → 30·sin60°≈25.98");
+        CHECK(std::abs(geo::measureDimension(*m.element(did)) - 60.0) < 1e-6, "③ 角度实测=60");
+    }
+
+    // ---- ④ 守卫：注释型标注/非法值拒绝驱动 ----
+    {
+        SketchModel m;
+        const int lid = addLine(m, 0, 0, 10, 0);
+        Element d; d.type = ElementType::Dimension; d.dtype = DimensionType::Leader;
+        d.refA = lid; d.pts = { Vec3(0,0,0), Vec3(5,5,0), Vec3(10,5,0) };
+        const int did = m.addElement(d);
+        CHECK(!m.driveDimension(did, 5.0), "④ 引线型标注拒绝驱动");
+        Element d2; d2.type = ElementType::Dimension; d2.dtype = DimensionType::Aligned;
+        d2.refA = lid; d2.pts = { Vec3(0,0,0), Vec3(10,0,0) };
+        const int d2id = m.addElement(d2);
+        CHECK(!m.driveDimension(d2id, 0.0), "④ 非法值(0)拒绝驱动");
+        CHECK(!m.driveDimension(d2id, -5.0), "④ 非法值(负)拒绝驱动");
+    }
+
+    // ---- ⑤ dimedit 命令入口（选中标注后带 R/° 前后缀解析）----
+    {
+        SketchModel m;
+        const int cid = addCircle(m, 0, 0, 10);
+        m.setSelection({}); 
+        Element d; d.type = ElementType::Dimension; d.dtype = DimensionType::Radius;
+        d.refA = cid; d.pts = { Vec3(0,0,0), Vec3(10,0,0) };
+        const int did = m.addElement(d);
+        m.setSelection({ did });
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("dimedit R25")), "⑤ dimedit R25 命令执行成功");
+        CHECK(std::abs(m.element(cid)->radius - 25.0) < 1e-6, "⑤ 圆半径 10→25（R 前缀解析）");
+        CHECK(!interp.execute(QStringLiteral("dimedit abc")), "⑤ dimedit 非数值被拒");
+    }
+
+    fprintf(stdout, "  (尺寸驱动自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ============================================================================
+// 需求 D：两线选角标注 + 尺寸驱动主开关（t_dimAngleDrive）
+// ----------------------------------------------------------------------------
+// ① 选中两条相交直线 → dim angle 自动求交为顶点、取两线远端端点为边点，生成带 ° 的角度标注；
+// ② 角度标注（refA=-1，坐标锚定）经 dimedit 驱动时按全局开关分派：
+//     开（默认）→ 旋转第二条线端点（几何联动）；
+//     关        → 仅覆盖显示文本，几何不变（显示与几何解耦）。
+// ④ 尺寸驱动主开关默认值经 AppSettings 单一数据源校验为开启。
+static bool t_dimAngleDrive() {
+    const int passBefore = g_pass, failBefore = g_fail;
+
+    // ---- ① 选中两相交直线 → 自动创建角度标注（顶点=交点，边点=两线远端端点）----
+    {
+        SketchModel m;
+        const int lidA = addLine(m, 0, 0, 30, 0);   // 边1：沿 +X
+        const int lidB = addLine(m, 0, 0, 0, 30);   // 边2：沿 +Y（与边1 共端于原点，夹角 90°）
+        m.setSelection({lidA, lidB});
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("dim angle")), "① 选中两相交直线 → dim angle 创建成功");
+
+        int did = -1;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Dimension && e.dtype == DimensionType::Angle) { did = e.id; break; }
+        CHECK(did >= 0, "① 已创建角度标注图元");
+        const Element* d = m.element(did);
+        CHECK(d != nullptr, "① 可取到角度标注指针");
+        CHECK(d->pts.size() == 3, "① 角度标注三控制点（顶点/边1/边2）");
+        CHECK(d->pts[0].distTo(Vec3(0,0,0)) < 1e-6, "① 顶点=两直线交点 (0,0)");
+        CHECK(std::abs(geo::measureDimension(*d) - 90.0) < 1e-6, "① 夹角测量=90°");
+
+        // ---- ② 开关开启（默认）→ dimedit 驱动旋转第二条线端点 ----
+        CHECK(m.dimensionDriven(), "② 尺寸驱动主开关默认开启");
+        CHECK(interp.execute(QStringLiteral("dimedit %1 60").arg(did)), "② dimedit 60 驱动成功");
+        const Vec3& p = m.element(lidB)->pts[1];
+        CHECK(std::abs(p.x - 15.0) < 1e-6, "② 边2(第2条线)端点 x → 30·cos60°=15");
+        CHECK(std::abs(p.y - 30.0*std::sqrt(3.0)/2.0) < 1e-6, "② 边2端点 y → 30·sin60°≈25.98");
+        CHECK(std::abs(geo::measureDimension(*m.element(did)) - 60.0) < 1e-6, "② 角度实测=60");
+    }
+
+    // ---- ③ 主开关关闭 → dimedit 仅覆盖显示文本，几何不变 ----
+    {
+        SketchModel m;
+        const int lidA = addLine(m, 0, 0, 30, 0);
+        const int lidB = addLine(m, 0, 0, 0, 30);
+        m.setSelection({lidA, lidB});
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("dim angle")), "③ 选中两线创建角度标注");
+        int did = -1;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Dimension && e.dtype == DimensionType::Angle) { did = e.id; break; }
+        CHECK(did >= 0, "③ 已创建角度标注");
+
+        m.setDimensionDriven(false);
+        CHECK(!m.dimensionDriven(), "③ 主开关已关闭");
+        const Vec3 before = m.element(lidB)->pts[1];
+        CHECK(interp.execute(QStringLiteral("dimedit %1 45").arg(did)), "③ dimedit 45（开关关）执行成功");
+        const Vec3 after = m.element(lidB)->pts[1];
+        CHECK(std::abs(after.x - before.x) < 1e-9 && std::abs(after.y - before.y) < 1e-9,
+              "③ 主开关关闭 → 第二条线几何端点未移动");
+        const Element* d = m.element(did);
+        CHECK(d->text == QStringLiteral("45"), "③ 主开关关闭 → 仅覆盖显示文本为 \"45\"");
+        CHECK(std::abs(geo::measureDimension(*d) - 90.0) < 1e-6,
+              "③ 主开关关闭 → 实测角度仍为几何真值 90°（显示与几何解耦）");
+    }
+
+    // ---- ④ 尺寸驱动主开关默认值（AppSettings 单一数据源）----
+    {
+        CHECK(AppSettings::defaultValue(QLatin1String("dimension/driveOn")).toBool(),
+              "④ AppSettings 尺寸驱动默认开启");
+    }
+
+    // ---- ⑤ 两直线不相交 → 明确错误提示，不创建标注（命令路径）----
+    {
+        SketchModel m;
+        const int lidA = addLine(m, 0, 0, 30, 0);    // 水平线 y=0
+        const int lidB = addLine(m, 0, 10, 30, 10);  // 水平线 y=10（平行，不相交）
+        m.setSelection({lidA, lidB});
+        CommandInterpreter interp(&m);
+        CHECK(!interp.execute(QStringLiteral("dim angle")), "⑤ 两直线不相交 → dim angle 失败并报错");
+        int cnt = 0;
+        for (const auto& e : m.elements())
+            if (e.type == ElementType::Dimension && e.dtype == DimensionType::Angle) cnt++;
+        CHECK(cnt == 0, "⑤ 不相交时不创建角度标注图元");
+    }
+
+    fprintf(stdout, "  (两线角度标注+尺寸驱动开关自测: 通过 %d / 失败 %d)\n",
+            g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ============================================================================
 // 新建图纸幅面驱动打印页面设置（t_sheetPageSync）
 // ----------------------------------------------------------------------------
 // 根因回归：新建 A4 横向 → 打印预览/导出 PDF 曾恒为默认 A4 纵向。
@@ -9595,6 +9826,7 @@ int main(int argc, char** argv) {
     CHECK(t_ucs(),         "用户坐标系 UCS(往返换算/45°@100<0落点≤1e-6/ucs命令定义+CRUD/极轴正交栅格UCS对齐/读数切换/网格方向/不入档)");
     CHECK(t_ucsSheetCenter(), "UCS 幅面中心(新建图纸原点=图纸中央/命令参数坐标随UCS/两路输入同源/raw纯解析回归/世界系恒等/move位移不受UCS)");
     CHECK(t_sheetPageSync(), "新建图纸幅面驱动页面设置(六幅面映射/只动两字段/随图存档往返/图框自愈/零布局PDF横竖端到端/布局seeding/COM批出图)");
+    CHECK(t_dimDriven(), "尺寸驱动编辑(直线/圆/角度驱动+相邻联动+标注文本同步+域刷新+单步撤销+dimedit入口)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");
@@ -9621,6 +9853,7 @@ int main(int argc, char** argv) {
     CHECK(t_dimDriveLength(),    "DimDrive Length");
     CHECK(t_dimDriveDistance(),  "DimDrive Distance");
     CHECK(t_dimDriveAngle(),     "DimDrive Angle");
+    CHECK(t_dimAngleDrive(),     "需求D: 两线角度标注+尺寸驱动主开关");
     CHECK(t_paramLink(),         "Param Link 参数表联动");
     CHECK(t_driveConsistency(),  "Drive 一致性校验");
 

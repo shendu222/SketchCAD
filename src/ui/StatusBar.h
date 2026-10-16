@@ -19,7 +19,7 @@ class StatusBar : public QStatusBar {
     Q_OBJECT
 public:
     // 可点击开关的键（顺序即排布顺序）
-    enum class Toggle { Ortho = 0, Polar, Snap, Track, Lwt };
+    enum class Toggle { Ortho = 0, Polar, Snap, Track, Lwt, DimDrive };
     explicit StatusBar(QWidget* parent = nullptr);
     void setCommand(const QString& s);
     void setOptions(const QStringList& opts);  // 选项提示区：[C/闭合 U/放弃]，空列表则清空
@@ -42,7 +42,7 @@ signals:
 private:
     QLabel *lCmd, *lOpt, *lCoord, *lPlane, *lUcs, *lCount, *lScale, *lStats;
     QToolButton* btnSave_ = nullptr;            // 上次自动保存时间（点击手动触发）
-    QToolButton* btns_[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    QToolButton* btns_[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     UnitsMeta units_;                          // 坐标显示口径（默认 mm/2 位）
     bool autosaveOn_ = true;                   // 间隔=0 时为 false
 };

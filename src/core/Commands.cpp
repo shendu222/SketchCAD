@@ -2029,7 +2029,7 @@ bool DimCommand::execute(const CommandContext& ctx) {
         {"ordinate", DimensionType::Ordinate}, {"ord", DimensionType::Ordinate}};
     if (ctx.toks.size() < 2) {
         m->log("用法: dim linear|aligned|h|v x1,y1 x2,y2 [尺寸线位置 px,py]", "warn");
-        m->log("      dim angle 顶点 边1点 边2点 | dim radius|dia <圆id> [引出角度]", "warn");
+        m->log("      dim angle（先选中两条相交直线） | dim radius|dia <圆id> [引出角度]", "warn");
         m->log("      dim baseline|continue x1,y1 x2,y2 | dim arc <圆id> [起角 终角]", "warn");
         m->log("      dim leader 起点 折点 [文本点] | dim ordinate 被测点 基准点 [0/90]", "warn");
         return false;
@@ -2052,11 +2052,29 @@ bool DimCommand::execute(const CommandContext& ctx) {
         e.refA = c->id;
         e.pts = {c->pts[0], geo::endpointFrom(c->pts[0], c->radius, ang)};
     } else if (dt == DimensionType::Angle) {
-        Vec3 v, p1, p2;
-        if (ctx.toks.size() < 5 || !ctx.parsePoint(2, v) ||
-            !ctx.parsePoint(3, p1) || !ctx.parsePoint(4, p2)) {
-            m->log("用法: dim angle 顶点x,y 边1点x,y 边2点x,y", "warn"); return false;
+        // 角度标注：选两条相交直线，自动以交点为顶点、两线远端端点为边点。
+        // 此布局与 driveDimension 角度分支一致——驱动时天然旋转第二条线（pts[2] 绕顶点旋转，
+        // 与 pts[2] 坐标重合的端点一并联动），无需改内核即可实现夹角驱动。
+        const auto sel = m->selection();
+        if (sel.size() != 2) {
+            m->log(QStringLiteral("dim angle: 请先选中两条相交直线"), QStringLiteral("warn"));
+            return false;
         }
+        const Element* a = m->element(sel[0]);
+        const Element* b = m->element(sel[1]);
+        if (!a || !b || a->type != ElementType::Line || b->type != ElementType::Line
+            || a->pts.size() < 2 || b->pts.size() < 2) {
+            m->log(QStringLiteral("dim angle: 所选两个图元必须都是直线"), QStringLiteral("warn"));
+            return false;
+        }
+        const auto ips = geo::intersectElements(*a, *b);
+        if (ips.empty()) {
+            m->log(QStringLiteral("dim angle: 所选两条直线不相交，无法标注夹角"), QStringLiteral("warn"));
+            return false;
+        }
+        const Vec3 v  = ips.front();
+        const Vec3 p1 = (a->pts[0].distTo(v) < 1e-6) ? a->pts[1] : a->pts[0];
+        const Vec3 p2 = (b->pts[0].distTo(v) < 1e-6) ? b->pts[1] : b->pts[0];
         e.pts = {v, p1, p2};
     } else if (dt == DimensionType::Arc) {
         // 弧长标注：引用一个圆或圆弧；圆没有起止角时用默认 0°~90° 扫掠
@@ -4533,6 +4551,60 @@ void CommandRegistry::registerBuiltins() {
             m->updateElementQuiet(id, [content](Element& d){ d.text = content; });
             cmdRememberArgs(ctx.cmd, t);
             m->log(QStringLiteral("已修改文字 #%1：%2").arg(id).arg(content.left(20)), QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- dimedit：尺寸驱动编辑（改标注数值 → 几何联动调整，标注/文字/域同步）----
+    registerExact("dimedit", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
+            int id = -1; QString valStr;
+            if (t.size() >= 3) {
+                bool ok = false; id = t[1].toInt(&ok);
+                if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+                valStr = t.mid(2).join(QChar(' '));
+            } else {
+                for (int sel : m->selection()) {
+                    const Element* e = m->element(sel);
+                    if (e && e->type == ElementType::Dimension) { id = sel; break; }
+                }
+                if (id < 0 || t.size() < 2) {
+                    m->log(QStringLiteral("用法：dimedit <标注id> <新值> 或选中标注后 dimedit <新值>"), QStringLiteral("error"));
+                    m->log(QStringLiteral("      数值驱动几何联动（对齐/水平/竖直/半径/直径/角度）；其余类型请用属性面板"), QStringLiteral("warn"));
+                    return false;
+                }
+                valStr = t.mid(1).join(QChar(' '));
+            }
+            const Element* e = m->element(id);
+            if (!e || e->type != ElementType::Dimension) {
+                m->log(QStringLiteral("目标 #%1 不是尺寸标注").arg(id), QStringLiteral("warn")); return false;
+            }
+            // 容忍 R20 / ⌀50 / 45° 等前后缀：提取首个数值
+            static const QRegularExpression numRe(QStringLiteral("-?\\d+(?:\\.\\d+)?"));
+            const auto mt = numRe.match(valStr);
+            if (!mt.hasMatch()) {
+                m->log(QStringLiteral("无法从「%1」解析数值").arg(valStr), QStringLiteral("error")); return false;
+            }
+            const double v = mt.captured(0).toDouble();
+            const double oldV = geo::measureDimension(*e);
+            if (!m->dimensionDriven()) {
+                // 尺寸驱动主开关关闭（需求 D-③）：仅覆盖显示文本，不改动任何图元几何
+                m->beginEdit(QStringLiteral("dimedit(仅显示)"));
+                m->updateElementQuiet(id, [valStr](Element& d) { d.text = valStr; });
+                cmdRememberArgs(ctx.cmd, t);
+                m->log(QStringLiteral("尺寸驱动已关闭：dimedit 仅更新标注显示文本 #%1 → %2（几何未改动）")
+                           .arg(id).arg(valStr), QStringLiteral("info"));
+                return true;
+            }
+            if (!m->driveDimension(id, v)) {
+                m->log(QStringLiteral("标注 #%1（%2）不支持尺寸驱动，支持：对齐/距离/水平/竖直/半径/直径/角度")
+                           .arg(id).arg(QString::fromUtf8(dimensionTypeName(e->dtype))), QStringLiteral("warn"));
+                return false;
+            }
+            cmdRememberArgs(ctx.cmd, t);
+            m->log(QStringLiteral("尺寸驱动 #%1：%2 → %3（关联几何与标注已联动更新）")
+                       .arg(id).arg(oldV, 0, 'f', 2).arg(v, 0, 'f', 2), QStringLiteral("info"));
             return true;
         }));
 

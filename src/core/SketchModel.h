@@ -484,6 +484,12 @@ public:
     double gridSnapStep() const { return gridSnapStep_; }
     void setGridSnapStep(double mm);            // 吸附步长（mm，>0）；变化发 gridSnapChanged()
 
+    // ---- 尺寸驱动主开关（需求 D-③）----
+    // 默认开启。开启时修改标注数值（属性栏 / 双击图元 / dimedit 命令）会驱动关联几何联动调整；
+    // 关闭时仅覆盖标注显示文本，不改动任何图元几何。单一状态源，信号广播同步状态栏与持久化。
+    bool dimensionDriven() const { return dimensionDriven_; }
+    void setDimensionDriven(bool on);           // 幂等；变化发 dimensionDrivenChanged()
+
     // ---- 绘图比例（GB/T 14690 技术制图 比例）----
     // 默认 1:1。修改比例会把已有图元（不含图框/标题栏）按内容包围盒中心等比缩放，
     // 使「绘图根据比例进行缩放」。新建图纸时由新建对话框设定初始比例。
@@ -730,6 +736,7 @@ signals:
     void chainLineToggled(bool on);
     void lineParamsChanged();
     void dimensionStandardChanged(DimensionStandard s);
+    void dimensionDrivenChanged(bool on);        // 尺寸驱动主开关变化（状态栏按钮 / 持久化同步）
     void commandPromptChanged(const QString& prompt);
     void commandOptionsChanged(const QStringList& opts);   // 分段命令可选项变化（状态栏/命令行提示）
     void showLineWeightChanged(bool on);                    // 线宽显示开关变化（状态栏/渲染联动）
@@ -807,6 +814,7 @@ private:
     double defaultWidth_ = 1.0;
     LineStyle defaultLineStyle_ = LineStyle::Solid;
     DimensionStandard dimensionStandard_ = DimensionStandard::GBT;   // 当前标注标准（默认国标）
+    bool dimensionDriven_ = true;   // 尺寸驱动主开关（默认开：改标注值联动实际几何）
     bool chainLine_ = true;    // 直线默认连续绘制，右键结束
     LineDrawParams lp_;        // 直线绘制参数输入条（角度/长度、平行间隔/条数）
     double scaleRatio_ = 1.0;  // 绘图比例（图形:实际），1.0 = 1:1

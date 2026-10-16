@@ -34,12 +34,13 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
     // ---- 可点击开关组：正交 / 极轴 / 捕捉 / 追踪 / 线宽 ----
     // 按钮只发 toggleRequested；模型回写经 setToggleState（信号阻塞防回环）。
     struct ToggleDef { Toggle key; const char* text; const char* tip; };
-    const ToggleDef defs[5] = {
+    const ToggleDef defs[6] = {
         { Toggle::Ortho, "正交", "正交模式 (F8)：方向锁定到水平/垂直" },
         { Toggle::Polar, "极轴", "极轴追踪 (F10)：按增量角度追踪落点" },
         { Toggle::Snap,  "捕捉", "栅格吸附 (F9)：坐标量化到栅格步长" },
         { Toggle::Track, "追踪", "对象捕捉追踪 (F11)：沿捕捉点对齐方向追踪" },
         { Toggle::Lwt,   "线宽", "线宽显示：按图元实际线宽渲染（关=一律细线）" },
+        { Toggle::DimDrive, "驱动", "尺寸驱动 (需求 D-③，默认开)：改标注值是否联动调整实际几何；关=仅改标注显示" },
     };
     for (const auto& d : defs) {
         auto* b = new QToolButton(this);

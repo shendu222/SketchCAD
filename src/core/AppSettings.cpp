@@ -14,6 +14,7 @@ using SettingKeys::kRecentFileCount;
 using SettingKeys::kUndoDepth;
 using SettingKeys::kUndoDelta;
 using SettingKeys::kFieldAutoUpdate;
+using SettingKeys::kDimensionDrive;
 using SettingKeys::kShowGrid;
 using SettingKeys::kGridSnap;
 using SettingKeys::kGridSnapStep;
@@ -206,6 +207,10 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         { kRightClickIdleRepeat, true, boolVal },
         // ---- fields（FIELD 域自动刷新；默认开）----
         { kFieldAutoUpdate, true, boolVal },
+        // ---- dimension（尺寸驱动主开关；默认开）----
+        // 开 → 修改标注数值（属性栏 / 双击 / dimedit）驱动关联几何联动调整；
+        // 关 → 仅覆盖标注显示文本，不改动任何图元几何。
+        { kDimensionDrive, true, boolVal },
         // ---- privacy ----
         // 遥测默认关闭（用户任务硬边界：默认不得有任何网络外发）；
         // 诊断包导出不依赖此键——只在用户主动点击时生成本地 ZIP。
@@ -467,6 +472,9 @@ void AppSettings::setDynMode(bool b) { setValue(QLatin1String(kDynMode), b); }
 
 bool AppSettings::showLineWeight() const { return value(QLatin1String(kShowLineWeight)).toBool(); }
 void AppSettings::setShowLineWeight(bool b) { setValue(QLatin1String(kShowLineWeight), b); }
+
+bool AppSettings::dimensionDriveOn() const { return value(QLatin1String(kDimensionDrive)).toBool(); }
+void AppSettings::setDimensionDrive(bool b) { setValue(QLatin1String(kDimensionDrive), b); }
 
 int AppSettings::recentFileCount() const { return value(QLatin1String(kRecentFileCount)).toInt(); }
 void AppSettings::setRecentFileCount(int n) { setValue(QLatin1String(kRecentFileCount), n); }

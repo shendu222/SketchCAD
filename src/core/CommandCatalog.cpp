@@ -147,6 +147,7 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("dtext", "单行文字", "工具", "text 的别名入口", "dtext <x,y> <字高> <内容...>", "", "", { "text" }, "");
     add("mtext", "多行文字", "工具", "放置多行文字", "mtext <x,y> <字高> <内容...>", "", "", { "text" }, "");
     add("ddedit", "编辑文字", "工具", "修改既有文字内容", "ddedit <id> <新内容>", "", "", { "text", "mtext" }, "");
+    add("dimedit", "尺寸驱动", "标注", "修改标注数值，几何按关联联动调整，标注/文字/域同步更新", "dimedit <标注id> <新值> 或选中标注后 dimedit <新值>", "支持：对齐/距离/水平/竖直/半径/直径/角度；容忍 R/⌀/° 前后缀", "dimedit 50", { "dim", "ddedit" }, "");
     add("linetype", "线型", "工具", "线型的加载/设置/列表", "linetype", "", "", {}, "");
     add("dxfout", "导出 DXF", "工具", "把当前图导出为 DXF 文件（可选版本）", "dxfout <路径.dxf> [-v R12|2000]", "", "dxfout part.dxf -v 2000", { "wblock" }, "");
     add("group", "编组", "工具", "编组的创建/加成员/移除/列表/解组", "group [create <名> | add <名> | remove | list | ungroup <名>]", "", "group create 螺栓组", { "block" }, "");

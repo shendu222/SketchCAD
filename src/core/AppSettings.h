@@ -53,6 +53,8 @@ inline constexpr const char* kConstraintSolver  = "solver/constraintEnabled";
 // 打开文档时自动刷新 FIELD 域（默认开）：对全模型含域 MText/Table 预热求值一次
 // （求值只读不改几何、异常回落 ###）。属"应用习惯"。
 inline constexpr const char* kFieldAutoUpdate   = "fields/autoUpdateOnOpen";
+// 尺寸驱动主开关（需求 D-③）：默认开。开→改标注值联动实际几何；关→仅覆盖标注显示文本。属"应用习惯"。
+inline constexpr const char* kDimensionDrive    = "dimension/driveOn";
 inline constexpr const char* kDefaultSaveDir    = "files/defaultSaveDir";
 inline constexpr const char* kDefaultTemplate   = "files/defaultTemplate";
 inline constexpr const char* kLastDir           = "files/lastDir";
@@ -154,6 +156,7 @@ public:
     bool   orthoMode() const;          void setOrthoMode(bool b);
     bool   dynMode() const;            void setDynMode(bool b);
     bool   showLineWeight() const;     void setShowLineWeight(bool b);
+    bool   dimensionDriveOn() const;    void setDimensionDrive(bool b);      // 尺寸驱动主开关（默认开）
     int    recentFileCount() const;    void setRecentFileCount(int n);    // 0..20，默认 10
     int    undoDepth() const;          void setUndoDepth(int n);           // 1..1000，默认 100
     bool   undoDelta() const;          void setUndoDelta(bool b);          // 默认 true（差量化开）
