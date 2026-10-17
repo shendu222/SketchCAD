@@ -22,6 +22,7 @@
 #include "CadFormats.h"        // P0-01：dxfout 命令行导出（版本协商 / 原生实体）
 #include "CommandCatalog.h"    // help <cmd>：命令元数据目录（用法/参数/样例/相关）
 #include "CommandInterpreter.h" // help 总表：commandNames()（注册表+家族全集）
+#include "BomItem.h"            // P2：序号球标纯生成器 + BomItem 数据模型
 #include "AliasTable.h"        // help 总表：别名单列；help <cmd> 先解析别名
 #include <QRegularExpression>
 #include <QFile>              // P0-01：dxfout 文件写出
@@ -4524,6 +4525,49 @@ void CommandRegistry::registerBuiltins() {
     registerExact("text",  std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, false); }));
     registerExact("dtext", std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, false); }));
     registerExact("mtext", std::make_shared<LambdaCommand>([](const CommandContext& ctx){ return runTextCmd(ctx, true); }));
+
+    // ---- xh：序号球标（明细表 BOM 联动）----
+    // 选中对象 / 给定 id → 按源几何质心放置「圆 + 编号文字」球标 → 追加 BomItem → 刷新明细表。
+    // 一次操作一次 pushMemento（整组球标 + 明细行可一次 Ctrl+Z 撤回；addElementsQuiet 不压栈）。
+    registerExact("xh", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            // 目标 id：命令行 token（xh 12 13）优先，否则取当前选择集
+            std::vector<int> ids;
+            for (int i = 1; i < ctx.toks.size(); ++i) {
+                bool ok = false; int id = ctx.toks[i].toInt(&ok);
+                if (ok && id >= 0) ids.push_back(id);
+            }
+            if (ids.empty())
+                for (int s : m->selection()) ids.push_back(s);
+            if (ids.empty()) {
+                m->log(QStringLiteral("xh：请先选中对象或给定图元 id（用法：xh [id ...]）"), QStringLiteral("error"));
+                return false;
+            }
+            m->beginEdit(QStringLiteral("序号球标"));   // 公开入口压一次撤销快照（整组可一次 Ctrl+Z）
+            int added = 0;
+            for (int id : ids) {
+                const Element* e = m->element(id);
+                if (!e) continue;
+                const Vec3 c = geo::elementCentroid(*e);           // 球标置于源几何质心
+                const int seq = m->nextBomSeq();                   // 唯一递增序号
+                auto parts = buildBalloon(seq, c, e->layer);       // 圆 + 编号文字
+                const std::vector<int> newIds = m->addElementsQuiet(parts);
+                BomItem it;
+                it.seq = seq;
+                it.srcIds = { (qint64)id };                       // 关联源几何
+                for (int nid : newIds) it.balloonIds.append((qint64)nid);  // 关联球标标记
+                m->addBomItem(it);
+                ++added;
+            }
+            if (added == 0) {
+                m->log(QStringLiteral("xh：无有效对象，未生成球标"), QStringLiteral("warn"));
+                return false;
+            }
+            m->log(QString("xh：已生成 %1 个序号球标（明细表已刷新）").arg(added), QStringLiteral("info"));
+            // 刷新明细表：Phase-1 数据已写入 bom_；BomTree 视图联动刷新见 docs 偏差说明（后续集成步骤）。
+            return true;
+        }));
 
     // ---- ddedit（ED）：修改文字/多行文字内容 ----
     registerExact("ddedit", std::make_shared<LambdaCommand>(

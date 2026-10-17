@@ -1500,7 +1500,19 @@ void GraphicsView::zoomToElement(int id) {
 
 void GraphicsView::onModelChanged() {
     // 本编辑批次已通过 onElementUpdated 增量处理（O(1)）→ 仅刷新视口，不做差异扫描。
-    if (incSyncPending_) { incSyncPending_ = false; viewport()->update(); return; }
+    if (incSyncPending_) {
+        incSyncPending_ = false;
+        // 增量更新后若场景项数与模型图元数不一致（如 O(1) 更新后紧接增删），
+        // 仍须跑一次差异同步补齐/清理——否则新增图元不渲染、被删图元残留。
+        // 仅作数量判定（O(1)），正常 O(1) 更新且数量一致时仍走轻量刷新，不破坏性能契约。
+        // 根因：modify::applyChanges 先 emit modelChanged 再 emit elementUpdated，
+        // 使 incSyncPending_ 在批次尾部才被置位并"泄漏"到下一操作；下一操作的 modelChanged
+        // 若直接短路，会导致真正新增的图元被跳过（实测 t_incrementalRender 新增 d 漏建）。
+        if ((int)items_.size() != model_->elementCount())
+            syncIncremental();
+        viewport()->update();
+        return;
+    }
     // 批量/结构性变更（clear/load/undo、图层增删、平面切换…）→ 差异同步（复用场景项，不全量重建）
     syncIncremental();
     viewport()->update();

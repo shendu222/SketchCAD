@@ -43,6 +43,7 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("poly", "多边形", "绘图", "依次输入顶点绘制多边形（首末自动闭合）", "poly x1,y1 x2,y2 ...", "", "poly 0,0 40,0 20,35", { "poly_regular", "poly_edge" }, "");
     add("spline", "样条曲线", "绘图", "依次输入顶点绘制样条曲线", "spline p1 p2 ...", "", "spline 0,0 30,20 60,5", { "spline_parabola_4p", "spline_through_points" }, "");
     add("point", "点", "绘图", "绘制单个或多个点", "point <x,y> [x,y ...]", "", "point 10,10 30,40", {}, "");
+    add("xh", "序号球标", "绘图", "为选中对象生成序号球标并写入明细表（BOM）", "xh [id ...]", "先选中零部件几何或给定图元 id；自动按质心放置圆+编号球标并追加明细行", "xh 12 13", { "bom", "balloon" }, "");
     add("xline", "构造线", "绘图", "无限长构造直线（过点+角度 / 两点 / 平行 / 平分）", "xline x,y <角度> | xline x1,y1 x2,y2", "子模式：xline_h / xline_v / xline_angle / xline_bisector / xline_parallel", "xline 0,0 45", { "line" }, "");
     add("hatch", "图案填充", "绘图", "对选中闭合边界生成关联填充，或调整填充参数", "hatch [scale <倍数> | angle <度> | pattern <名|none>]", "先选中闭合边界图元（圆/矩形/闭合折线等）；无参数 = 默认填充", "hatch scale 1.5", { "bhatch", "hatchedit" }, "");
     add("bhatch", "边界填充", "绘图", "hatch 的别名入口（自动选边界）", "bhatch", "", "", { "hatch" }, "");

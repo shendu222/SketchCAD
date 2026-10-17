@@ -187,6 +187,13 @@ public slots:
     bool memLimited() const { return memLimited_; }             // 内存不足：场景项创建已暂停
     void processDeferredBuilds(int maxCount = -1);              // 分帧补建离屏场景项（空闲/测试可驱动）
     void setCullEnabled(bool on);                               // 视口裁剪建项开关（默认开，阈值内不生效）
+    // ---- P0-2 G-C 增量更新：只读指针身份访问器（证明「单图元变更不重建」）----
+    // 返回 id 对应场景项的裸指针；用于自测断言「变更前后同一 id 的 ElementItem* 身份不变」，
+    // 从而验证增量链路确实未被 rebuild() 全量重建（rebuild 会 scene_->clear()+items_.clear() 使旧指针失效）。
+    ElementItem* itemForId(int id) const {
+        auto it = items_.find(id);
+        return it == items_.end() ? nullptr : it->second;
+    }
 protected:
     void drawBackground(QPainter* p, const QRectF& rect) override;
     void drawForeground(QPainter* p, const QRectF& rect) override;

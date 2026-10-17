@@ -2923,6 +2923,103 @@ std::optional<SheetSpec> SketchModel::sheetSpecFromJson(const QJsonObject& o) {
     return s;
 }
 
+// ---- 明细表（BOM）/ 序号球标（随图存档顶层 "bom"）----
+// 与「图纸幅面」同等地位：运行期唯一写入途径是 xh 命令；数据层不入元素撤销差量。
+int SketchModel::nextBomSeq() const {
+    int mx = 0;
+    for (const auto& it : bom_) if (it.seq > mx) mx = it.seq;
+    return mx + 1;                       // 空表 → 1；保证唯一递增（不随删除而重用）
+}
+
+void SketchModel::addBomItem(const BomItem& it) {
+    bom_.append(it);
+}
+
+void SketchModel::removeBomItemAt(int index) {
+    if (index < 0 || index >= (int)bom_.size()) return;
+    // 联动删除球标标记图元（圆 + 编号文字），静默删除不压栈（调用方已 pushMemento）
+    for (qint64 id : bom_[index].balloonIds) removeElementQuiet((int)id);
+    bom_.removeAt(index);
+}
+
+int SketchModel::mergeBomByName() {
+    // 合并同名行：保留每组中 seq 最小的行，srcIds/balloonIds 取并集；
+    // 其余同名行删除（其球标标记随 removeElementQuiet 一并清理）。
+    for (int i = 0; i < (int)bom_.size(); ++i) {
+        if (bom_[i].name.isEmpty()) continue;          // 无名不合并
+        for (int j = i + 1; j < (int)bom_.size(); ) {
+            if (bom_[j].name == bom_[i].name) {
+                if (bom_[j].seq < bom_[i].seq) {       // 保留更小 seq 的行
+                    std::swap(bom_[i], bom_[j]);
+                }
+                for (qint64 id : bom_[j].balloonIds) {
+                    bom_[i].balloonIds.append(id);
+                    removeElementQuiet((int)id);
+                }
+                for (qint64 id : bom_[j].srcIds)
+                    if (!bom_[i].srcIds.contains(id)) bom_[i].srcIds.append(id);
+                bom_.removeAt(j);                      // 删除被合并行（不移动 i）
+            } else {
+                ++j;
+            }
+        }
+    }
+    renumberBom();                                     // 合并后重排，保证 1..N 唯一
+    return bom_.size();
+}
+
+void SketchModel::renumberBom() {
+    for (int i = 0; i < (int)bom_.size(); ++i) bom_[i].seq = i + 1;
+}
+
+int SketchModel::bomIndexForBalloon(qint64 balloonElemId) const {
+    for (int i = 0; i < (int)bom_.size(); ++i)
+        if (bom_[i].balloonIds.contains(balloonElemId)) return i;
+    return -1;
+}
+
+const BomItem* SketchModel::bomItemAt(int index) const {
+    return (index >= 0 && index < (int)bom_.size()) ? &bom_[index] : nullptr;
+}
+
+QJsonArray SketchModel::bomToJson() const {
+    QJsonArray a;
+    for (const auto& it : bom_) {
+        QJsonObject o;
+        o["seq"]      = it.seq;
+        o["code"]     = it.code;
+        o["name"]     = it.name;
+        o["material"] = it.material;
+        o["weight"]   = it.weight;
+        o["remark"]   = it.remark;
+        QJsonArray s;
+        for (qint64 id : it.srcIds) s.append((double)id);
+        o["srcIds"] = s;
+        QJsonArray b;
+        for (qint64 id : it.balloonIds) b.append((double)id);
+        o["balloonIds"] = b;                            // Phase-1 扩展字段（悬停取数/联动删标记）
+        a.append(o);
+    }
+    return a;
+}
+
+void SketchModel::setBomFromJson(const QJsonArray& a) {
+    bom_.clear();
+    for (const auto& v : a) {
+        const QJsonObject o = v.toObject();
+        BomItem it;
+        it.seq      = o.value("seq").toInt(0);
+        it.code     = o.value("code").toString();
+        it.name     = o.value("name").toString();
+        it.material = o.value("material").toString();
+        it.weight   = o.value("weight").toString();
+        it.remark   = o.value("remark").toString();
+        for (const auto& s : o.value("srcIds").toArray())     it.srcIds.append((qint64)s.toDouble());
+        for (const auto& b : o.value("balloonIds").toArray()) it.balloonIds.append((qint64)b.toDouble());
+        bom_.append(it);
+    }
+}
+
 void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
     if (c == snapConfig_) return;                 // 相同不发信号、也不入栈（幂等）
     pushMemento(QStringLiteral("修改捕捉设置"));
@@ -3426,6 +3523,7 @@ void SketchModel::reorderElement(int id, int beforeId) {
 void SketchModel::clear() {
     scaleRatio_ = 1.0;          // 清空即回到默认 1:1（新建图纸契约）
     hasSheetSpec_ = false;      // 幅面规格随 clear 一并丢弃（新图由 applyNewDrawing 重设；
+    bom_.clear();               // 明细表随 clear 一并丢弃（读档路径在 clear 之后按 "bom" 键重设）
                                 // 读档路径在 clear 之后按 "sheet" 键/图框推断重设）
     trackPoints_.clear();       // 临时追踪点属瞬态会话状态，新建/清空图纸时一并丢弃
     if (elems_.empty()) return;
@@ -3801,6 +3899,8 @@ QJsonObject SketchModel::toDrawingJson() const {
     root["properties"] = propsToJson();   // 自定义图纸特性（PROP 域数据源；旧档缺键 → 空表）
     // 图纸幅面规格（打印/预览/PDF 页面尺寸与方向的数据源；旧档缺键 → 读档按图框推断）
     if (hasSheetSpec_) root["sheet"] = sheetSpecToJson();
+    // 明细表（BOM）/ 序号球标（无数据不写 "bom" 键，精确镜像 sheet 条件写键模式）
+    if (!bom_.isEmpty()) root["bom"] = bomToJson();
     return root;
 }
 

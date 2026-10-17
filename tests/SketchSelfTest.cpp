@@ -6,6 +6,7 @@
 #include <QKeyEvent>      // t_interaction：键盘事件直注（QApplication::sendEvent）
 #include <QFileInfo>
 #include <QFile>
+#include <QSet>          // t_sheetFrameBars：预设 key 唯一性检查
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -20,6 +21,22 @@
 #include "ConstraintSolver.h"
 #include "ConstraintSolverFacade.h"   // SKT 集成 Phase B：约束求解路由门面
 #include "Geometry.h"
+#include "CenterLineGen.h"   // P1 中心线家族生成器（t_centerLine 直测）
+#include "SymbolFactory.h"    // P3 符号标注扩展生成器（t_symbolExt 直测）
+#include "BomItem.h"           // P2 序号球标纯生成器 + BomItem 数据模型（t_bom 直测）
+#include "InvoluteGear.h"       // P4 渐开线齿轮齿廓采样生成器（t_gear 直测）
+#include "PartLibrary.h"        // P4 零件库抽象（t_gear 直测 GearGenerator 接入）
+#include "GbFastenerTable.h"    // P5 GB 紧固件规格表（t_partlib 直测）
+#include "Block.h"               // P5 出库：BlockDef / makeRef / extractAttributes
+#include "ViewTools.h"           // P6 视图工具（向视符号/孔轴投影/转角投影，t_viewtool 直测）
+#include "SectionProps.h"        // P7 截面特性（面积/形心/二次矩/惯性积 + 重量估算，t_sectionprops 直测）
+#include "DensityTable.h"        // P7 材料密度表（人工提供禁改数值，t_sectionprops 直测）
+#include "BatchBom.h"            // P7 批量 BOM 汇总（只读顶层 bom 键，t_bomanalysis 直测）
+#include "VarParam.h"            // P8 变量表达式层（变量表 + 安全求值器 + 拓扑重算，t_varparam 直测）
+#include "BatchTools.h"          // P9 扩展工具（机械图拆分/自动排图/批量签名，t_splitplot 直测）
+#include "TitleBlockLayout.h"    // P9 批量签名：单元格适配单一入口（fitCellText/titleBlockCellAt）
+#include "SheetSpec.h"           // P9 标题栏字段 key↔label（titleBlockFields）+ buildSheetFrame
+#include "FeatureMenu.h"         // P1~P9 功能菜单与准入（目录 + 条件评估，t_featuremenu 直测）
 #include "Snap.h"
 #include "Vec.h"
 #include "CommandInterpreter.h"
@@ -41,7 +58,7 @@
 #include "ElementFactory.h"  // GD&T：createMLeader / createFcf 工厂
 #include "Modify.h"          // 分层测试网：修改引擎纯函数层
 #include "Clipboard.h"       // 分层测试网：内部剪贴板（JOIN/阵列/剪贴板三件套）
-#include "ui/DocTab.h"       // 多文档标签：DocSession/DocManager 会话核心（t_multidoc）
+#include "ui/DocTab.h"      // 多文档标签：DocSession/DocManager 会话核心（t_multidoc）
 #include "ui/CommandLine.h"  // 命令行键盘语义（历史/补全/重复上一命令），t_interaction 直测
 #include "AppSettings.h"     // 应用级配置持久化（t_appsettings / t_recent / t_interaction）
 #include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
@@ -64,6 +81,7 @@
 #include "Diagnostics.h"      // 崩溃不丢稿：日志滚动落盘 + 崩溃转储
 #include "core/TextMetrics.h" // 文字度量单一数据源（屏幕/打印/取景 三处同源）自测
 #include "SheetSpec.h"        // 标题栏表格化：buildSheetFrame / InsertedTitleBlock（t_titleBlockAux）
+#include "SheetFrameTemplate.h" // 新建图框扩展：三栏预设/模板持久化（t_sheetFrameBars）
 #include "ProjectionSymbol.h" // 辅助元素打印过滤：isProjectionSymbolElement 谓词（t_titleBlockAux）
 #include "TitleBlockLayout.h" // 单元格文字自适应 + 网格重建（t_titleBlockAux 直测）
 #include "ui/PlotRenderer.h"  // 端到端出图：renderModel 直渲染 QImage（t_titleBlockAux 墨迹断言）
@@ -8773,6 +8791,88 @@ static bool t_textMetrics() {
 // 运行环境持 QApplication，但本组锚定无头确定性度量（size*height*0.62），
 // 与 t_textMetrics 同口径；组尾还原，不影响其它测试组。
 // ===========================================================================
+// 【新建图框】图框生成选项（buildSheetFrameWithOptions）：向后兼容 + GB 装订/加长/自定义/分区/对中/明细栏
+static bool t_sheetFrameOpts() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- 【新建图框】图框生成选项 (buildSheetFrameWithOptions) ---\n");
+
+    // 取「图框」层、粗实线(width=2)矩形 = 图框内边界，返回其最小 x（=装订边 a 或 e）
+    auto frameLeft = [](const std::vector<Element>& els) {
+        double x = 1e9; bool found = false;
+        for (const auto& e : els) {
+            if (e.layer == QStringLiteral("图框") && e.type == ElementType::Rectangle && e.lineWidth == 2.0) {
+                for (const auto& v : e.pts) { if (v.x < x) x = v.x; found = true; }
+            }
+        }
+        return found ? x : -1.0;
+    };
+    auto hasText = [](const std::vector<Element>& els, const QString& s) {
+        for (const auto& e : els) if (e.type == ElementType::Text && e.text == s) return true;
+        return false;
+    };
+    auto hasField = [](const std::vector<Element>& els, const QString& key) {
+        for (const auto& e : els) if (e.name == QStringLiteral("tb:field:") + key) return true;
+        return false;
+    };
+
+    // ① 向后兼容：默认选项 == 旧 buildSheetFrame(A3 横向)
+    SheetFrameOptions def; def.basicFormat = SheetFormat::A3; def.landscape = true;
+    auto baseA3 = buildSheetFrameWithOptions(def);
+    auto oldA3  = buildSheetFrame(SheetSpec::make(SheetFormat::A3, true));
+    CHECK(baseA3.size() == oldA3.size(), "frameOpts: 默认选项与旧 buildSheetFrame 图元数一致");
+    CHECK(hasField(baseA3, QStringLiteral("drawingName")), "frameOpts: 默认选项含标准标题栏字段");
+
+    // ② 留装订边：A3 左边界 = a = 25
+    CHECK(std::fabs(frameLeft(baseA3) - 25.0) < 1e-6, "frameOpts: 留装订边 A3 左边界=25");
+
+    // ③ 不留装订边：A3 四边 e = 10（A3→e=10）
+    SheetFrameOptions unb = def; unb.bindingMargin = false;
+    auto e3 = buildSheetFrameWithOptions(unb);
+    CHECK(std::fabs(frameLeft(e3) - 10.0) < 1e-6, "frameOpts: 不留装订边 A3 边界=10(e)");
+
+    // ④ 加长幅面 A3×3（横向）：宽=891 高=420；周边按「大一号」A2 → c=10 → 左边界=25
+    SheetFrameOptions ext; ext.sizeMode = SheetFrameOptions::SizeMode::Extended;
+    ext.extBase = SheetFormat::A3; ext.extFactor = 3; ext.landscape = true;
+    auto extEls = buildSheetFrameWithOptions(ext);
+    CHECK(std::fabs(ext.widthMm() - 891.0) < 1e-6 && std::fabs(ext.heightMm() - 420.0) < 1e-6,
+          "frameOpts: A3×3 横放尺寸 891×420");
+    CHECK(std::fabs(frameLeft(extEls) - 25.0) < 1e-6, "frameOpts: 加长幅面图框按大一号(A2)→左边界=25");
+    CHECK(ext.sizeLabel().contains(QStringLiteral("A3×3")), "frameOpts: sizeLabel 含 A3×3");
+
+    // ⑤ 自定义幅面 500×400：宽=500 高=400；最长边 500→A3 档 → c=5 → 左边界=25
+    SheetFrameOptions cus; cus.sizeMode = SheetFrameOptions::SizeMode::Custom;
+    cus.customW = 500.0; cus.customH = 400.0;
+    auto cusEls = buildSheetFrameWithOptions(cus);
+    CHECK(std::fabs(cus.widthMm() - 500.0) < 1e-6 && std::fabs(cus.heightMm() - 400.0) < 1e-6,
+          "frameOpts: 自定义尺寸 500×400");
+    CHECK(std::fabs(frameLeft(cusEls) - 25.0) < 1e-6, "frameOpts: 自定义按最长边定档→左边界=25");
+
+    // ⑥ 对中符号：开启后恰好多 4 条边中点短线
+    SheetFrameOptions cm = def; cm.centerMarks = true;
+    auto cmEls = buildSheetFrameWithOptions(cm);
+    CHECK(cmEls.size() == baseA3.size() + 4, "frameOpts: 对中符号恰好新增 4 条短线");
+
+    // ⑦ 分区：A3 长度4×宽度2 → 新增 10 个图元(3竖线+4数字+1横线+2字母)，且出现编号"1"与字母"A"
+    SheetFrameOptions zo = def; zo.zonesEnabled = true; zo.zoneCountX = 4; zo.zoneCountY = 2;
+    auto zoEls = buildSheetFrameWithOptions(zo);
+    CHECK(zoEls.size() >= baseA3.size() + 10, "frameOpts: 分区网格新增图元");
+    CHECK(hasText(zoEls, QStringLiteral("1")) && hasText(zoEls, QStringLiteral("A")),
+          "frameOpts: 分区编号(数字1/字母A)已生成");
+
+    // ⑧ 明细栏：开启后出现表头"序号"
+    SheetFrameOptions bom = def; bom.bomEnabled = true; bom.bomRows = 4;
+    auto bomEls = buildSheetFrameWithOptions(bom);
+    CHECK(bomEls.size() > baseA3.size(), "frameOpts: 明细栏新增图元");
+    CHECK(hasText(bomEls, QStringLiteral("序号")), "frameOpts: 明细栏表头含「序号」");
+
+    // ⑨ 无标题栏：None 时不生成标题栏字段
+    SheetFrameOptions noTb = def; noTb.titleBlock = TitleBlockStyle::None;
+    auto noTbEls = buildSheetFrameWithOptions(noTb);
+    CHECK(!hasField(noTbEls, QStringLiteral("drawingName")), "frameOpts: 无标题栏样式不含 tb:field");
+
+    return true;
+}
+
 static bool t_titleBlockAux() {
     using namespace SketchCAD;
     fprintf(stdout, "--- 标题栏表格化 + 辅助元素打印过滤 ---\n");
@@ -9706,6 +9806,1760 @@ static bool t_sheetPageSync() {
     return (g_fail - failBefore) == 0;
 }
 
+// ----------------------------------------------------------------------------
+// 【新建图框】附加栏/代号栏/参数栏 + 装订宽度 + 模板持久化（t_sheetFrameBars）
+// 需求 10/11/12 + 附图扩展：三栏预设注册表（key 绝不猜）、代号栏与标题栏图号
+// 同名共用（tb:field:drawingNumber ×2 → TitleBlockForm 同名全写回自动关联）、
+// 明细栏→附加栏→参数栏越顶堆叠、bindingWidth 可配置装订宽度、模板 JSON 往返。
+// ============================================================================
+static bool t_sheetFrameBars() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- 新建图框扩展（附加栏/代号栏/参数栏/装订宽度/模板持久化） ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    auto countNamed = [](const std::vector<Element>& els, const QString& name) {
+        int n = 0;
+        for (const auto& e : els) if (e.name == name) ++n;
+        return n;
+    };
+    auto hasText = [](const std::vector<Element>& els, const QString& layer,
+                      const QString& text) {
+        for (const auto& e : els)
+            if (e.type == ElementType::Text && e.layer == layer && e.text == text) return true;
+        return false;
+    };
+
+    // ---- 1) 向后兼容：默认选项无三新栏（与旧生成一致） ----
+    {
+        SheetFrameOptions def;
+        const auto els = buildSheetFrameWithOptions(def);
+        CHECK(countNamed(els, QStringLiteral("tb:field:drawingNumber")) == 1,
+              "sheetFrameBars: 默认选项仅标题栏 1 处图号字段");
+        CHECK(!hasText(els, QStringLiteral("标题栏"), QStringLiteral("更改标记")) &&
+              !hasText(els, QStringLiteral("图框"), QStringLiteral("图样代号")),
+              "sheetFrameBars: 默认选项无附加栏/代号栏墨迹");
+    }
+
+    // ---- 2) 附加栏（需求 10）：预设绘制于标题栏上方，越顶压缩不越界 ----
+    {
+        SheetFrameOptions o;
+        o.additionalBarEnabled = true;
+        o.additionalBarKey = QStringLiteral("revision");
+        const auto els = buildSheetFrameWithOptions(o);
+        CHECK(hasText(els, QStringLiteral("标题栏"), QStringLiteral("更改标记")),
+              "sheetFrameBars: 附加栏(revision)表头绘制");
+        // 只统计「标题栏」层的栏元素（纸张外框矩形在 "图框" 层、y=H，不得计入），
+        // 并断言栏顶不越过图框顶留边（otherM ≥ 5，frameTop = H - otherM ≤ H - 5）。
+        double maxY = -1e9;
+        for (const auto& e : els)
+            if (e.layer == QStringLiteral("标题栏"))
+                for (const auto& v : e.pts) maxY = std::max(maxY, v.y);
+        CHECK(maxY <= o.heightMm() - 5.0 + 1e-6,
+              "sheetFrameBars: 附加栏不越出图框顶部");
+        // 未知 key → 绝不猜（无新增墨迹）
+        SheetFrameOptions bad = o;
+        bad.additionalBarKey = QStringLiteral("nope");
+        CHECK(buildSheetFrameWithOptions(bad).size() ==
+              buildSheetFrameWithOptions(SheetFrameOptions{}).size(),
+              "sheetFrameBars: 未知附加栏 key 回落默认（绝不猜）");
+    }
+
+    // ---- 3) 参数栏（需求 12）：预设表头 + 未知 key 守卫 ----
+    {
+        SheetFrameOptions o;
+        o.paramBarEnabled = true;
+        o.paramBarKey = QStringLiteral("bevelGear");
+        const auto els = buildSheetFrameWithOptions(o);
+        CHECK(hasText(els, QStringLiteral("标题栏"), QStringLiteral("模数 m")),
+              "sheetFrameBars: 参数栏(直齿锥齿轮)表头绘制");
+    }
+
+    // ---- 4) 代号栏（需求 11）：图框左上角 + 与标题栏图号同名自动关联 ----
+    {
+        SheetFrameOptions o;
+        o.codeBarEnabled = true;
+        o.codeBarKey = QStringLiteral("Tydh");
+        const auto els = buildSheetFrameWithOptions(o);
+        CHECK(countNamed(els, QStringLiteral("tb:field:drawingNumber")) == 2,
+              "sheetFrameBars: 代号栏与标题栏图号共用名（2 处 → 同名全写回关联）");
+        CHECK(hasText(els, QStringLiteral("图框"), QStringLiteral("图样代号")),
+              "sheetFrameBars: 代号栏标签绘制于图框层");
+    }
+
+    // ---- 5) 分区左带开关（附图「是否显示左分区」） ----
+    {
+        SheetFrameOptions o;
+        o.zonesEnabled = true;
+        o.zoneCountX = 4;
+        o.zoneCountY = 4;
+        o.zoneShowLeft = true;
+        CHECK(hasText(buildSheetFrameWithOptions(o), QStringLiteral("图框"), QStringLiteral("A")),
+              "sheetFrameBars: 显示左分区时左带字母 A 绘制");
+        o.zoneShowLeft = false;
+        CHECK(!hasText(buildSheetFrameWithOptions(o), QStringLiteral("图框"), QStringLiteral("A")),
+              "sheetFrameBars: 关闭左分区后字母 A 消失（顶带不受影响）");
+    }
+
+    // ---- 6) 装订宽度可配置（附图「装订宽度 25」输入框；默认 25 向后兼容） ----
+    {
+        auto frameLeftX = [](const std::vector<Element>& els) -> double {
+            for (const auto& e : els)
+                if (e.type == ElementType::Rectangle && e.layer == QStringLiteral("图框") &&
+                    e.lineWidth == 2.0)
+                    return e.pts.empty() ? -1e9 : e.pts[0].x;
+            return -1e9;
+        };
+        SheetFrameOptions def;
+        CHECK(std::fabs(frameLeftX(buildSheetFrameWithOptions(def)) - 25.0) < 1e-6,
+              "sheetFrameBars: 默认装订宽度 25（旧行为不变）");
+        SheetFrameOptions w30 = def;
+        w30.bindingWidth = 30.0;
+        CHECK(std::fabs(frameLeftX(buildSheetFrameWithOptions(w30)) - 30.0) < 1e-6,
+              "sheetFrameBars: 装订宽度 30 生效于图框左边界");
+    }
+
+    // ---- 7) 预设注册表：key 唯一、必备成员齐全 ----
+    {
+        QSet<QString> keys;
+        for (const auto& p : additionalBarPresets()) {
+            CHECK(!p.key.isEmpty() && !keys.contains(p.key) && !p.columns.isEmpty() && p.rows >= 1,
+                  "sheetFrameBars: 附加栏预设 key 唯一且成员齐全");
+            keys.insert(p.key);
+        }
+        keys.clear();
+        for (const auto& p : codeBarPresets()) {
+            CHECK(!p.key.isEmpty() && !keys.contains(p.key) &&
+                  !p.caption.isEmpty() && !p.fieldKey.isEmpty(),
+                  "sheetFrameBars: 代号栏预设 key 唯一且关联字段齐全");
+            keys.insert(p.key);
+        }
+        keys.clear();
+        bool hasBevel = false;
+        for (const auto& p : paramBarPresets()) {
+            CHECK(!p.key.isEmpty() && !keys.contains(p.key) && !p.columns.isEmpty() && p.rows >= 1,
+                  "sheetFrameBars: 参数栏预设 key 唯一且成员齐全");
+            keys.insert(p.key);
+            if (p.label == QStringLiteral("直齿锥齿轮参数表")) hasBevel = true;
+        }
+        CHECK(hasBevel, "sheetFrameBars: 参数栏含直齿锥齿轮预设（需求 12 例）");
+    }
+
+    // ---- 8) 模板持久化（需求 13）：JSON 往返 + 缺文件回落内置 sample ----
+    {
+        const QString path = QDir::temp().filePath(QStringLiteral("sketchcad_t_bars.json"));
+        QFile::remove(path);
+        // 缺文件 → 内置 sample
+        const QVector<SheetFrameTemplate> builtin = loadFrameTemplates(path);
+        CHECK(builtin.size() == 1 && builtin[0].name == QStringLiteral("sample"),
+              "sheetFrameBars: 缺模板文件回落内置 sample");
+        // 两个模板（含三新栏 + 比例）往返
+        QVector<SheetFrameTemplate> ts;
+        SheetFrameTemplate a;
+        a.name = QStringLiteral("t1");
+        a.opts.additionalBarEnabled = true;
+        a.opts.additionalBarKey = QStringLiteral("tracing");
+        a.opts.codeBarEnabled = true;
+        a.opts.codeBarKey = QStringLiteral("Tth");
+        a.opts.paramBarEnabled = true;
+        a.opts.paramBarKey = QStringLiteral("sprocket");
+        a.opts.bindingWidth = 30.0;
+        a.opts.autoFillDate = true;
+        a.opts.textInitHeightEnabled = true;
+        a.opts.textInitHeight = 5.0;
+        a.scaleNum = 2.0;
+        a.scaleDen = 1.0;
+        ts.append(a);
+        SheetFrameTemplate b;
+        b.name = QStringLiteral("t2");
+        b.opts.sizeMode = SheetFrameOptions::SizeMode::Extended;
+        b.opts.extBase = SheetFormat::A3;
+        b.opts.extFactor = 3;
+        b.scaleNum = 1.0;
+        b.scaleDen = 4.0;
+        ts.append(b);
+        CHECK(saveFrameTemplates(ts, path), "sheetFrameBars: 模板保存成功");
+        const QVector<SheetFrameTemplate> back = loadFrameTemplates(path);
+        CHECK(back.size() == 2 && back[0].name == QStringLiteral("t1") &&
+              back[1].name == QStringLiteral("t2"),
+              "sheetFrameBars: 模板往返数量与名称一致");
+        CHECK(back[0].opts.additionalBarKey == QStringLiteral("tracing") &&
+              back[0].opts.codeBarKey == QStringLiteral("Tth") &&
+              back[0].opts.paramBarKey == QStringLiteral("sprocket") &&
+              back[0].opts.bindingWidth == 30.0 && back[0].opts.autoFillDate &&
+              back[0].opts.textInitHeightEnabled &&
+              back[0].opts.textInitHeight == 5.0,
+              "sheetFrameBars: 模板往返三新栏/装订宽度/日期/初始高度保真");
+        CHECK(back[0].scaleNum == 2.0 && back[0].scaleDen == 1.0 &&
+              back[1].scaleNum == 1.0 && back[1].scaleDen == 4.0,
+              "sheetFrameBars: 模板往返绘图比例前值/后值保真");
+        CHECK(back[1].opts.sizeMode == SheetFrameOptions::SizeMode::Extended &&
+              back[1].opts.extBase == SheetFormat::A3 && back[1].opts.extFactor == 3,
+              "sheetFrameBars: 模板往返加长幅面保真");
+        QFile::remove(path);
+    }
+
+    fprintf(stdout, "  (新建图框扩展自测: 通过 %d / 失败 %d)\n", g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
+// ---------- P1 中心线家族（CenterLineGen）----------
+static bool t_centerLine() {
+    const int fail0 = g_fail;
+    CLParams p; p.extend = 4.0; p.gap = 0.0; p.layer = QStringLiteral("CENTER");
+
+    auto mkCircle = [](double cx, double cy, double r) {
+        Element e; e.type = ElementType::Circle; e.pts = {Vec3(cx, cy, 0)}; e.radius = r; return e;
+    };
+    auto mkLine = [](double x0, double y0, double x1, double y1) {
+        Element e; e.type = ElementType::Line; e.pts = {Vec3(x0, y0, 0), Vec3(x1, y1, 0)}; return e;
+    };
+
+    // kCircleMark：两圆 → 圆心标记（每圆 1 个小十字=2 线，共 4 线）
+    {
+        Element c1 = mkCircle(0, 0, 10), c2 = mkCircle(50, 50, 8);
+        auto r = makeCenterLine(CenterLineKind::kCircleMark, {c1, c2}, p);
+        CHECK(r.size() == 4, "kCircleMark：两圆应产 4 条线（每圆 2 短臂）");
+        bool allDash = true; for (auto& e : r) if (e.lineStyle != LineStyle::DashDot) allDash = false;
+        CHECK(allDash, "kCircleMark：全部产物线型必须为 DashDot(细点画线/中心线)");
+        bool through0 = false;
+        for (auto& e : r) { Vec3 mid = (e.pts[0] + e.pts[1]) * 0.5; if (mid.distTo(Vec3(0,0,0)) < 1e-9) through0 = true; }
+        CHECK(through0, "kCircleMark：至少一条线中点落在圆心(0,0)");
+    }
+
+    // kFullCircle：整圆 → 过整圆十字（2 线，过圆心，臂长=半径+延伸）
+    {
+        Element c = mkCircle(0, 0, 10);
+        auto r = makeCenterLine(CenterLineKind::kFullCircle, {c}, p);
+        CHECK(r.size() == 2, "kFullCircle：应产 2 条线(十字)");
+        bool throughCenter = false, hasH = false, hasV = false;
+        for (auto& e : r) {
+            Vec3 mid = (e.pts[0] + e.pts[1]) * 0.5;
+            if (mid.distTo(Vec3(0,0,0)) < 1e-9) throughCenter = true;
+            if (std::fabs(e.pts[0].y - e.pts[1].y) < 1e-9) hasH = true;   // 水平臂
+            if (std::fabs(e.pts[0].x - e.pts[1].x) < 1e-9) hasV = true;   // 垂直臂
+        }
+        CHECK(throughCenter, "kFullCircle：十字线中点过圆心");
+        CHECK(hasH && hasV, "kFullCircle：含水平+垂直两臂");
+        CHECK(std::fabs(r[0].pts[0].distTo(Vec3(0,0,0)) - 14.0) < 1e-6, "kFullCircle：臂长=半径+延伸(14)");
+    }
+
+    // kCorner：两直线交于(5,5) → 过角点的角平分线
+    {
+        Element l1 = mkLine(0, 0, 10, 10);   // y = x
+        Element l2 = mkLine(0, 10, 10, 0);   // y = 10 - x → 交点(5,5)
+        auto r = makeCenterLine(CenterLineKind::kCorner, {l1, l2}, p);
+        CHECK(r.size() == 1, "kCorner：应产 1 条角平分线");
+        if (!r.empty()) {
+            Vec3 mid = (r[0].pts[0] + r[0].pts[1]) * 0.5;
+            CHECK(mid.distTo(Vec3(5, 5, 0)) < 1e-6, "kCorner：角平分线过交点(5,5)");
+            CHECK(r[0].lineStyle == LineStyle::DashDot, "kCorner：线型 DashDot");
+        }
+    }
+
+    // kPlate：矩形 → 双对称轴线（2 线）。矩形按对角线双角点定义（pts[0]/pts[1]）
+    {
+        Element rect; rect.type = ElementType::Rectangle;
+        rect.pts = {Vec3(0,0,0), Vec3(10,5,0)};   // 左下(0,0) — 右上(10,5)
+        auto r = makeCenterLine(CenterLineKind::kPlate, {rect}, p);
+        CHECK(r.size() == 2, "kPlate：应产 2 条对称轴线");
+        bool hasH = false, hasV = false;
+        for (auto& e : r) { Vec3 mid = (e.pts[0] + e.pts[1]) * 0.5;
+            if (std::fabs(mid.y - 2.5) < 1e-6) hasH = true;
+            if (std::fabs(mid.x - 5.0) < 1e-6) hasV = true; }
+        CHECK(hasH && hasV, "kPlate：水平轴 y=2.5 + 垂直轴 x=5");
+    }
+
+    // kCenter：直线参考 → 沿直线延伸的单轴中心线
+    {
+        Element l = mkLine(0, 0, 10, 0);
+        auto r = makeCenterLine(CenterLineKind::kCenter, {l}, p);
+        CHECK(r.size() == 1, "kCenter(直线)：1 条");
+        if (!r.empty())
+            CHECK(std::fabs(r[0].pts[0].distTo(Vec3(-4,0,0))) < 1e-6 &&
+                  std::fabs(r[0].pts[1].distTo(Vec3(14,0,0))) < 1e-6,
+                  "kCenter(直线)：两端各延伸 extend(4)");
+    }
+
+    // kCross：圆 → 十字
+    {
+        Element c = mkCircle(0, 0, 10);
+        auto r = makeCenterLine(CenterLineKind::kCross, {c}, p);
+        CHECK(r.size() == 2, "kCross：2 条");
+        CHECK(std::fabs(r[0].pts[0].distTo(Vec3(0,0,0)) - 14.0) < 1e-6 ||
+              std::fabs(r[1].pts[0].distTo(Vec3(0,0,0)) - 14.0) < 1e-6, "kCross：臂长 14");
+    }
+
+    // kAngle：两臂 → 两条沿臂延伸的中心线
+    {
+        Element l1 = mkLine(0, 0, 10, 0), l2 = mkLine(0, 0, 0, 10);
+        auto r = makeCenterLine(CenterLineKind::kAngle, {l1, l2}, p);
+        CHECK(r.size() == 2, "kAngle：2 条");
+    }
+
+    // kHole / kThroughHole：圆 → 单轴（通孔更长，体现贯通）
+    {
+        Element c = mkCircle(0, 0, 10);
+        auto h = makeCenterLine(CenterLineKind::kHole, {c}, p);
+        auto t = makeCenterLine(CenterLineKind::kThroughHole, {c}, p);
+        CHECK(h.size() == 1 && t.size() == 1, "kHole/kThroughHole：各 1 条");
+        if (!t.empty())
+            CHECK(std::fabs(t[0].pts[0].distTo(Vec3(0,0,0)) - 18.0) < 1e-6, "kThroughHole：臂长=r+2*extend=18");
+    }
+
+    // kTwoLinesCross：两线交点十字
+    {
+        Element l1 = mkLine(0, 0, 10, 0), l2 = mkLine(0, 0, 0, 10);  // 交点(0,0)
+        auto r = makeCenterLine(CenterLineKind::kTwoLinesCross, {l1, l2}, p);
+        CHECK(r.size() == 2, "kTwoLinesCross：2 条");
+        if (!r.empty()) { Vec3 mid = (r[0].pts[0] + r[0].pts[1]) * 0.5;
+            CHECK(mid.distTo(Vec3(0,0,0)) < 1e-6, "kTwoLinesCross：十字过交点(0,0)"); }
+    }
+
+    // 退化用例
+    {
+        CHECK(makeCenterLine(CenterLineKind::kCenter, {}, p).empty(), "退化：空 refs → 空");
+        Element zero; zero.type = ElementType::Circle; zero.pts = {Vec3(0,0,0)}; zero.radius = 0;  // 半径0
+        CHECK(makeCenterLine(CenterLineKind::kFullCircle, {zero}, p).empty(), "退化：半径0圆 → 空");
+        Element l1 = mkLine(0, 0, 10, 0), l2 = mkLine(0, 1, 10, 1);   // 平行无交点
+        CHECK(makeCenterLine(CenterLineKind::kCorner, {l1, l2}, p).empty(), "退化：平行直线无交点 → 空");
+        Element zl; zl.type = ElementType::Line; zl.pts = {Vec3(0,0,0), Vec3(0,0,0)};  // 零长度
+        auto r = makeCenterLine(CenterLineKind::kCenter, {zl}, p);
+        CHECK(!r.empty() && r[0].pts.size() == 2, "退化：零长度直线不崩溃（归一化兜底）");
+    }
+
+    return g_fail == fail0;
+}
+
+// ---------- P3 符号标注扩展（SymbolFactory）----------
+static bool t_symbolExt() {
+    const int fail0 = g_fail;
+    QVariantMap base; base[QStringLiteral("layer")] = QStringLiteral("标注");
+    const Vec3 anchor(20, 20, 0);
+
+    auto hasText  = [](const std::vector<Element>& v, const QString& sub) {
+        for (auto& e : v) if (e.type == ElementType::Text && e.text.contains(sub)) return true;
+        return false;
+    };
+    auto hasCircle = [](const std::vector<Element>& v) {
+        for (auto& e : v) if (e.type == ElementType::Circle) return true;
+        return false;
+    };
+    auto hasLine = [](const std::vector<Element>& v) {
+        for (auto& e : v) if (e.type == ElementType::Line) return true;
+        return false;
+    };
+
+    // 基准符号
+    {
+        QVariantMap p = base; p[QStringLiteral("letter")] = QStringLiteral("B");
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("datum"), anchor, p);
+        CHECK(!r.empty(), "datum：非空");
+        CHECK(hasText(r, QStringLiteral("B")), "datum：含基准字母 B");
+        CHECK(hasLine(r), "datum：含三角形边线");
+    }
+    // 焊接符号三版
+    for (const char* t : {"fillet", "v", "square"}) {
+        QVariantMap p = base; p[QStringLiteral("type")] = QString::fromUtf8(t);
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("weld"), anchor, p);
+        QString msg = QStringLiteral("weld(%1)：非空且含线").arg(QString::fromUtf8(t));
+        CHECK(!r.empty() && hasLine(r), msg.toUtf8().constData());
+    }
+    // 锥度/斜度
+    {
+        QVariantMap p = base; p[QStringLiteral("ratio")] = QStringLiteral("1:20");
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("taper"), anchor, p);
+        CHECK(!r.empty(), "taper：非空");
+        CHECK(hasText(r, QStringLiteral("1:20")), "taper：含比值文本 1:20");
+    }
+    // 中心孔
+    {
+        QVariantMap p = base; p[QStringLiteral("r")] = 3.0; p[QStringLiteral("label")] = QStringLiteral("A型");
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("centerhole"), anchor, p);
+        CHECK(!r.empty() && hasCircle(r), "centerhole：含圆");
+        CHECK(hasText(r, QStringLiteral("A型")), "centerhole：含旁注 A型");
+    }
+    // 标高
+    {
+        QVariantMap p = base; p[QStringLiteral("value")] = QStringLiteral("+5.000");
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("elevation"), anchor, p);
+        CHECK(!r.empty(), "elevation：非空");
+        CHECK(hasText(r, QStringLiteral("+5.000")), "elevation：含标高值 +5.000");
+    }
+    // 旋转
+    {
+        QVariantMap p = base; p[QStringLiteral("angle")] = QStringLiteral("180°");
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("rotation"), anchor, p);
+        CHECK(!r.empty() && hasCircle(r), "rotation：含圆");
+        CHECK(hasText(r, QStringLiteral("180°")), "rotation：含角度文本 180°");
+    }
+    // 退化：未知 name → 空
+    {
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("unknown"), anchor, base);
+        CHECK(r.empty(), "退化：未知符号名 → 空 vector");
+    }
+    // 整体旋转参数不崩溃
+    {
+        QVariantMap p = base; p[QStringLiteral("rot")] = 30.0;
+        auto r = SymbolFactory::mkSymbol(QStringLiteral("datum"), anchor, p);
+        CHECK(!r.empty(), "rot：整体旋转不崩溃且非空");
+    }
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_bom：序号球标与明细表联动（P2）
+//   覆盖：生成（球标图元 + BomItem）、隐藏/显示、删除（数据 + 球标标记联动）、
+//   合并同名、重排编号、悬停取数、序列化写→读→再写往返一致、旧档无 bom 键不崩、
+//   一次操作一次 pushMemento（经 xh 命令 + CommandInterpreter 验证）。
+// ============================================================
+static bool t_bom() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 生成：buildBalloon 纯生成器 ----------
+    {
+        auto parts = buildBalloon(3, Vec3(10, 20, 0), QStringLiteral("0"), 4.0);
+        CHECK(parts.size() == 2, "球标 = 圆 + 编号文字 两图元");
+        CHECK(parts[0].type == ElementType::Circle, "球标[0] = 圆");
+        CHECK(std::fabs(parts[0].radius - 4.0) < 1e-9, "球标高 = 半径 4.0");
+        CHECK(parts[1].type == ElementType::Text, "球标[1] = 编号文字");
+        CHECK(parts[1].text == QStringLiteral("3"), "球标文字 = 序号(QString::number(3))");
+        CHECK(parts[0].pts[0] == Vec3(10, 20, 0), "球标圆心 = 锚点");
+    }
+
+    // ---------- 生成：xh 命令（经 CommandInterpreter）一次操作一次 pushMemento ----------
+    SketchModel m;
+    CommandInterpreter interp(&m);
+    const int c1 = addCircle(m, 0, 0, 3);
+    const int c2 = addCircle(m, 30, 10, 4);
+    const int beforeUndo = m.undoStackSize();
+    CHECK(interp.execute(QStringLiteral("xh %1 %2").arg(c1).arg(c2)), "xh <id id> → 生成两个球标");
+    CHECK(m.bomCount() == 2, "xh 生成 2 条明细");
+    CHECK(countType(m, ElementType::Circle) == 2 + 2, "xh 额外生成 2 个圆（源圆 2 + 球标圆 2）");   // 源 2 + 球标 2
+    CHECK(countType(m, ElementType::Text) == 2, "xh 生成 2 个编号文字");
+    // 一次操作一次 pushMemento（不含 addElement 自带快照，因用 addElementsQuiet）
+    CHECK(m.undoStackSize() == beforeUndo + 1, "xh：一次操作仅一次 pushMemento");
+    // 序号唯一递增（球标编号不唯一 = FORBID）
+    const BomItem* b0 = m.bomItemAt(0);
+    const BomItem* b1 = m.bomItemAt(1);
+    CHECK(b0 && b1, "两条明细均可查");
+    CHECK(b0->seq != b1->seq, "两球标序号互不相同（唯一）");
+    CHECK(b0->srcIds.contains(c1) && b1->srcIds.contains(c2), "明细关联源几何 id 正确");
+    CHECK(b0->balloonIds.size() == 2, "明细[0] 关联 2 个球标标记（圆+文字）");
+
+    // ---------- 悬停取数：球标标记 id → 所属明细 ----------
+    {
+        const qint64 bid = b0->balloonIds.first();
+        const int idx = m.bomIndexForBalloon(bid);
+        CHECK(idx == 0, "悬停取数：球标标记 → 所属明细索引正确");
+        CHECK(m.bomIndexForBalloon(-9999) == -1, "悬停取数：非法 id → -1（不在任何球标上）");
+    }
+
+    // ---------- 隐藏 / 显示：球标标记图元 visible 切换 ----------
+    {
+        const qint64 circleId = b0->balloonIds[0];   // 球标圆
+        const Element* e = m.element((int)circleId);
+        CHECK(e && e->visible, "隐藏前球标圆可见");
+        m.updateElementQuiet((int)circleId, [](Element& el){ el.visible = false; });
+        CHECK(!m.element((int)circleId)->visible, "隐藏：球标圆 visible=false");
+        m.updateElementQuiet((int)circleId, [](Element& el){ el.visible = true; });
+        CHECK(m.element((int)circleId)->visible, "显示：球标圆 visible=true");
+    }
+
+    // ---------- 合并同名 ----------
+    {
+        SketchModel mm;
+        BomItem x; x.seq = 1; x.name = QStringLiteral("螺栓"); x.srcIds = {10};
+        BomItem y; y.seq = 2; y.name = QStringLiteral("螺栓"); y.srcIds = {20}; y.balloonIds = {100, 101};
+        BomItem z; z.seq = 3; z.name = QStringLiteral("垫圈"); z.srcIds = {30};
+        mm.addBomItem(x); mm.addBomItem(y); mm.addBomItem(z);
+        const int n = mm.mergeBomByName();
+        CHECK(n == 2, "合并同名：3 行 → 2 行（螺栓合并）");
+        const BomItem* m0 = mm.bomItemAt(0);
+        CHECK(m0 && m0->name == QStringLiteral("螺栓"), "合并后保留螺栓行");
+        CHECK(m0->srcIds.contains(10) && m0->srcIds.contains(20), "合并后 srcIds 取并集");
+        CHECK(m0->balloonIds.contains(100) && m0->balloonIds.contains(101), "合并后 balloonIds 取并集");
+        CHECK(mm.bomItemAt(0)->seq == 1 && mm.bomItemAt(1)->seq == 2, "合并后重排编号 1..N 唯一");
+        CHECK(mm.bomItemAt(1)->name == QStringLiteral("垫圈"), "垫圈行保留且编号顺延");
+    }
+
+    // ---------- 重排编号（乱序 → 1..N） ----------
+    {
+        SketchModel mm;
+        BomItem a; a.seq = 7; a.name = QStringLiteral("A");
+        BomItem b; b.seq = 3; b.name = QStringLiteral("B");
+        BomItem c; c.seq = 9; c.name = QStringLiteral("C");
+        mm.addBomItem(a); mm.addBomItem(b); mm.addBomItem(c);
+        mm.renumberBom();
+        CHECK(mm.bomItemAt(0)->seq == 1 && mm.bomItemAt(1)->seq == 2 && mm.bomItemAt(2)->seq == 3,
+              "重排编号：7/3/9 → 1/2/3");
+    }
+
+    // ---------- 删除：数据 + 球标标记联动 ----------
+    {
+        SketchModel mm;
+        // 构造一条带球标标记的明细：直接加两个图元并把 id 写入 balloonIds
+        Element circle; circle.type = ElementType::Circle; circle.pts = {Vec3(0,0,0)}; circle.radius = 4;
+        Element txt; txt.type = ElementType::Text; txt.pts = {Vec3(0,0,0)}; txt.text = QStringLiteral("1");
+        const int idc = mm.addElement(circle);
+        const int idt = mm.addElement(txt);
+        BomItem it; it.seq = 1; it.name = QStringLiteral("零件"); it.balloonIds = {(qint64)idc, (qint64)idt};
+        mm.addBomItem(it);
+        CHECK(mm.bomCount() == 1, "删除前 1 条明细");
+        CHECK(mm.elementCount() == 2, "删除前 2 个图元（球标标记）");
+        mm.removeBomItemAt(0);
+        CHECK(mm.bomCount() == 0, "删除后明细清空");
+        CHECK(mm.elementCount() == 0, "删除后球标标记图元联动删除");
+    }
+
+    // ---------- 序列化：写 → 读 → 再写 往返一致 ----------
+    {
+        SketchModel m1;
+        const int s1 = addCircle(m1, 5, 5, 2);
+        CommandInterpreter i1(&m1);
+        CHECK(i1.execute(QStringLiteral("xh %1").arg(s1)), "序列化：xh 生成球标");
+        const QByteArray bytes1 = m1.toDrawingBytes();
+        QJsonDocument doc1 = QJsonDocument::fromJson(bytes1);
+        CHECK(doc1.object().contains("bom"), "序列化：有数据时写出 bom 键");
+
+        SketchModel m2;
+        m2.setBomFromJson(doc1.object()["bom"].toArray());
+        CHECK(m2.bomCount() == m1.bomCount(), "序列化：读回明细行数一致");
+        const QByteArray bytes2 = m2.toDrawingBytes();
+        QJsonDocument doc2 = QJsonDocument::fromJson(bytes2);
+        // 仅比较 bom 键（m2 无图元，其余键无关）
+        CHECK(doc1.object()["bom"] == doc2.object()["bom"], "序列化：写→读→再写 bom 键完全一致");
+
+        // 无数据时不应写 bom 键（条件写键，镜像 sheet）
+        SketchModel m3;
+        QJsonDocument doc3 = QJsonDocument::fromJson(m3.toDrawingBytes());
+        CHECK(!doc3.object().contains("bom"), "序列化：无明细时不写 bom 键");
+    }
+
+    // ---------- 旧档无 bom 键不崩 ----------
+    {
+        QJsonObject root;
+        root["elements"] = QJsonArray();
+        root["app"] = QStringLiteral("SketchCAD");
+        SketchModel m4;
+        m4.setBomFromJson(root["bom"].toArray());   // 缺键 → Undefined → 空数组
+        CHECK(m4.bomCount() == 0, "旧档无 bom 键：回落空表不崩");
+        CHECK(m4.bomItemAt(0) == nullptr, "旧档无 bom 键：越界查詢返回空");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_gear：渐开线齿轮齿廓采样（P4）
+//   覆盖：退化(teeth<2 / module<=0)、标准 20° 压力角基圆关系、齿顶/齿根半径、
+//   对称性(镜像)、节圆处斜率=压力角(人工给定 G1 公式)、involute 公式正确性、
+//   整轮闭合/点集非空、PartLibrary 接入(gear 出库为闭合 Polyline)。
+// ============================================================
+static bool t_gear() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+    const double DEG = 3.14159265358979323846 / 180.0;
+
+    // ---------- 退化 ----------
+    {
+        std::vector<Vec3> pts;
+        CHECK(!InvoluteGear::profile(1, 2.0, 20.0, pts), "退化：teeth<2 → false（不生成）");
+        CHECK(pts.empty(), "退化：teeth<2 → 输出点集清空");
+        CHECK(!InvoluteGear::profile(20, 0.0, 20.0, pts), "退化：module<=0 → false");
+        CHECK(!InvoluteGear::profile(0, 2.0, 20.0, pts), "退化：teeth=0 → false");
+    }
+
+    // ---------- 标准 20° 压力角几何关系 ----------
+    {
+        const int z = 20; const double m = 2.0; const double pa = 20.0;
+        const double r  = InvoluteGear::pitchRadius(z, m);          // 20
+        const double rb = InvoluteGear::baseRadius(z, m, pa);       // r*cos20
+        const double ra = InvoluteGear::addendumRadius(z, m);       // 22
+        const double rf = InvoluteGear::dedendumRadius(z, m);       // 17.5
+        CHECK(std::fabs(r - 20.0) < 1e-9, "分度圆 r = m*z/2 = 20");
+        CHECK(std::fabs(rb - 20.0 * std::cos(pa * DEG)) < 1e-6, "基圆 rb = r*cos(α)（标准 20° 压力角）");
+        CHECK(std::fabs(ra - 22.0) < 1e-9, "齿顶圆 ra = r + m = 22");
+        CHECK(std::fabs(rf - 17.5) < 1e-9, "齿根圆 rf = r - 1.25m = 17.5");
+    }
+
+    // ---------- 齿廓采样：非空 / 半径范围 / 闭合 ----------
+    {
+        std::vector<Vec3> pts;
+        CHECK(InvoluteGear::profile(20, 2.0, 20.0, pts, true), "profile(20,2,20) → 成功");
+        CHECK(pts.size() > 200, "整齿轮点集足够稠密（>200 点）");
+        double rmin = 1e9, rmax = 0;
+        for (const auto& p : pts) {
+            const double rr = std::hypot(p.x, p.y);
+            rmin = std::min(rmin, rr); rmax = std::max(rmax, rr);
+        }
+        CHECK(std::fabs(rmax - 22.0) < 0.05, "最大半径 ≈ 齿顶圆 22");
+        CHECK(std::fabs(rmin - 17.5) < 0.05, "最小半径 ≈ 齿根圆 17.5");
+        // 分度圆处半齿厚角 = π/(2z) ≈ 0.0785 rad（验证齿厚几何正确，而非全挤在基圆退化）
+        bool foundPitch = false;
+        const double halfTooth = 3.14159265358979323846 / (2.0 * 20.0);
+        for (const auto& p : pts) {
+            const double rr = std::hypot(p.x, p.y);
+            if (p.y > 0 && std::fabs(rr - 20.0) < 0.1) {
+                if (std::fabs(std::atan2(p.y, p.x) - halfTooth) < 0.02) { foundPitch = true; break; }
+            }
+        }
+        CHECK(foundPitch, "分度圆处存在上侧齿廓点，半齿厚角 ≈ π/(2z)（齿厚几何正确，非基圆退化）");
+    }
+
+    // ---------- 对称性（关于 x 轴镜像）----------
+    {
+        std::vector<Vec3> pts;
+        InvoluteGear::profile(20, 2.0, 20.0, pts, true);
+        int matched = 0;
+        for (const auto& p : pts) {
+            bool ok = false;
+            for (const auto& q : pts) {
+                if (std::fabs(q.x - p.x) < 1e-6 && std::fabs(q.y + p.y) < 1e-6) { ok = true; break; }
+            }
+            if (ok) ++matched;
+        }
+        CHECK(matched == (int)pts.size(), "整齿轮外轮廓关于 x 轴对称（每点都有镜像点）");
+    }
+
+    // ---------- 人工给定(G1)的 involute 公式正确性 ----------
+    {
+        double x, y;
+        const double rb = 18.7938, t = 0.35;
+        InvoluteGear::involute(rb, t, x, y);
+        const double ex = rb * (std::cos(t) + t * std::sin(t));
+        const double ey = rb * (std::sin(t) - t * std::cos(t));
+        CHECK(std::fabs(x - ex) < 1e-9 && std::fabs(y - ey) < 1e-9, "involute(rb,t) 与 G1 标准公式一致");
+        const double rr = std::hypot(x, y);
+        CHECK(std::fabs(rr - rb * std::sqrt(1.0 + t * t)) < 1e-9, "involute 点半径 = rb*sqrt(1+t^2)（渐开线几何不变量）");
+    }
+
+    // ---------- 节圆处斜率 = 压力角（G1 公式的微分性质）----------
+    {
+        const double rb = 20.0 * std::cos(20.0 * DEG);   // z=20,m=2 基圆
+        const double tp = std::tan(20.0 * DEG);            // 分度圆处展开参数 t = tan(α)（半径 = rb·sqrt(1+t²) = r）
+        double x1, y1, x2, y2;
+        InvoluteGear::involute(rb, tp - 1e-4, x1, y1);
+        InvoluteGear::involute(rb, tp + 1e-4, x2, y2);
+        // 切线方向
+        double tx = x2 - x1, ty = y2 - y1;
+        const double tl = std::hypot(tx, ty); tx /= tl; ty /= tl;
+        // 径向方向（指向外）
+        const double mx = (x1 + x2) / 2.0, my = (y1 + y2) / 2.0;
+        double rx = mx, ry = my; const double rl = std::hypot(rx, ry); rx /= rl; ry /= rl;
+        double dot = tx * rx + ty * ry;
+        dot = std::max(-1.0, std::min(1.0, dot));
+        const double ang = std::acos(dot) / DEG;          // 切线与径向夹角 = 压力角
+        CHECK(std::fabs(ang - 20.0) < 1.0, "节圆处渐开线切线与径向夹角 ≈ 压力角 20°");
+    }
+
+    // ---------- 单齿廓（开放）----------
+    {
+        std::vector<Vec3> pts;
+        CHECK(InvoluteGear::profile(20, 2.0, 20.0, pts, false), "单齿廓 profile(fullGear=false) → 成功");
+        CHECK(pts.size() > 20, "单齿廓点集非空");
+    }
+
+    // ---------- PartLibrary 接入：gear 出库为闭合 Polyline ----------
+    {
+        const PartLibrary& lib = PartLibrary::instance();
+        const PartGenerator* g = lib.find(QStringLiteral("gear"));
+        CHECK(g != nullptr, "PartLibrary 注册了 gear 生成器");
+        CHECK(lib.ids().contains(QStringLiteral("gear")), "PartLibrary 列表含 gear");
+        QVariantMap params;
+        params[QStringLiteral("teeth")] = 20;
+        params[QStringLiteral("module")] = 2.0;
+        std::vector<Element> out;
+        CHECK(lib.generate(QStringLiteral("gear"), params, out), "PartLibrary::generate(gear) → 成功");
+        CHECK(out.size() == 1, "gear 出库 1 个图元");
+        CHECK(out[0].type == ElementType::Polyline, "gear 图元 = 闭合 Polyline");
+        CHECK(out[0].closed, "gear 图元 closed = true（闭合齿轮）");
+        CHECK(out[0].pts.size() > 200, "gear 图元点集稠密");
+        // 退化参数 → 出库失败
+        QVariantMap bad; bad[QStringLiteral("teeth")] = 1;
+        std::vector<Element> out2;
+        CHECK(!lib.generate(QStringLiteral("gear"), bad, out2), "gear 退化参数(teeth=1) → 出库失败");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_partlib：GB 紧固件规格表 + 系列化出库（P5）
+//   覆盖：六角螺栓/螺母/平垫圈规格→关键尺寸（≥6 断言/件）、规格缺项回落+提示、
+//   标准标记、规格列表、PartLibrary::checkout 打包为 BlockDef + 属性提取。
+// ============================================================
+static bool t_partlib() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 规格表数值（人工给定 G3，参考值）----------
+    {
+        const FastenerSpec b = GbFastenerTable::lookup(FastenerKind::HexBolt, 6.0);
+        CHECK(b.valid, "螺栓 M6 命中规格表");
+        CHECK(std::fabs(b.acrossFlats - 10.0) < 1e-9, "螺栓 M6 对边 s=10");
+        CHECK(std::fabs(b.thickness - 4.0) < 1e-9, "螺栓 M6 头高 k=4");
+        CHECK(std::fabs(b.innerD - 5.5) < 1e-9, "螺栓 M6 螺纹内径≈5.5");
+        CHECK(std::fabs(b.outerD - 2.0*10.0/std::sqrt(3.0)) < 1e-6, "螺栓 M6 头部对角=2s/√3");
+
+        const FastenerSpec n = GbFastenerTable::lookup(FastenerKind::HexNut, 8.0);
+        CHECK(n.valid && std::fabs(n.acrossFlats - 13.0) < 1e-9 && std::fabs(n.thickness - 6.8) < 1e-9,
+              "螺母 M8 对边 s=13 / 厚 m=6.8");
+
+        const FastenerSpec w = GbFastenerTable::lookup(FastenerKind::PlainWasher, 6.0);
+        CHECK(w.valid && std::fabs(w.innerD - 6.4) < 1e-9 && std::fabs(w.outerD - 12.0) < 1e-9 && std::fabs(w.thickness - 1.6) < 1e-9,
+              "垫圈 M6 内径 6.4 / 外径 12 / 厚 1.6");
+    }
+
+    // ---------- 规格列表 + 标准标记 ----------
+    {
+        const QVector<double> sz = GbFastenerTable::sizes(FastenerKind::HexBolt);
+        CHECK(sz.size() == 8, "螺栓规格表 8 档（M3~M16）");
+        CHECK(std::fabs(sz.first() - 3.0) < 1e-9 && std::fabs(sz.last() - 16.0) < 1e-9, "螺栓规格 M3..M16");
+        CHECK(GbFastenerTable::standardTag(FastenerKind::HexBolt, 6.0) == QStringLiteral("GB/T 5782 M6"), "标准标记 GB/T 5782 M6");
+        CHECK(GbFastenerTable::standardTag(FastenerKind::PlainWasher, 6.0) == QStringLiteral("GB/T 97.1 M6"), "标准标记 GB/T 97.1 M6");
+    }
+
+    const PartLibrary& lib = PartLibrary::instance();
+
+    // ---------- 六角螺栓出库：规格→关键尺寸 ----------
+    {
+        QVariantMap p; p[QStringLiteral("nominal")] = 6.0; p[QStringLiteral("length")] = 30.0;
+        std::vector<Element> out;
+        CHECK(lib.generate(QStringLiteral("bolt"), p, out), "螺栓出库成功");
+        CHECK(out.size() == 3, "螺栓 3 图元（头/杆/垫面）");
+        const QRectF head = geo::elementBounds(out[0]);
+        CHECK(std::fabs(head.width() - 10.0) < 0.05, "螺栓头宽=对边 s=10");
+        CHECK(std::fabs(head.height() - 4.0) < 0.05, "螺栓头高=k=4");
+        const QRectF shank = geo::elementBounds(out[1]);
+        CHECK(std::fabs(shank.width() - 5.5) < 0.05, "螺栓杆宽=螺纹内径≈5.5");
+    }
+
+    // ---------- 六角螺母出库 ----------
+    {
+        QVariantMap p; p[QStringLiteral("nominal")] = 6.0;
+        std::vector<Element> out;
+        CHECK(lib.generate(QStringLiteral("nut"), p, out), "螺母出库成功");
+        CHECK(out.size() == 2, "螺母 2 图元（六角/螺纹孔）");
+        const QRectF hex = geo::elementBounds(out[0]);
+        CHECK(std::fabs(hex.height() - 10.0) < 0.05, "螺母六角跨对边(高)=s=10");
+        CHECK(std::fabs(hex.width() - 11.547) < 0.05, "螺母六角对角(宽)=2s/√3≈11.547");
+        const QRectF hole = geo::elementBounds(out[1]);
+        CHECK(std::fabs(hole.width() - 5.5) < 0.05, "螺母螺纹孔径≈5.5");
+    }
+
+    // ---------- 平垫圈出库 ----------
+    {
+        QVariantMap p; p[QStringLiteral("nominal")] = 6.0;
+        std::vector<Element> out;
+        CHECK(lib.generate(QStringLiteral("washer"), p, out), "垫圈出库成功");
+        CHECK(out.size() == 2, "垫圈 2 图元（外圆/内圆）");
+        const QRectF outer = geo::elementBounds(out[0]);
+        const QRectF inner = geo::elementBounds(out[1]);
+        CHECK(std::fabs(outer.width() - 12.0) < 0.05, "垫圈外径=12");
+        CHECK(std::fabs(inner.width() - 6.4) < 0.05, "垫圈内径=6.4");
+    }
+
+    // ---------- 规格缺项：回落最近规格 + 提示 ----------
+    {
+        QVariantMap p; p[QStringLiteral("nominal")] = 7.0;   // M7 不在表内
+        QString note;
+        std::vector<Element> out;
+        CHECK(lib.generate(QStringLiteral("bolt"), p, out, &note), "缺项仍能出库（回落）");
+        CHECK(!note.isEmpty(), "缺项回落产生提示（note 非空）");
+        const FastenerSpec fb = GbFastenerTable::lookup(FastenerKind::HexBolt, 7.0);
+        CHECK(!fb.valid, "M7 查表 valid=false（未命中）");
+        CHECK(std::fabs(fb.acrossFlats - 10.0) < 1e-9, "M7 回落最近规格 M6（s=10）");
+    }
+
+    // ---------- checkout：打包为 BlockDef + 属性提取 ----------
+    {
+        QVariantMap p; p[QStringLiteral("nominal")] = 6.0;
+        BlockDef def;
+        CHECK(lib.checkout(QStringLiteral("bolt"), p, def), "checkout(bolt) → BlockDef 成功");
+        CHECK(def.entities.size() == 3, "BlockDef 含 3 图元");
+        CHECK(def.attdefs.size() >= 3, "BlockDef 含 ≥3 属性定义（标准/公称/名称）");
+        // 实例化引用 + 属性提取（BOM 联动）
+        const Element ref = block::makeRef(def, Vec3(0, 0, 0), 0.0, 1.0, 1.0);
+        const auto attrs = block::extractAttributes(ref, { def });
+        QString stdTag;
+        for (const auto& a : attrs) if (a.tag == QStringLiteral("STANDARD")) stdTag = a.value;
+        CHECK(stdTag == QStringLiteral("GB/T 5782 M6"), "属性提取 STANDARD=GB/T 5782 M6");
+    }
+
+    // ---------- 库维护：规格表 ↔ JSON（编辑 JSON 规格）----------
+    {
+        const FastenerKind kind = FastenerKind::PlainWasher;
+        const QJsonArray saved = GbFastenerTable::toJson(kind);
+        CHECK(saved.size() == 8, "toJson 导出垫圈规格表 8 档");
+        CHECK(!GbFastenerTable::fromJson(kind, QJsonArray()), "fromJson 空数组 → false（不改动）");
+        // 往返一致
+        CHECK(GbFastenerTable::fromJson(kind, saved), "fromJson 接受导出表");
+        {
+            const FastenerSpec rt = GbFastenerTable::lookup(kind, 6.0);
+            CHECK(rt.valid && std::fabs(rt.outerD - 12.0) < 1e-9 && std::fabs(rt.innerD - 6.4) < 1e-9,
+                  "JSON 往返后 M6 规格不变（d1=6.4,d2=12）");
+        }
+        // 编辑 JSON：M6 外径 12 → 15，出库即时反映
+        QJsonArray edited = saved;
+        for (int i = 0; i < edited.size(); ++i) {
+            QJsonObject o = edited[i].toObject();
+            if (std::fabs(o.value("nominal").toDouble() - 6.0) < 1e-6) { o["outerD"] = 15.0; edited[i] = o; }
+        }
+        CHECK(GbFastenerTable::fromJson(kind, edited), "fromJson 接受编辑后的规格");
+        CHECK(std::fabs(GbFastenerTable::lookup(kind, 6.0).outerD - 15.0) < 1e-9, "编辑后 M6 外径=15（库维护生效）");
+        {
+            QVariantMap wp; wp[QStringLiteral("nominal")] = 6.0;
+            std::vector<Element> wo;
+            CHECK(lib.generate(QStringLiteral("washer"), wp, wo), "编辑后垫圈出库成功");
+            CHECK(std::fabs(geo::elementBounds(wo[0]).width() - 15.0) < 0.05, "出库外圆直径反映编辑后规格 15");
+        }
+        // 恢复默认，避免污染后续用例
+        GbFastenerTable::resetToDefaults(kind);
+        CHECK(std::fabs(GbFastenerTable::lookup(kind, 6.0).outerD - 12.0) < 1e-9, "resetToDefaults 恢复 M6 外径=12");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_viewtool：视图工具（P6）—— 向视符号 / 孔轴投影 / 转角投影
+//   每工具 ≥5 断言（锚点/方向角/字母/尺寸）；退化：缺方向/缺转角 → false。
+// ============================================================
+static bool t_viewtool() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 向视符号 ----------
+    {
+        DirectionSymbolSpec s;
+        s.anchor = Vec3(10, 20, 0);
+        s.angleDeg = 90.0;             // 指向 +Y
+        s.arrowLen = 8.0;
+        s.letter = QStringLiteral("B");
+        std::vector<Element> out;
+        CHECK(buildDirectionSymbol(s, out), "向视符号 → 成功");
+        CHECK(out.size() == 4, "向视符号 4 图元（箭杆+两翼+字母）");
+        CHECK(out[0].type == ElementType::Line, "向视符号[0] = 箭杆直线");
+        CHECK(out[0].pts[0] == Vec3(10, 20, 0), "向视符号锚点 = (10,20)");
+        CHECK(std::fabs(out[0].pts[1].x - 10.0) < 1e-9 && std::fabs(out[0].pts[1].y - 28.0) < 1e-9,
+              "向视符号方向角 90°：箭头端 = 锚点 + 8·(0,1) = (10,28)");
+        bool hasLetter = false;
+        for (const auto& e : out) if (e.type == ElementType::Text && e.text == QStringLiteral("B")) hasLetter = true;
+        CHECK(hasLetter, "向视符号含字母标识 B");
+        // 退化
+        DirectionSymbolSpec bad = s; bad.hasDirection = false;
+        std::vector<Element> o2;
+        CHECK(!buildDirectionSymbol(bad, o2) && o2.empty(), "向视符号：缺方向 → false");
+        DirectionSymbolSpec bad2 = s; bad2.arrowLen = 0.0;
+        CHECK(!buildDirectionSymbol(bad2, o2), "向视符号：箭长非正 → false");
+    }
+
+    // ---------- 孔轴投影 ----------
+    {
+        HoleProjectionSpec s;
+        s.anchor = Vec3(5, 5, 0);
+        s.diameter = 10.0;
+        s.depth = 30.0;
+        s.angleDeg = 90.0;             // 轴向 +Y
+        std::vector<Element> out;
+        CHECK(buildHoleProjection(s, out), "孔轴投影 → 成功");
+        CHECK(out.size() == 5, "孔轴投影 5 图元（中心线+2圆+2母线）");
+        // out[0] 中心线，起点 = 锚点 - 2·dir
+        CHECK(out[0].type == ElementType::Line && out[0].lineStyle == LineStyle::DashDot, "孔轴投影[0] = 中心线(点画线)");
+        CHECK(std::fabs(out[0].pts[0].x - 5.0) < 1e-9 && std::fabs(out[0].pts[0].y - 3.0) < 1e-9,
+              "中心线起点 = 锚点 - 2 = (5,3)");
+        CHECK(out[1].type == ElementType::Circle && std::fabs(out[1].radius - 5.0) < 1e-9, "近端投影圆半径 = d/2 = 5");
+        CHECK(out[1].pts[0] == Vec3(5, 5, 0), "近端投影圆圆心 = 锚点");
+        CHECK(std::fabs(out[2].pts[0].x - 5.0) < 1e-9 && std::fabs(out[2].pts[0].y - 35.0) < 1e-9,
+              "远端投影圆圆心 = 锚点 + 30·(0,1) = (5,35)");
+        // 退化
+        HoleProjectionSpec bad = s; bad.hasDirection = false;
+        std::vector<Element> o2;
+        CHECK(!buildHoleProjection(bad, o2) && o2.empty(), "孔轴投影：缺方向 → false");
+        HoleProjectionSpec bad2 = s; bad2.diameter = 0.0;
+        CHECK(!buildHoleProjection(bad2, o2), "孔轴投影：直径非正 → false");
+    }
+
+    // ---------- 转角投影 ----------
+    {
+        RotationProjectionSpec s;
+        s.anchor = Vec3(0, 0, 0);
+        s.length1 = 20.0;
+        s.turnAngleDeg = 90.0;
+        s.length2 = 15.0;
+        s.startAngleDeg = 0.0;         // 第一段 +X
+        std::vector<Element> out;
+        CHECK(buildRotationProjection(s, out), "转角投影 → 成功");
+        CHECK(out.size() == 1 && out[0].type == ElementType::Polyline, "转角投影 = 1 个 Polyline");
+        CHECK(out[0].pts.size() == 3, "转角投影折线 3 点");
+        CHECK(out[0].pts[0] == Vec3(0, 0, 0), "转角投影起点 = 锚点");
+        CHECK(std::fabs(out[0].pts[1].x - 20.0) < 1e-9 && std::fabs(out[0].pts[1].y - 0.0) < 1e-9,
+              "第一段末 = 锚点 + 20·(1,0) = (20,0)");
+        CHECK(std::fabs(out[0].pts[2].x - 20.0) < 1e-9 && std::fabs(out[0].pts[2].y - 15.0) < 1e-9,
+              "第二段末 = (20,0) + 15·(0,1) = (20,15)（转角 90° 复用 geo::rotateAroundCentroid）");
+        // 两段夹角 = 转角
+        const Vec3 seg1(out[0].pts[1].x - out[0].pts[0].x, out[0].pts[1].y - out[0].pts[0].y, 0);
+        const Vec3 seg2(out[0].pts[2].x - out[0].pts[1].x, out[0].pts[2].y - out[0].pts[1].y, 0);
+        const double dot = seg1.x * seg2.x + seg1.y * seg2.y;
+        const double ang = std::acos(std::max(-1.0, std::min(1.0, dot / (20.0 * 15.0)))) / (3.14159265358979323846 / 180.0);
+        CHECK(std::fabs(ang - 90.0) < 1e-6, "转角投影两段夹角 = 转角 90°");
+        // 退化
+        RotationProjectionSpec bad = s; bad.hasAngle = false;
+        std::vector<Element> o2;
+        CHECK(!buildRotationProjection(bad, o2) && o2.empty(), "转角投影：缺转角 → false");
+        RotationProjectionSpec bad2 = s; bad2.length2 = 0.0;
+        CHECK(!buildRotationProjection(bad2, o2), "转角投影：段长非正 → false");
+    }
+
+    return g_fail == fail0;
+}
+
+// t_featuremenu：P1~P9 功能菜单与准入（FeatureMenu 纯逻辑模块）
+// ------------------------------------------------------------
+// 覆盖：目录单一数据源完整性、各功能准入条件正/反例（含 reason 非空）、
+// 中心线 10 kind ↔ FeatureId 映射往返、闭合轮廓提取与准入谓词同源。
+static bool t_featuremenu() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 1) 目录完整性（单一数据源）----------
+    {
+        const QVector<FeatureEntry>& cat = featureCatalog();
+        CHECK((int)cat.size() == (int)FeatureId::FeatureIdCount,
+              "目录：条目数 == FeatureIdCount（32）");
+        bool idsOk = true, titlesOk = true, groupsOk = true, tipsOk = true;
+        QSet<int> seen;
+        for (const FeatureEntry& e : cat) {
+            if (seen.contains((int)e.id)) idsOk = false;
+            seen.insert((int)e.id);
+            if (!e.title || !*e.title) titlesOk = false;
+            if (!e.group || !*e.group) groupsOk = false;
+            if (!e.tip   || !*e.tip)   tipsOk = false;
+            if (featureEntry(e.id) != &e) idsOk = false;   // 按 id 反查一致
+        }
+        CHECK(idsOk,    "目录：id 唯一且 featureEntry 反查一致");
+        CHECK(titlesOk, "目录：标题全部非空");
+        CHECK(groupsOk, "目录：分组（子菜单标题）全部非空");
+        CHECK(tipsOk,   "目录：提示（含准入说明）全部非空");
+        CHECK(featureEntry((FeatureId)999) == nullptr, "目录：越界 id → nullptr");
+        // 9 个 P 分组
+        QSet<QString> groups;
+        for (const FeatureEntry& e : cat) groups.insert(QString::fromUtf8(e.group));
+        CHECK(groups.size() == 9, "目录：9 个 P1~P9 分组");
+    }
+
+    // ---------- 2) 空图纸 + 空选择集：条件类全禁用、无条件类启用 ----------
+    {
+        SketchModel m;
+        CHECK(!evaluateFeature(m, FeatureId::CenterLine).enabled, "空图纸：中心线禁用");
+        CHECK(!evaluateFeature(m, FeatureId::CircleMark).enabled, "空图纸：圆心标记禁用");
+        CHECK(!evaluateFeature(m, FeatureId::CornerCenterLine).enabled, "空图纸：角点中心线禁用");
+        CHECK(!evaluateFeature(m, FeatureId::Balloon).enabled, "空图纸：序号球标禁用");
+        CHECK(!evaluateFeature(m, FeatureId::BomTable).enabled, "空图纸：明细表禁用");
+        CHECK(!evaluateFeature(m, FeatureId::SymbolDatum).enabled, "空图纸：基准符号禁用");
+        CHECK(!evaluateFeature(m, FeatureId::SectionProps).enabled, "空图纸：截面特性禁用");
+        CHECK(!evaluateFeature(m, FeatureId::SplitDrawing).enabled, "空图纸：拆分禁用");
+        CHECK(!evaluateFeature(m, FeatureId::BatchSign).enabled, "空图纸：批量签名禁用");
+        // 禁用必须带可读原因（交互反馈）
+        bool reasonsOk = true;
+        for (int i = 0; i < (int)FeatureId::FeatureIdCount; ++i) {
+            const FeatureAvailability a = evaluateFeature(m, (FeatureId)i);
+            if (!a.enabled && a.reason.isEmpty()) reasonsOk = false;
+        }
+        CHECK(reasonsOk, "空图纸：所有禁用项 reason 非空（悬停可读）");
+        // 无条件类恒启用
+        CHECK(evaluateFeature(m, FeatureId::Gear).enabled, "空图纸：齿轮启用（无条件）");
+        CHECK(evaluateFeature(m, FeatureId::FastenerBolt).enabled, "空图纸：螺栓启用（无条件）");
+        CHECK(evaluateFeature(m, FeatureId::BatchBom).enabled, "空图纸：批量BOM启用（无条件）");
+        CHECK(evaluateFeature(m, FeatureId::VariableTable).enabled, "空图纸：变量表启用（无条件）");
+        // 空指针图纸（无文档）：同类规则
+        CHECK(!evaluateFeature((const SketchModel*)nullptr, FeatureId::Balloon).enabled,
+              "空指针图纸：序号球标禁用");
+        CHECK(evaluateFeature((const SketchModel*)nullptr, FeatureId::Gear).enabled,
+              "空指针图纸：齿轮仍启用");
+    }
+
+    // ---------- 3) P1 各 kind 准入与选择集类型严格对应 ----------
+    {
+        SketchModel m;
+        const int l1 = addLine(m, 0, 0, 10, 0);
+        const int l2 = addLine(m, 0, 5, 10, 5);
+        const int c1 = addCircle(m, 5, 5, 2);
+        m.setSelection({ l1 });
+        CHECK(evaluateFeature(m, FeatureId::CenterLine).enabled, "选中直线：中心线启用");
+        CHECK(evaluateFeature(m, FeatureId::AngleCenterLine).enabled, "选中直线：角度中心线启用");
+        CHECK(!evaluateFeature(m, FeatureId::CircleMark).enabled, "仅选直线：圆心标记禁用（需圆）");
+        CHECK(!evaluateFeature(m, FeatureId::CornerCenterLine).enabled, "仅选 1 条直线：角点中心线禁用（需 2 条）");
+        CHECK(evaluateFeature(m, FeatureId::CenterCross).enabled, "选中直线：十字中心线启用（直线中点）");
+        m.setSelection({ l1, l2 });
+        CHECK(evaluateFeature(m, FeatureId::CornerCenterLine).enabled, "选 2 条直线：角点中心线启用");
+        CHECK(evaluateFeature(m, FeatureId::TwoLinesCross).enabled, "选 2 条直线：两线交点十字线启用");
+        m.setSelection({ c1 });
+        CHECK(evaluateFeature(m, FeatureId::CircleMark).enabled, "选中圆：圆心标记启用");
+        CHECK(evaluateFeature(m, FeatureId::HoleCenterLine).enabled, "选中圆：孔中心线启用");
+        CHECK(evaluateFeature(m, FeatureId::ThroughHoleCenterLine).enabled, "选中圆：通孔中心线启用");
+        CHECK(evaluateFeature(m, FeatureId::FullCircleCross).enabled, "选中圆：整圆十字启用");
+        CHECK(evaluateFeature(m, FeatureId::CenterLine).enabled, "选中圆：中心线启用（过圆心）");
+        CHECK(!evaluateFeature(m, FeatureId::AngleCenterLine).enabled, "仅选圆：角度中心线禁用（需直线）");
+        // 矩形 → 对称板中心线
+        Element r; r.type = ElementType::Rectangle; r.pts = { Vec3(0,0,0), Vec3(20,10,0) };
+        const int r1 = m.addElement(r);
+        m.setSelection({ r1 });
+        CHECK(evaluateFeature(m, FeatureId::PlateCenterLine).enabled, "选中矩形：对称板中心线启用");
+        CHECK(!evaluateFeature(m, FeatureId::CircleMark).enabled, "仅选矩形：圆心标记禁用");
+    }
+
+    // ---------- 4) P2/P3/P6 选择集类准入 ----------
+    {
+        SketchModel m;
+        const int l1 = addLine(m, 0, 0, 10, 0);
+        m.setSelection({ l1 });
+        CHECK(evaluateFeature(m, FeatureId::Balloon).enabled, "选中图元：序号球标启用");
+        CHECK(evaluateFeature(m, FeatureId::SymbolDatum).enabled, "选中图元：基准符号启用");
+        CHECK(evaluateFeature(m, FeatureId::SymbolWeld).enabled, "选中图元：焊接符号启用");
+        CHECK(evaluateFeature(m, FeatureId::DirectionSymbol).enabled, "选中图元：向视符号启用");
+        CHECK(evaluateFeature(m, FeatureId::HoleProjection).enabled, "选中图元：孔轴投影启用");
+        m.clearSelection();
+        CHECK(!evaluateFeature(m, FeatureId::Balloon).enabled, "清空选择：序号球标禁用");
+        CHECK(!evaluateFeature(m, FeatureId::SymbolElevation).enabled, "清空选择：标高符号禁用");
+        CHECK(!evaluateFeature(m, FeatureId::RotationProjection).enabled, "清空选择：转角投影禁用");
+        CHECK(!evaluateFeature(m, FeatureId::Balloon).reason.isEmpty(), "禁用 reason 非空");
+    }
+
+    // ---------- 5) P2 明细表：依赖 bom 数据 ----------
+    {
+        SketchModel m;
+        CHECK(!evaluateFeature(m, FeatureId::BomTable).enabled, "无 BOM 数据：明细表禁用");
+        BomItem it; it.seq = 1; it.name = QStringLiteral("轴"); it.code = QStringLiteral("AX-01");
+        m.addBomItem(it);
+        CHECK(m.bomCount() == 1, "addBomItem 生效（前置）");
+        CHECK(evaluateFeature(m, FeatureId::BomTable).enabled, "有 BOM 数据：明细表启用");
+    }
+
+    // ---------- 6) P7 闭合轮廓准入（单选）----------
+    {
+        SketchModel m;
+        const int c1 = addCircle(m, 5, 5, 3);
+        m.setSelection({ c1 });
+        CHECK(evaluateFeature(m, FeatureId::SectionProps).enabled, "单选圆：截面特性启用");
+        CHECK(evaluateFeature(m, FeatureId::MassEstimate).enabled, "单选圆：重量估算启用");
+        const int l1 = addLine(m, 0, 0, 10, 0);
+        m.setSelection({ c1, l1 });
+        CHECK(!evaluateFeature(m, FeatureId::SectionProps).enabled, "多选：截面特性禁用（需恰好一个）");
+        m.setSelection({ l1 });
+        CHECK(!evaluateFeature(m, FeatureId::SectionProps).enabled, "单选直线：截面特性禁用（非闭合轮廓）");
+        const int rp = addRectPolyline(m, 0, 0, 10, 8);
+        m.setSelection({ rp });
+        CHECK(evaluateFeature(m, FeatureId::SectionProps).enabled, "单选闭合多段线：截面特性启用");
+        // 开放多段线 → 禁用
+        Element op; op.type = ElementType::Polyline; op.closed = false;
+        op.pts = { Vec3(0,0,0), Vec3(5,5,0), Vec3(10,0,0) };
+        const int opid = m.addElement(op);
+        m.setSelection({ opid });
+        CHECK(!evaluateFeature(m, FeatureId::SectionProps).enabled, "开放多段线：截面特性禁用");
+    }
+
+    // ---------- 7) P9 准入：拆分需图元、签名需标题栏字段 ----------
+    {
+        SketchModel m;
+        CHECK(!evaluateFeature(m, FeatureId::SplitDrawing).enabled, "空图纸：拆分禁用");
+        CHECK(!evaluateFeature(m, FeatureId::BatchSign).enabled, "无标题栏：批量签名禁用");
+        (void)addLine(m, 0, 0, 10, 0);   // 图纸非空即可（拆分准入只看有无图元）
+        CHECK(evaluateFeature(m, FeatureId::SplitDrawing).enabled, "有图元：拆分启用");
+        CHECK(!evaluateFeature(m, FeatureId::PackDrawings).enabled,
+              "有图元但无图框矩形：排图禁用（需图框层矩形）");
+        Element fr; fr.type = ElementType::Rectangle; fr.layer = QStringLiteral("图框");
+        fr.pts = { Vec3(0,0,0), Vec3(200,100,0) };
+        const int frid = m.addElement(fr);
+        CHECK(frid > 0, "图框矩形添加成功（前置）");
+        CHECK(evaluateFeature(m, FeatureId::PackDrawings).enabled, "有图框矩形：排图启用");
+        CHECK(!evaluateFeature(m, FeatureId::BatchSign).enabled, "有图元但无 tb:field：签名仍禁用");
+        Element tb; tb.type = ElementType::Text; tb.text = QStringLiteral("某厂");
+        tb.name = QStringLiteral("tb:field:organization");
+        const int tbid = m.addElement(tb);
+        CHECK(tbid > 0, "tb:field 元素添加成功（前置）");
+        CHECK(evaluateFeature(m, FeatureId::BatchSign).enabled, "有 tb:field 元素：批量签名启用");
+    }
+
+    // ---------- 8) P1 映射往返：10 个 FeatureId ↔ 10 种 CenterLineKind ----------
+    {
+        QSet<int> kinds;
+        int clCount = 0;
+        for (int i = 0; i < (int)FeatureId::FeatureIdCount; ++i) {
+            const FeatureId id = (FeatureId)i;
+            if (isCenterLineFeature(id)) {
+                ++clCount;
+                kinds.insert((int)centerLineKindFor(id));
+            } else {
+                CHECK(centerLineKindFor(id) == CenterLineKind::kCenter,
+                      "非 P1 条目 → 映射回落 kCenter（不误入中心线分支）");
+            }
+        }
+        CHECK(clCount == 10, "P1 菜单条目共 10 个（覆盖全部 CenterLineKind）");
+        CHECK(kinds.size() == 10, "10 个条目 ↔ 10 种 CenterLineKind 一一对应");
+    }
+
+    // ---------- 9) 闭合轮廓提取（与准入谓词同源）----------
+    {
+        std::vector<Vec3> poly;
+        Element c; c.type = ElementType::Circle; c.pts = { Vec3(0,0,0) }; c.radius = 20.0;
+        CHECK(closedProfilePolygon(c, poly) && poly.size() == 128, "圆 → 128 边形");
+        const double r2 = 20.0 * 20.0;
+        bool onCircle = true;
+        for (const Vec3& p : poly)
+            if (std::fabs(p.x * p.x + p.y * p.y - r2) > 1e-6) onCircle = false;
+        CHECK(onCircle, "128 边形全部顶点在圆上（R=20）");
+        Element r; r.type = ElementType::Rectangle; r.pts = { Vec3(0,0,0), Vec3(10,8,0) };
+        CHECK(closedProfilePolygon(r, poly) && poly.size() == 4
+              && poly[0] == Vec3(0,0,0) && poly[2] == Vec3(10,8,0),
+              "矩形 → 四角（对角点展开，逆时针）");
+        Element l; l.type = ElementType::Line; l.pts = { Vec3(0,0,0), Vec3(1,0,0) };
+        CHECK(!closedProfilePolygon(l, poly) && poly.empty(), "直线 → 提取失败（非闭合轮廓）");
+        CHECK(!isClosedProfile(l), "直线：非闭合轮廓谓词");
+        CHECK(isClosedProfile(r), "矩形：闭合轮廓谓词");
+        CHECK(isClosedProfile(c), "圆：闭合轮廓谓词");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_sectionprops：截面特性（P7）—— 矩形/三角形/圆(多边形逼近) 解析解对照 + 退化 + 重量估算
+//   公式为给定标准公式（Green 定理/鞋带 + 平行轴定理），非自造积分；
+//   数值正确性以解析解对照校验（ESCALATE G1：截面/惯性矩公式停止线 → 已按标准参考值实现+自测锁定）。
+// ============================================================
+static bool t_sectionprops() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 矩形 100×50（CCW）：解析解对照 ----------
+    {
+        const std::vector<Vec3> rect = { Vec3(0,0,0), Vec3(100,0,0), Vec3(100,50,0), Vec3(0,50,0) };
+        SectionProperties sp;
+        QString reason;
+        CHECK(SectionProps::compute(rect, sp, &reason), "矩形：compute 成功");
+        CHECK(sp.valid, "矩形：valid=true");
+        CHECK(std::fabs(sp.area - 5000.0) < 1e-9, "矩形：面积 = 100×50 = 5000 mm²");
+        CHECK(std::fabs(sp.centroid.x - 50.0) < 1e-9 && std::fabs(sp.centroid.y - 25.0) < 1e-9,
+              "矩形：形心 = (50,25)");
+        CHECK(std::fabs(sp.inertiaIx - 100.0*50.0*50.0*50.0/12.0) < 1e-6,
+              "矩形：Ix = b·h³/12 = 1041666.67 mm⁴");
+        CHECK(std::fabs(sp.inertiaIy - 50.0*100.0*100.0*100.0/12.0) < 1e-6,
+              "矩形：Iy = h·b³/12 = 4166666.67 mm⁴");
+        CHECK(std::fabs(sp.inertiaIxy) < 1e-6, "矩形：形心轴惯性积 = 0");
+
+        // CW 顶点序（反向）→ 全部结果一致（方向 sign 校正）
+        const std::vector<Vec3> rectCW = { Vec3(0,50,0), Vec3(100,50,0), Vec3(100,0,0), Vec3(0,0,0) };
+        SectionProperties sp2;
+        CHECK(SectionProps::compute(rectCW, sp2), "矩形(CW)：compute 成功");
+        CHECK(std::fabs(sp2.area - sp.area) < 1e-9 && std::fabs(sp2.inertiaIx - sp.inertiaIx) < 1e-6
+              && std::fabs(sp2.inertiaIy - sp.inertiaIy) < 1e-6 && std::fabs(sp2.inertiaIxy) < 1e-6,
+              "矩形(CW)：面积/二次矩/惯性积与 CCW 一致（顶点方向 sign 校正）");
+    }
+
+    // ---------- 直角三角形 (0,0)(6,0)(0,4)：解析解对照 ----------
+    {
+        const std::vector<Vec3> tri = { Vec3(0,0,0), Vec3(6,0,0), Vec3(0,4,0) };
+        SectionProperties sp;
+        CHECK(SectionProps::compute(tri, sp), "直角三角形：compute 成功");
+        CHECK(std::fabs(sp.area - 12.0) < 1e-9, "三角形：面积 = ½·6·4 = 12 mm²");
+        CHECK(std::fabs(sp.centroid.x - 2.0) < 1e-9 && std::fabs(sp.centroid.y - 4.0/3.0) < 1e-9,
+              "三角形：形心 = (b/3, h/3) = (2, 4/3)");
+        CHECK(std::fabs(sp.inertiaIx - 6.0*64.0/36.0) < 1e-6, "三角形：Ix = b·h³/36 = 10.6667 mm⁴");
+        CHECK(std::fabs(sp.inertiaIy - 216.0*4.0/36.0) < 1e-6, "三角形：Iy = h·b³/36 = 24 mm⁴");
+        CHECK(std::fabs(sp.inertiaIxy - (-36.0*16.0/72.0)) < 1e-6, "三角形：Ixy = -b²h²/72 = -8 mm⁴");
+    }
+
+    // ---------- 圆（正 128 边形逼近 R=20）：对照 πR² 与 πR⁴/4 ----------
+    {
+        std::vector<Vec3> circ;
+        const int n = 128;
+        const double R = 20.0;
+        for (int i = 0; i < n; ++i) {
+            const double a = 2.0 * 3.14159265358979323846 * i / n;
+            circ.push_back(Vec3(R * std::cos(a), R * std::sin(a), 0));
+        }
+        SectionProperties sp;
+        CHECK(SectionProps::compute(circ, sp), "圆(128 边形)：compute 成功");
+        const double Ac = 3.14159265358979323846 * R * R;
+        CHECK(std::fabs(sp.area - Ac) / Ac < 2e-3, "圆：面积 ≈ πR²（多边形逼近 0.2% 内）");
+        const double Ic = 3.14159265358979323846 * std::pow(R, 4) / 4.0;
+        CHECK(std::fabs(sp.inertiaIx - Ic) / Ic < 2e-3 && std::fabs(sp.inertiaIy - Ic) / Ic < 2e-3,
+              "圆：Ix=Iy ≈ πR⁴/4（多边形逼近 0.2% 内）");
+        CHECK(std::fabs(sp.inertiaIxy) / Ic < 1e-6, "圆：惯性积 ≈ 0（轴对称）");
+    }
+
+    // ---------- 退化：自交 / 顶点不足 / 零面积 ----------
+    {
+        SectionProperties sp;
+        QString reason;
+        // 自交（蝶形）：(0,0)(10,10)(10,0)(0,10) —— 两对角边交叉
+        const std::vector<Vec3> bow = { Vec3(0,0,0), Vec3(10,10,0), Vec3(10,0,0), Vec3(0,10,0) };
+        CHECK(!SectionProps::compute(bow, sp, &reason) && !sp.valid, "自交多边形：compute → false + valid=false");
+        CHECK(reason.contains(QStringLiteral("自交")), "自交多边形：reason 含「自交」");
+        CHECK(SectionProps::isSelfIntersecting(bow), "isSelfIntersecting：蝶形 → true");
+        const std::vector<Vec3> sq = { Vec3(0,0,0), Vec3(10,0,0), Vec3(10,10,0), Vec3(0,10,0) };
+        CHECK(!SectionProps::isSelfIntersecting(sq), "isSelfIntersecting：简单正方形 → false");
+        CHECK(!SectionProps::isSelfIntersecting({ Vec3(0,0,0), Vec3(5,0,0), Vec3(0,5,0) }),
+              "isSelfIntersecting：三角形 → false（n<4 早退）");
+        // 顶点不足 3
+        const std::vector<Vec3> two = { Vec3(0,0,0), Vec3(1,1,0) };
+        CHECK(!SectionProps::compute(two, sp, &reason) && reason.contains(QStringLiteral("顶点不足")),
+              "顶点<3：compute → false + reason 含「顶点不足」");
+        // 共线零面积
+        const std::vector<Vec3> col = { Vec3(0,0,0), Vec3(10,0,0), Vec3(20,0,0) };
+        CHECK(!SectionProps::compute(col, sp, &reason) && reason.contains(QStringLiteral("面积退化")),
+              "共线零面积：compute → false + reason 含「面积退化」");
+    }
+
+    // ---------- 重量估算 + 密度表（人工提供值，禁改） ----------
+    {
+        double g = 0.0;
+        CHECK(SectionProps::massGrams(5000.0, QStringLiteral("钢"), g, 2.0) && std::fabs(g - 78.5) < 1e-9,
+              "massGrams：5000mm²×2mm×7.85 = 78.5 g");
+        CHECK(SectionProps::massGrams(1000.0, QStringLiteral("钢"), g) && std::fabs(g - 7.85) < 1e-9,
+              "massGrams：默认厚度 1mm → 7.85 g");
+        CHECK(!SectionProps::massGrams(5000.0, QStringLiteral("未知金属"), g),
+              "massGrams：未知材料 → false");
+        CHECK(std::fabs(DensityTable::density(QStringLiteral("钢")) - 7.85) < 1e-9
+              && std::fabs(DensityTable::density(QStringLiteral("铝合金")) - 2.70) < 1e-9
+              && std::fabs(DensityTable::density(QStringLiteral("铅")) - 11.34) < 1e-9,
+              "DensityTable：钢 7.85 / 铝合金 2.70 / 铅 11.34（人工提供值）");
+        CHECK(DensityTable::has(QStringLiteral("铸铁")) && !DensityTable::has(QStringLiteral("不明材料")),
+              "DensityTable：has 正/误报");
+        CHECK(DensityTable::materials().size() == 10 && DensityTable::density(QString()) == 0.0,
+              "DensityTable：10 种已知材料；空名 → 0.0（未知）");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_bomanalysis：批量 BOM 汇总（P7）—— 多档扫描 + 跨档累加 + 读错误收集
+//   IO_SPEC「只读档头」：不实例化 SketchModel / 不构建 Element，仅取顶层 "bom" 数组。
+//   ⚠️ 偏差：Qt 核心无流式 JSON 解析器，QJsonDocument::fromJson 仍解析整份文本；
+//   但模型/图元层「全量解析」被完全避免（内存与耗时大头在图元实例化）。
+// ============================================================
+static bool t_bomanalysis() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    QTemporaryDir td;
+    CHECK(td.isValid(), "批量 BOM：临时目录创建成功");
+
+    // 档 A：真实 SketchModel 序列化（bomToJson 同源格式，螺栓 + 螺母）
+    const QString pathA = QDir(td.path()).filePath(QStringLiteral("asm_a.skd"));
+    {
+        SketchModel m;
+        BomItem it;
+        it.seq = 1; it.code = QStringLiteral("GB/T 5782"); it.name = QStringLiteral("螺栓");
+        m.addBomItem(it);
+        it.seq = 2; it.code = QStringLiteral("GB/T 6170"); it.name = QStringLiteral("螺母");
+        m.addBomItem(it);
+        QFile f(pathA);
+        CHECK(f.open(QIODevice::WriteOnly), "档 A（模型序列化）落盘成功");
+        f.write(m.toDrawingBytes());
+        f.close();
+    }
+    // 档 B：手写同构 JSON（螺栓重复 → 跨档累加；垫圈仅此档）
+    const QString pathB = QDir(td.path()).filePath(QStringLiteral("asm_b.skd"));
+    {
+        QFile f(pathB);
+        CHECK(f.open(QIODevice::WriteOnly), "档 B（手写 JSON）落盘成功");
+        f.write(QByteArrayLiteral(R"({"formatVersion":1,"bom":[{"seq":1,"code":"GB/T 5782","name":"螺栓"},{"seq":2,"code":"GB/T 97.1","name":"垫圈"}]})"));
+        f.close();
+    }
+    // 三个坏档：语法错 / 无 bom 键 / bom 记录非对象
+    const QString pathBad1 = QDir(td.path()).filePath(QStringLiteral("bad_json.skd"));
+    const QString pathBad2 = QDir(td.path()).filePath(QStringLiteral("no_bom.skd"));
+    const QString pathBad3 = QDir(td.path()).filePath(QStringLiteral("bad_entry.skd"));
+    auto writeText = [](const QString& p, const QByteArray& t) {
+        QFile f(p);
+        const bool ok = f.open(QIODevice::WriteOnly);
+        if (ok) { f.write(t); f.close(); }
+        return ok;
+    };
+    CHECK(writeText(pathBad1, QByteArrayLiteral("{ this is not json")), "坏档 1（语法错）落盘");
+    CHECK(writeText(pathBad2, QByteArrayLiteral(R"({"elements":[]})")), "坏档 2（无 bom）落盘");
+    CHECK(writeText(pathBad3, QByteArrayLiteral(R"({"bom":["oops"]})")), "坏档 3（记录非对象）落盘");
+
+    // ---------- 正常汇总：跨档累加 + 首见顺序 ----------
+    {
+        QStringList errs;
+        const QVector<BomSummaryRow> rows = BatchBom::analyze({ pathA, pathB }, &errs);
+        CHECK(errs.isEmpty(), "两正常档 → 无读错误");
+        CHECK(rows.size() == 3, "汇总 3 行（螺栓/螺母/垫圈）");
+        CHECK(rows.size() == 3 && rows[0].name == QStringLiteral("螺栓")
+              && rows[0].code == QStringLiteral("GB/T 5782") && rows[0].quantity == 2,
+              "螺栓：跨 A/B 两档累加 = 2（首见行）");
+        CHECK(rows.size() == 3 && rows[1].name == QStringLiteral("螺母") && rows[1].quantity == 1,
+              "螺母：仅 A 档 = 1");
+        CHECK(rows.size() == 3 && rows[2].name == QStringLiteral("垫圈") && rows[2].quantity == 1,
+              "垫圈：仅 B 档 = 1");
+    }
+
+    // ---------- 读错误收集：不存在 / 语法错 / 缺键 / 非对象 ----------
+    {
+        QStringList errs;
+        const QString missing = QDir(td.path()).filePath(QStringLiteral("no_such.skd"));
+        const QVector<BomSummaryRow> rows =
+            BatchBom::analyze({ missing, pathBad1, pathBad2, pathBad3 }, &errs);
+        CHECK(rows.isEmpty(), "全坏档 → 无汇总行");
+        CHECK(errs.size() == 4, "4 个坏源各产生 1 条读错误");
+        CHECK(errs.size() == 4 && errs[0].contains(QStringLiteral("无法打开")), "不存在文件 → 「无法打开」");
+        CHECK(errs.size() == 4 && errs[1].contains(QStringLiteral("JSON 解析失败")), "语法错 → 「JSON 解析失败」");
+        CHECK(errs.size() == 4 && errs[2].contains(QStringLiteral("无 bom 明细键")), "缺键 → 「无 bom 明细键」");
+        CHECK(errs.size() == 4 && errs[3].contains(QStringLiteral("非对象")), "记录非对象 → 「非对象」");
+    }
+
+    // ---------- 空输入 / readErrors 可空 ----------
+    {
+        CHECK(BatchBom::analyze(QStringList()).isEmpty(), "空输入 → 空汇总");
+        QStringList errs;
+        CHECK(BatchBom::analyze({ pathA }, nullptr).size() == 2, "readErrors 传 nullptr 不崩（A 档 2 行）");
+        const QString missing = QDir(td.path()).filePath(QStringLiteral("no_such.skd"));
+        CHECK(BatchBom::analyze({ missing }, &errs).isEmpty() && errs.size() == 1, "单坏档 → 恰 1 条错误");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_varparam：参数化变量层（P8）—— 变量定义/表达式求值/驱动后几何变化/
+//   循环依赖检测/过约束尺寸标识/显示开关/退化（未定义变量、除零）
+//   驱动链路：改变量 → 拓扑重算依赖变量 → 既有 driveParameter 重解 → 刷新标注
+//   （FORBID：不改既有约束求解语义——变量层只算值，应用全委托既有路径）。
+// ============================================================
+static bool t_varparam() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // 会话级变量表（单例）：每组前清空隔离
+    auto resetVars = [] { ConstraintSolverFacade::instance().clearVariables(); };
+
+    // ---------- 1) 变量定义：常量表达式→值变量；含引用→表达式变量 ----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        CHECK(f.defineVariable(QStringLiteral("W"), QStringLiteral("50")).isEmpty(),
+              "defineVariable 常量表达式 → 成功");
+        CHECK(f.hasVariable(QStringLiteral("W")) && !f.isExpressionVariable(QStringLiteral("W"))
+              && std::fabs(f.variableValue(QStringLiteral("W")) - 50.0) < 1e-9,
+              "常量定义转为值变量，value=50");
+        CHECK(f.defineVariable(QStringLiteral("L"), QStringLiteral("2*W+10")).isEmpty(),
+              "defineVariable 含变量引用 → 成功");
+        CHECK(f.isExpressionVariable(QStringLiteral("L"))
+              && f.variableExpression(QStringLiteral("L")) == QStringLiteral("2*W+10"),
+              "L 为表达式变量，定义原文可查（显示尺寸表达式数据源）");
+        CHECK(std::fabs(f.variableValue(QStringLiteral("L")) - 110.0) < 1e-9,
+              "L = 2*W+10 = 110（依赖 W 当前值链式求值）");
+
+        // 轻量安全求值器：算术/括号/一元号/小数
+        double v = 0.0; QString err;
+        CHECK(VarParamTable::evalExpression(QStringLiteral("(1+2)*3-4/2"), v, &err)
+              && std::fabs(v - 7.0) < 1e-12, "求值器：括号与优先级 (1+2)*3-4/2 = 7");
+        CHECK(VarParamTable::evalExpression(QStringLiteral("-3*-2"), v, &err)
+              && std::fabs(v - 6.0) < 1e-12, "求值器：一元号 -3*-2 = 6");
+        CHECK(VarParamTable::evalExpression(QStringLiteral("1.5+2.25"), v, &err)
+              && std::fabs(v - 3.75) < 1e-12, "求值器：小数 1.5+2.25 = 3.75");
+        // 求值器退化：除零/缺括号/连续运算符/未定义标识符/超深嵌套
+        CHECK(!VarParamTable::evalExpression(QStringLiteral("1/0"), v, &err)
+              && err.contains(QStringLiteral("除零")), "求值器退化：除零 → false + 「除零」");
+        CHECK(!VarParamTable::evalExpression(QStringLiteral("2*(3"), v, &err)
+              && err.contains(QStringLiteral("右括号")), "求值器退化：缺右括号 → false + 「右括号」");
+        CHECK(!VarParamTable::evalExpression(QStringLiteral("2*(3+"), v, &err),
+              "求值器退化：括号内缺运算数 → false");
+        CHECK(!VarParamTable::evalExpression(QStringLiteral("2**3"), v, &err),
+              "求值器退化：连续乘号 → false");
+        CHECK(!VarParamTable::evalExpression(QStringLiteral("X+1"), v, &err)
+              && err.contains(QStringLiteral("未定义变量")), "求值器退化：未定义标识符 → false + 「未定义变量」");
+        const QString deep = QString(80, QLatin1Char('(')) + QStringLiteral("1") + QString(80, QLatin1Char(')'));
+        CHECK(!VarParamTable::evalExpression(deep, v, &err), "求值器退化：括号嵌套 >64 → false（防栈耗尽）");
+        // 变量名校验
+        CHECK(VarParamTable::isValidName(QStringLiteral("长度_1")), "中文/下划线变量名合法");
+        CHECK(!VarParamTable::isValidName(QStringLiteral("1L"))
+              && !VarParamTable::isValidName(QStringLiteral("a b"))
+              && !VarParamTable::isValidName(QString()), "变量名校验：数字开头/含空格/空名 → 非法");
+        CHECK(!f.defineVariable(QStringLiteral("2X"), QStringLiteral("1")).isEmpty(),
+              "defineVariable 非法名 → 非空原因");
+        CHECK(!f.defineVariable(QStringLiteral("Y"), QStringLiteral("1/0")).isEmpty(),
+              "defineVariable 常量除零 → 定义期即暴露");
+    }
+
+    // ---------- 2) 驱动后几何变化（单变量直驱 + 标注刷新 + 日志）----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        SketchModel m;
+        int c = addCircle(m, 0, 0, 5);
+        int d = addDim(m, DimensionType::Radius, c);
+        CHECK(ConstraintSolver::linkDimension(m, d, QStringLiteral("R")).isEmpty(),
+              "半径标注关联参数 R");
+        CHECK(f.defineVariable(QStringLiteral("R"), QStringLiteral("8")).isEmpty(), "定义 R=8（值变量）");
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(f.drive(m, QStringLiteral("R"), 12.0).isEmpty(), "drive(R,12) → 成功");
+        const Element* ec = m.element(c);
+        CHECK(ec && std::fabs(ec->radius - 12.0) < 1e-3, "驱动后几何变化：圆半径 5 → 12");
+        CHECK(std::fabs(ConstraintSolver::measureDimension(m, d) - 12.0) < 1e-3,
+              "关联标注已刷新（measureDimension = 12）");
+        CHECK(std::fabs(m.param(QStringLiteral("R")) - 12.0) < 1e-9, "模型参数表同步 R=12");
+        bool drove = false;
+        for (const QString& s : logged) if (s.contains(QStringLiteral("参数驱动"))) drove = true;
+        CHECK(drove, "驱动结果经 model.log 记录");
+    }
+
+    // ---------- 3) 表达式依赖传播（拓扑重算）+ 表达式变量禁直驱 ----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        SketchModel m;
+        int c = addCircle(m, 0, 0, 5);
+        int d = addDim(m, DimensionType::Radius, c);
+        CHECK(ConstraintSolver::linkDimension(m, d, QStringLiteral("L")).isEmpty(),
+              "半径标注关联参数 L（表达式变量）");
+        CHECK(f.defineVariable(QStringLiteral("W"), QStringLiteral("5")).isEmpty(), "定义 W=5");
+        CHECK(f.defineVariable(QStringLiteral("L"), QStringLiteral("2*W+10")).isEmpty(), "定义 L=2*W+10");
+        CHECK(f.drive(m, QStringLiteral("W"), 6.0).isEmpty(), "drive(W,6) → 成功（驱动独立变量）");
+        CHECK(std::fabs(f.variableValue(QStringLiteral("L")) - 22.0) < 1e-9,
+              "拓扑重算：L = 2*6+10 = 22");
+        const Element* ec = m.element(c);
+        CHECK(ec && std::fabs(ec->radius - 22.0) < 1e-3, "传播到模型：圆半径 → 22");
+        // 表达式变量直驱 → 拒绝（防静默丢失表达式定义），几何零改动
+        const QString e = f.drive(m, QStringLiteral("L"), 100.0);
+        CHECK(!e.isEmpty() && e.contains(QStringLiteral("表达式")), "表达式变量直驱 → 拒绝（原因含「表达式」）");
+        const Element* ec2 = m.element(c);
+        CHECK(ec2 && std::fabs(ec2->radius - 22.0) < 1e-3, "拒绝直驱后几何不变（仍 22）");
+    }
+
+    // ---------- 4) 循环依赖检测（驱动阻断 + 零改动）----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        SketchModel m;
+        int c = addCircle(m, 0, 0, 5);
+        int d = addDim(m, DimensionType::Radius, c);
+        CHECK(ConstraintSolver::linkDimension(m, d, QStringLiteral("W")).isEmpty(), "半径标注关联参数 W");
+        CHECK(f.defineVariable(QStringLiteral("W"), QStringLiteral("5")).isEmpty(), "定义 W=5（值变量）");
+        // 定义期允许任意顺序（B/A 互相引用此时即已成环）
+        CHECK(f.defineVariable(QStringLiteral("A"), QStringLiteral("B+1")).isEmpty(), "定义 A=B+1");
+        CHECK(f.defineVariable(QStringLiteral("B"), QStringLiteral("A+1")).isEmpty(), "定义 B=A+1 → 成环");
+        CHECK(std::isnan(f.variableValue(QStringLiteral("A"))), "循环依赖：value(A) → NaN（栈式检测）");
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        const QString e = f.drive(m, QStringLiteral("W"), 9.0);
+        CHECK(!e.isEmpty() && e.contains(QStringLiteral("循环依赖")), "驱动被环阻断：原因含「循环依赖」");
+        bool loggedCyc = false;
+        for (const QString& s : logged) if (s.contains(QStringLiteral("循环依赖"))) loggedCyc = true;
+        CHECK(loggedCyc, "循环依赖 → model.log(warn) 记录");
+        const Element* ec = m.element(c);
+        CHECK(ec && std::fabs(ec->radius - 5.0) < 1e-9, "驱动失败零几何改动（半径仍 5）");
+    }
+
+    // ---------- 5) 过约束尺寸标识 + 驱动告警 + 显示开关 ----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        SketchModel m;
+        int ln = addLine(m, 0, 0, 10, 0);                 // 长度 10
+        int d1 = addDim(m, DimensionType::Aligned, ln);  // 长度标注 → 目标 10
+        int ph = addLine(m, 0, 0, 1, 0);                 // 占位图元（Dimensional 只校验 idB）
+        CHECK(ConstraintSolver::linkDimension(m, d1, QStringLiteral("L1")).isEmpty(),
+              "长度标注 d1 关联 L1（Dimensional 约束 driverId=d1）");
+        // 同一长度上再加一条矛盾 Dimensional(20) → 过约束（既有 diagnose 可定位，见 t_sktIntegration）。
+        // 注意：addConstraint 解不动会返回原因，但约束记录已入表——此处只关心 diagnose 定位，故忽略返回。
+        (void)f.addConstraint(m, ConstraintType::Dimensional, ph, ln, 20.0);
+        CHECK(f.defineVariable(QStringLiteral("L1"), QStringLiteral("10")).isEmpty(), "定义 L1=10");
+
+        // 开关默认全开：过约束尺寸标识
+        const QVector<int> over = f.overconstrainedDimensionIds(m);
+        CHECK(over.size() == 1 && over.contains(d1), "过约束尺寸标识：d1 被标出（其余尺寸无）");
+        auto info1 = f.dimensionDisplayInfo(m, d1);
+        CHECK(info1.isDimension && info1.overconstrained, "dimensionDisplayInfo(d1).overconstrained = true");
+        CHECK(info1.additional && info1.expressionText == QStringLiteral("10"),
+              "d1 为附加尺寸（参数关联已定义变量）且表达式原文可查");
+        CHECK(info1.valueText == QStringLiteral("10"), "showExpression 开：valueText 显示表达式原文");
+        auto infoNon = f.dimensionDisplayInfo(m, ln);
+        CHECK(!infoNon.isDimension, "非尺寸图元 → isDimension=false");
+
+        // 驱动后告警（过约束开关开）
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(f.drive(m, QStringLiteral("L1"), 25.0).isEmpty(), "过约束模型上 drive(L1,25) 仍成功（既有语义）");
+        const Element* el = m.element(ln);
+        // 矛盾约束下 LM 取残差折中（(len-25)²+(len-20)² 最小 → ≈22.5）：长度显著离开原值 10
+        CHECK(el && el->pts[0].distTo(el->pts[1]) > 15.0,
+              "过约束下驱动仍改几何（长度 10 → 折中值 >15，与矛盾约束 20 竞争）");
+        bool warned = false;
+        for (const QString& s : logged) if (s.contains(QStringLiteral("过约束告警"))) warned = true;
+        CHECK(warned, "过约束开关开：驱动后告警日志");
+
+        // 开关全关：不标识、不组装
+        ConstraintSolverFacade::VarDisplaySwitches off;
+        off.showExpression = false; off.showAdditional = false; off.overconstrained = false;
+        f.setVarDisplaySwitches(off);
+        CHECK(f.overconstrainedDimensionIds(m).isEmpty(), "过约束开关关 → 空标识");
+        auto info2 = f.dimensionDisplayInfo(m, d1);
+        CHECK(!info2.overconstrained && !info2.additional, "开关关：无过约束/附加标识");
+        // showExpression 关：显示回填数值（矛盾求解后实测长度，非表达式原文「10」）
+        CHECK(!info2.valueText.contains(QLatin1Char('*')) && info2.valueText != QStringLiteral("10"),
+              "showExpression 关：valueText 显示数值（非表达式原文）");
+        // 恢复默认（会话级，避免影响后续用例）
+        f.setVarDisplaySwitches(ConstraintSolverFacade::VarDisplaySwitches{});
+    }
+
+    // ---------- 6) 退化汇总：未定义变量驱动 + 纯数值变量 + 清空 ----------
+    resetVars();
+    {
+        ConstraintSolverFacade& f = ConstraintSolverFacade::instance();
+        SketchModel m;
+        int c = addCircle(m, 0, 0, 5);
+        QStringList logged;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString&) { logged << msg; });
+        CHECK(!f.drive(m, QStringLiteral("NOPE"), 1.0).isEmpty(), "驱动未定义变量 → false");
+        bool loggedMiss = false;
+        for (const QString& s : logged) if (s.contains(QStringLiteral("未定义"))) loggedMiss = true;
+        CHECK(loggedMiss, "未定义变量 → model.log(warn) 记录");
+        const Element* ec = m.element(c);
+        CHECK(ec && std::fabs(ec->radius - 5.0) < 1e-9, "失败驱动零几何改动");
+
+        CHECK(f.setVariableValue(QStringLiteral("Q"), 3.5).isEmpty()
+              && std::fabs(f.variableValue(QStringLiteral("Q")) - 3.5) < 1e-9,
+              "setVariableValue 纯数值变量");
+        CHECK(f.variableNames().size() == 1 && f.variableNames().first() == QStringLiteral("Q"),
+              "variableNames 按定义顺序");
+        f.clearVariables();
+        CHECK(!f.hasVariable(QStringLiteral("Q")) && f.variableNames().isEmpty()
+              && std::isnan(f.variableValue(QStringLiteral("Q"))), "clearVariables 清空 + 查询回落 NaN");
+    }
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// t_splitplot：扩展工具（P9）—— 机械图拆分 / 自动排图 shelf 装箱 / 批量签名
+//   ACCEPT：拆分≥5断言(切分后子档可独立打开)；排图≥5断言(不重叠/利用率)；退化分支。
+//   FORBID：不改存档格式（子档克隆源根仅替换 elements）、不改枚举。
+// ============================================================
+static bool t_splitplot() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+
+    // ---------- 1) 按图层分组 ----------
+    {
+        SketchModel m;
+        int a1 = addLine(m, 0, 0, 10, 0);
+        int a2 = addCircle(m, 5, 5, 2);
+        int b1 = addLine(m, 0, 20, 10, 20);
+        m.updateElementQuiet(a1, [](Element& e){ e.layer = QStringLiteral("零件A"); });
+        m.updateElementQuiet(a2, [](Element& e){ e.layer = QStringLiteral("零件A"); });
+        m.updateElementQuiet(b1, [](Element& e){ e.layer = QStringLiteral("零件B"); });
+        const QVector<SplitGroup> gs = groupByLayer(m.elements());
+        CHECK(gs.size() == 2, "按图层分组：2 组（零件A/零件B）");
+        CHECK(gs.size() == 2 && gs[0].name == QStringLiteral("零件A") && gs[0].elemIds.size() == 2
+              && gs[1].name == QStringLiteral("零件B") && gs[1].elemIds.size() == 1,
+              "按图层分组：组成员与保序正确");
+        size_t total = 0;
+        for (const auto& g : gs) total += g.elemIds.size();
+        CHECK(total == m.elements().size(), "按图层分组：图元守恒（无丢失无重复）");
+    }
+
+    // ---------- 2) 按图框分组（首个包含者优先 + 框外不丢弃）----------
+    {
+        std::vector<Element> es;
+        auto mk = [](int id, double x, double y) {
+            Element e; e.id = id; e.type = ElementType::Line;
+            e.pts = { Vec3(x, y, 0), Vec3(x + 1, y, 0) };
+            return e;
+        };
+        es.push_back(mk(1, 10, 10));    // 帧1 内
+        es.push_back(mk(2, 60, 10));    // 帧2 内
+        es.push_back(mk(3, 200, 200));  // 框外
+        es.push_back(mk(4, 45, 10));    // 两帧交叠区 → 归帧1（frames 保序即优先级）
+        const QVector<QRectF> frames = { QRectF(0, 0, 50, 50), QRectF(40, 0, 50, 50) };
+        const QVector<SplitGroup> gs = groupByFrame(es, frames);
+        CHECK(gs.size() == 3, "按图框分组：3 组（帧-1/帧-2/框外）");
+        CHECK(gs.size() == 3 && gs[0].name == QStringLiteral("帧-1") && gs[0].elemIds.size() == 2,
+              "帧-1 含 id1 + 交叠区 id4（首个包含者优先）");
+        CHECK(gs.size() == 3 && gs[1].name == QStringLiteral("帧-2") && gs[1].elemIds.size() == 1
+              && gs[2].name == QStringLiteral("框外") && gs[2].elemIds.size() == 1,
+              "帧-2 含 id2；框外含 id3（不丢弃）");
+        const QVector<SplitGroup> none = groupByFrame(es, QVector<QRectF>());
+        CHECK(none.size() == 1 && none[0].elemIds.size() == 4, "无帧输入 → 全部归框外（等价不拆）");
+    }
+
+    // ---------- 3) 子档写出 + 独立打开验证 ----------
+    {
+        QTemporaryDir td;
+        CHECK(td.isValid(), "拆分：临时目录创建成功");
+        SketchModel m;
+        // 真实图框 + 标题栏（tb:field: 元素随图）
+        const std::vector<Element> frame = buildSheetFrame(SheetSpec::make(SheetFormat::A3, true));
+        m.beginEdit(QStringLiteral("图框"));
+        m.addElementsQuiet(frame);
+        int p1 = addLine(m, 100, 100, 150, 100);
+        int p2 = addCircle(m, 120, 120, 8);
+        int p3 = addLine(m, 300, 100, 350, 150);
+        m.updateElementQuiet(p1, [](Element& e){ e.layer = QStringLiteral("零件A"); });
+        m.updateElementQuiet(p2, [](Element& e){ e.layer = QStringLiteral("零件A"); });
+        m.updateElementQuiet(p3, [](Element& e){ e.layer = QStringLiteral("零件B"); });
+
+        const QJsonObject root = m.toDrawingJson();
+        const QVector<SplitGroup> gs = groupByLayer(m.elements());
+        const SplitResult sr = writeSplitDrawings(root, gs, m.elements(), td.path(),
+                                                  QStringLiteral("asm"), QStringLiteral(".skd"));
+        // 4 组：零件A / 零件B / 图框 / 标题栏
+        CHECK(sr.written == 4 && sr.errors.isEmpty(), "拆分写出：4 组全部成功、无错误");
+
+        // 子档可独立打开：JSON 可解析 + 图元经 elementFromJson  round-trip + id 集合与分组一致
+        bool allOpenable = true;
+        bool keysPreserved = true;
+        for (int gi = 0; gi < gs.size(); ++gi) {
+            const QString path = sr.outPaths.value(gi);
+            if (path.isEmpty()) { allOpenable = false; continue; }
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) { allOpenable = false; continue; }
+            const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+            f.close();
+            if (!doc.isObject()) { allOpenable = false; continue; }
+            const QJsonObject sub = doc.object();
+            // 存档格式零改动：除 elements 外顶层键与源完全一致
+            for (const QString& k : root.keys()) {
+                if (k == QStringLiteral("elements")) continue;
+                if (sub.value(k) != root.value(k)) keysPreserved = false;
+            }
+            const QJsonArray arr = sub.value(QStringLiteral("elements")).toArray();
+            if ((int)arr.size() != (int)gs[gi].elemIds.size()) { allOpenable = false; continue; }
+            QSet<qint64> ids;
+            for (const auto& v : arr) {
+                const Element e = elementFromJson(v.toObject());
+                ids.insert((qint64)e.id);
+            }
+            for (qint64 id : gs[gi].elemIds) if (!ids.contains(id)) allOpenable = false;
+        }
+        CHECK(allOpenable, "切分后子档可独立打开（JSON 可解析 + elementFromJson 往返 + id 集合一致）");
+        CHECK(keysPreserved, "子档保留源图全部其余顶层键（存档格式零改动）");
+        // 坏组：id 不在源图元集 → 记错不写
+        QVector<SplitGroup> bad = gs;
+        bad[0].elemIds.push_back((qint64)999999);
+        const SplitResult sr2 = writeSplitDrawings(root, bad, m.elements(), td.path(),
+                                                   QStringLiteral("asm2"), QStringLiteral(".skd"));
+        CHECK(sr2.written == 3 && !sr2.errors.isEmpty()
+              && sr2.errors.first().contains(QStringLiteral("不在源图元集中")),
+              "坏组（幽灵 id）→ 跳过该组 + 明确错误，其余组照常");
+    }
+
+    // ---------- 4) 自动排图（shelf 装箱）----------
+    {
+        PackOptions opt;
+        opt.sheetW = 420.0; opt.sheetH = 297.0; opt.gap = 5.0;
+        const QVector<PackRect> rects = {
+            { 1, 200.0, 100.0 }, { 2, 100.0, 100.0 }, { 3, 150.0,  80.0 },
+            { 4,  80.0,  60.0 }, { 5, 120.0,  40.0 },
+        };
+        const PackResult pr = packShelf(rects, opt);
+        CHECK(pr.ok && pr.placements.size() == 5, "排图：5 个图框全部放入");
+        // 不重叠（成对相交判定，容差 1e-9）
+        bool overlap = false;
+        for (int i = 0; i < 5 && !overlap; ++i)
+            for (int j = i + 1; j < 5 && !overlap; ++j) {
+                const PackPlacement& A = pr.placements[i];
+                const PackPlacement& B = pr.placements[j];
+                const bool sep = (A.x + A.w <= B.x + 1e-9) || (B.x + B.w <= A.x + 1e-9) ||
+                                 (A.y + A.h <= B.y + 1e-9) || (B.y + B.h <= A.y + 1e-9);
+                if (!sep) overlap = true;
+            }
+        CHECK(!overlap, "排图：成对不重叠");
+        // 不越界（含间距语义下的纸张净区域）
+        bool inBounds = true;
+        for (const auto& p : pr.placements)
+            if (p.x < -1e-9 || p.y < -1e-9 || p.x + p.w > opt.sheetW + 1e-9 || p.y + p.h > opt.sheetH + 1e-9)
+                inBounds = false;
+        CHECK(inBounds, "排图：全部在纸张可用区域内");
+        CHECK(pr.utilization > 0.0 && pr.utilization <= 1.0, "排图：利用率 ∈ (0,1]");
+        // 确定性：同输入两次 → 逐位一致
+        const PackResult pr2 = packShelf(rects, opt);
+        bool same = pr2.placements.size() == pr.placements.size();
+        for (int i = 0; i < 5 && same; ++i) {
+            const PackPlacement& A = pr.placements[i];
+            const PackPlacement& B = pr2.placements[i];
+            if (A.id != B.id || std::fabs(A.x - B.x) > 1e-12 || std::fabs(A.y - B.y) > 1e-12) same = false;
+        }
+        CHECK(same, "排图：确定性（同输入 → 同结果）");
+        // 利用率口径：Σ面积 / 占用包围盒
+        const double expectUtil = pr.areaSum / (pr.usedW * pr.usedH);
+        CHECK(std::fabs(pr.utilization - expectUtil) < 1e-9, "排图：利用率 = Σ面积/占用包围盒");
+        // 退化：超纸张 / 空表 / 非法尺寸
+        const PackResult big = packShelf({ { 9, 500.0, 100.0 } }, opt);
+        CHECK(!big.ok && big.error.contains(QStringLiteral("超出纸张")), "排图退化：超出纸张 → false + 原因");
+        CHECK(!packShelf(QVector<PackRect>(), opt).ok, "排图退化：空表 → false");
+        const PackResult neg = packShelf({ { 9, -1.0, 10.0 } }, opt);
+        CHECK(!neg.ok && neg.error.contains(QStringLiteral("非法")), "排图退化：非法尺寸 → false + 原因");
+        // 贴边单框：利用率 = 1
+        const PackResult exact = packShelf({ { 7, 420.0, 297.0 } }, opt);
+        CHECK(exact.ok && std::fabs(exact.utilization - 1.0) < 1e-9, "排图：贴边单框利用率 = 1");
+    }
+
+    // ---------- 5) 批量签名 ----------
+    {
+        SketchModel m;
+        const std::vector<Element> frame = buildSheetFrame(SheetSpec::make(SheetFormat::A3, true));
+        m.beginEdit(QStringLiteral("图框"));
+        m.addElementsQuiet(frame);
+
+        // key 通道：设计/审核/批准
+        QHash<QString, QString> fields;
+        fields.insert(QStringLiteral("design"),   QStringLiteral("张三"));
+        fields.insert(QStringLiteral("review"),   QStringLiteral("李四"));
+        fields.insert(QStringLiteral("approve"),  QStringLiteral("王五"));
+        const SignResult sr = batchSign(m, fields);
+        CHECK(sr.updates.size() == 3 && sr.unmatched.isEmpty(), "批量签名：3 个 key 通道字段全部命中");
+        bool texts = sr.updates.size() == 3;
+        for (const auto& u : sr.updates) {
+            if (u.fieldKey == QStringLiteral("design"))  { if (u.newElem.text != QStringLiteral("张三")) texts = false; }
+            if (u.fieldKey == QStringLiteral("review"))  { if (u.newElem.text != QStringLiteral("李四")) texts = false; }
+            if (u.fieldKey == QStringLiteral("approve")) { if (u.newElem.text != QStringLiteral("王五")) texts = false; }
+            if (u.elemId < 0) texts = false;
+        }
+        CHECK(texts, "批量签名：填字内容与 elemId 正确");
+
+        // label 通道：中文标签 → 经 titleBlockFields() 映射 key
+        const SignResult sr2 = batchSign(m, { { QStringLiteral("图纸名称"), QStringLiteral("轴承座") } });
+        CHECK(sr2.updates.size() == 1 && sr2.updates[0].fieldKey == QStringLiteral("drawingName")
+              && sr2.updates[0].newElem.text == QStringLiteral("轴承座"),
+              "批量签名：label 通道（「图纸名称」→ drawingName）");
+
+        // 应用链路：updateElementQuiet 消费 updates → 模型文本即签名
+        if (!sr.updates.empty()) {
+            const SignUpdate u0 = sr.updates.front();
+            m.updateElementQuiet((int)u0.elemId, [&](Element& e){ e = u0.newElem; });
+            const Element* after = m.element((int)u0.elemId);
+            CHECK(after && after->text == u0.newElem.text, "批量签名：updates 可经 Quiet API 落模");
+        }
+
+        // 退化：空值跳过（不擦除）；未知 key → unmatched；空签名表 → 空操作
+        const SignResult sr3 = batchSign(m, { { QStringLiteral("design"), QString() } });
+        CHECK(sr3.updates.empty(), "批量签名：空值跳过（不擦除已有签名）");
+        const SignResult sr4 = batchSign(m, { { QStringLiteral("不存在的栏"), QStringLiteral("X") } });
+        CHECK(sr4.updates.empty() && sr4.unmatched.size() == 1
+              && sr4.unmatched.first() == QStringLiteral("不存在的栏"),
+              "批量签名：未知栏 → unmatched 回填（防静默漏签）");
+        CHECK(batchSign(m, QHash<QString,QString>()).updates.empty(), "批量签名：空签名表 → 空操作");
+        // 字段元素提取助手
+        const auto fe = titleBlockFieldElems(m.elements());
+        CHECK(!fe.isEmpty() && fe.first().first == QStringLiteral("drawingName"),
+              "titleBlockFieldElems：tb:field: 元素按 key 提取");
+    }
+
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -9764,6 +11618,17 @@ int main(int argc, char** argv) {
     CHECK(t_constraintInvolving(), "constraintsInvolving 命中");
     CHECK(t_serializeRoundTrip(),   "serialize RoundTrip (序列化幂等)");
     CHECK(t_sktIntegration(),       "SKT 集成：约束求解门面路由(Phase B) 映射/诊断/联动/回落");
+    CHECK(t_centerLine(),            "P1 中心线家族(CenterLineGen 10 种 + 退化用例)");
+    CHECK(t_symbolExt(),             "P3 符号标注扩展(SymbolFactory 6 类 + 退化用例)");
+    CHECK(t_bom(),                   "P2 序号球标与明细表联动(BomItem+xh+顶层bom条件写键)");
+    CHECK(t_gear(),                  "P4 机械零件设计(渐开线齿轮齿廓InvoluteGear+PartLibrary抽象)");
+    CHECK(t_partlib(),               "P5 参数化国标图库(GbFastenerTable 螺栓/螺母/垫圈+checkout出库BlockDef)");
+    CHECK(t_sectionprops(),          "P7 辅助工具(截面特性 Green 定理标准公式：矩形/三角形/圆解析解对照+退化+重量估算)");
+    CHECK(t_bomanalysis(),           "P7 辅助工具(批量 BOM 多档汇总+跨档累加+读错误收集)");
+    CHECK(t_varparam(),              "P8 参数化变量层(defineVariable/drive 表达式+拓扑重算+循环依赖+过约束尺寸开关+退化)");
+    CHECK(t_splitplot(),             "P9 扩展工具(机械图拆分按图层/图框+子档独立打开+自动排图不重叠/利用率+批量签名key/label)");
+    CHECK(t_viewtool(),              "P6 视图工具(向视符号/孔轴投影/转角投影+退化缺方向)");
+    CHECK(t_featuremenu(),           "P1~P9 功能菜单与准入(目录单一数据源+各准入条件正反例+闭合轮廓提取)");
 
     CHECK(t_scriptHost(),           "ScriptHost 脚本宿主(JS 加载/执行/异常/日志)");
     CHECK(t_pluginManager(),        "PluginManager 原生SDK(桥接/外部命令/插件加载卸载)");
@@ -9807,6 +11672,7 @@ int main(int argc, char** argv) {
     t_layout();            // 布局体系：paperRect往返/布局CRUD/旧档回落/1:2与2:1/平铺像素/PDF样张/命令行
     CHECK(t_plotPublish(), "打印发布体系(视口冻结/发布页列表/戳记/视口旋转/GUI-COM一致)");
     CHECK(t_titleBlockAux(), "标题栏表格化+辅助元素打印过滤(单元格包含/收缩适配/谓词/端到端零墨迹)");
+    CHECK(t_sheetFrameOpts(), "【新建图框】图框生成选项(兼容/装订/加长/自定义/分区/对中/明细栏)");
     CHECK(t_multidoc(),    "多文档标签 DocTab(独立undo/脏标记隔离/cycle循环/拖拽重排/跨文档粘贴/历史互换/关闭夹取)");
     CHECK(t_i18n(), "国际化+高DPI(语言解析/.qm装载/上下文存在/切换翻译底座/缺翻译回落中文/卸载回落源语言/DPI换算一致/QLocale口径)");
     CHECK(t_interaction(), "AutoCAD 交互对齐(空格/回车重复命令/↑↓历史/Tab补齐/坐标注入/未知命令3候选/历史持久化/右键行为配置)");
@@ -9826,6 +11692,7 @@ int main(int argc, char** argv) {
     CHECK(t_ucs(),         "用户坐标系 UCS(往返换算/45°@100<0落点≤1e-6/ucs命令定义+CRUD/极轴正交栅格UCS对齐/读数切换/网格方向/不入档)");
     CHECK(t_ucsSheetCenter(), "UCS 幅面中心(新建图纸原点=图纸中央/命令参数坐标随UCS/两路输入同源/raw纯解析回归/世界系恒等/move位移不受UCS)");
     CHECK(t_sheetPageSync(), "新建图纸幅面驱动页面设置(六幅面映射/只动两字段/随图存档往返/图框自愈/零布局PDF横竖端到端/布局seeding/COM批出图)");
+    CHECK(t_sheetFrameBars(), "新建图框扩展(附加栏/代号栏同名关联/参数栏/左分区开关/装订宽度/预设注册表/模板JSON往返)");
     CHECK(t_dimDriven(), "尺寸驱动编辑(直线/圆/角度驱动+相邻联动+标注文本同步+域刷新+单步撤销+dimedit入口)");
 
     // ---- 分层测试网：既有模块补充直测 ----

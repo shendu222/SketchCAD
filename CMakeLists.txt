@@ -42,6 +42,17 @@ set(CORE_SOURCES
     src/core/SketchModel.cpp
     src/core/CommandInterpreter.cpp
     src/core/CommandCatalog.cpp    # 命令元数据目录 + 面板纯逻辑 + 快捷键审计（纯数据层，可无头直测）
+    src/core/BomItem.cpp           # P2：序号球标纯生成器 + BomItem 数据模型
+    src/core/InvoluteGear.cpp       # P4：渐开线齿轮齿廓采样生成器（G1 公式）
+    src/core/PartLibrary.cpp        # P4：零件库抽象（PartGenerator 接口 + GearGenerator 内建）
+    src/core/GbFastenerTable.cpp    # P5：GB 紧固件规格表（六角螺栓/螺母/平垫圈，人工给定 G3）
+    src/core/ViewTools.cpp          # P6：视图工具（向视符号/孔轴投影/转角投影生成器）
+    src/core/SectionProps.cpp       # P7：截面特性（Green 定理标准公式，G1 待人工校核）
+    src/core/DensityTable.cpp       # P7：材料密度表（人工提供，禁改数值 G3）
+    src/core/BatchBom.cpp           # P7：批量 BOM 汇总（只读顶层 bom 键，不实例化模型）
+    src/core/VarParam.cpp           # P8：变量表达式层（会话级变量表 + 轻量安全求值器 + 拓扑重算）
+    src/core/BatchTools.cpp         # P9：扩展工具（机械图拆分/自动排图 shelf 装箱/批量签名）
+    src/core/FeatureMenu.cpp        # P1~P9 功能菜单与准入（目录单一数据源 + 纯逻辑条件评估）
     src/core/MacroScript.cpp
     src/core/AliasTable.cpp
     src/core/CuiManager.cpp
@@ -58,6 +69,8 @@ set(CORE_SOURCES
     src/core/ProjectionSymbol.cpp
     src/core/TitleBlockLayout.cpp  # 标题栏单元格文字自适应（度量→收缩→定位）+ 网格重建（编辑期/自测共用）
     src/core/SurfaceRoughness.cpp
+    src/core/CenterLineGen.cpp   # P1 中心线家族生成器（10 种，纯函数 + 单文件自测接入 SketchSelfTest）
+    src/core/SymbolFactory.cpp   # P3 符号标注扩展（datum/weld/taper/centerhole/elevation/rotation 6 类纯生成器）
     src/core/SectionCutSymbol.cpp
     src/core/SectionDrawing.cpp
     src/core/ConstraintSolver.cpp
@@ -67,6 +80,7 @@ set(CORE_SOURCES
     src/core/ShapeSelect.cpp
     src/core/GripOps.cpp
     src/core/sheet_frame.cpp
+    src/core/SheetFrameTemplate.cpp  # 【新建图框】图框布置模板持久化（独立 JSON，需求 13）
     src/core/Modify.cpp
     src/core/UndoDelta.cpp        # 撤销栈差量化（变更集 + 每 50 步全量检查点）
     src/core/Clipboard.cpp
@@ -135,6 +149,7 @@ set(UI_SOURCES
     src/ui/DiagnosticsDialog.cpp   # 诊断包导出对话框（异常退出提示 / 帮助菜单共用）
     src/ui/StatusBar.cpp
     src/ui/NewDrawingDialog.cpp
+    src/ui/SheetFrameDialog.cpp    # 【图纸】>【新建图框】对话框（GB/T 14689 图框选项生成）
     src/ui/PaperSizeDialog.cpp
     src/ui/TitleBlockForm.cpp
     src/ui/ModifyInputDialog.cpp

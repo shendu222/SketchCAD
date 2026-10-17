@@ -2,6 +2,7 @@
 #include <QMainWindow>
 #include <QJsonObject>
 #include <QHash>
+#include <QRectF>
 #include <QList>
 #include <QVector>
 #include <QPair>
@@ -11,6 +12,7 @@
 #include "ui/ConstraintBar.h" // ConstraintBar 定义（约束栏面板，需求③④）
 #include "ui/DesignCenterPanel.h" // DesignCenterPanel 定义（设计中心侧栏，供 designPanel_ 成员使用）
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
+#include "core/FeatureMenu.h" // P1~P9 功能菜单与准入（目录单一数据源 + 条件评估）
 #include "core/Section.h"    // SectionStyle / SectionLoopSet（剖面填充点选模式的样式与缓存）
 #include "ui/PrintEngine.h"  // PrintSettings（打印/出图设置，同时充当布局定义）
 #include "ui/MTextDialog.h"       // MTEXT 多行文字对话框（双击编辑/菜单入口共用）
@@ -55,6 +57,7 @@ class GroupManagerDialog;   // 编组管理器（GROUP）
 class QSelectDialog;        // 快速选择（QSELECT）
 class FilterDialog;         // 过滤器（FILTER）
 struct SheetSpec;
+struct SheetFrameOptions;   // core/SheetSpec.h：【新建图框】图框生成选项
 enum class TitleBlockStyle : int;   // core/SheetSpec.h：标题栏样式（Standard/None）
 class AppSettings;          // 全局设置（AppSettings.h 仍需在 cpp 中包含）
 class RecentFiles;          // 最近文件 MRU（core/RecentFiles.h 在 cpp 中包含）
@@ -190,6 +193,35 @@ private:
 
     void buildMenu();
     void rebuildMenusForLanguage();           // 语言切换即刻生效：卸旧菜单 → buildMenu 重跑 tr()
+    // ---- P1~P9 功能菜单与准入（FeatureMenu 目录驱动）----
+    // 菜单注册：buildMenu 内由 featureCatalog() 生成「扩展工具」顶层菜单
+    // （9 个 P 分组子菜单），QAction 集中登记到 featureActs_；
+    // 条件评估：QMenu::aboutToShow + 选择集变更 → updateFeatureMenuState()
+    // 逐项 evaluateFeature → setEnabled(av.enabled)，禁用项 statusTip/toolTip
+    // 回显原因（交互反馈：悬停即知缺什么）；
+    // 触发分发：onFeatureTriggered 单一入口 → 各功能处理器（库调用 + model_->log 反馈）。
+    QVector<QPair<FeatureId, QAction*>> featureActs_;
+    void updateFeatureMenuState();
+    void onFeatureTriggered(FeatureId id);
+    // 共享辅助（生成器统一落盘路径）
+    std::vector<Element> selectedRefElements() const;          // 选择集图元（保序）
+    Vec3 selectionAnchorOrViewCenter() const;                  // 锚点：选中包围盒中心 → 视图中心
+    QVector<QRectF> frameRectsInDrawing() const;               // 图框层矩形（拆分/排图输入）
+    int  insertGeneratedElements(const std::vector<Element>& parts,
+                                 const QString& undoLabel);    // beginEdit + Quiet 统一插入
+    // 各功能处理器（准入已过 + 库层双保险）
+    void insertCenterLineFor(CenterLineKind kind);             // P1
+    void openBomTableDialog();                                 // P2
+    void insertSymbolAtAnchor(const QString& symbolName);      // P3
+    void insertPartAtAnchor(const QString& partId, const QString& title); // P4/P5
+    void insertViewToolSymbol(FeatureId id);                   // P6
+    void showSectionPropsOfSelection();                        // P7
+    void estimateMassOfSelection();                            // P7
+    void runBatchBomAnalysis();                                // P7
+    void openVariableTableDialog();                            // P8
+    void runSplitDrawing();                                    // P9
+    void runPackDrawings();                                    // P9
+    void runBatchSign();                                       // P9
     void openCommandPalette();                // 命令面板（Ctrl+Shift+P）：模糊搜索 → Enter 执行
     void auditShortcutConflicts();            // 启动自检：扫描重复快捷键绑定，warn 日志提示
     // 崩溃可复现诊断包：启动提示 + 一键导出（打包/隐私逻辑在 core/DiagBundle 与 Telemetry）
@@ -274,6 +306,9 @@ private:
     // 模板化新建的唯一入口：菜单「新建」与启动页模板按钮共用同一 new drawing 流
     //（applyNewDrawing 原样）；TitleBlockStyle::None 时在同一撤销步内静默移除标题栏层。
     void createTemplatedDrawing(const SheetSpec& spec, double ratio, TitleBlockStyle tb);
+    // 【图纸】>【新建图框】：弹窗收集图框选项 → 新文档生成；applySheetFrame 为纯落盘封装
+    void openSheetFrameDialog();
+    void applySheetFrame(const SheetFrameOptions& opts, double scaleRatio);
     // 「无标题栏」样式：移除标题栏层全部图元（Quiet，并入「新建图纸」同一撤销步）
     void removeTitleBlockElements();
     // 启动页打开首图：成功后若「出厂空白图」仍在（唯一/未命名/不脏/无图元）则收走它，

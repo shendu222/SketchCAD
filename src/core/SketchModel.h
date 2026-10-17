@@ -5,6 +5,7 @@
 #include <QString>
 #include <QJsonArray>
 #include "Element.h"
+#include "BomItem.h"   // P2：序号球标 / 明细表（BOM）数据模型 + 球标纯生成器
 #include "Vec.h"
 #include "LineStyleConfig.h"
 #include "DimStyle.h"
@@ -354,7 +355,30 @@ public:
     // 无矩形 / 非标尺寸 → nullopt（调用方放弃推断，绝不猜）
     std::optional<SheetSpec> inferSheetSpecFromFrame() const;
     QJsonObject sheetSpecToJson() const;                        // 无规格 → 空对象（不写 "sheet" 键）
-    static std::optional<SheetSpec> sheetSpecFromJson(const QJsonObject& o);   // 缺键/非法 → nullopt    // 格式化便捷口（状态栏 / 属性面板 / 查询结果统一走此，杜绝两处口径漂移）
+    static std::optional<SheetSpec> sheetSpecFromJson(const QJsonObject& o);   // 缺键/非法 → nullopt
+
+    // ---- 明细表（BOM）/ 序号球标（随图存档顶层 JSON "bom"）----
+    // 与「图纸幅面」同级：运行期唯一写入途径是 xh 命令（一次操作一次 pushMemento）；
+    // 数据本身不入元素撤销差量（撤销栈条数只反映图元，BOM 行刷新属数据层，Phase-1 暂不一致，
+    // 见 docs/feature-expansion/P2...md 偏差）。顶层 "bom" 键精确镜像 sheet 的条件写键模式：
+    // 仅当 bom_ 非空才写键，读取缺键 → 空表回落（绝不崩、无推断兜底，BOM 无图框可推断）。
+    const QVector<BomItem>& bom() const { return bom_; }
+    int  bomCount() const { return bom_.size(); }
+    int  nextBomSeq() const;                                  // 下一个唯一序号（max(seq)+1，空表=1）
+    // 追加一条明细（不压撤销栈；调用方负责 pushMemento 包裹整组操作）
+    void addBomItem(const BomItem& it);
+    // 按索引删除一条明细 + 联动删除其球标标记图元（不压栈）
+    void removeBomItemAt(int index);
+    // 合并同名：name 相同者合并为一行（seq 取最小、srcIds/balloonIds 取并集），返回合并后行数
+    int  mergeBomByName();
+    // 重排编号：按当前顺序 seq = 1..N（唯一递增，满足「球标编号不唯一」FORBID）
+    void renumberBom();
+    // 悬停取数：由球标标记图元 id 反查所属明细索引（-1 = 不在任何球标上）
+    int  bomIndexForBalloon(qint64 balloonElemId) const;
+    const BomItem* bomItemAt(int index) const;
+    // 序列化（顶层 "bom" 条件写键；旧档缺键 → 空表）
+    QJsonArray bomToJson() const;
+    void setBomFromJson(const QJsonArray& a);                 // 读档：直接替换（clear 后调用）    // 格式化便捷口（状态栏 / 属性面板 / 查询结果统一走此，杜绝两处口径漂移）
     QString formatLength(double mm) const { return formatLengthMm(mm, units_); }
     // 注意：同名自由函数被类内成员遮蔽，须 SketchCAD:: 限定才能命中双参版本
     QString formatLengthWithUnit(double mm) const { return SketchCAD::formatLengthWithUnit(mm, units_); }
@@ -840,6 +864,7 @@ private:
     LimitsMeta limits_;                   // 图纸界限（默认 A3，检查默认关）
     SheetSpec  sheetSpec_;                // 图纸幅面规格（hasSheetSpec_ 为真时有效；打印页面尺寸/方向数据源）
     bool       hasSheetSpec_ = false;     // 是否已设定幅面（空白图/外部导入未推断出 → false）
+    QVector<BomItem> bom_;                // 明细表（BOM）/ 序号球标数据；随图存档顶层 "bom"（非空才写键）
     snap::SnapConfig snapConfig_;         // 捕捉全局配置（随图存档 + 入撤销栈）
     snap::TrackConfig trackConfig_;       // 追踪全局配置（随图存档 + 入撤销栈）
     std::vector<Vec3> trackPoints_;       // 临时追踪点（TK，瞬态，不随图存档）

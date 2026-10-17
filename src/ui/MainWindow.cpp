@@ -49,6 +49,7 @@
 #include "ui/StatusBar.h"
 #include "ui/icons.h"
 #include "ui/NewDrawingDialog.h"
+#include "ui/SheetFrameDialog.h"   // 【图纸】>【新建图框】对话框
 #include "ui/PaperSizeDialog.h"
 #include "ui/TitleBlockForm.h"
 #include "ui/ModifyInputDialog.h"
@@ -75,6 +76,16 @@
 #include "core/AutoSave.h"              // 自动保存核心
 #include "core/AppSettings.h"           // 全局设置（HKCU\Software\SketchCAD）
 #include "core/ConstraintSolverFacade.h" // 约束求解路由门面（注入 AppSettings 供特性开关读取）
+#include "core/FeatureMenu.h"      // P1~P9 功能菜单与准入（目录单一数据源 + 条件评估）
+#include "core/CenterLineGen.h"    // P1 中心线家族（makeCenterLine）
+#include "core/SymbolFactory.h"    // P3 符号标注扩展（mkSymbol）
+#include "core/ViewTools.h"        // P6 视图工具（向视/孔轴/转角投影）
+#include "core/SectionProps.h"     // P7 截面特性（面积/形心/二次矩/惯性积）
+#include "core/DensityTable.h"     // P7 材料密度表（人工提供禁改）
+#include "core/BatchBom.h"         // P7 批量 BOM 汇总
+#include "core/BatchTools.h"       // P9 扩展工具（拆分/排图/批量签名）
+#include "core/PartLibrary.h"      // P4/P5 零件库（齿轮/紧固件出库）
+#include "core/GbFastenerTable.h"  // P5 GB 紧固件规格表（FastenerKind / sizes）
 #include "core/I18n.h"                  // 界面语言单一入口（翻译器装载/语言解析）
 #include "core/RecentFiles.h"           // 最近文件 MRU（路径+时间+pin）
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
@@ -88,6 +99,12 @@
 
 #include <QMenuBar>
 #include <QMenu>
+#include <QTableWidget>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QToolBar>
 #include <QToolButton>
 #include <QShortcut>     // 正交 F8 / 栅格吸附 F9 的全局快捷键
@@ -1010,6 +1027,13 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("print"));
     bar->addMenu(pr);
 
+    // ---- 顶级菜单：图纸（图框/标题栏/明细栏生成）----
+    QMenu* sh = new QMenu(tr("图纸(&G)"), this);
+    sh->setObjectName("menuSheet");
+    mk(sh, tr("新建图框..."), QKeySequence(), [this] { openSheetFrameDialog(); })
+        ->setIcon(icons::make("titleblock"));
+    bar->addMenu(sh);
+
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     // 快速开关 + 追踪设置入口；勾选态与 trackConfigChanged 双向同步（命令行/面板改动即时反映）。
     QMenu* k = new QMenu(tr("追踪(&K)"), this);
@@ -1838,6 +1862,58 @@ void MainWindow::buildMenu() {
     plug->addMenu(pluginLoadedSub_);
     refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
     bar->addMenu(plug);
+
+    // ---- 扩展工具：P1~P9 功能菜单（FeatureMenu 目录驱动 + 准入置灰）----
+    // 单一数据源 = featureCatalog()：分组子菜单、菜单项、提示全部由目录生成，
+    // 禁止在此手工维护第二份清单（同一语义两处拼装 ⇒ 一处更新一处漏）。
+    // 准入：aboutToShow → updateFeatureMenuState() 逐项 evaluateFeature，
+    // 不满足条件 setEnabled(false) 且 statusTip/toolTip 回显原因（悬停可读）。
+    QMenu* ex = new QMenu(tr("扩展工具(&R)"), this);
+    ex->setObjectName("menuExt");
+    featureActs_.clear();   // 语言切换会重跑 buildMenu：先清登记表，避免动作累积
+    {
+        const QVector<FeatureEntry>& cat = featureCatalog();
+        // 分组顺序 = 目录首次出现顺序（P1~P9）
+        QStringList groupOrder;
+        QHash<QString, QMenu*> groupMenus;
+        for (const FeatureEntry& e : cat) {
+            const QString group = QString::fromUtf8(e.group);
+            if (!groupMenus.contains(group)) {
+                groupOrder << group;
+                groupMenus.insert(group, ex->addMenu(group));
+            }
+        }
+        // 分组图标（子菜单标题左侧）
+        static const QHash<QString, QString> kGroupIcons = {
+            { QStringLiteral("中心线 (P1)"),      QStringLiteral("line") },
+            { QStringLiteral("序号球标 (P2)"),    QStringLiteral("field") },
+            { QStringLiteral("符号标注 (P3)"),    QStringLiteral("dim") },
+            { QStringLiteral("机械零件 (P4)"),    QStringLiteral("block") },
+            { QStringLiteral("国标图库 (P5)"),    QStringLiteral("attributes") },
+            { QStringLiteral("视图工具 (P6)"),    QStringLiteral("views") },
+            { QStringLiteral("辅助工具 (P7)"),    QStringLiteral("query") },
+            { QStringLiteral("参数化变量 (P8)"),  QStringLiteral("constraint") },
+            { QStringLiteral("扩展工具 (P9)"),    QStringLiteral("modify") },
+        };
+        for (const QString& g : groupOrder) {
+            QMenu* gm = groupMenus.value(g);
+            const QString iconId = kGroupIcons.value(g);
+            if (gm && !iconId.isEmpty()) gm->setIcon(icons::make(iconId));
+        }
+        for (const FeatureEntry& e : cat) {
+            QMenu* gm = groupMenus.value(QString::fromUtf8(e.group));
+            if (!gm) continue;
+            QAction* a = gm->addAction(QString::fromUtf8(e.title));
+            a->setObjectName(QStringLiteral("feature_%1").arg((int)e.id));
+            a->setStatusTip(QString::fromUtf8(e.tip));
+            a->setToolTip(QString::fromUtf8(e.tip));
+            connect(a, &QAction::triggered, this, [this, id = e.id] { onFeatureTriggered(id); });
+            featureActs_.append({ e.id, a });
+        }
+    }
+    // 菜单展开时重算准入（选择集/图纸内容可能已变化）；禁用原因经 statusTip 反馈
+    connect(ex, &QMenu::aboutToShow, this, [this] { updateFeatureMenuState(); });
+    bar->addMenu(ex);
 
     // ---- 工具（统一「选项」入口：应用级配置持久化 + 分类树表单）----
     QMenu* tools = new QMenu(tr("工具(&T)"), this);
@@ -3795,6 +3871,12 @@ void MainWindow::hookActiveDoc() {
         propDock_->raise();
     });
 
+    // ---- 扩展工具菜单准入态随选择集刷新（aboutToShow 亦会重算；此处保证菜单
+    //      展开期间/文档切换后即时正确——置灰项 statusTip 已回显禁用原因）----
+    modelConns_ << connect(model_, &SketchModel::selectionChanged, this, [this] {
+        updateFeatureMenuState();
+    });
+
     // ---- 约束可视化联动 ----
     modelConns_ << connect(model_, &SketchModel::constraintsChanged, constraintBar_, &ConstraintBar::refresh);
     modelConns_ << connect(model_, &SketchModel::constraintsChanged, view_, &GraphicsView::refreshConstraintDiagnostics);
@@ -4111,6 +4193,60 @@ void MainWindow::removeTitleBlockElements() {
         if (e.layer == QStringLiteral("标题栏")) ids.push_back(e.id);
     for (int id : ids) model_->removeElementQuiet(id);
     model_->log(QStringLiteral("已按「无标题栏」样式移除标题栏（%1 条图元）").arg(ids.size()));
+}
+
+// 【图纸】>【新建图框】：弹窗收集图框选项 → 生成到新文档（与「新建」同流，不破坏当前工作）。
+void MainWindow::openSheetFrameDialog() {
+    SheetFrameDialog dlg(this);
+    if (dlg.exec() != QDialog::Accepted) return;
+    const SheetFrameOptions opts = dlg.result();
+    const double ratio = dlg.selectedScaleRatio();
+    DocSession* s = docs_->addNewDoc();
+    makeDocPage(s);
+    docTabs_->addTab(docTabText(docs_->count() - 1));
+    switchToDoc(docs_->count() - 1);
+    applySheetFrame(opts, ratio);
+    s->markClean();
+    syncTabTitle(docs_->activeIndex());
+}
+
+// 依据 SheetFrameOptions 生成图框并落到当前文档（单一落盘封装，与 applyNewDrawing 同构）。
+void MainWindow::applySheetFrame(const SheetFrameOptions& opts, double scaleRatio) {
+    if (scaleRatio <= 0.0) scaleRatio = 1.0;
+    const SheetSpec spec = opts.toSheetSpec();
+    setCurrentSheetFormat(spec.format);                // 字高等「随幅面」的量据此派生
+    model_->clear();
+    model_->setDrawingPath(QString());
+    model_->setScaleRatio(scaleRatio, false);
+    for (const Layer& l : standardLayers())
+        model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
+    model_->beginEdit(QStringLiteral("新建图框"));
+    model_->addElementsQuiet(buildSheetFrameWithOptions(opts));
+    model_->setSheetSpec(spec);                        // 幅面规格随图存档
+    syncTitleBlockScale();                             // 标题栏「比例」栏预填当前比例
+    // 自动填写日期：把当天日期写入标题栏「设计日期」栏（附图左下开关）
+    if (opts.autoFillDate) {
+        const QString today = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
+        const QString want = QStringLiteral("tb:field:designDate");
+        for (const Element& e : model_->elements())
+            if (e.name == want && e.text != today)
+                model_->updateElementQuiet(e.id, [today](Element& el) { el.text = today; });
+    }
+    model_->setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"),
+                              Vec3(opts.widthMm() / 2.0, opts.heightMm() / 2.0, 0.0), 0.0));
+    model_->log(QStringLiteral("已生成 %1 图框（比例 %2）：装订边%3、对中符号%4、分区%5、"
+                                "明细栏%6、附加栏%7、代号栏%8、参数栏%9")
+                    .arg(opts.sizeLabel()).arg(model_->scaleLabel())
+                    .arg(opts.bindingMargin ? QStringLiteral("有") : QStringLiteral("无"))
+                    .arg(opts.centerMarks ? QStringLiteral("有") : QStringLiteral("无"))
+                    .arg(opts.zonesEnabled ? QStringLiteral("有") : QStringLiteral("无"))
+                    .arg(opts.bomEnabled ? QStringLiteral("有") : QStringLiteral("无"))
+                    .arg(opts.additionalBarEnabled ? opts.additionalBarKey
+                                                   : QStringLiteral("无"))
+                    .arg(opts.codeBarEnabled ? opts.codeBarKey : QStringLiteral("无"))
+                    .arg(opts.paramBarEnabled ? opts.paramBarKey : QStringLiteral("无")));
+    syncPrintSettingsToSheet();
+    view_->fitToRect(QRectF(0.0, 0.0, opts.widthMm(), opts.heightMm()));
 }
 
 // 启动页对话框：只做选择、不动模型；执行统一在 exec 返回后分派。
@@ -4810,6 +4946,8 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         model_->setSheetSpec(*sp);
     else if (auto inf = model_->inferSheetSpecFromFrame())
         model_->setSheetSpec(*inf);
+    // 明细表（BOM）/ 序号球标：顶层 "bom" 键缺省 → 空数组 → 空表回落（不崩、无推断兜底）
+    model_->setBomFromJson(root["bom"].toArray());
     // 读档的比例只作元数据恢复：存档里的几何已经是按该比例画好的成品，不能再缩放一次
     if (root.contains("scaleRatio"))
         model_->setScaleRatioValue(root["scaleRatio"].toDouble(1.0));
@@ -5747,6 +5885,738 @@ void MainWindow::saveCurrentAsWorkspaceDialog() {
     applyCui();
     model_->log(QStringLiteral("已保存并切换到工作空间：%1（%2 工具条 / %3 菜单）")
                     .arg(id).arg(tbs.size()).arg(menus.size()));
+}
+
+// ============================================================================
+// P1~P9 功能菜单：准入评估 / 状态更新 / 触发分发（FeatureMenu 目录驱动）
+// ------------------------------------------------------------
+// 分层：FeatureMenu（core 纯逻辑）负责「能不能进」；本文件负责「进了做什么」。
+// 每个处理器遵守三件套：① 准入已过（菜单置灰保证）；② 库层双保险（旁路触发
+// 时再判一次，失败给明确 log）；③ model_->log 反馈（info/warn 进日志面板）。
+// ============================================================================
+
+void MainWindow::updateFeatureMenuState() {
+    for (const auto& fa : featureActs_) {
+        QAction* a = fa.second;
+        if (!a) continue;
+        const FeatureAvailability av = evaluateFeature(model_, fa.first);
+        a->setEnabled(av.enabled);
+        const FeatureEntry* e = featureEntry(fa.first);
+        const QString tip = e ? QString::fromUtf8(e->tip) : QString();
+        // 禁用态回显原因（交互反馈：悬停即知缺什么）；启用态恢复功能提示
+        a->setStatusTip(av.enabled ? tip : av.reason);
+        a->setToolTip(av.enabled ? tip : av.reason);
+    }
+}
+
+std::vector<Element> MainWindow::selectedRefElements() const {
+    std::vector<Element> out;
+    if (!model_) return out;
+    for (int id : model_->selection()) {
+        const Element* e = model_->element(id);
+        if (e) out.push_back(*e);
+    }
+    return out;
+}
+
+Vec3 MainWindow::selectionAnchorOrViewCenter() const {
+    if (model_ && model_->hasSelection()) {
+        bool first = true;
+        QRectF bb;
+        for (int id : model_->selection()) {
+            const Element* e = model_->element(id);
+            if (!e) continue;
+            const QRectF r = geo::elementBounds(*e);
+            if (r.isNull()) continue;
+            if (first) { bb = r; first = false; } else bb = bb.united(r);
+        }
+        if (!first) return Vec3(bb.center().x(), bb.center().y(), 0);
+    }
+    if (view_) {
+        const QPointF sp = view_->mapToScene(view_->viewport()->rect().center());
+        return Vec3(sp.x(), sp.y(), 0);
+    }
+    return Vec3(0, 0, 0);
+}
+
+QVector<QRectF> MainWindow::frameRectsInDrawing() const {
+    QVector<QRectF> out;
+    if (!model_) return out;
+    for (const Element& e : model_->elements()) {
+        if (e.type != ElementType::Rectangle) continue;
+        if (e.layer != QStringLiteral("图框")) continue;   // 与图框生成端同层名
+        const QRectF bb = geo::elementBounds(e);
+        if (!bb.isNull()) out.push_back(bb);
+    }
+    return out;
+}
+
+int MainWindow::insertGeneratedElements(const std::vector<Element>& parts,
+                                        const QString& undoLabel) {
+    if (!model_ || parts.empty()) return 0;
+    model_->beginEdit(undoLabel);              // 整组一次 Ctrl+Z 撤回
+    const std::vector<int> ids = model_->addElementsQuiet(parts);
+    return (int)ids.size();
+}
+
+void MainWindow::onFeatureTriggered(FeatureId id) {
+    if (!model_) return;
+    // 双保险：旁路触发（命令面板/脚本/自定义工具条不经菜单）也按准入拦一道
+    const FeatureAvailability av = evaluateFeature(model_, id);
+    if (!av.enabled) {
+        model_->log(QStringLiteral("功能当前不可用：%1").arg(av.reason), QStringLiteral("warn"));
+        return;
+    }
+    if (isCenterLineFeature(id)) { insertCenterLineFor(centerLineKindFor(id)); return; }
+    switch (id) {
+    case FeatureId::Balloon:
+        // 单一入口：与命令行 xh 同一 handler（选中集 → 球标 + 明细表登记）
+        interp_->execute(QStringLiteral("xh"));
+        break;
+    case FeatureId::BomTable:
+        openBomTableDialog();
+        break;
+    case FeatureId::SymbolDatum:      insertSymbolAtAnchor(QStringLiteral("datum")); break;
+    case FeatureId::SymbolWeld:       insertSymbolAtAnchor(QStringLiteral("weld")); break;
+    case FeatureId::SymbolTaper:      insertSymbolAtAnchor(QStringLiteral("taper")); break;
+    case FeatureId::SymbolCenterHole: insertSymbolAtAnchor(QStringLiteral("centerhole")); break;
+    case FeatureId::SymbolElevation:  insertSymbolAtAnchor(QStringLiteral("elevation")); break;
+    case FeatureId::SymbolRotation:   insertSymbolAtAnchor(QStringLiteral("rotation")); break;
+    case FeatureId::Gear:
+        insertPartAtAnchor(QStringLiteral("gear"), QStringLiteral("渐开线齿轮"));
+        break;
+    case FeatureId::FastenerBolt:
+        insertPartAtAnchor(QStringLiteral("bolt"), QStringLiteral("六角头螺栓"));
+        break;
+    case FeatureId::FastenerNut:
+        insertPartAtAnchor(QStringLiteral("nut"), QStringLiteral("六角螺母"));
+        break;
+    case FeatureId::FastenerWasher:
+        insertPartAtAnchor(QStringLiteral("washer"), QStringLiteral("平垫圈"));
+        break;
+    case FeatureId::DirectionSymbol:
+    case FeatureId::HoleProjection:
+    case FeatureId::RotationProjection:
+        insertViewToolSymbol(id);
+        break;
+    case FeatureId::SectionProps:  showSectionPropsOfSelection(); break;
+    case FeatureId::MassEstimate:  estimateMassOfSelection(); break;
+    case FeatureId::BatchBom:      runBatchBomAnalysis(); break;
+    case FeatureId::VariableTable: openVariableTableDialog(); break;
+    case FeatureId::SplitDrawing:  runSplitDrawing(); break;
+    case FeatureId::PackDrawings:  runPackDrawings(); break;
+    case FeatureId::BatchSign:     runBatchSign(); break;
+    default:
+        model_->log(QStringLiteral("功能菜单：未实现的入口"), QStringLiteral("warn"));
+        break;
+    }
+}
+
+// ---- P1 中心线家族：选中图元作 refs → makeCenterLine → 统一插入 ----
+void MainWindow::insertCenterLineFor(CenterLineKind kind) {
+    const std::vector<Element> refs = selectedRefElements();
+    if (refs.empty()) {
+        model_->log(QStringLiteral("中心线：请先选中参考图元"), QStringLiteral("warn"));
+        return;
+    }
+    CLParams p;
+    p.layer = model_->currentLayer();   // 产物归属当前活动图层
+    QString reason;
+    const std::vector<Element> parts = makeCenterLine(kind, refs, p, &reason);
+    if (parts.empty()) {
+        model_->log(QStringLiteral("中心线：%1")
+                        .arg(reason.isEmpty() ? QStringLiteral("生成失败（退化输入）") : reason),
+                    QStringLiteral("warn"));
+        return;
+    }
+    const int n = insertGeneratedElements(parts, QStringLiteral("中心线"));
+    if (n > 0)
+        model_->log(QString("中心线：已生成 %1 条（%2）")
+                        .arg(n).arg(QString::fromUtf8(centerLineKindName(kind))),
+                    QStringLiteral("info"));
+}
+
+// ---- P2 明细表：只读表格展示 BOM 数据（无数据时菜单已置灰，此处双保险）----
+void MainWindow::openBomTableDialog() {
+    if (!model_ || model_->bomCount() <= 0) {
+        if (model_) model_->log(QStringLiteral("明细表：图纸尚无 BOM 数据"), QStringLiteral("warn"));
+        return;
+    }
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("明细表（BOM）"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* table = new QTableWidget(model_->bomCount(), 6, &dlg);
+    table->setHorizontalHeaderLabels({ QStringLiteral("序号"), QStringLiteral("代号"),
+                                       QStringLiteral("名称"), QStringLiteral("材料"),
+                                       QStringLiteral("单重"), QStringLiteral("备注") });
+    for (int i = 0; i < model_->bomCount(); ++i) {
+        const BomItem* it = model_->bomItemAt(i);
+        if (!it) continue;
+        const QList<QString> cells = { QString::number(it->seq), it->code, it->name,
+                                       it->material, it->weight, it->remark };
+        for (int c = 0; c < cells.size(); ++c)
+            table->setItem(i, c, new QTableWidgetItem(cells[c]));
+    }
+    table->resizeColumnsToContents();
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);   // 只读查看
+    lay->addWidget(table);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::accept);
+    lay->addWidget(box);
+    dlg.exec();
+}
+
+// ---- P3 符号标注：按符号名收集参数 → mkSymbol → 统一插入（锚点 = 选中质心）----
+void MainWindow::insertSymbolAtAnchor(const QString& symbolName) {
+    QVariantMap params;
+    bool ok = false;
+    if (symbolName == QStringLiteral("datum")) {
+        const QString letter = QInputDialog::getText(this, QStringLiteral("基准符号"),
+                                                     QStringLiteral("基准字母："),
+                                                     QLineEdit::Normal, QStringLiteral("A"), &ok);
+        if (!ok || letter.isEmpty()) return;
+        params.insert(QStringLiteral("letter"), letter);
+    } else if (symbolName == QStringLiteral("weld")) {
+        const QStringList items = { QStringLiteral("角焊 (fillet)"), QStringLiteral("V 形 (v)"),
+                                    QStringLiteral("方框 (square)") };
+        const QString sel = QInputDialog::getItem(this, QStringLiteral("焊接符号"),
+                                                  QStringLiteral("焊接类型："), items, 0, false, &ok);
+        if (!ok) return;
+        params.insert(QStringLiteral("type"),
+                      sel.startsWith(QStringLiteral("V")) ? QStringLiteral("v")
+                      : sel.startsWith(QStringLiteral("方")) ? QStringLiteral("square")
+                                                             : QStringLiteral("fillet"));
+    } else if (symbolName == QStringLiteral("taper")) {
+        const QString ratio = QInputDialog::getText(this, QStringLiteral("锥度/斜度符号"),
+                                                    QStringLiteral("比率文本："),
+                                                    QLineEdit::Normal, QStringLiteral("1:50"), &ok);
+        if (!ok || ratio.isEmpty()) return;
+        params.insert(QStringLiteral("ratio"), ratio);
+    } else if (symbolName == QStringLiteral("centerhole")) {
+        const double r = QInputDialog::getDouble(this, QStringLiteral("中心孔符号"),
+                                                 QStringLiteral("孔径(mm)："), 2.5, 0.1, 100.0, 2, &ok);
+        if (!ok) return;
+        const QString label = QInputDialog::getText(this, QStringLiteral("中心孔符号"),
+                                                    QStringLiteral("旁注（可空）："),
+                                                    QLineEdit::Normal, QString(), &ok);
+        if (!ok) return;
+        params.insert(QStringLiteral("r"), r);
+        if (!label.isEmpty()) params.insert(QStringLiteral("label"), label);
+    } else if (symbolName == QStringLiteral("elevation")) {
+        const QString value = QInputDialog::getText(this, QStringLiteral("标高符号"),
+                                                    QStringLiteral("标高值："),
+                                                    QLineEdit::Normal, QStringLiteral("±0.000"), &ok);
+        if (!ok || value.isEmpty()) return;
+        params.insert(QStringLiteral("value"), value);
+    } else if (symbolName == QStringLiteral("rotation")) {
+        const QString angle = QInputDialog::getText(this, QStringLiteral("旋转符号"),
+                                                    QStringLiteral("角度文本："),
+                                                    QLineEdit::Normal, QStringLiteral("360°"), &ok);
+        if (!ok || angle.isEmpty()) return;
+        params.insert(QStringLiteral("angle"), angle);
+    } else {
+        model_->log(QStringLiteral("符号标注：未知符号 %1").arg(symbolName), QStringLiteral("warn"));
+        return;
+    }
+    const Vec3 anchor = selectionAnchorOrViewCenter();
+    const std::vector<Element> parts = SymbolFactory::mkSymbol(symbolName, anchor, params);
+    if (parts.empty()) {
+        model_->log(QStringLiteral("符号标注：生成失败（%1）").arg(symbolName), QStringLiteral("warn"));
+        return;
+    }
+    const int n = insertGeneratedElements(parts, QStringLiteral("符号标注"));
+    if (n > 0)
+        model_->log(QString("符号标注：已插入 %1（%2 个图元）").arg(symbolName).arg(n),
+                    QStringLiteral("info"));
+}
+
+// ---- P4/P5 零件出库：PartLibrary.generate → 平移至锚点 → 统一插入 ----
+void MainWindow::insertPartAtAnchor(const QString& partId, const QString& title) {
+    QVariantMap params;
+    bool ok = false;
+    if (partId == QStringLiteral("gear")) {
+        const int teeth = QInputDialog::getInt(this, title, QStringLiteral("齿数 z："),
+                                               20, 6, 300, 1, &ok);
+        if (!ok) return;
+        const double module = QInputDialog::getDouble(this, title, QStringLiteral("模数 m(mm)："),
+                                                      2.0, 0.5, 20.0, 2, &ok);
+        if (!ok) return;
+        const QStringList paItems = { QStringLiteral("20°"), QStringLiteral("14.5°"),
+                                      QStringLiteral("25°") };
+        const QString pa = QInputDialog::getItem(this, title, QStringLiteral("压力角："),
+                                                 paItems, 0, false, &ok);
+        if (!ok) return;
+        params.insert(QStringLiteral("teeth"), teeth);
+        params.insert(QStringLiteral("module"), module);
+        params.insert(QStringLiteral("pressureAngle"),
+                      pa.startsWith(QStringLiteral("14")) ? 14.5
+                      : pa.startsWith(QStringLiteral("25")) ? 25.0 : 20.0);
+    } else {
+        FastenerKind fk = FastenerKind::HexBolt;
+        if (partId == QStringLiteral("nut")) fk = FastenerKind::HexNut;
+        else if (partId == QStringLiteral("washer")) fk = FastenerKind::PlainWasher;
+        const QVector<double> szs = GbFastenerTable::sizes(fk);
+        QStringList items;
+        for (double s : szs) items << QStringLiteral("M%1").arg(s);
+        if (items.isEmpty()) {
+            model_->log(QStringLiteral("国标图库：规格表为空"), QStringLiteral("warn"));
+            return;
+        }
+        const int defIdx = items.indexOf(QStringLiteral("M6"));
+        const QString sel = QInputDialog::getItem(this, title, QStringLiteral("公称规格："),
+                                                  items, defIdx < 0 ? 0 : defIdx, false, &ok);
+        if (!ok) return;
+        const int idx = items.indexOf(sel);
+        params.insert(QStringLiteral("nominal"), szs.value(idx < 0 ? 0 : idx, 6.0));
+        if (partId == QStringLiteral("bolt")) {
+            const double length = QInputDialog::getDouble(this, title, QStringLiteral("杆长 L(mm)："),
+                                                          30.0, 5.0, 500.0, 1, &ok);
+            if (!ok) return;
+            params.insert(QStringLiteral("length"), length);
+        }
+    }
+    std::vector<Element> out;
+    QString note;
+    if (!PartLibrary::instance().generate(partId, params, out, &note) || out.empty()) {
+        model_->log(QStringLiteral("%1：生成失败（参数不合法）").arg(title), QStringLiteral("warn"));
+        return;
+    }
+    // 生成器产出于局部原点 → 平移到锚点（选中质心或视图中心）
+    const Vec3 at = selectionAnchorOrViewCenter();
+    for (Element& e : out)
+        for (Vec3& p : e.pts) p = p + at;
+    const int n = insertGeneratedElements(out, title);
+    if (n > 0) {
+        model_->log(QString("%1：已出库插入（%2 个图元）").arg(title).arg(n),
+                    QStringLiteral("info"));
+        if (!note.isEmpty())
+            model_->log(note, QStringLiteral("warn"));   // 规格回落提示（G3 门禁）
+    }
+}
+
+// ---- P6 视图工具：三种投影符号生成 → 统一插入 ----
+void MainWindow::insertViewToolSymbol(FeatureId id) {
+    const Vec3 anchor = selectionAnchorOrViewCenter();
+    std::vector<Element> out;
+    QString label;
+    if (id == FeatureId::DirectionSymbol) {
+        bool ok = false;
+        const QString letter = QInputDialog::getText(this, QStringLiteral("向视符号"),
+                                                     QStringLiteral("视图字母："),
+                                                     QLineEdit::Normal, QStringLiteral("A"), &ok);
+        if (!ok || letter.isEmpty()) return;
+        DirectionSymbolSpec s;
+        s.anchor = anchor;
+        s.letter = letter;
+        label = QStringLiteral("向视符号");
+        if (!buildDirectionSymbol(s, out)) {
+            model_->log(QStringLiteral("向视符号：生成失败（方向/箭长非法）"), QStringLiteral("warn"));
+            return;
+        }
+    } else if (id == FeatureId::HoleProjection) {
+        bool ok = false;
+        const double dia = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
+                                                   QStringLiteral("直径(mm)："), 10.0, 0.5, 500.0, 2, &ok);
+        if (!ok) return;
+        const double depth = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
+                                                     QStringLiteral("投影长度(mm)："), 30.0, 1.0, 2000.0, 2, &ok);
+        if (!ok) return;
+        const double ang = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
+                                                   QStringLiteral("轴向角(度)："), 90.0, -360.0, 360.0, 1, &ok);
+        if (!ok) return;
+        HoleProjectionSpec s;
+        s.anchor = anchor; s.diameter = dia; s.depth = depth; s.angleDeg = ang;
+        label = QStringLiteral("孔轴投影");
+        if (!buildHoleProjection(s, out)) {
+            model_->log(QStringLiteral("孔轴投影：生成失败"), QStringLiteral("warn"));
+            return;
+        }
+    } else {
+        bool ok = false;
+        const double l1 = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
+                                                  QStringLiteral("第一段长(mm)："), 20.0, 1.0, 2000.0, 2, &ok);
+        if (!ok) return;
+        const double ta = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
+                                                  QStringLiteral("转角(度)："), 45.0, -360.0, 360.0, 1, &ok);
+        if (!ok) return;
+        const double l2 = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
+                                                  QStringLiteral("第二段长(mm)："), 15.0, 1.0, 2000.0, 2, &ok);
+        if (!ok) return;
+        RotationProjectionSpec s;
+        s.anchor = anchor; s.length1 = l1; s.turnAngleDeg = ta; s.length2 = l2;
+        label = QStringLiteral("转角投影");
+        if (!buildRotationProjection(s, out)) {
+            model_->log(QStringLiteral("转角投影：生成失败"), QStringLiteral("warn"));
+            return;
+        }
+    }
+    const int n = insertGeneratedElements(out, label);
+    if (n > 0)
+        model_->log(QString("%1：已生成（%2 个图元）").arg(label).arg(n), QStringLiteral("info"));
+}
+
+// ---- P7 截面特性：单选闭合轮廓 → Green 定理标准公式 → 结果框 + 日志 ----
+void MainWindow::showSectionPropsOfSelection() {
+    if (!model_ || model_->selection().size() != 1) {
+        model_->log(QStringLiteral("截面特性：请恰好选中一个闭合轮廓"), QStringLiteral("warn"));
+        return;
+    }
+    const Element* e = model_->element(model_->selection().front());
+    std::vector<Vec3> poly;
+    if (!e || !closedProfilePolygon(*e, poly)) {
+        model_->log(QStringLiteral("截面特性：选中图元不是闭合轮廓"), QStringLiteral("warn"));
+        return;
+    }
+    SectionProperties sp;
+    QString reason;
+    if (!SectionProps::compute(poly, sp, &reason) || !sp.valid) {
+        QMessageBox::warning(this, QStringLiteral("截面特性"),
+                             reason.isEmpty() ? QStringLiteral("计算失败（退化截面）") : reason);
+        return;
+    }
+    const QString text = QStringLiteral(
+        "面积 A     = %1 mm²\n"
+        "形心 C     = (%2, %3) mm\n"
+        "二次矩 Ix  = %4 mm⁴\n"
+        "二次矩 Iy  = %5 mm⁴\n"
+        "惯性积 Ixy = %6 mm⁴")
+        .arg(sp.area, 0, 'f', 3)
+        .arg(sp.centroid.x, 0, 'f', 3).arg(sp.centroid.y, 0, 'f', 3)
+        .arg(sp.inertiaIx, 0, 'f', 3).arg(sp.inertiaIy, 0, 'f', 3)
+        .arg(sp.inertiaIxy, 0, 'f', 3);
+    model_->log(QStringLiteral("截面特性：A=%1 mm², C=(%2, %3), Ix=%4, Iy=%5, Ixy=%6")
+                    .arg(sp.area, 0, 'f', 3)
+                    .arg(sp.centroid.x, 0, 'f', 3).arg(sp.centroid.y, 0, 'f', 3)
+                    .arg(sp.inertiaIx, 0, 'f', 3).arg(sp.inertiaIy, 0, 'f', 3)
+                    .arg(sp.inertiaIxy, 0, 'f', 3),
+                QStringLiteral("info"));
+    QMessageBox::information(this, QStringLiteral("截面特性"), text);
+}
+
+// ---- P7 重量估算：截面面积 × 材料密度 × 厚度 ----
+void MainWindow::estimateMassOfSelection() {
+    if (!model_ || model_->selection().size() != 1) {
+        model_->log(QStringLiteral("重量估算：请恰好选中一个闭合轮廓"), QStringLiteral("warn"));
+        return;
+    }
+    const Element* e = model_->element(model_->selection().front());
+    std::vector<Vec3> poly;
+    if (!e || !closedProfilePolygon(*e, poly)) {
+        model_->log(QStringLiteral("重量估算：选中图元不是闭合轮廓"), QStringLiteral("warn"));
+        return;
+    }
+    SectionProperties sp;
+    QString reason;
+    if (!SectionProps::compute(poly, sp, &reason) || !sp.valid) {
+        QMessageBox::warning(this, QStringLiteral("重量估算"),
+                             reason.isEmpty() ? QStringLiteral("计算失败（退化截面）") : reason);
+        return;
+    }
+    bool ok = false;
+    const QStringList materials = DensityTable::materials();
+    if (materials.isEmpty()) {
+        model_->log(QStringLiteral("重量估算：密度表为空"), QStringLiteral("warn"));
+        return;
+    }
+    const QString material = QInputDialog::getItem(this, QStringLiteral("重量估算"),
+                                                   QStringLiteral("材料："), materials, 0, false, &ok);
+    if (!ok || material.isEmpty()) return;
+    const double thickness = QInputDialog::getDouble(this, QStringLiteral("重量估算"),
+                                                     QStringLiteral("厚度(mm)："), 1.0, 0.1, 1000.0, 2, &ok);
+    if (!ok) return;
+    double grams = 0.0;
+    if (!SectionProps::massGrams(sp.area, material, grams, thickness)) {
+        QMessageBox::warning(this, QStringLiteral("重量估算"),
+                             QStringLiteral("未知材料密度：%1").arg(material));
+        return;
+    }
+    const QString text = QStringLiteral("材料：%1\n厚度：%2 mm\n面积：%3 mm²\n估算重量：%4 g")
+        .arg(material).arg(thickness, 0, 'f', 2).arg(sp.area, 0, 'f', 3).arg(grams, 0, 'f', 3);
+    model_->log(QStringLiteral("重量估算：%1（%2 mm 厚）→ %3 g")
+                    .arg(material).arg(thickness, 0, 'f', 2).arg(grams, 0, 'f', 3),
+                QStringLiteral("info"));
+    QMessageBox::information(this, QStringLiteral("重量估算"), text);
+}
+
+// ---- P7 批量 BOM：多档扫描 → (名称,代号) 跨档汇总 ----
+void MainWindow::runBatchBomAnalysis() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("批量 BOM 分析"), rememberDialogDir(),
+        QStringLiteral("图纸文件 (*.skd *.json);;所有文件 (*.*)"));
+    if (paths.isEmpty()) return;
+    QStringList errors;
+    const QVector<BomSummaryRow> rows = BatchBom::analyze(paths, &errors);
+    if (rows.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("批量 BOM 分析"),
+                             errors.isEmpty() ? QStringLiteral("未找到任何 BOM 明细数据")
+                                              : errors.join(QStringLiteral("\n")));
+        return;
+    }
+    QString text;
+    for (const BomSummaryRow& r : rows)
+        text += QStringLiteral("%1  %2  × %3\n").arg(r.name, r.code).arg(r.quantity);
+    if (!errors.isEmpty())
+        text += QStringLiteral("\n读取警告 %1 个：\n").arg(errors.size())
+                + errors.join(QStringLiteral("\n"));
+    model_->log(QStringLiteral("批量 BOM：%1 个文件 → %2 种零件（读错误 %3 个）")
+                    .arg(paths.size()).arg(rows.size()).arg(errors.size()),
+                QStringLiteral("info"));
+    QMessageBox::information(this, QStringLiteral("批量 BOM 分析"), text);
+}
+
+// ---- P8 变量表：定义 / 设值 / 驱动 / 清空（ facade 会话级变量表）----
+void MainWindow::openVariableTableDialog() {
+    auto& facade = ConstraintSolverFacade::instance();
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("参数化变量表"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* table = new QTableWidget(0, 3, &dlg);
+    table->setHorizontalHeaderLabels({ QStringLiteral("变量"), QStringLiteral("表达式 / 值"),
+                                       QStringLiteral("当前值") });
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    auto rebuild = [&table, &facade]() {
+        table->setRowCount(0);
+        for (const QString& n : facade.variableNames()) {
+            const int r = table->rowCount();
+            table->insertRow(r);
+            table->setItem(r, 0, new QTableWidgetItem(n));
+            table->setItem(r, 1, new QTableWidgetItem(facade.variableExpression(n)));
+            table->setItem(r, 2, new QTableWidgetItem(
+                                     QString::number(facade.variableValue(n), 'f', 4)));
+        }
+    };
+    rebuild();
+    lay->addWidget(table);
+    auto* btnDefine = new QPushButton(QStringLiteral("定义..."), &dlg);
+    auto* btnSet    = new QPushButton(QStringLiteral("设值..."), &dlg);
+    auto* btnDrive  = new QPushButton(QStringLiteral("驱动..."), &dlg);
+    auto* btnClear  = new QPushButton(QStringLiteral("全部清空"), &dlg);
+    auto* btnClose  = new QPushButton(QStringLiteral("关闭"), &dlg);
+    auto* row = new QHBoxLayout();
+    row->addWidget(btnDefine); row->addWidget(btnSet); row->addWidget(btnDrive);
+    row->addWidget(btnClear); row->addStretch(1); row->addWidget(btnClose);
+    lay->addLayout(row);
+    connect(btnClose, &QPushButton::clicked, &dlg, &QDialog::accept);
+    auto currentName = [&table]() -> QString {
+        const int r = table->currentRow();
+        if (r < 0) return QString();
+        const QTableWidgetItem* it = table->item(r, 0);
+        return it ? it->text() : QString();
+    };
+    connect(btnDefine, &QPushButton::clicked, &dlg, [&]() {
+        bool ok = false;
+        const QString name = QInputDialog::getText(&dlg, QStringLiteral("定义变量"),
+                                                   QStringLiteral("变量名："),
+                                                   QLineEdit::Normal, QString(), &ok);
+        if (!ok || name.isEmpty()) return;
+        const QString expr = QInputDialog::getText(&dlg, QStringLiteral("定义变量"),
+                                                   QStringLiteral("表达式 / 数值："),
+                                                   QLineEdit::Normal, QString(), &ok);
+        if (!ok || expr.isEmpty()) return;
+        const QString err = facade.defineVariable(name, expr);
+        if (!err.isEmpty()) {
+            QMessageBox::warning(&dlg, QStringLiteral("定义变量"), err);
+            return;
+        }
+        rebuild();
+        model_->log(QStringLiteral("变量已定义：%1 = %2").arg(name, expr), QStringLiteral("info"));
+    });
+    connect(btnSet, &QPushButton::clicked, &dlg, [&]() {
+        const QString name = currentName();
+        if (name.isEmpty()) {
+            QMessageBox::warning(&dlg, QStringLiteral("设值"), QStringLiteral("请先在表中选中一个变量"));
+            return;
+        }
+        bool ok = false;
+        const double v = QInputDialog::getDouble(&dlg, QStringLiteral("设值"),
+                                                 name + QStringLiteral(" ="),
+                                                 facade.variableValue(name), -1e9, 1e9, 4, &ok);
+        if (!ok) return;
+        const QString err = facade.setVariableValue(name, v);
+        if (!err.isEmpty()) {
+            QMessageBox::warning(&dlg, QStringLiteral("设值"), err);
+            return;
+        }
+        rebuild();
+    });
+    connect(btnDrive, &QPushButton::clicked, &dlg, [&]() {
+        const QString name = currentName();
+        if (name.isEmpty()) {
+            QMessageBox::warning(&dlg, QStringLiteral("驱动"), QStringLiteral("请先在表中选中一个变量"));
+            return;
+        }
+        bool ok = false;
+        const double v = QInputDialog::getDouble(&dlg, QStringLiteral("驱动"),
+                                                 name + QStringLiteral(" ="),
+                                                 facade.variableValue(name), -1e9, 1e9, 4, &ok);
+        if (!ok) return;
+        const QString err = facade.drive(*model_, name, v);
+        if (!err.isEmpty()) {
+            QMessageBox::warning(&dlg, QStringLiteral("驱动"), err);
+            return;
+        }
+        rebuild();
+        model_->log(QStringLiteral("变量驱动：%1 = %2").arg(name).arg(v, 0, 'f', 4),
+                    QStringLiteral("info"));
+    });
+    connect(btnClear, &QPushButton::clicked, &dlg, [&]() {
+        if (QMessageBox::question(&dlg, QStringLiteral("全部清空"),
+                                  QStringLiteral("确认清空全部变量定义？"))
+                != QMessageBox::Yes)
+            return;
+        facade.clearVariables();
+        rebuild();
+    });
+    dlg.exec();
+}
+
+// ---- P9 机械图拆分：按图层/图框分组 → 克隆根仅替换 elements → 原子写子档 ----
+void MainWindow::runSplitDrawing() {
+    if (!model_ || model_->elementCount() <= 0) {
+        model_->log(QStringLiteral("机械图拆分：图纸为空"), QStringLiteral("warn"));
+        return;
+    }
+    bool ok = false;
+    const QString mode = QInputDialog::getItem(
+        this, QStringLiteral("机械图拆分"), QStringLiteral("分组方式："),
+        { QStringLiteral("按图层"), QStringLiteral("按图框（图框层矩形）") }, 0, false, &ok);
+    if (!ok) return;
+    const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("选择子档输出目录"),
+                                                          rememberDialogDir());
+    if (dir.isEmpty()) return;
+    QVector<SplitGroup> groups;
+    if (mode.startsWith(QStringLiteral("按图层"))) {
+        groups = groupByLayer(model_->elements());
+    } else {
+        const QVector<QRectF> frames = frameRectsInDrawing();
+        if (frames.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("机械图拆分"),
+                                 QStringLiteral("图纸中未找到图框（图框层矩形），无法按图框分组"));
+            return;
+        }
+        groups = groupByFrame(model_->elements(), frames);
+    }
+    if (groups.isEmpty()) {
+        model_->log(QStringLiteral("机械图拆分：分组结果为空"), QStringLiteral("warn"));
+        return;
+    }
+    // 基名：当前文档标题（去脏标记与空白）
+    QString base = QStringLiteral("drawing");
+    if (docs_ && docs_->active()) {
+        QString t = docs_->active()->title();
+        t.remove(QLatin1Char('*'));
+        t = t.trimmed();
+        if (!t.isEmpty()) base = t;
+    }
+    const SplitResult sr = writeSplitDrawings(model_->toDrawingJson(), groups,
+                                              model_->elements(), dir, base);
+    QString text = QStringLiteral("已写出 %1 / %2 组：\n").arg(sr.written).arg(groups.size());
+    for (const QString& p : sr.outPaths) text += p + QStringLiteral("\n");
+    if (!sr.errors.isEmpty())
+        text += QStringLiteral("\n失败 %1 组：\n").arg(sr.errors.size())
+                + sr.errors.join(QStringLiteral("\n"));
+    model_->log(QStringLiteral("机械图拆分：%1/%2 组写出至 %3（错误 %4）")
+                    .arg(sr.written).arg(groups.size()).arg(dir).arg(sr.errors.size()),
+                sr.errors.isEmpty() ? QStringLiteral("info") : QStringLiteral("warn"));
+    QMessageBox::information(this, QStringLiteral("机械图拆分"), text);
+}
+
+// ---- P9 自动排图：图框层矩形 → shelf 装箱 → 落位报告（Phase-1 不改模型）----
+void MainWindow::runPackDrawings() {
+    if (!model_) return;
+    const QVector<QRectF> frames = frameRectsInDrawing();
+    if (frames.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("自动排图"),
+                             QStringLiteral("图纸中未找到图框（图框层矩形）作为排图输入"));
+        return;
+    }
+    bool ok = false;
+    const double sheetW = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
+                                                  QStringLiteral("可用区宽(mm)："), 420.0, 50.0, 5000.0, 1, &ok);
+    if (!ok) return;
+    const double sheetH = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
+                                                  QStringLiteral("可用区高(mm)："), 297.0, 50.0, 5000.0, 1, &ok);
+    if (!ok) return;
+    const double gap = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
+                                               QStringLiteral("图框间距(mm)："), 5.0, 0.0, 100.0, 1, &ok);
+    if (!ok) return;
+    QVector<PackRect> rects;
+    for (int i = 0; i < frames.size(); ++i)
+        rects.push_back({ i, frames[i].width(), frames[i].height() });
+    PackOptions opt;
+    opt.sheetW = sheetW; opt.sheetH = sheetH; opt.gap = gap;
+    const PackResult pr = packShelf(rects, opt);
+    QString text;
+    if (!pr.ok)
+        text += QStringLiteral("未能全部放入：%1\n\n").arg(pr.error);
+    text += QStringLiteral("共 %1 个图框，已排 %2 个\n").arg(rects.size()).arg(pr.placements.size());
+    text += QStringLiteral("占用：%1 × %2 mm，利用率 %3%\n\n")
+                .arg(pr.usedW, 0, 'f', 1).arg(pr.usedH, 0, 'f', 1)
+                .arg(pr.utilization * 100.0, 0, 'f', 1);
+    for (const PackPlacement& p : pr.placements)
+        text += QStringLiteral("  图框 %1 → (%2, %3)  %4×%5 mm\n")
+                    .arg(p.id + 1).arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1)
+                    .arg(p.w, 0, 'f', 1).arg(p.h, 0, 'f', 1);
+    text += QStringLiteral("\n（Phase-1 仅计算报告，不改动模型图元）");
+    model_->log(QStringLiteral("自动排图：%1 个图框，利用率 %2%")
+                    .arg(pr.placements.size()).arg(pr.utilization * 100.0, 0, 'f', 1),
+                pr.ok ? QStringLiteral("info") : QStringLiteral("warn"));
+    QMessageBox::information(this, QStringLiteral("自动排图"), text);
+}
+
+// ---- P9 批量签名：字段表单（预填当前值）→ batchSign → 单元格适配写回 ----
+void MainWindow::runBatchSign() {
+    if (!model_) return;
+    // 预填：各标题栏字段当前值（name = "tb:field:<key>" 的元素 text）
+    static const QString kFieldPrefix = QStringLiteral("tb:field:");
+    QHash<QString, QString> current;
+    for (const Element& e : model_->elements()) {
+        if (!e.name.startsWith(kFieldPrefix)) continue;
+        current.insert(e.name.mid(kFieldPrefix.size()), e.text);
+    }
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("批量签名（标题栏）"));
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* form = new QFormLayout();
+    QVector<QLineEdit*> edits;
+    QVector<QString> keys;
+    for (const TitleBlockField& f : titleBlockFields()) {
+        auto* le = new QLineEdit(current.value(f.key), &dlg);
+        edits << le;
+        keys << f.key;
+        form->addRow(f.label + QStringLiteral("："), le);
+    }
+    lay->addLayout(form);
+    auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    lay->addWidget(box);
+    if (dlg.exec() != QDialog::Accepted) return;
+    // 收集输入：空值不传（batchSign 跳过空值，不擦除已有签名）
+    QHash<QString, QString> input;
+    for (int i = 0; i < edits.size(); ++i) {
+        const QString v = edits[i]->text().trimmed();
+        if (!v.isEmpty()) input.insert(keys[i], v);
+    }
+    if (input.isEmpty()) {
+        model_->log(QStringLiteral("批量签名：未填写任何字段"), QStringLiteral("warn"));
+        return;
+    }
+    const SignResult sr = batchSign(*model_, input);
+    if (sr.updates.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("批量签名"),
+                             QStringLiteral("签名表未匹配到图纸标题栏字段"));
+        return;
+    }
+    model_->beginEdit(QStringLiteral("批量签名"));
+    for (const SignUpdate& u : sr.updates)
+        model_->updateElementQuiet((int)u.elemId, [&u](Element& e) { e = u.newElem; });
+    model_->log(QStringLiteral("批量签名：已填写 %1 个字段").arg(sr.updates.size()),
+                QStringLiteral("info"));
+    if (!sr.unmatched.isEmpty())
+        model_->log(QStringLiteral("批量签名：未匹配字段 %1")
+                        .arg(sr.unmatched.join(QStringLiteral(", "))),
+                    QStringLiteral("warn"));
 }
 
 } // namespace SketchCAD

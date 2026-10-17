@@ -452,13 +452,111 @@ static ScaleResult benchScale(int N) {
     return r;
 }
 
+// ============================================================================
+// P0-2 G-C 场景增量更新回归（--selftest 一并运行）
+// ----------------------------------------------------------------------------
+// 验证单图元几何变更 / 选中变化 / 增量增删 均不触发 rebuild() 全量重建：
+// rebuild() 会 scene_->clear()+items_.clear() 使旧 ElementItem* 失效，
+// 故「同一 id 在变更前后 itemForId(id) 指针身份不变」即证明未走 rebuild。
+// 选中变化仅翻转 highlight；单图元变更走 O(1) syncItemAddOrUpdate；
+// 批量/结构变更走 syncIncremental 复用场景项——rebuild() 仅作结构兜底。
+// ============================================================================
+static int t_incrementalRender() {
+    int fail = 0;
+    auto check = [&fail](bool cond, const char* msg) {
+        if (cond) fprintf(stdout, "  [PASS] %s\n", msg);
+        else { ++fail; fprintf(stderr, "  [FAIL] %s\n", msg); }
+    };
+    auto addLineB = [](SketchModel& m, double x0, double y0, double x1, double y1) {
+        Element e; e.type = ElementType::Line;
+        e.pts = { Vec3(x0, y0, 0), Vec3(x1, y1, 0) };
+        return m.addElement(e);
+    };
+
+    SketchModel m;
+    GraphicsView gv(&m);
+    gv.resize(1280, 800);
+    gv.setCullEnabled(false);   // 关闭裁剪：syncIncremental 对新增图元立即建项（不进待建队列）
+
+    const int a = addLineB(m, 0, 0, 10, 0);
+    const int b = addLineB(m, 0, 0, 0, 10);
+    const int c = addLineB(m, 5, 5, 15, 5);
+    gv.processDeferredBuilds();
+
+    check(gv.sceneItemCount() == m.elementCount(), "增量渲染: 增量建项后 场景项数==模型图元数");
+    check(gv.sceneItemCount() == 3, "增量渲染: 场景建满 3 个图元项");
+
+    ElementItem* pa = gv.itemForId(a);
+    ElementItem* pb = gv.itemForId(b);
+    ElementItem* pc = gv.itemForId(c);
+    check(pa && pb && pc, "增量渲染: 三个图元均有场景项指针");
+    check(!pa->highlight && !pb->highlight && !pc->highlight, "增量渲染: 初始无选中高亮");
+
+    // (1) 选中变化：仅切换高亮，不重建（指针身份不变、项数不变）
+    m.setSelection({ a });
+    check(gv.itemForId(a) == pa, "增量渲染: 选中变化后 a 指针身份不变（未 rebuild）");
+    check(gv.itemForId(b) == pb && gv.itemForId(c) == pc, "增量渲染: 选中变化后 b/c 指针身份不变");
+    check(gv.sceneItemCount() == 3, "增量渲染: 选中变化不改变场景项数");
+    check(gv.itemForId(a)->highlight == true,  "增量渲染: 选中项 a 高亮置位");
+    check(gv.itemForId(b)->highlight == false, "增量渲染: 未选中项 b 高亮清除");
+
+    // (2) 单图元几何变更（平移）：O(1) 增量更新，指针身份不变、项数不变
+    const Vec3 before = m.element(a)->pts[1];
+    m.setSelection({ a });
+    m.translateSelection(Vec3(20, 0, 0));
+    check(gv.itemForId(a) == pa, "增量渲染: 平移 a 后指针身份不变（O(1) 增量，未 rebuild）");
+    check(gv.sceneItemCount() == 3, "增量渲染: 平移不改变场景项数");
+    const Vec3 after = m.element(a)->pts[1];
+    check(std::abs(after.x - (before.x + 20.0)) < 1e-6, "增量渲染: 模型端 a 确实被平移（增量更新绑定同一图元）");
+
+    // (3) 增量新增：项数 +1，旧指针全部守恒
+    const int d = addLineB(m, 50, 50, 60, 50);
+    check(gv.itemForId(d) != nullptr, "增量渲染: 新增 d 已建场景项（增量 add）");
+    check(gv.sceneItemCount() == 4, "增量渲染: 新增后场景项数 +1");
+    check(gv.itemForId(a) == pa && gv.itemForId(b) == pb && gv.itemForId(c) == pc,
+          "增量渲染: 新增后旧图元指针身份不变（未 rebuild）");
+
+    // (4) 增量删除：项数 -1，其余守恒，被删指针转 null
+    m.removeElement(b);
+    check(gv.itemForId(b) == nullptr, "增量渲染: 删除 b 后场景项被增量移除（pointer 转 null）");
+    check(gv.sceneItemCount() == 3, "增量渲染: 删除后场景项数 -1");
+    check(gv.itemForId(a) == pa && gv.itemForId(c) == pc && gv.itemForId(d) != nullptr,
+          "增量渲染: 删除后其余图元指针身份不变（未 rebuild）");
+
+    // (5) 撤销删除：b 重新出现（增量 resync），其余指针身份不变
+    m.undo();
+    check(gv.itemForId(b) != nullptr, "增量渲染: 撤销删除后 b 场景项重新出现（增量 resync）");
+    check(gv.sceneItemCount() == 4, "增量渲染: 撤销删除后场景项数恢复为 4");
+    check(gv.itemForId(a) == pa && gv.itemForId(c) == pc && gv.itemForId(d) != nullptr,
+          "增量渲染: 撤销删除后 a/c/d 指针身份不变（未 rebuild）");
+    // (6) 撤销新增：d 被增量移除；a/c 指针身份守恒（b 曾被删后重建，指针自然变更，仅验证存在）
+    m.undo();
+    check(gv.itemForId(d) == nullptr, "增量渲染: 撤销新增后 d 场景项被增量移除");
+    check(gv.sceneItemCount() == 3, "增量渲染: 撤销新增后场景项数回到 3");
+    check(gv.itemForId(a) == pa && gv.itemForId(c) == pc && gv.itemForId(b) != nullptr,
+          "增量渲染: 撤销新增后 a/c 指针守恒、b 存在（b 曾删后重建指针自然变更）");
+    // (7) 撤销平移：a 回到原始端点（增量 resync 闭环），指针身份不变
+    m.undo();
+    check(gv.itemForId(a) != nullptr, "增量渲染: 撤销平移后 a 场景项仍存在");
+    const Vec3 restored = m.element(a)->pts[1];
+    check(std::abs(restored.x - before.x) < 1e-6, "增量渲染: 撤销平移后模型端 a 回到原始端点");
+    check(gv.itemForId(a) == pa, "增量渲染: 撤销平移后 a 指针身份不变（未 rebuild）");
+
+    fprintf(stdout, "P0-2 INCREMENTAL RENDER: %s (fail=%d)\n", fail == 0 ? "ALL PASS" : "HAS FAIL", fail);
+    return fail;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     setvbuf(stdout, nullptr, _IONBF, 0);
 
     // ---- P0-04 视图级自测模式（build.sh test 调用；不跑基准）----
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--selftest") == 0) return selfTestP004();
+        if (std::strcmp(argv[i], "--selftest") == 0) {
+            int f = selfTestP004();          // P0-04：视口裁剪/分帧补建/节流/降级
+            f += t_incrementalRender();       // P0-2 G-C：增量渲染契约（不 rebuild）
+            return f == 0 ? 0 : 1;
+        }
     }
 
     g_fast = (std::getenv("SKETCH_BENCH_FAST") != nullptr);

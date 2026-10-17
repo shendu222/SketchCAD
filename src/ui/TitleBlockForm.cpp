@@ -17,25 +17,29 @@ TitleBlockForm::TitleBlockForm(SketchModel* model, QWidget* parent) : QDialog(pa
     setWindowTitle(QStringLiteral("填写标题栏"));
     resize(420, 460);
 
-    // 收集当前图纸中的标题栏栏目（name 以 "tb:field:" 开头）
-    struct Row { int id; QString key; QString label; QString value; QLineEdit* edit; Vec3 anchor; };
+    // 收集当前图纸中的标题栏栏目（name 以 "tb:field:" 开头）。
+    // 同名元素全收集（不 break）：代号栏（图框左上角）字段与标题栏「图号」共用
+    // tb:field:drawingNumber，确认后同名全部写回 → 填图号即代号栏自动关联同步。
+    // 代号栏元素锚点在图框周边带、不在标题栏网格内，titleBlockCellAt 返回 invalid，
+    // fitTitleBlockText 对 invalid 不动（绝不猜），故写回对其天然安全。
+    struct Row { QString key; QString label; QString value; QVector<int> ids;
+                 QVector<Vec3> anchors; QLineEdit* edit; };
     QVector<Row> rows;
 
     const auto& fields = titleBlockFields();
     for (const auto& f : fields) {
         const QString name = QStringLiteral("tb:field:") + f.key;
+        Row r;
+        r.key = f.key;
+        r.label = f.label;
         for (const auto& e : model->elements()) {
             if (e.name == name) {
-                Row r;
-                r.id = e.id;
-                r.key = f.key;
-                r.label = f.label;
-                r.value = e.text;
-                r.anchor = e.pts.empty() ? Vec3() : e.pts[0];
-                rows.append(r);
-                break;
+                if (r.ids.isEmpty()) r.value = e.text;   // 首个匹配作表单显示值
+                r.ids.append(e.id);
+                r.anchors.append(e.pts.empty() ? Vec3() : e.pts[0]);
             }
         }
+        if (!r.ids.isEmpty()) rows.append(r);
     }
 
     auto* root = new QVBoxLayout(this);
@@ -65,15 +69,19 @@ TitleBlockForm::TitleBlockForm(SketchModel* model, QWidget* parent) : QDialog(pa
         for (const auto& r : rows) {
             const QString v = r.edit->text();
             if (v != r.value) {
-                // 编辑期单元格适配：按开表单时的锚点重建所在单元格（网格线在模态
-                // 对话框期间不变，只读预计算避开 updateElement 期间的模型变动），
-                // 写回时同步收缩字高/复位锚点——长值不再冲出单元格，旧档错位一并修复。
-                // cell 无效（网格不完整）→ fitTitleBlockText 不动，绝不猜。
-                const QRectF cell = titleBlockCellAt(model, r.anchor.x, r.anchor.y);
-                model->updateElement(r.id, [v, cell](Element& e) {
-                    e.text = v;
-                    fitTitleBlockText(e, cell);
-                });
+                // 逐元素写回：标题栏栏目做编辑期单元格适配（按开表单时的锚点重建
+                // 所在单元格；网格线在模态对话框期间不变，只读预计算避开
+                // updateElement 期间的模型变动），写回时同步收缩字高/复位锚点；
+                // 代号栏等非标题栏网格元素 cell 无效 → fitTitleBlockText 不动。
+                for (int i = 0; i < r.ids.size(); ++i) {
+                    const int id = r.ids[i];
+                    const Vec3& anchor = r.anchors[i];
+                    const QRectF cell = titleBlockCellAt(model, anchor.x, anchor.y);
+                    model->updateElement(id, [v, cell](Element& e) {
+                        e.text = v;
+                        fitTitleBlockText(e, cell);
+                    });
+                }
             }
         }
         accept();
