@@ -122,6 +122,7 @@ add_library(SketchDwgBridge STATIC src/core/DwgBridge.cpp)
 # Qt6::Gui：CadFormats.h → Element.h 链上引用 QColor（仅取头路径，桥逻辑本身只用 Core）
 target_link_libraries(SketchDwgBridge PUBLIC Qt6::Core Qt6::Gui)
 target_compile_options(SketchDwgBridge PRIVATE -Wall -Wextra)
+
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
     src/ui/ElementPath.cpp
@@ -197,6 +198,25 @@ target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
+
+# ---- D1b：部署 DWG 外部转换器（LibreDWG，独立构建）到运行时 tools/dwg/ ----
+# 必须置于 add_executable(SketchCAD) 之后（POST_BUILD 依赖该目标已存在）。
+# 转换器位于工程根之外一级：真实路径为 <CMAKE_SOURCE_DIR>/../thirdparty/libredwg-0.14/
+# build-mingw（本机即 02-avticationCAD/thirdparty/libredwg-0.14/build-mingw）。
+# 仅当转换器已构建时才拷贝；读(dwg2dxf)/写(dwgwrite) 两端均部署，杜绝"未安装"误报，
+# 使 AC1012+ 的合法 DWG（如施工图纸库 C0层.dwg，AC1021）能被正常打开。
+set(_LIBREDWG_BIN "${CMAKE_SOURCE_DIR}/../thirdparty/libredwg-0.14/build-mingw")
+if(EXISTS "${_LIBREDWG_BIN}/dwg2dxf.exe")
+    add_custom_command(TARGET SketchCAD POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SketchCAD>/tools/dwg"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_LIBREDWG_BIN}/dwg2dxf.exe"
+                "$<TARGET_FILE_DIR:SketchCAD>/tools/dwg/dwg2dxf.exe"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_LIBREDWG_BIN}/dwgwrite.exe"
+                "$<TARGET_FILE_DIR:SketchCAD>/tools/dwg/dwgwrite.exe"
+        COMMENT "部署 DWG 转换器 dwg2dxf/dwgwrite → tools/dwg")
+endif()
 
 # ---- 版本宏注入（version.h）----
 # 从 project(... VERSION ...) 生成，供「关于」对话框等 C++ 侧读取，
@@ -329,6 +349,21 @@ target_include_directories(ReadmeShots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(ReadmeShots PRIVATE -Wall -Wextra)
+
+# ===================== DWG 打开核验（交互同读档链 → 离屏渲染 PNG）=====================
+# fromDwg → $INSUNITS 换算 → addBlockDef 注册块定义 → filterElements → GraphicsView
+# 渲染 PNG，用于与正确 CAD 的截图逐图对比（如施工图纸库 C0层.dwg 的块内容完整性）。
+add_executable(DwgOpenVerify
+    bench/DwgOpenVerify.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(DwgOpenVerify PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_include_directories(DwgOpenVerify PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(DwgOpenVerify PRIVATE -Wall -Wextra)
 
 # ===================== 脚本宿主：可选语言引擎 =====================
 # 默认仅 JavaScript（Qt 内置 QJSEngine，零外部依赖）参与构建。

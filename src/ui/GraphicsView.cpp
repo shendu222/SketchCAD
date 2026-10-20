@@ -704,6 +704,9 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / z, -1.0 / z);                          // 抵消视图 Y 轴翻转（与 Dimension 一致）
+    // 旋转在翻转之后施加，负号同 Dimension 文字（翻转后局部系 Y 向下）——
+    // DXF 组码 50 的顺/逆时针语义与 g.textRotDeg 一致（90=字头朝左），表格竖排文字由此恢复。
+    if (std::fabs(e.rotation) > 1e-9) p->rotate(-e.rotation);
     QFont f = p->font();
     f.setPixelSize(std::max(8, (int)std::lround(th * z)));
     if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
@@ -718,9 +721,8 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
     const QFontMetricsF fm(f);
     const double hh = fm.height();                        // 设备像素（用于垂直居中）
     const double lineHpx = lay.lineHeightMm * z;          // 单行高度(设备px)
-    const int    align   = isM ? e.textAlign : 1;          // Text 维持原「中上」锚定
+    const int    align   = e.textAlign;                   // 9 点对齐（Text 默认 1=中上；导入带 72/73 真值）
     const int    hA = align % 3, vA = align / 3;           // 0左/1中/右 ; 0上/1中/2下
-    const double maxWpx = lay.widthMm * z;
     const double totalHpx = lay.heightMm * z;
     const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
 
@@ -729,10 +731,11 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
     for (int i = 0; i < lay.lines.size(); ++i) {
         const double wpx = lay.lines[i].widthMm * z;
         const double yc = startYv - (i + 0.5) * lineHpx;    // 行中心（局部 y 向上）
+        // 锚点=对齐点：左→行首在锚点；中→行中心在锚点；右→行尾在锚点
         double x0;
         if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -(maxWpx - wpx) / 2;
-        else              x0 = -(maxWpx - wpx);
+        else if (hA == 1) x0 = -wpx / 2;
+        else              x0 = -wpx;
         const QRectF box(x0, yc - hh / 2, wpx, hh);
         p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
     }

@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QDebug>
 
 namespace SketchCAD {
 namespace dwgbridge {
@@ -18,12 +19,62 @@ namespace dwgbridge {
 static QString g_testToolsDir;   // 自测注入（setToolsDirForTest）
 
 static QString toolsDir() {
-    if (!g_testToolsDir.isEmpty()) return g_testToolsDir;
+    if (!g_testToolsDir.isEmpty()) {
+        qWarning() << "[DwgBridge] toolsDir: 使用自测注入目录 =" << g_testToolsDir;
+        return g_testToolsDir;
+    }
     const QString envDir = qEnvironmentVariable("SKETCHCAD_DWGTOOLS");
-    if (!envDir.isEmpty()) return envDir;
-    // 安装包布局：<exe目录>/tools/dwg/dwg2dxf.exe …
+    if (!envDir.isEmpty()) {
+        qWarning() << "[DwgBridge] toolsDir: 使用环境变量 SKETCHCAD_DWGTOOLS =" << envDir;
+        return envDir;
+    }
     const QString appDir = QCoreApplication::applicationDirPath();
-    if (!appDir.isEmpty()) return appDir + QStringLiteral("/tools/dwg");
+    qWarning() << "[DwgBridge] toolsDir: 起始 appDir =" << appDir;
+    if (!appDir.isEmpty()) {
+        // 安装包布局：<exe目录>/tools/dwg/dwg2dxf.exe …（优先，存在即采用）
+        const QString local = appDir + QStringLiteral("/tools/dwg");
+        if (QFile::exists(local + QStringLiteral("/dwg2dxf.exe"))
+            || QFile::exists(local + QStringLiteral("/dwg2dxf"))) {
+            qWarning() << "[DwgBridge] toolsDir: 命中 exe 同级 tools/dwg =" << local;
+            return local;
+        }
+        // 开发布局回退：从 exe 目录逐层向上，查找 <某级>/thirdparty/libredwg-*/build-mingw
+        // 或 <某级>/libredwg-*/build-mingw。本机布局转换器在
+        //   02-avticationCAD/thirdparty/libredwg-0.14/build-mingw
+        // （CMAKE_SOURCE_DIR=sketch-cad-cpp，故在 build 目录两级之上级），必须用向上搜索，
+        // 不能只查 build/.. 一级，否则永远找不到而静默报"未安装"。
+        // 转换器为独立 GPL 工程，不进入本工程；此处仅做发现，避免未部署 tools/dwg
+        // 时无法打开合法 DWG。
+        QDir cur(appDir);
+        for (int depth = 0; depth < 6; ++depth) {
+            // 模式 A：<级>/thirdparty/libredwg-*/build-mingw
+            QDir pdir(cur.absolutePath() + QStringLiteral("/thirdparty"));
+            if (pdir.exists()) {
+                pdir.setNameFilters(QStringList() << QStringLiteral("libredwg-*"));
+                pdir.setFilter(QDir::Dirs | QDir::NoDotAndDotDot);
+                for (const QString& d : pdir.entryList()) {
+                    const QString cand = pdir.absoluteFilePath(d) + QStringLiteral("/build-mingw");
+                    if (QFile::exists(cand + QStringLiteral("/dwg2dxf.exe"))) {
+                        qWarning() << "[DwgBridge] toolsDir: 命中向上搜索 thirdparty/" << d << "/build-mingw =" << cand;
+                        return cand;
+                    }
+                }
+            }
+            // 模式 B：<级>/libredwg-*/build-mingw（平铺在工程根的情况）
+            QDir sib(cur.absolutePath());
+            sib.setNameFilters(QStringList() << QStringLiteral("libredwg-*"));
+            sib.setFilter(QDir::Dirs | QDir::NoDotAndDotDot);
+            for (const QString& d : sib.entryList()) {
+                const QString cand = sib.absoluteFilePath(d) + QStringLiteral("/build-mingw");
+                if (QFile::exists(cand + QStringLiteral("/dwg2dxf.exe"))) {
+                    qWarning() << "[DwgBridge] toolsDir: 命中向上搜索" << d << "/build-mingw =" << cand;
+                    return cand;
+                }
+            }
+            if (!cur.cdUp()) break;  // 已达文件系统根，停止
+        }
+    }
+    qWarning() << "[DwgBridge] toolsDir: 未找到任何转换器目录（available() 将返回 false）";
     return QString();
 }
 
@@ -36,11 +87,24 @@ static QString converterPath(const char* exeName) {
 #else
     Q_UNUSED(exeName)
 #endif
-    return QFile::exists(p) ? p : QString();
+    if (QFile::exists(p)) {
+        qWarning() << "[DwgBridge] converterPath:" << exeName << "->" << p;
+        return p;
+    }
+    qWarning() << "[DwgBridge] converterPath: 缺失" << exeName << "（期望路径" << p << "）";
+    return QString();
 }
 
 bool available() {
-    return !converterPath("dwg2dxf").isEmpty() && !converterPath("dwgwrite").isEmpty();
+    const bool a = !converterPath("dwg2dxf").isEmpty();
+    const bool b = !converterPath("dwgwrite").isEmpty();
+    qWarning() << "[DwgBridge] available(): dwg2dxf=" << a << "dwgwrite=" << b
+               << "=>" << (a && b);
+    return a && b;
+}
+
+QString resolvedToolsDir() {
+    return toolsDir();
 }
 
 // ---------------------------------------------------------------------------
@@ -86,24 +150,39 @@ struct RunResult {
 RunResult runConverter(const QString& exe, const QStringList& args,
                        const QString& workDir, int timeoutMs) {
     RunResult r;
+    qWarning() << "[DwgBridge] runConverter: 启动" << exe
+               << "参数" << args
+               << "工作目录" << workDir << "超时(ms)" << timeoutMs;
     QProcess proc;
     proc.setWorkingDirectory(workDir);
     proc.setProcessChannelMode(QProcess::SeparateChannels);
+    // 将转换器自身目录加入 PATH，确保随附 DLL 在进程外调用时可解析（静态链接时无害）
+    {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        const QString exeDir = QFileInfo(exe).absolutePath();
+        const QString sysPath = env.value(QStringLiteral("PATH"));
+        env.insert(QStringLiteral("PATH"), exeDir + QDir::listSeparator() + sysPath);
+        proc.setProcessEnvironment(env);
+    }
     proc.start(exe, args);
     if (!proc.waitForStarted(5000)) {
         // QProcess::error 枚举：0=FailedToStart 1=Crashed 2=Timedout 4=WriteError 5=Unknown
         r.err = QStringLiteral("DWG 转换器无法启动: %1（QProcess::error=%2）")
                     .arg(exe).arg(int(proc.error()));
+        qWarning() << "[DwgBridge] runConverter: 启动失败" << r.err
+                   << "errorString=" << proc.errorString();
         return r;
     }
     if (!proc.waitForFinished(timeoutMs)) {
         if (proc.state() == QProcess::Running) proc.kill();
         proc.waitForFinished(2000);
         r.err = QStringLiteral("DWG 转换器超时（>%1s）或无响应").arg(timeoutMs / 1000);
+        qWarning() << "[DwgBridge] runConverter: 超时" << r.err;
         return r;
     }
     if (proc.exitStatus() == QProcess::CrashExit) {
         r.err = QStringLiteral("DWG 转换器异常退出（文件可能损坏或含不支持结构）");
+        qWarning() << "[DwgBridge] runConverter: 崩溃" << r.err;
         return r;
     }
     if (proc.exitCode() != 0) {
@@ -113,8 +192,11 @@ RunResult runConverter(const QString& exe, const QStringList& args,
                     .arg(msg.isEmpty() ? QString()
                                        : QStringLiteral(": %1").arg(
                                              QString::fromLocal8Bit(msg).left(200).trimmed()));
+        qWarning() << "[DwgBridge] runConverter: 非零退出 code=" << proc.exitCode()
+                   << "stderr=" << QString::fromLocal8Bit(msg).left(200).trimmed();
         return r;
     }
+    qWarning() << "[DwgBridge] runConverter: 成功" << exe;
     r.ok = true;
     return r;
 }
@@ -167,33 +249,55 @@ bool convert(const QString& exe, const QStringList& args,
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
-// 读桥：DWG → DXF（dwg2dxf，输出 R2000 DXF 供 cadfmt::fromDxf 回读）
+// 读桥：DWG → DXF（dwg2dxf，输出 r2004 DXF 供 cadfmt::fromDxf 回读；
+//       LibreDWG 的 r2004 输出 $ACADVER=AC1018，落在 fromDxf 白名单内）
 // ---------------------------------------------------------------------------
 bool dwgToDxf(const QByteArray& dwgBytes, QByteArray& dxfOut, QString* err,
               int timeoutMs) {
     if (err) err->clear();
+    qWarning() << "[DwgBridge] dwgToDxf: 入口，输入字节数 =" << dwgBytes.size();
     if (!available()) {
         if (err) *err = QStringLiteral("未安装 DWG 转换组件（tools/dwg），无法读取 %1")
                             .arg(versionHuman(versionFromBytes(dwgBytes)));
+        qWarning() << "[DwgBridge] dwgToDxf: available()==false，未安装转换组件（tools/dwg 缺失）";
         return false;
     }
     const QString ver = versionFromBytes(dwgBytes);
     const QString verCtx = ver.isEmpty() ? QStringLiteral("版本未知")
                                          : QStringLiteral("%1 / %2").arg(ver, versionHuman(ver));
+    qWarning() << "[DwgBridge] dwgToDxf: 探测版本 =" << (ver.isEmpty() ? QStringLiteral("(无)") : ver)
+               << "human=" << versionHuman(ver);
     if (ver.isEmpty()) {
         if (err) *err = QStringLiteral("不是有效的 DWG 文件（头部无版本串）");
+        qWarning() << "[DwgBridge] dwgToDxf: 非法文件（头部无 AC1xNN 版本串）";
         return false;
     }
     if (!canReadVersion(ver)) {
         if (err) *err = QStringLiteral("不支持的 DWG 版本：%1（%2）").arg(ver, versionHuman(ver));
+        qWarning() << "[DwgBridge] dwgToDxf: 版本不在可读取集合（canReadVersion=false）";
         return false;
     }
-    // dwg2dxf <in.dwg> -o <out.dxf>（-y 覆盖已有输出；LibreDWG CLI 契约）
-    return convert(converterPath("dwg2dxf"),
+    // dwg2dxf <in.dwg> --as r2004 -y -o <out.dxf>
+    // ⚠️ 关键①：必须显式 --as。dwg2dxf 默认【保留输入版本】，若不加该参数，
+    // AC1021(DWG 2004) 会被转成「AC1021 DXF」，而 cadfmt::fromDxf 的版本协商
+    // 只接受 ≤ AC1018，于是回读时直接报「不支持的文件版本」——这是 DWG 2004
+    // 经桥转换后仍打不开的第一层根因。
+    // ⚠️ 关键②：必须选 r2004 而非 r2000。LibreDWG 在把动态块(DynamicBlock)
+    // 降级到 R2000 DXF 时会【丢弃块内几何】（实测：WAGO 端子块/M5螺孔等块
+    // 在 r2000 输出中只剩 BLOCK 记录头、零图元；r2004 输出保留 49 LINE+8
+    // CIRCLE/块）。r2004 降级时块几何完整，且 LibreDWG 的 r2004 输出
+    // $ACADVER 实际写作 AC1018（本就在 fromDxf 白名单内，无需放宽版本契约）。
+    const bool ok = convert(converterPath("dwg2dxf"),
                    { QStringLiteral("@IN@"), QStringLiteral("-y"),
+                     QStringLiteral("--as"), QStringLiteral("r2004"),
                      QStringLiteral("-o"), QStringLiteral("@OUT@") },
                    dwgBytes, QStringLiteral("in.dwg"), QStringLiteral("out.dxf"),
                    dxfOut, err, verCtx, timeoutMs);
+    if (!ok)
+        qWarning() << "[DwgBridge] dwgToDxf: 转换失败" << (err ? *err : QString());
+    else
+        qWarning() << "[DwgBridge] dwgToDxf: 成功，输出 DXF 字节数 =" << dxfOut.size();
+    return ok;
 }
 
 // ---------------------------------------------------------------------------

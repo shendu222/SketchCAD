@@ -235,7 +235,7 @@ QRectF TextMetrics::elementBoundsMm(const Element& e, const SketchModel* model) 
     const double ls = isM ? e.lineSpacing : 1.0;
     const TextLayout lay = layout(rs, display, h, mw, ls);
 
-    const int  align = isM ? e.textAlign : 1;        // Text 维持原「中上」锚定
+    const int  align = e.textAlign;                   // 9 点对齐（与 paint 两处同源）
     const int  hA = align % 3, vA = align / 3;       // 0左/中/右 ; 0上/中/下
     const double W = lay.widthMm, H = lay.heightMm;
     const double xL = (hA == 0) ? 0.0 : (hA == 1) ? -W / 2.0 : -W;

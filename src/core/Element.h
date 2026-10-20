@@ -307,6 +307,11 @@ struct Element {
     //         （即 AutoCAD 的 "ByObject/覆盖"）。旧存档缺此键时回落 false + 快照=现值，
     //         与"快照式分组"历史行为完全向后兼容。
     bool byLayer = true;
+    // ---- ByBlock（DXF 组码 62=0）标志：块内图元在展开期继承所属 INSERT 的解析样式 ----
+    // DXF 62 三分语义：缺省/256=ByLayer(byLayer=true)；0=ByBlock(本标志)；
+    // 1..255=显式色(byLayer=false)。仅 DXF/DWG 导入产生；新建图元恒为 false。
+    // 继承见 Block.cpp evalDef；未被收编的残留按图层解析（SketchModel::resolveElement）。
+    bool byBlock = false;
 
     // ---- 尺寸驱动 / 参数化建模字段（Request M 新增）----
     // 这些字段使"标注(Dimension) ↔ 几何约束(尺寸类) ↔ 参数表"形成双向关联：

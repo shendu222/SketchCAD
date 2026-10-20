@@ -158,7 +158,7 @@ void paintOne(QPainter* p, const Element& e, Ctx& c) {
     const Element& ee = (c.model ? c.model->resolveElement(e) : e);
     if (ee.type == ElementType::Dimension) { paintDimension(p, ee, c); return; }
     if (ee.type == ElementType::MLeader || ee.type == ElementType::Fcf) { paintGdt(p, ee, c); return; }
-    if (ee.type == ElementType::Text)      { paintText(p, ee, c);      return; }
+    if (ee.type == ElementType::Text || ee.type == ElementType::MText) { paintText(p, ee, c); return; }
     if (ee.type == ElementType::Table)     { paintTable(p, ee, c);     return; }
     if (ee.type == ElementType::Hatch)     { paintHatch(p, ee, c);     return; }
     if (ee.type == ElementType::Boundary)  { paintBoundary(p, ee, c);  return; }
@@ -424,6 +424,9 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
     p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);        // 抵消世界→设备变换的 Y 翻转
+    // 旋转在翻转之后施加、取负号（同 GraphicsView/Dimension 文字约定）——
+    // 表格/标注竖排文字（DXF 组码 50 = 90/270）打印方向由此与屏幕一致。
+    if (std::fabs(e.rotation) > 1e-9) p->rotate(-e.rotation);
     QFont f = p->font();
     f.setPixelSize(std::max(6, (int)std::lround(th * c.scaleDev)));
     if (!ts.fontFamily.isEmpty()) f.setFamily(ts.fontFamily);
@@ -436,9 +439,8 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
     const QFontMetricsF fm(f);
     const double hh = fm.height();
     const double lineHpx = lay.lineHeightMm * c.scaleDev;
-    const int    align   = isM ? e.textAlign : 1;
+    const int    align   = e.textAlign;                 // 9 点对齐（与 GraphicsView 同源）
     const int    hA = align % 3, vA = align / 3;
-    const double maxWpx = lay.widthMm * c.scaleDev;
     const double totalHpx = lay.heightMm * c.scaleDev;
     const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
     p->setPen(rs.color);
@@ -446,10 +448,11 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
     for (int i = 0; i < lay.lines.size(); ++i) {
         const double wpx = lay.lines[i].widthMm * c.scaleDev;
         const double yc = startYv - (i + 0.5) * lineHpx;
+        // 锚点=对齐点：左→行首在锚点；中→行中心在锚点；右→行尾在锚点
         double x0;
         if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -(maxWpx - wpx) / 2;
-        else              x0 = -(maxWpx - wpx);
+        else if (hA == 1) x0 = -wpx / 2;
+        else              x0 = -wpx;
         const QRectF box(x0, yc - hh / 2, wpx, hh);
         p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
     }

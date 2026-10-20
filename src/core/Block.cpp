@@ -247,12 +247,14 @@ std::set<int> hiddenSet(const BlockDef& def, const std::vector<BlockDynValue>& d
 
 // 递归内核：在变换 xf 下求值块定义，输出世界坐标子图元。
 //   visiting：当前递归路径的块名（环检测）；fallbackLayer：块内"默认层"图元应落的插入层。
+//   inheritFrom：本级所属 INSERT 引用（其"显式样式"供块内 ByBlock 图元继承，见下）。
 std::vector<Element> evalDef(const BlockDef& def, const X2D& xf,
                              const std::vector<BlockDynValue>& dyn,
                              const std::vector<BlockAttrValue>& attrs,
                              const std::vector<BlockDef>& table,
                              std::vector<QString>& visiting, int depth,
-                             const QString& fallbackLayer) {
+                             const QString& fallbackLayer,
+                             const Element* inheritFrom) {
     std::vector<Element> out;
     if (depth > kMaxBlockDepth) return out;
 
@@ -261,6 +263,18 @@ std::vector<Element> evalDef(const BlockDef& def, const X2D& xf,
     for (int i = 0; i < (int)def.entities.size(); ++i) {
         if (hidden.count(i)) continue;
         Element e = def.entities[i];
+
+        // ByBlock(62=0)：继承本级插入的显式样式（color/线型/线宽）。插入为 ByLayer/ByBlock
+        // 时保留标志——由 resolveElement 按已映射的插入层解析（链式 ByBlock 自然上溯）。
+        // 嵌套 INSERT 也先过此步，故内层显式色 < 本层显式色的继承链在各级各自收敛。
+        if (e.byBlock && inheritFrom && !inheritFrom->byLayer && !inheritFrom->byBlock) {
+            e.color         = inheritFrom->color;
+            e.lineStyle     = inheritFrom->lineStyle;
+            e.lineWidth     = inheritFrom->lineWidth;
+            e.lineWidthAuto = inheritFrom->lineWidthAuto;
+            e.byLayer = false;
+            e.byBlock = false;
+        }
 
         // 嵌套块：先算"子块局部插入变换"，再与父变换复合（先子后父）后递归
         if (e.type == ElementType::BlockRef) {
@@ -272,7 +286,7 @@ std::vector<Element> evalDef(const BlockDef& def, const X2D& xf,
             const QString childLayer = (e.layer.isEmpty() || e.layer == QStringLiteral("0"))
                                            ? fallbackLayer : e.layer;
             visiting.push_back(e.blockName);
-            auto sub = evalDef(*cd, childXf, e.dynValues, e.blockAttrs, table, visiting, depth + 1, childLayer);
+            auto sub = evalDef(*cd, childXf, e.dynValues, e.blockAttrs, table, visiting, depth + 1, childLayer, &e);
             visiting.pop_back();
             out.insert(out.end(), sub.begin(), sub.end());
             continue;
@@ -300,6 +314,8 @@ std::vector<Element> evalDef(const BlockDef& def, const X2D& xf,
         t.pts   = {xf.apply(ad.pos)};
         t.text  = val;
         t.radius = ad.height * xf.scaleFactor();    // 字高(mm)
+        t.textAlign = ad.align;                     // 9 点对齐随 ATTDEF（表格/标签定位）
+        t.styleName = ad.styleName;                 // 文字样式随 ATTDEF（字体）
         t.lineStyle = LineStyle::Solid;
         t.lineWidth = 1.0;
         t.lineWidthAuto = true;
@@ -326,7 +342,7 @@ std::vector<Element> expandRef(const Element& ref, const std::vector<BlockDef>& 
     const X2D xf = X2D::insert(ins, ref.rotation, sx, sy, def->basePoint);
     std::vector<QString> visiting{ref.blockName};
     const QString fallback = ref.layer.isEmpty() ? QStringLiteral("0") : ref.layer;
-    return evalDef(*def, xf, ref.dynValues, ref.blockAttrs, table, visiting, 0, fallback);
+    return evalDef(*def, xf, ref.dynValues, ref.blockAttrs, table, visiting, 0, fallback, &ref);
 }
 
 Element makeRef(const BlockDef& def, const Vec3& P, double rotDeg, double sx, double sy) {
@@ -401,6 +417,7 @@ QJsonObject blockDefToJson(const BlockDef& d) {
         ao["tag"] = a.tag; ao["prompt"] = a.prompt; ao["default"] = a.defaultValue;
         ao["pos"] = QJsonArray{a.pos.x, a.pos.y, a.pos.z};
         ao["height"] = a.height; ao["constant"] = a.constant; ao["invisible"] = a.invisible;
+        ao["align"] = a.align; ao["style"] = a.styleName;
         ads.append(ao);
     }
     o["attdefs"] = ads;
@@ -460,6 +477,8 @@ BlockDef blockDefFromJson(const QJsonObject& o) {
         a.height = json::getDouble(ao, "height", 3.5);
         a.constant = ao["constant"].toBool(false);
         a.invisible = ao["invisible"].toBool(false);
+        a.align = json::getInt(ao, "align", 1);
+        a.styleName = ao["style"].toString();
         d.attdefs.push_back(a);
     }
 

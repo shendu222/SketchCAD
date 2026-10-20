@@ -133,6 +133,20 @@ if [ "$MODE" = "dist" ]; then
     mkdir -p "$ROOT/dist/imageformats"
     cp "$QT_ROOT/plugins/imageformats/"*.dll "$ROOT/dist/imageformats/" 2>/dev/null || true
     echo "[OK] 图像格式插件已部署到 dist/imageformats/"
+    # ---- 部署 DWG 外部转换器（tools/dwg）----
+    # ⚠️ 关键：转换器是独立 GPL 工程编译的 dwg2dxf/dwgwrite exe，CMake POST_BUILD
+    #   已落到 build/tools/dwg/，但 dist 只是「拷贝 build/SketchCAD.exe + 部署 Qt」，
+    #   不会自动带它。若此处不显式拷贝，从零执行 ./build.sh dist 产出的 dist/ 会缺
+    #   转换器 → available()==false → 打开任意 DWG 报「未安装 DWG 转换组件」。
+    #   build/ 与 dist/ 职责不同（前者为 CMake 中间产物，后者为可发布成品），
+    #   此处是二者唯一会「混淆/漏拷」的交汇点，必须显式同步。
+    if [ -d "$ROOT/build/tools/dwg" ]; then
+        mkdir -p "$ROOT/dist/tools/dwg"
+        cp -r "$ROOT/build/tools/dwg/." "$ROOT/dist/tools/dwg/"
+        echo "[OK] DWG 转换器已部署到 dist/tools/dwg/（$(ls "$ROOT/dist/tools/dwg" | wc -l) 个文件）"
+    else
+        echo "[警告] build/tools/dwg 不存在（先执行普通构建以触发 CMake POST_BUILD 部署），dist 将不含 DWG 转换器" >&2
+    fi
     echo "[OK] 已打包: $ROOT/dist/SketchCAD.exe（含 Qt 运行时，可拷贝到无 Qt 环境运行）"
     echo "[OK] 剖面 PAT 图案已同步到 dist/hatch/"
     echo "[OK] 启动画面封面已同步到 dist/"
@@ -270,6 +284,15 @@ if [ "$MODE" = "package" ]; then
     # 图像格式插件（启动封面 JPEG 解码必需）
     mkdir -p "$STAGE/imageformats"
     cp "$QT_ROOT/plugins/imageformats/"*.dll "$STAGE/imageformats/" 2>/dev/null || true
+    # DWG 外部转换器（tools/dwg）：从 build 同源拷贝到 stage，否则安装包不含转换器
+    # → 用户安装后打开 DWG 全部失败（available()==false）。与 dist 模式保持同一源。
+    if [ -d "$ROOT/build/tools/dwg" ]; then
+        mkdir -p "$STAGE/tools/dwg"
+        cp -r "$ROOT/build/tools/dwg/." "$STAGE/tools/dwg/"
+        echo "[OK] DWG 转换器已汇入安装包暂存目录（$STAGE/tools/dwg）"
+    else
+        echo "[警告] build/tools/dwg 不存在，安装包将不含 DWG 转换器（DWG 将无法打开）" >&2
+    fi
     # 运行时数据：剖面 PAT 图案 + 启动封面（与 dist 模式保持一致）
     sync_hatch "$STAGE/hatch"
     sync_cover "$STAGE/"

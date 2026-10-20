@@ -4629,7 +4629,8 @@ void MainWindow::openFile() {
     const QString startDir = rememberDialogDir();
     const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("打开图纸"), startDir,
         QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
-    if (fn.isEmpty()) return;
+    qWarning() << "[MainWindow] openFile: 用户选择路径 =" << fn;
+    if (fn.isEmpty()) { qWarning() << "[MainWindow] openFile: 未选择文件（取消）"; return; }
     if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
     openDocInteractive(fn);
 }
@@ -4703,15 +4704,25 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
 
 // 读盘实作（原同步实现；P0-04 增加后台解析与取消支持）。
 bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelTouched) {
+    qWarning() << "[MainWindow] readDrawingImpl: 入口 path =" << path;
+    {
+        const QFileInfo fi(path);
+        qWarning() << "[MainWindow] readDrawingImpl: 绝对路径 =" << fi.absoluteFilePath()
+                   << "存在 =" << fi.exists() << "大小(字节) =" << fi.size()
+                   << "可读 =" << fi.isReadable();
+    }
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = QStringLiteral("无法读取 ") + path;
         model_->log(QStringLiteral("打开失败：") + path, "error");
+        qWarning() << "[MainWindow] readDrawingImpl: 无法以只读方式打开文件 =" << path;
         return false;
     }
     const QByteArray raw = f.readAll();
     const bool bigFile = raw.size() > kAsyncLoadBytes;   // 大文件 → 后台解析 + 进度对话框
     const cadfmt::CadFormat fmt = cadfmt::formatFromPath(path);
+    qWarning() << "[MainWindow] readDrawingImpl: 识别格式 =" << cadfmt::formatName(fmt)
+               << "fmt码 =" << int(fmt) << "字节数 =" << raw.size();
 
     if (fmt == cadfmt::CadFormat::Step) {
         if (err) *err = QStringLiteral("STEP 为只写格式，不支持读回");
@@ -4749,6 +4760,23 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         model_->clear();
         // 块定义须先于 BlockRef 图元注册：INSERT 引用按名解析，缺定义则渲染为空。
         for (const auto& b : st.blocks) model_->addBlockDef(b);
+        // STYLE 文字样式表随档注册（空名 addTextStyle 自行拒绝）。重名但内建样式的字体为空、
+        // 导入样式带字体（Standard 的 SimSun 只存于 XDATA 1000）→ 就地覆盖：否则字体信息
+        // 被"重名拒绝"挡掉，全图文字退回系统默认字体（"字体不对"的根因之一）。
+        for (const auto& s : st.styles) {
+            if (!model_->hasTextStyle(s.name)) { model_->addTextStyle(s); continue; }
+            const TextStyle* old = model_->findTextStyle(s.name);
+            if (old && old->fontFamily.isEmpty() && !s.fontFamily.isEmpty())
+                model_->updateTextStyle(s);
+        }
+        // LAYER 表随档注册：byLayer 图元经 resolveElement 取层色/层线型/层线宽；缺注册则
+        // findLayer 失败回落原值，整层颜色退回默认深灰（尺寸线层绿、中心线层红等全部丢失）。
+        for (const auto& l : st.layers) {
+            if (model_->hasLayer(l.name))
+                model_->setLayerStyle(l.name, &l.color, &l.lineWidth, &l.lineStyle);
+            else
+                model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
+        }
         // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
         int robSkip = 0, robFix = 0; QString robRep;
         std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
@@ -4799,6 +4827,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     }
 
     if (fmt == cadfmt::CadFormat::Dwg) {
+        qWarning() << "[MainWindow] readDrawingImpl: 进入 DWG 分支，开始解析（后台线程）";
         std::vector<Element> imported;
         QString e;
         cadfmt::DxfImportStats st;
@@ -4811,15 +4840,45 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         if (canceled) {
             model_->log(QStringLiteral("已取消打开：") + path, "info");
             if (err) *err = QStringLiteral("已取消");
+            qWarning() << "[MainWindow] readDrawingImpl: 用户取消 DWG 打开";
             return false;
         }
         if (!parseOk) {
             if (err) *err = e;
             model_->log(QStringLiteral("DWG 解析失败：") + e, "error");
+            qWarning() << "[MainWindow] readDrawingImpl: DWG 解析失败 =" << e;
             return false;
         }
+        qWarning() << "[MainWindow] readDrawingImpl: DWG 解析成功，图元数 =" << imported.size();
+        // 跨单位交换：与 DXF 分支同规则——DWG 头 $INSUNITS ≠ mm 时按元数据换算到 mm
+        // （桥路径经 dwg2dxf 产出 DXF 头，st.insunits 已填；R12 原生路径缺头 → 4=mm 不缩放）。
+        const LengthUnit srcUnit = lengthUnitFromInsunits(st.insunits);
+        const bool rescaled = lengthFactorToMm(srcUnit) != 1.0;
+        if (rescaled)
+            scaleElementsToUnit(imported, srcUnit);
         *modelTouched = true;
         model_->clear();
+        // 块定义须先于 BlockRef 图元注册（与 DXF 分支一致）：本文件 160 处 INSERT 引用
+        // （标题栏/机柜/铜排/WAGO/*U## 动态块等）缺定义则 expandRef 返回空 → 整片块内容
+        // 不渲染，正是"C0层.dwg 打开后图形残缺错乱"的根因。
+        for (const auto& b : st.blocks) model_->addBlockDef(b);
+        // STYLE 文字样式表随档注册（空名 addTextStyle 自行拒绝）。重名但内建样式的字体为空、
+        // 导入样式带字体（Standard 的 SimSun 只存于 XDATA 1000）→ 就地覆盖：否则字体信息
+        // 被"重名拒绝"挡掉，全图文字退回系统默认字体（"字体不对"的根因之一）。
+        for (const auto& s : st.styles) {
+            if (!model_->hasTextStyle(s.name)) { model_->addTextStyle(s); continue; }
+            const TextStyle* old = model_->findTextStyle(s.name);
+            if (old && old->fontFamily.isEmpty() && !s.fontFamily.isEmpty())
+                model_->updateTextStyle(s);
+        }
+        // LAYER 表随档注册：byLayer 图元经 resolveElement 取层色/层线型/层线宽；缺注册则
+        // findLayer 失败回落原值，整层颜色退回默认深灰（尺寸线层绿、中心线层红等全部丢失）。
+        for (const auto& l : st.layers) {
+            if (model_->hasLayer(l.name))
+                model_->setLayerStyle(l.name, &l.color, &l.lineWidth, &l.lineStyle);
+            else
+                model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
+        }
         // 鲁棒性守卫：解析得到的图元先做只读校验/丢弃/修复，避免损坏数据进入模型造成崩溃或画错。
         int robSkip = 0, robFix = 0; QString robRep;
         std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
@@ -4828,8 +4887,13 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
                            .arg(robSkip).arg(robFix).arg(robRep), "warn");
         model_->beginEdit(QStringLiteral("导入 DWG"));
         model_->addElementsQuiet(kept);
-        QString note = QStringLiteral("已打开 DWG（R12/AC1009）：%1（导入 %2 个图元）")
-                           .arg(path).arg(kept.size());
+        QString note = QStringLiteral("已打开 DWG：%1（导入 %2 个图元%3）")
+                           .arg(path).arg(kept.size())
+                           .arg(st.blocks.empty() ? QString()
+                                                  : QStringLiteral("，块定义 %1 个").arg(st.blocks.size()));
+        if (rescaled)
+            note += QStringLiteral("；按文件头 $INSUNITS 自 %1 换算到 mm")
+                        .arg(lengthUnitName(srcUnit));
         model_->log(note, "info");
         QRectF bb; bool haveBox = false;
         for (const auto& el : kept) {

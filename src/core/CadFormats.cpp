@@ -4,6 +4,7 @@
 #include "TextStyle.h"   // resolveFields：导出前把 %<字段>% 占位解析为求值快照
 #include "Block.h"       // 外部块表读取：block::blockDefFromJson / BlockDef
 #include "DwgBridge.h"   // D1：R2000+ DWG 读写的外部转换器桥（进程外，零 GPL 链入）
+#include <QDebug>
 #include <QFileInfo>
 #include <QFile>
 #include <QTextStream>
@@ -66,15 +67,33 @@ static QString fromGbk(const QByteArray& b) {
     return QString::fromLocal8Bit(b);
 }
 
-// 读 DXF 字节时的编码判定：优先看文件头声明的 $DWGCODEPAGE（ANSI_936/950/949 = 中日韩双字节）；
-// 没声明就先按 UTF-8 解，出现替换字符（U+FFFD）说明不是 UTF-8，再回落 GBK。
+// 读 DXF 字节时的编码判定。
+// ⚠️ 历史坑：原实现「见到 $DWGCODEPAGE=ANSI_936 就按 GBK 解」。但 LibreDWG
+// (dwg2dxf) 输出的是【UTF-8 文本】+【ANSI_936 声明】——内部一律 UTF-8，
+// 写 DXF 时原样落盘，代码页头却没同步改。按 GBK 解 UTF-8 → 全篇乱码
+// （C0层.dwg 586 个文本实体全部变成锟斤拷）。
+// 判定改为「内容优先」：先按 UTF-8 解，若合法且解出真实 CJK 表意字符
+// （U+4E00..U+9FFF / 扩展区）则必为 UTF-8 文本——因为 GBK 双字节序列被
+// 误当 UTF-8 解出的码位通常落在非 CJK 区（如「啊」B0A1 → U+0C21 卡纳达文），
+// 二者可以可靠区分。否则回落 GBK（覆盖本产品写出端与绝大多数中文 CAD 的 GBK 档）。
+static bool hasCjkIdeographs(const QString& s) {
+    for (const QChar ch : s) {
+        const ushort u = ch.unicode();
+        if ((u >= 0x4E00 && u <= 0x9FFF) ||   // CJK 统一表意
+            (u >= 0x3400 && u <= 0x4DBF) ||   // 扩展 A
+            (u >= 0xF900 && u <= 0xFAFF))     // 兼容表意
+            return true;
+    }
+    return false;
+}
 static QString decodeDxfBytes(const QByteArray& data) {
-    const QByteArray head = data.left(8192).toUpper();
-    if (head.contains("ANSI_936") || head.contains("ANSI_950") || head.contains("ANSI_949"))
-        return fromGbk(data);
     const QString u = QString::fromUtf8(data);
-    if (!u.contains(QChar(0xFFFD))) return u;
-    return fromGbk(data);
+    if (!u.contains(QChar(0xFFFD)) && hasCjkIdeographs(u))
+        return u;                       // 合法 UTF-8 且含真实汉字 → UTF-8（LibreDWG 桥）
+    if (u.contains(QChar(0xFFFD)))
+        return fromGbk(data);           // 非法 UTF-8 → GBK（产品写出端 / 传统中文 CAD）
+    // 合法 UTF-8 但无汉字（纯 ASCII / 西文）：两种解释等价，直接采用
+    return u;
 }
 
 // ---- P0-01 前向声明：R2000 派生与二进制 DXF 辅助（定义见 tokenizeDxf 之后）----
@@ -144,7 +163,12 @@ static int aciFromRgb(const QColor& c) {
     return best;
 }
 
-// ACI 1..9 -> RGB（DXF 回读用，与上面 aciFromRgb 的表互为反函数）
+// ACI -> RGB（DXF 回读用）。
+//   1..9    = AutoCAD 标准色（与上面 aciFromRgb 的表互为反函数，语义不动）。
+//   10..255 = 完整 ACI 调色板（源自 LibreDWG rgb_palette，与 AutoCAD 色号表一致：
+//             10..249 色环、250..254 灰阶、255 纯白）。
+//   主题适配：本程序画布为浅色，图纸里 ACI 7（深底 CAD 上显示为"白"的正文色）与
+//             ACI 255（纯白）统一映射为深灰 1A1D28，避免浅底上"白字不可见"。
 static QColor rgbFromAci(int aci) {
     switch (aci) {
         case 1: return QColor(255, 0, 0);
@@ -156,8 +180,81 @@ static QColor rgbFromAci(int aci) {
         case 7: return QColor(26, 29, 40);
         case 8: return QColor(128, 128, 128);
         case 9: return QColor(192, 192, 192);
-        default: return QColor(26, 29, 40);
+        default: break;
     }
+    if (aci >= 10 && aci <= 255) {
+        static const unsigned char kAci[256][3] = {
+            {0,0,0}, {255,0,0}, {255,255,0}, {0,255,0},
+            {0,255,255}, {0,0,255}, {255,0,255}, {255,255,255},
+            {65,65,65}, {128,128,128}, {255,0,0}, {255,170,170},
+            {189,0,0}, {189,126,126}, {129,0,0}, {129,86,86},
+            {104,0,0}, {104,69,69}, {79,0,0}, {79,53,53},
+            {255,63,0}, {255,191,170}, {189,46,0}, {189,141,126},
+            {129,31,0}, {129,96,86}, {104,25,0}, {104,78,69},
+            {79,19,0}, {79,59,53}, {255,127,0}, {255,212,170},
+            {189,94,0}, {189,157,126}, {129,64,0}, {129,107,86},
+            {104,52,0}, {104,86,69}, {79,39,0}, {79,66,53},
+            {255,191,0}, {255,234,170}, {189,141,0}, {189,173,126},
+            {129,96,0}, {129,118,86}, {104,78,0}, {104,95,69},
+            {79,59,0}, {79,73,53}, {255,255,0}, {255,255,170},
+            {189,189,0}, {189,189,126}, {129,129,0}, {129,129,86},
+            {104,104,0}, {104,104,69}, {79,79,0}, {79,79,53},
+            {191,255,0}, {234,255,170}, {141,189,0}, {173,189,126},
+            {96,129,0}, {118,129,86}, {78,104,0}, {95,104,69},
+            {59,79,0}, {73,79,53}, {127,255,0}, {212,255,170},
+            {94,189,0}, {157,189,126}, {64,129,0}, {107,129,86},
+            {52,104,0}, {86,104,69}, {39,79,0}, {66,79,53},
+            {63,255,0}, {191,255,170}, {46,189,0}, {141,189,126},
+            {31,129,0}, {96,129,86}, {25,104,0}, {78,104,69},
+            {19,79,0}, {59,79,53}, {0,255,0}, {170,255,170},
+            {0,189,0}, {126,189,126}, {0,129,0}, {86,129,86},
+            {0,104,0}, {69,104,69}, {0,79,0}, {53,79,53},
+            {0,255,63}, {170,255,191}, {0,189,46}, {126,189,141},
+            {0,129,31}, {86,129,96}, {0,104,25}, {69,104,78},
+            {0,79,19}, {53,79,59}, {0,255,127}, {170,255,212},
+            {0,189,94}, {126,189,157}, {0,129,64}, {86,129,107},
+            {0,104,52}, {69,104,86}, {0,79,39}, {53,79,66},
+            {0,255,191}, {170,255,234}, {0,189,141}, {126,189,173},
+            {0,129,96}, {86,129,118}, {0,104,78}, {69,104,95},
+            {0,79,59}, {53,79,73}, {0,255,255}, {170,255,255},
+            {0,189,189}, {126,189,189}, {0,129,129}, {86,129,129},
+            {0,104,104}, {69,104,104}, {0,79,79}, {53,79,79},
+            {0,191,255}, {170,234,255}, {0,141,189}, {126,173,189},
+            {0,96,129}, {86,118,129}, {0,78,104}, {69,95,104},
+            {0,59,79}, {53,73,79}, {0,127,255}, {170,212,255},
+            {0,94,189}, {126,157,189}, {0,64,129}, {86,107,129},
+            {0,52,104}, {69,86,104}, {0,39,79}, {53,66,79},
+            {0,63,255}, {170,191,255}, {0,46,189}, {126,141,189},
+            {0,31,129}, {86,96,129}, {0,25,104}, {69,78,104},
+            {0,19,79}, {53,59,79}, {0,0,255}, {170,170,255},
+            {0,0,189}, {126,126,189}, {0,0,129}, {86,86,129},
+            {0,0,104}, {69,69,104}, {0,0,79}, {53,53,79},
+            {63,0,255}, {191,170,255}, {46,0,189}, {141,126,189},
+            {31,0,129}, {96,86,129}, {25,0,104}, {78,69,104},
+            {19,0,79}, {59,53,79}, {127,0,255}, {212,170,255},
+            {94,0,189}, {157,126,189}, {64,0,129}, {107,86,129},
+            {52,0,104}, {86,69,104}, {39,0,79}, {66,53,79},
+            {191,0,255}, {234,170,255}, {141,0,189}, {173,126,189},
+            {96,0,129}, {118,86,129}, {78,0,104}, {95,69,104},
+            {59,0,79}, {73,53,79}, {255,0,255}, {255,170,255},
+            {189,0,189}, {189,126,189}, {129,0,129}, {129,86,129},
+            {104,0,104}, {104,69,104}, {79,0,79}, {79,53,79},
+            {255,0,191}, {255,170,234}, {189,0,141}, {189,126,173},
+            {129,0,96}, {129,86,118}, {104,0,78}, {104,69,95},
+            {79,0,59}, {79,53,73}, {255,0,127}, {255,170,212},
+            {189,0,94}, {189,126,157}, {129,0,64}, {129,86,107},
+            {104,0,52}, {104,69,86}, {79,0,39}, {79,53,66},
+            {255,0,63}, {255,170,191}, {189,0,46}, {189,126,141},
+            {129,0,31}, {129,86,96}, {104,0,25}, {104,69,78},
+            {79,0,19}, {79,53,59}, {51,51,51}, {80,80,80},
+            {105,105,105}, {130,130,130}, {190,190,190}, {255,255,255}
+        };
+        const unsigned char* c = kAci[aci];
+        if (c[0] == 255 && c[1] == 255 && c[2] == 255)
+            return QColor(26, 29, 40);           // 纯白(255) → 深灰（浅底适配，同 ACI 7）
+        return QColor(c[0], c[1], c[2]);
+    }
+    return QColor(26, 29, 40);                   // 越界（含 0=ByBlock 语义位）→ 默认深灰
 }
 
 // 图层名净化：DXF 是「组码行 + 值行」的文本格式，任何组码的值里都不能含换行，
@@ -385,13 +482,17 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // 文本：把多行内容按行拆成多个 TEXT 实体。
     // 绝不能把含 \n 的字符串整段写进组码 1 —— 那会把值行劈成两行，后续组码全部错位，
     // 整份 DXF 直接不可解析（标注数字就是 "xx m\n(xx ft)" 这种双行文本）。
+    // align9：Element::textAlign（9 点）→ 写 72(水平)/73(垂直)+11/21，与 dxfTextAlign 导入
+    // 映射互逆，保证往返对齐稳定（-1 = 不写对齐列）。
     const auto textLines = [&](QStringList& T, const Element& e, const QString& raw, const Vec3& pos,
-                               double h, double rot, bool centered, double wf = 1.0) {
+                               double h, double rot, int align9, double wf = 1.0) {
         QString t = raw;
         t.replace("\r\n", "\n");
         t.replace('\r', '\n');
         const QStringList parts = t.split('\n');
         const double lineH = (h > 0.1 ? h : 3.5) * 1.3;
+        const int h72 = (align9 >= 0) ? (align9 % 3) : 0;
+        const int v73 = (align9 >= 0) ? (3 - align9 / 3) : 0;   // 上0→3 中1→2 下2→1
         for (int i = 0; i < parts.size(); ++i) {
             const QString line = dxfSafe(parts.at(i));
             if (line.trimmed().isEmpty()) continue;
@@ -400,7 +501,9 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
             T << "10" << num(pos.x) << "20" << num(y) << "40" << num(h);
             if (std::fabs(wf - 1.0) > 1e-9) T << "41" << num(wf);   // 宽度因子（MTEXT）
             if (std::fabs(rot) > 1e-9) T << "50" << num(rot);
-            if (centered) T << "72" << "1" << "73" << "2" << "11" << num(pos.x) << "21" << num(y);
+            if (align9 >= 0)
+                T << "72" << QString::number(h72) << "73" << QString::number(v73)
+                  << "11" << num(pos.x) << "21" << num(y);
             T << "1" << line;
         }
     };
@@ -514,7 +617,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
                     arrowSolid(BD, e, ra);
                 }
                 if (!g.label.isEmpty())
-                    textLines(BD, e, g.label, rel(g.textPos), dimSt.textHeight, g.textRotDeg, true);
+                    textLines(BD, e, g.label, rel(g.textPos), dimSt.textHeight, g.textRotDeg, 4);
                 anonDims.push_back({aname, BD});
                 // ---- DIMENSION 实体本体 ----
                 ent(T, QStringLiteral("DIMENSION"), e);
@@ -544,7 +647,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
             for (size_t i = 1; i < g.arcPoly.size(); ++i) seg(g.arcPoly[i - 1], g.arcPoly[i]);
             for (const auto& ar : g.arrows) arrowSolid(T, e, ar);
             if (!g.label.isEmpty())
-                textLines(T, e, g.label, g.textPos, dimSt.textHeight, g.textRotDeg, true);
+                textLines(T, e, g.label, g.textPos, dimSt.textHeight, g.textRotDeg, 4);
         } else if (e.type == ElementType::Spline && e.pts.size() >= 2) {
             // 样条按屏幕上看到的那条 Catmull-Rom 曲线离散后导出。
             // 直接导原始控制点会让 DXF 里变成折线 —— 跟屏幕显示不一致，
@@ -562,7 +665,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
             textLines(T, e, resolveFields(e.text, nullptr), e.pts[0],
                       e.radius > 0.1 ? e.radius : 3.5,
                       isMT ? e.rotation : 0.0,
-                      isMT && (e.textAlign % 3 == 1),
+                      e.textAlign,                              // 9 点对齐写 72/73 保往返
                       isMT && e.widthFactor > 0 ? e.widthFactor : 1.0);
         } else if (e.type == ElementType::Table && !e.pts.empty()) {
             // 表格（明细表）：R12 无 TABLE 语义 → 炸开为 LINE 网格 + TEXT 单元格文字，
@@ -1059,18 +1162,25 @@ QByteArray toDwgR2000(const std::vector<Element>& elems, QString* err, double dr
 bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err, DxfImportStats* stats) {
     if(err) err->clear();
     if(stats) *stats = DxfImportStats();
+    qWarning() << "[CadFormats] fromDwg: 入口，输入字节数 =" << data.size();
     // ---- D1：版本自动路由（版本串探测唯一入口 = dwgbridge::versionFromBytes）----
     //   AC1009             → 落入下方自研 R12 原生解析（语义不动，回归保护对象）；
     //   AC1012~AC1032      → 外部转换器桥转 DXF，复用 fromDxf 回读；
     //   无法识别的版本串   → 明确报错（含头部原文），绝不误读。
     {
         const QString ver = dwgbridge::versionFromBytes(data);
+        qWarning() << "[CadFormats] fromDwg: 探测版本 =" << (ver.isEmpty() ? QStringLiteral("(无)") : ver)
+                   << "human=" << dwgbridge::versionHuman(ver);
         if (!ver.isEmpty() && ver != QLatin1String("AC1009")) {
             QByteArray dxfBytes; QString bridgeErr;
+            qWarning() << "[CadFormats] fromDwg: 版本非 R12，进入外部转换器桥（dwgToDxf）";
             if (!dwgbridge::dwgToDxf(data, dxfBytes, &bridgeErr)) {
                 if (err) *err = bridgeErr;
+                qWarning() << "[CadFormats] fromDwg: 桥转换失败 =" << bridgeErr;
                 return false;
             }
+            qWarning() << "[CadFormats] fromDwg: 桥转换成功，DXF 字节数 =" << dxfBytes.size()
+                       << "，转交 fromDxf 回读";
             // 桥产出的 R2000 DXF 复用既有解析链（R2000 的 100/5/330 标记被自然忽略）
             return fromDxf(dxfBytes, out, err, stats);
         }
@@ -1152,6 +1262,7 @@ bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
     }
     if(count==0){ if(err)*err=QStringLiteral("未解析到任何图元"); return false; }
     if(stats) stats->entities = count;
+    qWarning() << "[CadFormats] fromDwg: 解析完成，图元数 =" << count;
     return true;
 }
 
@@ -1760,6 +1871,22 @@ static std::vector<Vec3> sampleEllipseArc(const Vec3& c, const Vec3& mj,
     return pts;
 }
 
+// ---- DXF TEXT/ATTDEF 对齐组码 72(水平)/73(垂直) → Element::textAlign（9 点 = v*3+h）----
+// 72: 0/3/5=左(基线/对齐/调整) 1/4=中 2=右；73: 0/1=基线/底 2=中 3=上。
+// 两码均缺 → AutoCAD 默认 0/0 = 左下(6)（ATTDEF 实测 AC220 无 72/73、11/21=0,0 即此语义）。
+static int dxfTextAlign(const std::vector<DxfPair>& p) {
+    int h = 0, v = 2;                      // 缺省：左、下
+    if (hasCode(p, 72)) {
+        const int c = (int)firstNum(p, 72, 0.0);
+        h = (c == 1 || c == 4) ? 1 : (c == 2 ? 2 : 0);
+    }
+    if (hasCode(p, 73)) {
+        const int c = (int)firstNum(p, 73, 0.0);
+        v = (c == 3) ? 0 : (c == 2 ? 1 : 2);
+    }
+    return v * 3 + h;
+}
+
 // ---- DXF 回读上下文（ENTITIES 与 BLOCKS 共用一套实体分发）----
 // 设计：扫描整份 token 流，按当前 SECTION 把实体分发给 handleEntity；
 // 顶层 ENTITIES 的图元进 out，BLOCKS 段内的图元进对应 BlockDef 的 entities；
@@ -1774,16 +1901,35 @@ struct DxfImportCtx {
     bool pendingClosed = false, inPoly = false;
     int section = 0;                  // 0 无 / 1 ENTITIES / 2 BLOCKS / 3 TABLES
     int lastBlockRefIdx = -1;         // 最近一个顶层 BlockRef（接收后续 ATTRIB）
+    int lastBlockRefCurIdx = -1;      // 最近一个块内 BlockRef（curBlock.entities 下标）
     bool inBlock = false;
     BlockDef curBlock;
-    std::map<QString, std::vector<Element>> blockEntities;  // name -> 块内图元
+    std::map<QString, BlockDef> blockDefs;   // name -> 块定义（entities + attdefs）
 
     explicit DxfImportCtx(std::vector<Element>& o, DxfImportStats& s) : out(o), st(s) {}
 
     void applyStyle(Element& e, const std::vector<DxfPair>& p) {
         const QString ly = firstStr(p, 8).trimmed();
         if (!ly.isEmpty()) e.layer = ly;
-        if (hasCode(p, 62)) e.color = rgbFromAci((int)firstNum(p, 62, 7));
+        // 组码 7 = 文字样式名（TEXT/MTEXT/MULTILEADER 等携带）：挂到通用 styleName，
+        // 渲染期由 resolveTextStyle 按模型 STYLE 表解析字体/字高/宽度因子。
+        const QString sty = firstStr(p, 7).trimmed();
+        if (!sty.isEmpty()) e.styleName = sty;
+        // 组码 62 = 颜色三分语义（DXF 标准）：缺省/256=ByLayer（随层）；0=ByBlock
+        // （块展开期继承 INSERT 的解析色，见 Block.cpp evalDef）；1..255=显式 ACI 色。
+        // 旧实现无条件写 e.color 且不改 byLayer（默认 true），随后被 resolveElement 的
+        // 图层色覆盖 → 全部显式颜色被吞成图层色（C0层.dwg 右上图框"颜色不对"的根因）。
+        if (hasCode(p, 62)) {
+            const int aci = (int)firstNum(p, 62, 7);
+            if (aci == 256) {
+                e.byLayer = true;                          // ByLayer 显式声明
+            } else if (aci == 0) {
+                e.byBlock = true; e.byLayer = false;       // ByBlock（0 是语义位，不是色号）
+            } else {
+                e.byLayer = false;                         // 显式色（ByObject）：不被图层色覆盖
+                e.color   = rgbFromAci(aci < 0 ? -aci : aci);   // 负值=图层关闭，|aci| 仍是色号
+            }
+        }
         const double lw100 = firstNum(p, 370, 13.0);   // 1/100 mm
         e.lineWidth = std::max(1.0, std::round(lw100 / 13.0));
         e.lineWidthAuto = false;
@@ -1868,11 +2014,48 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
         }
         return;
     }
-    if (t == "TEXT" || t == "MTEXT") {
+    if (t == "TEXT") {
+        // ⚠️ 对齐点语义：72/73 非零时「第二对齐点」11/21 才是真正锚点，
+        // 10/20 仅作定义点（AutoCAD 惯例）。实测 LibreDWG r2004 输出中
+        // 665/722 个 TEXT 带组码 72（如 4=middle/2=center），只用 10/20
+        // 会把标题栏文字整体偏移（-154.44,25.42 vs 真值 -150.00,26.67）。
         const QString s = firstStr(p, 1).trimmed();
         if (!s.isEmpty()) {
-            Element e; e.type = ElementType::Text; e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
-            e.text = s; e.radius = firstNum(p, 40, 3.5); e.name = QStringLiteral("导入:文本");
+            // 72/73 非零且确有 11/21 → 取第二对齐点；否则回落 10/20（容错旧样本）
+            const bool aligned = (firstNum(p, 72, 0.0) != 0.0 || firstNum(p, 73, 0.0) != 0.0)
+                              && hasCode(p, 11);
+            const int cx = aligned ? 11 : 10, cy = aligned ? 21 : 20;
+            Element e; e.type = ElementType::Text; e.pts = {Vec3(firstNum(p, cx), firstNum(p, cy), 0)};
+            e.text = s; e.radius = firstNum(p, 40, 3.5);
+            e.rotation = firstNum(p, 50, 0.0);
+            e.textAlign = dxfTextAlign(p);     // 72/73 → 9 点对齐（缺省 0/0 = 左下）
+            e.name = QStringLiteral("导入:文本");
+            applyStyle(e, p); emitEl(std::move(e));
+        }
+        return;
+    }
+    if (t == "MTEXT") {
+        // MTEXT 的锚点恒为 10/20（11/21 是列流向矢量而非第二对齐点），不动。
+        // 组码语义（DXF 参考）：1/3=正文（3 为 250 字节前置续块，1 为收尾段）、
+        //   40=默认字高(mm)、41=参照矩形宽(mm，自动换行宽度)、50=旋转角【弧度】、
+        //   71=九点附着点(1=左上…9=右下)。旧实现按 Text 单行导入丢失对齐与旋转，
+        //   且 \P 段落标记未换行 → 导入后文字方向/排版与原图不一致。
+        QString s;
+        for (const auto& q : p) if (q.code == 3) s += q.value;      // 续块按序拼接
+        s += firstStr(p, 1);                                         // 收尾段
+        s = s.trimmed();
+        if (!s.isEmpty()) {
+            Element e; e.type = ElementType::MText;
+            e.pts = {Vec3(firstNum(p, 10), firstNum(p, 20), 0)};
+            e.text = s.replace(QLatin1String("\\P"), QStringLiteral("\n"))
+                      .replace(QLatin1String("\\~"), QStringLiteral(" "));
+            e.radius = firstNum(p, 40, 3.5);
+            // 71 attachment(1..9) → 9 点对齐索引(0..8)：映射表与 paintText 的
+            // align%3(水平)/align/3(垂直) 约定天然一致（1=左上 → 0=左上）。
+            e.textAlign = std::clamp((int)firstNum(p, 71, 1.0), 1, 9) - 1;
+            e.rotation = firstNum(p, 50, 0.0) * 180.0 / M_PI;        // MTEXT 组码 50 为弧度
+            e.mtextWidth = firstNum(p, 41, 0.0);                     // >0 才自动换行
+            e.name = QStringLiteral("导入:多行文本");
             applyStyle(e, p); emitEl(std::move(e));
         }
         return;
@@ -1982,9 +2165,11 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
             if (k >= p.size()) break;
             const int flag = (int)p[k].value.toDouble(); ++k;
             if (flag & 2) {   // 多段线边界
-                // 规范顺序：92 flag / 73 is_closed(path 级) / 93 顶点数 / [72 has-bulge、
-                // 42 bulge、10/20]×n。73/72/42 均可省略（旧样本无这些码）——逐个容错跳过。
-                if (k < p.size() && p[k].code == 73) ++k;   // path 级闭合标志（环天然闭合，忽略）
+                // 规范顺序：92 flag / [72 has-bulge、73 is_closed] / 93 顶点数 / [42 bulge、10/20]×n。
+                // ⚠️ LibreDWG r2004 实测输出 72 在前、73 在后（C0层.dwg：92=7 → 72 → 73 → 93），
+                // 旧代码只跳 73 → 72 挡住 93 → 顶点数=0 → 全部 HATCH 静默丢弃（7/7）。
+                // 72/73 均可省略且顺序不拘：逐个容错跳过（至多 2 个）。
+                for (int g = 0; g < 2 && k < p.size() && (p[k].code == 72 || p[k].code == 73); ++g) ++k;
                 int vcount = 0;
                 if (k < p.size() && p[k].code == 93) { vcount = (int)p[k].value.toDouble(); ++k; }
                 std::vector<Vec3> verts; int read = 0;
@@ -2026,6 +2211,79 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
         e.name = QStringLiteral("导入:点"); applyStyle(e, p); emitEl(std::move(e)); return;
     }
 
+    // MULTILEADER：LibreDWG r2004 输出结构（probe 全量 dump 实测）：
+    //   300 CONTEXT_DATA{ → 10/20/30 content_base(文字锚) → 41 文字高 → 140 箭头长
+    //   → 290 → 304 文字内容（真实文字，如 "1"~"4"）→ 340 样式句柄 → 12/22/32 → 42 → …
+    //   → 302 LEADER{ → 10/20 lastleaderlinepoint(折点) → 11/21 dogleg_vector → 40
+    //   → 304 LEADER_LINE{ → 10/20 顶点（实测常退化为两点相同）→ 305/} → 303/} → 301/}
+    // 旧实现按 Polyline+Text 拆分：LEADER_LINE 顶点退化 → 零长折线不可见，文字另立
+    // Text 锚点错位 → 引线整体丢失。现按原生 ElementType::MLeader 重建：
+    //   pts[0]=箭头尖(行顶点)、pts[1]=折点(lastleaderlinepoint)、pts[2]=文字锚(content_base)
+    //   text=304、radius=41 字高、mleaderArrowLen=140、mleaderLanding=0（dogleg 已由 p1→p2 段承担）
+    if (t == "MULTILEADER") {
+        bool inCtx = false, inLeader = false, inLine = false;
+        bool haveContent = false, haveElbow = false, haveTip = false;
+        Vec3 contentBase(0, 0, 0), elbow(0, 0, 0), tip(0, 0, 0);
+        QString textVal;
+        for (size_t k = 0; k < p.size(); ++k) {
+            const int c = p[k].code;
+            const QString v = p[k].value.trimmed();
+            if (c == 300 && v.startsWith(QLatin1String("CONTEXT_DATA"))) { inCtx = true; continue; }
+            if (c == 301) { inCtx = false; continue; }                       // CONTEXT_DATA 收尾
+            if (!inCtx) continue;
+            if (c == 302 && v.startsWith(QLatin1String("LEADER"))) { inLeader = true; continue; }
+            if (c == 303) { inLeader = false; continue; }                    // LEADER 收尾
+            if (c == 304 && v.startsWith(QLatin1String("LEADER_LINE"))) { inLine = true; continue; }
+            if (c == 305) { inLine = false; continue; }                      // LEADER_LINE 收尾
+            // 上下文级文字内容（304 非 LEADER_LINE 分隔串；与 302/304 分隔串判别互斥）
+            if (c == 304 && !inLeader && !inLine) { textVal = v; continue; }
+            // 文字锚：上下文级第一对 10/20（content_base；30=同点 Z 值随其后）
+            if (c == 10 && !inLeader && !inLine && !haveContent) {
+                if (k + 1 < p.size() && p[k + 1].code == 20) {
+                    contentBase = Vec3(p[k].value.trimmed().toDouble(),
+                                       p[k + 1].value.trimmed().toDouble(), 0);
+                    haveContent = true; ++k;
+                }
+                continue;
+            }
+            // 折点：LEADER 级 10/20 = lastleaderlinepoint（11/21 dogleg_vector 是方向量，非点）
+            if (c == 10 && inLeader && !inLine && !haveElbow) {
+                if (k + 1 < p.size() && p[k + 1].code == 20) {
+                    elbow = Vec3(p[k].value.trimmed().toDouble(),
+                                 p[k + 1].value.trimmed().toDouble(), 0);
+                    haveElbow = true; ++k;
+                }
+                continue;
+            }
+            // 箭头尖：LEADER_LINE 首个顶点（实测两点相同 = 退化的行段，取首点即可）
+            if (c == 10 && inLine && !haveTip) {
+                if (k + 1 < p.size() && p[k + 1].code == 20) {
+                    tip = Vec3(p[k].value.trimmed().toDouble(),
+                               p[k + 1].value.trimmed().toDouble(), 0);
+                    haveTip = true; ++k;
+                }
+                continue;
+            }
+        }
+        // 几何兜底：任一关键点缺失时按已有两点补全（buildMLeader 需要 ≥2 点）
+        if (!haveTip)     { tip = haveElbow ? elbow : contentBase; haveTip = true; }
+        if (!haveElbow)   { elbow = haveContent ? contentBase : tip; haveElbow = true; }
+        if (!haveContent) { contentBase = elbow; haveContent = true; }
+        if (!textVal.isEmpty() && (haveTip || haveElbow)) {
+            Element e; e.type = ElementType::MLeader;
+            e.pts = {tip, elbow, contentBase};
+            e.text = textVal;
+            e.radius = firstNum(p, 41, 3.5);              // 文字高(mm)
+            e.mleaderArrowLen = firstNum(p, 140, 3.5);    // 箭头长(mm)
+            e.mleaderLanding = 0.0;                       // dogleg 由 p1→p2 段承担
+            e.name = QStringLiteral("导入:多重引线");
+            applyStyle(e, p); emitEl(std::move(e));
+        } else {
+            ++st.fallbackEntities;
+        }
+        return;
+    }
+
     // LEADER：顶点在 10/20 序列 → 引线按 Polyline 重建（无专用 LEADER 图元），降级计数。
     if (t == "LEADER") {
         std::vector<Vec3> verts;
@@ -2038,18 +2296,41 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
         ++st.fallbackEntities; return;
     }
 
-    // ATTRIB：并入最近一个顶层块引用的属性（tag=2, value=1）。块内 ATTRIB 忽略。
+    // ATTRIB：并入最近一个块引用的属性（tag=2, value=1）。顶层并入 out，块内并入 curBlock。
     if (t == "ATTRIB") {
         const QString tag = firstStr(p, 2).trimmed();
         const QString val = firstStr(p, 1).trimmed();
-        if (!inBlock && lastBlockRefIdx >= 0 && lastBlockRefIdx < (int)out.size())
+        if (inBlock) {
+            if (lastBlockRefCurIdx >= 0 && lastBlockRefCurIdx < (int)curBlock.entities.size()
+                && curBlock.entities[lastBlockRefCurIdx].type == ElementType::BlockRef)
+                curBlock.entities[lastBlockRefCurIdx].blockAttrs.push_back({tag, val});
+        } else if (lastBlockRefIdx >= 0 && lastBlockRefIdx < (int)out.size()) {
             out[lastBlockRefIdx].blockAttrs.push_back({tag, val});
+        }
         return;
     }
 
-    // ATTDEF（块定义内的属性声明）：静默忽略，不计数、不中断。
-    // 属性"模板"信息对本产品无对应数据（BlockRef 属性值由 ATTRIB 直接携带），跳过即可。
-    if (t == "ATTDEF") return;
+    // ATTDEF（块定义内的属性声明）：入 curBlock.attdefs，展开时由 evalDef 生成属性文字
+    //（AC220 标签、QF-2(19)10A 型号、编号 1..48 等即由此而来——早年直接忽略导致全丢）。
+    if (t == "ATTDEF") {
+        if (!inBlock) return;               // 顶层 ATTDEF 无块可归属（罕见）→ 跳过
+        AttributeDef ad;
+        ad.tag          = firstStr(p, 2).trimmed();
+        ad.prompt       = firstStr(p, 3).trimmed();
+        ad.defaultValue = firstStr(p, 1).trimmed();
+        // 锚点规则与 TEXT 一致：72/73 非零且有 11/21 → 第二对齐点，否则 10/20
+        const bool aligned = (firstNum(p, 72, 0.0) != 0.0 || firstNum(p, 73, 0.0) != 0.0)
+                          && hasCode(p, 11);
+        ad.pos     = Vec3(firstNum(p, aligned ? 11 : 10), firstNum(p, aligned ? 21 : 20), 0);
+        ad.height  = firstNum(p, 40, 3.5);
+        const int flags = (int)firstNum(p, 70, 0.0);
+        ad.invisible = (flags & 1) != 0;    // 70: bit0=不可见 bit1=常量
+        ad.constant  = (flags & 2) != 0;
+        ad.align     = dxfTextAlign(p);     // 缺省 72/73 → 6 左下（AutoCAD 真值）
+        ad.styleName = firstStr(p, 7).trimmed();
+        if (!ad.tag.isEmpty()) curBlock.attdefs.push_back(std::move(ad));
+        return;
+    }
 
     // SOLID（实心四边形/三角形）：本产品无填充面图元 → 闭合多段线重建。
     // DXF 顶点序 10/11/12/13 按 1→2→4→3 环绕（3/4 重合即三角形，AutoCAD 标准写法）。
@@ -2097,19 +2378,42 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
         const Vec3 colDir(std::cos(rot * M_PI / 180.0), std::sin(rot * M_PI / 180.0), 0);
         const Vec3 rowDir(-std::sin(rot * M_PI / 180.0), std::cos(rot * M_PI / 180.0), 0);
         lastBlockRefIdx = -1;
+        lastBlockRefCurIdx = -1;
         for (int r = 0; r < rows; ++r) for (int c = 0; c < cols; ++c) {
             const Vec3 pos = ins + colDir * (colSp * c) + rowDir * (rowSp * r);
             Element e; e.type = ElementType::BlockRef; e.blockName = name; e.pts = {pos};
             e.scaleX = sx; e.scaleY = sy; e.rotation = rot;
             e.name = QStringLiteral("导入:块引用"); applyStyle(e, p);
             emitEl(std::move(e));
-            if (r == 0 && c == 0 && !inBlock) lastBlockRefIdx = (int)out.size() - 1;
+            if (r == 0 && c == 0) {         // 首实例：后续 ATTRIB 归属该引用（顶层/块内对称）
+                if (inBlock) lastBlockRefCurIdx = (int)curBlock.entities.size() - 1;
+                else         lastBlockRefIdx     = (int)out.size() - 1;
+            }
         }
         return;
     }
 
     // 未知/不支持实体：跳过并计数，禁止中断整档（约束）。
     ++st.unknownEntities;
+}
+
+// STYLE 组码 4「字体文件名」→ 可用字体族（Qt 无法加载 AutoCAD SHX 形文件，只能按名映射）：
+//   空/纯 SHX 西文字体(txt/romans/monotxt 等) → 留空走程序默认字体；
+//   中文大字体(hztxt/gbcbig/gbenor/chineset/bigs/fs 等 .shx) → "SimSun"（宋体，
+//     与主流 CAD 打开此类图纸的观感一致）；ttf/ttc/otf → 去扩展名作族名（Qt 按族名可命中）。
+static QString textStyleFontFamily(const QString& fontFileRaw) {
+    const QString ff = fontFileRaw.trimmed();
+    if (ff.isEmpty()) return QString();
+    const QString base = ff.section(QLatin1Char('.'), 0, 0).toLower();  // 去扩展名并小写
+    static const char* cjkShx[] = { "hztxt", "hztxtbig5", "gbcbig", "gbenor", "gbcbig5",
+                                    "chineset", "chineset3", "bigfont", "big5", "fs", "fsbig" };
+    for (const char* n : cjkShx)
+        if (base == QLatin1String(n)) return QStringLiteral("SimSun");
+    const QString ext = ff.section(QLatin1Char('.'), -1).toLower();
+    if (ext == QLatin1String("ttf") || ext == QLatin1String("ttc") || ext == QLatin1String("otf"))
+        return ff.left(ff.size() - ext.size() - 1);   // 保留原族名大小写
+    if (!ff.contains(QLatin1Char('.'))) return ff;    // 无扩展名 = 已是族名（XDATA "SimSun" 等）
+    return QString();                                 // 其余（txt.shx 等）走默认
 }
 
 // 扫描 token 流并按 SECTION 分发实体（ENTITIES 与 BLOCKS 共用一套 handleEntity）。
@@ -2137,16 +2441,56 @@ static bool parseDxfTokens(const std::vector<DxfPair>& tok, std::vector<Element>
             C.curBlock.name = firstStr(props, 2).trimmed();
             C.curBlock.basePoint = Vec3(firstNum(props, 10), firstNum(props, 20), 0);
             C.inBlock = true;
+            C.lastBlockRefIdx = -1; C.lastBlockRefCurIdx = -1;
             i = j; continue;
         }
         if (C.section == 2 && t == "ENDBLK") {
             C.flush();
-            if (!C.curBlock.name.isEmpty()) C.blockEntities[C.curBlock.name] = C.curBlock.entities;
+            if (!C.curBlock.name.isEmpty()) C.blockDefs[C.curBlock.name] = C.curBlock;
             C.curBlock = BlockDef(); C.inBlock = false;
+            C.lastBlockRefIdx = -1; C.lastBlockRefCurIdx = -1;
             i += 1; continue;
         }
-        if (C.section == 3) {   // TABLES：仅消费（LTYPE 名映射已由 lineStyleFromDxfName 按名处理）
+        if (C.section == 3) {   // TABLES：解析 STYLE 文字样式表（LTYPE 名映射已由
+                                // lineStyleFromDxfName 按名处理，其余表记录仅消费）
             std::vector<DxfPair> props; size_t j = i + 1; while (j < tok.size() && tok[j].code != 0) { props.push_back(tok[j]); ++j; }
+            if (t == "STYLE") {
+                TextStyle sty;
+                sty.name = firstStr(props, 2).trimmed();          // 2=样式名（唯一键）
+                if (!sty.name.isEmpty()) {
+                    // 字体文件三级 fallback：4=主字体 → 3=大字体 → XDATA 1000（LibreDWG
+                    // 实测 Standard 的 4/3 均空、字体名只在 1001 ACAD/1000 SimSun 中携带）。
+                    QString ff = firstStr(props, 4).trimmed();
+                    if (ff.isEmpty()) ff = firstStr(props, 3).trimmed();
+                    if (ff.isEmpty())
+                        for (const auto& q : props)
+                            if (q.code == 1000 && !q.value.trimmed().isEmpty()) {
+                                ff = q.value.trimmed(); break;
+                            }
+                    sty.fontFamily    = textStyleFontFamily(ff);
+                    sty.textHeight    = firstNum(props, 40, 0.0);  // 40=定字高(0=跟随图元)
+                    sty.widthFactor   = firstNum(props, 41, 1.0);  // 41=宽度因子
+                    sty.obliquingAngle = firstNum(props, 50, 0.0); // 50=倾斜角(度)
+                    ls.styles.push_back(std::move(sty));
+                }
+            } else if (t == "LAYER") {
+                // LAYER 表：2=层名 / 62=色号（负值=层关闭）/ 6=线型名 / 370=线宽(1/100mm)。
+                // 不随档注册则 byLayer 图元的层色解析（SketchModel::resolveElement）无从取，
+                // 整层颜色退回图元默认深灰——尺寸线层绿、中心线层红等全部丢失正是此因。
+                Layer ly;
+                ly.name = firstStr(props, 2).trimmed();
+                if (!ly.name.isEmpty()) {
+                    int aci = (int)firstNum(props, 62, 7);
+                    if (aci == 256 || aci == 0) aci = 7;      // 层色不合法（ByLayer/ByBlock 位）→ 标准白
+                    else if (aci < 0) aci = -aci;              // 负值=层关闭，|aci| 仍是色号
+                    ly.color     = rgbFromAci(aci);
+                    ly.lineStyle = lineStyleFromDxfName(firstStr(props, 6));
+                    const double lw100 = firstNum(props, 370, -3.0);
+                    if (lw100 > 0.0)                           // -3/-2/-1 = 随默认线宽标志，不覆盖
+                        ly.lineWidth = std::max(1.0, std::round(lw100 / 13.0));
+                    ls.layers.push_back(std::move(ly));
+                }
+            }
             i = j; continue;
         }
         if (C.section == 1 || C.section == 2) {
@@ -2158,11 +2502,19 @@ static bool parseDxfTokens(const std::vector<DxfPair>& tok, std::vector<Element>
     }
 
     // 收尾：BLOCKS 段解析出的块定义交回调用方（MainWindow 负责 addBlockDef）。
-    // '*' 前缀为匿名块（*D 标注图形块、*Model_Space / *Paper_Space），不进模型块表：
-    // *D 的内容已由 DIMENSION 组码直接重建，进表反而会产生悬空定义。
-    for (const auto& kv : C.blockEntities) {
-        if (kv.first.startsWith(QLatin1Char('*'))) continue;
-        BlockDef d; d.name = kv.first; d.entities = kv.second;
+    // 匿名块过滤【精确前缀，禁用裸 '*' 一刀切】：
+    //   *Model_Space / *Paper_Space：模型/布局空间镜像（ENTITIES 段已有同一批实体，进表即重复定义）；
+    //   *D…：标注图形块（几何已由 DIMENSION 组码直接重建，进表只产生悬空定义）。
+    //   ⚠️ 其余匿名块（*U## 动态块求值变体等）是被 INSERT 正常引用的**真实内容**，
+    //   必须进块表——LibreDWG 桥输出里大量块引用指向 *U##（C0层.dwg 实测 10 种 24 处
+    //   引用，且整棵「机柜→*U37→站机柜场景」子树经匿名块传递）；早年按 '*' 一刀切
+    //   会把这些引用全部悬空 → 表格上方图形整片消失、防雷/隔板等动态块变体全部不渲染。
+    for (const auto& kv : C.blockDefs) {
+        const QString bn = kv.first;
+        if (bn.startsWith(QLatin1String("*Model_Space")) || bn.startsWith(QLatin1String("*Paper_Space"))
+            || bn.startsWith(QLatin1String("*D"))) continue;
+        // 保持既有语义：块内几何与 attdefs 入表，basePoint 不带入（插入变换按原点）。
+        BlockDef d; d.name = bn; d.entities = kv.second.entities; d.attdefs = kv.second.attdefs;
         ls.blocks.push_back(std::move(d));
     }
 
@@ -2299,6 +2651,9 @@ QString cadVerToHuman(const QString& acadVer) {
 // 该 AutoCAD 版本串是否支持读取（R12/R13/R14/2000/2000i 支持；R2004+ 拒绝）
 bool isSupportedDxfVersion(const QString& acadVer) {
     const QString s = acadVer.trimmed().toUpper();
+    // 仅接受 ≤ R2000(AC1018) 的 DXF。R2004 及以后（AC1021+）的 DXF 由 DwgBridge
+    // 经 dwg2dxf --as r2000 统一降级为 R2000(AC1015) DXF 后再交本函数回读，
+    // 故此处无需、也不应直接放行 AC1021+（保持「请另存为 2000 或更早版本」契约）。
     return s.isEmpty() || s == "AC1009" || s == "AC1012" || s == "AC1014"
         || s == "AC1015" || s == "AC1018";
 }

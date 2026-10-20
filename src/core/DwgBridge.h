@@ -39,6 +39,10 @@ namespace dwgbridge {
 // 纯探测，无副作用（不启动进程）。
 bool available();
 
+// 诊断用：返回当前解析到的转换器目录（找不到返回空串）。
+// 供启动日志与排障时打印"实际使用的路径"。
+QString resolvedToolsDir();
+
 // 探测 DWG 字节流头部 6 字节版本串（"AC1009"/"AC1015"/"AC1021"…）。
 // 文件过短或无版本串 → 空串。这是路由与错误报文共用的唯一探测入口。
 QString versionFromBytes(const QByteArray& data);

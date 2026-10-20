@@ -2,7 +2,9 @@
 #include <QString>
 #include <vector>
 #include "Element.h"
-#include "Block.h"   // DxfImportStats 携带块表（仅 BlockDef 纯数据，无循环依赖）
+#include "Block.h"    // DxfImportStats 携带块表（仅 BlockDef 纯数据，无循环依赖）
+#include "TextStyle.h" // DxfImportStats 携带 STYLE 文字样式表（纯数据，无循环依赖）
+#include "Layer.h"     // DxfImportStats 携带 LAYER 图层表（纯数据，无循环依赖）
 
 // 图纸文件格式互操作层（纯函数，不依赖任何 UI / 模型对象）。
 //
@@ -159,6 +161,10 @@ struct DxfImportStats {
     int unknownEntities = 0;   // 无法识别/不支持的实体类型计数（跳过，不中断整档）
     int fallbackEntities = 0;  // 复杂实体降级为基元（LINE+TEXT/边界线）的计数
     std::vector<BlockDef> blocks;   // 从 BLOCKS 段解析出的块定义（供调用方 addBlockDef）
+    std::vector<TextStyle> styles;  // 从 TABLES 段解析出的文字样式（供调用方 addTextStyle；
+                                     //   已剔除字体文件名等无法跨程序解释的原始字段）
+    std::vector<Layer> layers;      // 从 TABLES 段解析出的 LAYER 图层表（供调用方注册：
+                                     //   addLayer/setLayerStyle，byLayer 图元的层色解析依赖它）
 };                         //   调用方按 Units.h::lengthUnitFromInsunits 换算到 mm
 bool fromDxf(const QByteArray& data, std::vector<Element>& out, QString* err = nullptr,
              DxfImportStats* stats = nullptr);

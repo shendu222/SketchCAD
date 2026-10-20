@@ -79,7 +79,8 @@ static bool sameElement(const Element& a, const Element& b) {
     if (a.text != b.text) return false;
     if (a.tolUpper != b.tolUpper || a.tolLower != b.tolLower || a.dimTextHeight != b.dimTextHeight) return false;
     if (a.fitCode != b.fitCode || a.symbolLibrary != b.symbolLibrary) return false;
-    if (a.refA != b.refA || a.refB != b.refB || a.visible != b.visible || a.byLayer != b.byLayer) return false;
+    if (a.refA != b.refA || a.refB != b.refB || a.visible != b.visible || a.byLayer != b.byLayer
+        || a.byBlock != b.byBlock) return false;
     if (a.dimValue != b.dimValue || a.dimDriven != b.dimDriven
         || a.dimParam != b.dimParam || a.dimLinked != b.dimLinked) return false;
     if (a.widthFactor != b.widthFactor || a.textAlign != b.textAlign || a.styleName != b.styleName) return false;
@@ -144,6 +145,7 @@ static bool sameBlockDef(const BlockDef& a, const BlockDef& b) {
         if (x.tag != y.tag || x.prompt != y.prompt || x.defaultValue != y.defaultValue) return false;
         if (!(x.pos == y.pos) || x.height != y.height) return false;
         if (x.constant != y.constant || x.invisible != y.invisible) return false;
+        if (x.align != y.align || x.styleName != y.styleName) return false;
     }
     if (a.dynParams.size() != b.dynParams.size()) return false;
     for (size_t i = 0; i < a.dynParams.size(); ++i) {
@@ -1784,7 +1786,9 @@ bool SketchModel::setLayerAlpha(const QString& name, double alpha) {
 }
 
 Element SketchModel::resolveElement(const Element& e) const {
-    if (!e.byLayer) return e;                     // 覆盖（ByObject）：快照原样使用
+    // ByObject（显式色）原样返回；ByBlock 残留（块内 ByBlock 图元的插入为随层/ByBlock，
+    // 见 Block.cpp evalDef——其层已映射为插入层）与 ByLayer 同路，按所属图层解析。
+    if (!e.byLayer && !e.byBlock) return e;       // 覆盖（ByObject）：快照原样使用
     const Layer* L = findLayer(e.layer);
     if (!L) return e;                             // 图层缺失：保持原值，避免凭空改变外观
     Element r = e;

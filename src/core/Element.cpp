@@ -136,7 +136,8 @@ bool Element::operator==(const Element& o) const {
     if (standard != o.standard) return false;
     if (text != o.text || tolUpper != o.tolUpper || tolLower != o.tolLower) return false;
     if (dimTextHeight != o.dimTextHeight || fitCode != o.fitCode || symbolLibrary != o.symbolLibrary) return false;
-    if (refA != o.refA || refB != o.refB || visible != o.visible || byLayer != o.byLayer) return false;
+    if (refA != o.refA || refB != o.refB || visible != o.visible || byLayer != o.byLayer
+        || byBlock != o.byBlock) return false;
     if (dimValue != o.dimValue || dimDriven != o.dimDriven) return false;
     if (dimParam != o.dimParam || dimLinked != o.dimLinked) return false;
     if (widthFactor != o.widthFactor || textAlign != o.textAlign) return false;
@@ -167,6 +168,7 @@ QJsonObject elementToJson(const Element& e) {
     o["id"] = e.id; o["type"] = (int)e.type; o["name"] = e.name; o["layer"] = e.layer;
     o["color"] = e.color.name(); o["lineWidth"] = e.lineWidth; o["lineWidthAuto"] = e.lineWidthAuto; o["lineStyle"] = (int)e.lineStyle; o["radius"] = e.radius;
     o["byLayer"] = e.byLayer;   // 图层动态语义：随图存档（旧档无此键 → 读端回落 false + 快照=现值，完全向后兼容）
+    o["byBlock"] = e.byBlock;   // ByBlock(62=0)：块内图元展开期继承 INSERT 样式（旧档无此键 → false）
     o["startAngle"] = e.startAngle; o["endAngle"] = e.endAngle;
     o["radiusY"] = e.radiusY;
     o["rotation"] = e.rotation;
@@ -275,6 +277,7 @@ Element elementFromJson(const QJsonObject& o) {
     // 旧存档没有 byLayer 字段：默认 false（快照式分组的历史行为——图元用自身 color/width/style）；
     // 新图元在 Element 构造时默认 true（随层）。这样"旧档逐字节语义兼容"自然成立。
     e.byLayer = json::getBool(o, "byLayer", false);
+    e.byBlock = json::getBool(o, "byBlock", false);   // 旧档无此键 → false（非 ByBlock）
     e.radius = o["radius"].toDouble();
     e.startAngle = o["startAngle"].toDouble();
     e.endAngle = o["endAngle"].toDouble();

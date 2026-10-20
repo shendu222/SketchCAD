@@ -15,6 +15,7 @@
 #include <QWidget>
 #include "core/Diagnostics.h"   // 崩溃不丢稿：日志滚动 + 崩溃转储
 #include "core/I18n.h"         // 国际化：语言解析 + QTranslator 装载
+#include "core/DwgBridge.h"     // 启动诊断：DWG 转换组件发现状态
 #include "ui/MainWindow.h"
 
 #ifdef Q_OS_WIN
@@ -180,6 +181,20 @@ int main(int argc, char** argv) {
     // 崩溃过滤器则要抢在任何窗口初始化失败之前。
     SketchCAD::Diagnostics::init(QStringLiteral("SketchCAD"));
     SketchCAD::Diagnostics::writeLog(QStringLiteral("SketchCAD 启动"), "info");
+    // 启动路径诊断：记录 exe 实际目录与 DWG 转换组件发现状态，便于用户在
+    // 「打开 DWG 失败」时从 %LOCALAPPDATA%/SketchCAD/logs 直接定位根因
+    // （例如 dist/ 打包时漏拷 tools/dwg → available()==false）。
+    {
+        const QString exeDir = QCoreApplication::applicationDirPath();
+        const QString td = SketchCAD::dwgbridge::resolvedToolsDir();
+        const bool dwgOk = SketchCAD::dwgbridge::available();
+        SketchCAD::Diagnostics::writeLog(
+            QStringLiteral("启动路径诊断：exeDir=%1，DWG转换组件=%2，toolsDir=%3")
+                .arg(exeDir)
+                .arg(dwgOk ? QStringLiteral("已就绪") : QStringLiteral("缺失"))
+                .arg(td.isEmpty() ? QStringLiteral("(未找到)") : td),
+            "info");
+    }
     // 会话标记：启动即写 → 正常退出删除 → 残留 = 上次异常退出（主窗口启动后弹提示）。
     // 检测结果缓存在 Diagnostics 内，MainWindow::showAbnormalExitNotice 稍后消费。
     SketchCAD::Diagnostics::beginSession();

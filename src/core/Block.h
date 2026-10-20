@@ -33,6 +33,8 @@ struct AttributeDef {
     double  height = 3.5;     // 文字高度(mm)
     bool    constant = false; // 常量属性：不可编辑，恒为 defaultValue
     bool    invisible = false;// 不可见属性：展开时不产生可见文字（仅参与提取）
+    int     align = 1;        // 文字对齐（Element::textAlign 9 点；DXF ATTDEF 缺省 72/73 → 6 左下）
+    QString styleName;        // 文字样式名（随 ATTDEF 的 7 组码，展开时赋给属性文字）
 };
 
 // ---- 动态参数类型 ----

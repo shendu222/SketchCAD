@@ -6380,6 +6380,202 @@ static bool t_formatsVersions() {
     std::vector<Element> bw; DxfImportStats sw; QString ew;
     CHECK(!fromDwg(badDwg, bw, &ew, &sw), "⑧ 非 R12 DWG 被拒绝");
 
+    // ---------- ⑨ 桥型 DXF 回归：UTF-8 防乱码 / GBK 保持 / TEXT 对齐 / MULTILEADER ----------
+    // ⑨a LibreDWG(dwg2dxf) 输出「UTF-8 文本 + $DWGCODEPAGE=ANSI_936 声明」：
+    //    必须按 UTF-8 解；旧逻辑见 ANSI_936 就按 GBK 解 → 全篇乱码（C0层.dwg 实测）。
+    QByteArray utf8Dxf = QStringLiteral(
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1015\r\n"
+        "9\r\n$DWGCODEPAGE\r\n3\r\nANSI_936\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nTEXT\r\n8\r\n0\r\n10\r\n5.0\r\n20\r\n6.0\r\n40\r\n2.5\r\n1\r\n设 计\r\n"
+        "0\r\nENDSEC\r\n0\r\nEOF\r\n").toUtf8();
+    std::vector<Element> u8; DxfImportStats su8; QString eu8;
+    CHECK(fromDxf(utf8Dxf, u8, &eu8, &su8), "⑨a UTF-8文本+ANSI_936声明 解析成功");
+    CHECK(eu8.isEmpty() && u8.size() == 1, "⑨a 得 1 个文本图元");
+    CHECK(u8.size() == 1 && u8[0].text == QStringLiteral("设 计"),
+          "⑨a UTF-8 文本正确解码（声明 ANSI_936 也不乱码）");
+
+    // ⑨b 真 GBK 字节（本产品写出端/传统中文 CAD，ANSI_936 声明）：仍按 GBK 解（回归防护）。
+    QByteArray gbkText;
+    gbkText.append("0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1015\r\n"
+                   "9\r\n$DWGCODEPAGE\r\n3\r\nANSI_936\r\n0\r\nENDSEC\r\n"
+                   "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+                   "0\r\nTEXT\r\n8\r\n0\r\n10\r\n5.0\r\n20\r\n6.0\r\n40\r\n2.5\r\n1\r\n");
+    gbkText.append(char(0xC9)); gbkText.append(char(0xE8)); gbkText.append(' ');
+    gbkText.append(char(0xBC)); gbkText.append(char(0xC6));   // "设 计" 的 GBK 字节
+    gbkText.append("\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n");
+    std::vector<Element> vg; DxfImportStats sg; QString eg;
+    CHECK(fromDxf(gbkText, vg, &eg, &sg), "⑨b GBK文本 解析成功");
+    CHECK(eg.isEmpty() && vg.size() == 1, "⑨b 得 1 个文本图元");
+    CHECK(vg.size() == 1 && vg[0].text == QStringLiteral("设 计"),
+          "⑨b GBK 文本仍正确解码（GBK 回归防护）");
+
+    // ⑨c TEXT 带 72/73 对齐：锚点须取 11/21（第二对齐点），而非 10/20。
+    QByteArray alignedDxf = QStringLiteral(
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1015\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nTEXT\r\n8\r\n0\r\n72\r\n4\r\n73\r\n2\r\n"
+        "10\r\n-154.444\r\n20\r\n25.416\r\n11\r\n-150.0\r\n21\r\n26.666\r\n40\r\n2.5\r\n1\r\n设 计\r\n"
+        "0\r\nENDSEC\r\n0\r\nEOF\r\n").toUtf8();
+    std::vector<Element> al; DxfImportStats sal; QString eal;
+    CHECK(fromDxf(alignedDxf, al, &eal, &sal), "⑨c 对齐TEXT 解析成功");
+    CHECK(eal.isEmpty() && al.size() == 1, "⑨c 得 1 个文本图元");
+    CHECK(al.size() == 1 && qAbs(al[0].pts[0].x - (-150.0)) < 1e-6 &&
+          qAbs(al[0].pts[0].y - 26.666) < 1e-6,
+          "⑨c 对齐TEXT 锚点取 11/21（非 10/20）");
+
+    // ⑨d MULTILEADER（LibreDWG r2004 输出结构）：还原引线折线 + 文字。
+    QByteArray mld = QStringLiteral(
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1018\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nMULTILEADER\r\n8\r\n0\r\n"
+        "300\r\nCONTEXT_DATA{\r\n"
+        "10\r\n10.0\r\n20\r\n20.0\r\n"
+        "302\r\nLEADER{\r\n"
+        "304\r\nLEADER_LINE{\r\n"
+        "10\r\n10.0\r\n20\r\n20.0\r\n"
+        "10\r\n15.0\r\n20\r\n25.0\r\n"
+        "305\r\n}\r\n"
+        "303\r\n}\r\n"
+        "304\r\n说明文字\r\n"
+        "301\r\n}\r\n"
+        "0\r\nENDSEC\r\n0\r\nEOF\r\n").toUtf8();
+    std::vector<Element> ml; DxfImportStats sml; QString eml;
+    CHECK(fromDxf(mld, ml, &eml, &sml), "⑨d MULTILEADER 解析成功");
+    // 2026-10 起 MULTILEADER 按原生 MLeader 图元重建（非 Polyline+Text 拆分），
+    // 与界面标注引线渲染同源；断言随之更新。
+    int nMld = 0; QString mlTxt;
+    for (const auto& e : ml) {
+        if (e.type == ElementType::MLeader) {
+            ++nMld;
+            if (!e.text.isEmpty()) mlTxt = e.text;
+        }
+    }
+    CHECK(nMld >= 1, "⑨d MULTILEADER 还原至少 1 个 MLeader 图元");
+    CHECK(nMld >= 1 && ml.size() >= 1 && ml[0].pts.size() >= 1 &&
+          mlTxt == QStringLiteral("说明文字"),
+          "⑨d MULTILEADER 还原引线文字");
+
+    // ---------- ⑩ 桥型 DXF 回归二：HATCH 72/73 顺序 + 匿名 *U 块保留 ----------
+    // ⑩a HATCH 环头 72(has-bulge) 在 73(closed) 之前：LibreDWG r2004 实测顺序
+    //    （92 → 72 → 73 → 93）。旧代码只跳 73 → 顶点数=0 → HATCH 全部静默丢弃。
+    QByteArray h72 = QStringLiteral(
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1018\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nBLOCKS\r\n"
+        "0\r\nBLOCK\r\n2\r\n*U28\r\n10\r\n0.0\r\n20\r\n0.0\r\n"
+        "0\r\nHATCH\r\n8\r\n0\r\n62\r\n4\r\n2\r\nSOLID\r\n91\r\n1\r\n92\r\n7\r\n"
+        "72\r\n0\r\n73\r\n1\r\n93\r\n4\r\n"
+        "10\r\n-1.47\r\n20\r\n-1.53\r\n10\r\n1.47\r\n20\r\n-1.53\r\n"
+        "10\r\n1.47\r\n20\r\n1.53\r\n10\r\n-1.47\r\n20\r\n1.53\r\n"
+        "97\r\n1\r\n47\r\n0.07\r\n98\r\n1\r\n"
+        "0\r\nENDBLK\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nINSERT\r\n2\r\n*U28\r\n10\r\n10.0\r\n20\r\n10.0\r\n"
+        "0\r\nENDSEC\r\n0\r\nEOF\r\n").toUtf8();
+    std::vector<Element> h72Out; DxfImportStats sh72; QString eh72;
+    CHECK(fromDxf(h72, h72Out, &eh72, &sh72), "⑩a HATCH(72先于73) 档解析成功");
+    int nHatch = 0;
+    for (const auto& b : sh72.blocks)
+        for (const auto& e : b.entities) if (e.type == ElementType::Hatch) ++nHatch;
+    CHECK(nHatch == 1, "⑩a 块内 HATCH 不再被 72/73 顺序丢弃（还原为填充图元）");
+
+    // ⑩b 匿名 *U## 动态块变体是被 INSERT 引用的真实内容：必须进块表（不可 '*' 一刀切），
+    //    且嵌套块（*U37→C0层—空表格）在展开时递归复合变换。
+    QByteArray uB = QStringLiteral(
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1018\r\n0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nBLOCKS\r\n"
+        "0\r\nBLOCK\r\n2\r\nC0层—空表格\r\n10\r\n0.0\r\n20\r\n0.0\r\n"
+        "0\r\nLINE\r\n8\r\n0\r\n10\r\n0.0\r\n20\r\n0.0\r\n11\r\n100.0\r\n21\r\n0.0\r\n"
+        "0\r\nENDBLK\r\n"
+        "0\r\nBLOCK\r\n2\r\n*U37\r\n10\r\n0.0\r\n20\r\n0.0\r\n"
+        "0\r\nINSERT\r\n2\r\nC0层—空表格\r\n10\r\n50.0\r\n20\r\n40.0\r\n"
+        "0\r\nENDBLK\r\n"
+        "0\r\nBLOCK\r\n2\r\n*Model_Space\r\n10\r\n0.0\r\n20\r\n0.0\r\n0\r\nENDBLK\r\n"
+        "0\r\nENDSEC\r\n"
+        "0\r\nSECTION\r\n2\r\nENTITIES\r\n"
+        "0\r\nINSERT\r\n2\r\n*U37\r\n10\r\n10.0\r\n20\r\n10.0\r\n"
+        "0\r\nENDSEC\r\n0\r\nEOF\r\n").toUtf8();
+    std::vector<Element> uOut; DxfImportStats su; QString eu;
+    CHECK(fromDxf(uB, uOut, &eu, &su), "⑩b 匿名块档解析成功");
+    bool hasU37 = false, hasTable = false, hasMS = false;
+    for (const auto& b : su.blocks) {
+        if (b.name == QStringLiteral("*U37")) hasU37 = true;
+        if (b.name == QStringLiteral("C0层—空表格")) hasTable = true;
+        if (b.name.startsWith(QLatin1String("*Model_Space"))) hasMS = true;
+    }
+    CHECK(hasU37 && hasTable, "⑩b *U## 匿名块进块表（INSERT 引用不再悬空）");
+    CHECK(!hasMS, "⑩b *Model_Space 镜像仍被过滤（不产生重复定义）");
+    {   // 展开 *U37 引用：应递归得到 空表格的 LINE，且位置 = (10,10)+(50,40) = (60,50)
+        Element ref; ref.type = ElementType::BlockRef; ref.blockName = QStringLiteral("*U37");
+        ref.pts = {Vec3(10, 10, 0)}; ref.scaleX = ref.scaleY = 1.0; ref.rotation = 0;
+        SketchModel mm;
+        { std::vector<Element> tmp = uOut; mm.addElementsQuiet(tmp); }
+        for (const auto& b : su.blocks) mm.addBlockDef(b);
+        Element r2 = ref;
+        const auto subs = mm.expandBlockRef(r2);
+        CHECK(subs.size() == 1 && subs[0].type == ElementType::Line
+              && qAbs(subs[0].pts[0].x - 60.0) < 1e-6 && qAbs(subs[0].pts[0].y - 50.0) < 1e-6,
+              "⑩b 嵌套匿名块递归展开且变换复合正确（(10,10)+(50,40)=(60,50)）");
+    }
+
+    // ---------- ⑩ 真档诊断（临时，文件缺失即静默跳过）----------
+    // 用程序真实的 fromDxf + expandBlockRef 解析 C0层.dwg 的 r2004 桥输出，
+    // 打印程序视角的完整统计：图元分布 / 块表 / 悬空块引用 / 世界展开几何量。
+    {
+        const QString diagPath = QStringLiteral("C:/tmp/c0r2000/cmp_r2004/out2004.dxf");
+        QFile df(diagPath);
+        if (df.open(QIODevice::ReadOnly)) {
+            const QByteArray dbg = df.readAll(); df.close();
+            std::vector<Element> de; DxfImportStats ds; QString deErr;
+            const bool ok = fromDxf(dbg, de, &deErr, &ds);
+            std::fprintf(stdout, "\n==== ⑩ 真档诊断 %s ====\n", diagPath.toUtf8().constData());
+            std::fprintf(stdout, "fromDxf ok=%d err=%s\n", ok ? 1 : 0, deErr.toUtf8().constData());
+            std::fprintf(stdout, "stats: entities=%d blocks=%d unknown=%d fallback=%d arcsKept=%d arcsDropped=%d\n",
+                         ds.entities, (int)ds.blocks.size(), ds.unknownEntities,
+                         ds.fallbackEntities, ds.arcsKept, ds.arcsDropped);
+            QHash<QString, int> byType; QHash<QString, int> byName;
+            for (const auto& e : de) {
+                ++byType[QString::number((int)e.type)];
+                if (e.type == ElementType::BlockRef) ++byName[e.blockName];
+            }
+            std::fprintf(stdout, "elements=%d  byType:", (int)de.size());
+            for (auto it = byType.begin(); it != byType.end(); ++it)
+                std::fprintf(stdout, " %s=%d", it.key().toUtf8().constData(), it.value());
+            std::fprintf(stdout, "\nblock table (%d):", (int)ds.blocks.size());
+            QSet<QString> defined;
+            for (const auto& b : ds.blocks) {
+                defined.insert(b.name);
+                std::fprintf(stdout, " [%s x%d]", b.name.toUtf8().constData(), (int)b.entities.size());
+            }
+            std::fprintf(stdout, "\n");
+            QHash<QString, int> dangling; int danglingTotal = 0;
+            for (auto it = byName.begin(); it != byName.end(); ++it)
+                if (!defined.contains(it.key())) { dangling.insert(it.key(), it.value()); danglingTotal += it.value(); }
+            std::fprintf(stdout, "top-level BlockRef kinds=%d, dangling kinds=%d (refs=%d):",
+                         (int)byName.size(), (int)dangling.size(), danglingTotal);
+            for (auto it = dangling.begin(); it != dangling.end(); ++it)
+                std::fprintf(stdout, " [%s x%d]", it.key().toUtf8().constData(), it.value());
+            std::fprintf(stdout, "\n");
+            // 世界展开几何量（与中望对照的硬指标）
+            SketchModel m;
+            { std::vector<Element> tmp = de; m.addElementsQuiet(tmp); }
+            for (const auto& b : ds.blocks) m.addBlockDef(b);
+            int worldTotal = 0, refs = 0, emptyRefs = 0;
+            const auto& all = m.elements();
+            for (const auto& e : all) {
+                if (e.type != ElementType::BlockRef) { ++worldTotal; continue; }
+                ++refs;
+                const auto subs = m.expandBlockRef(e);
+                if (subs.empty()) ++emptyRefs;
+                worldTotal += (int)subs.size();
+            }
+            std::fprintf(stdout, "world geometry: model=%d refs=%d emptyRefs=%d total=%d\n",
+                         (int)all.size() - refs, refs, emptyRefs, worldTotal);
+            std::fprintf(stdout, "==== ⑩ 诊断结束 ====\n");
+            std::fflush(stdout);
+        }
+    }
+
     return g_fail == 0;
 }
 
@@ -10523,17 +10719,102 @@ static bool t_partlib() {
 
     const PartLibrary& lib = PartLibrary::instance();
 
-    // ---------- 六角螺栓出库：规格→关键尺寸 ----------
+    // ---------- 六角螺栓出库：GB/T 5782 标注图（主视+端面+局部放大 X+标注+技术要求） ----------
     {
         QVariantMap p; p[QStringLiteral("nominal")] = 6.0; p[QStringLiteral("length")] = 30.0;
         std::vector<Element> out;
         CHECK(lib.generate(QStringLiteral("bolt"), p, out), "螺栓出库成功");
-        CHECK(out.size() == 3, "螺栓 3 图元（头/杆/垫面）");
-        const QRectF head = geo::elementBounds(out[0]);
-        CHECK(std::fabs(head.width() - 10.0) < 0.05, "螺栓头宽=对边 s=10");
-        CHECK(std::fabs(head.height() - 4.0) < 0.05, "螺栓头高=k=4");
-        const QRectF shank = geo::elementBounds(out[1]);
-        CHECK(std::fabs(shank.width() - 5.5) < 0.05, "螺栓杆宽=螺纹内径≈5.5");
+        const double eM6 = 2.0 * 10.0 / std::sqrt(3.0);
+        // 分类统计
+        int cl4 = 0, wave = 0, dims = 0, mtexts = 0, chamArc = 0, midArc = 0, filletArc = 0, minorThin = 0;
+        int rootLines = 0, rootThin = 0; double rootXmin = 1e9, rootXmax = -1e9;
+        const Element* hexEl = nullptr;
+        const Element* notes = nullptr;
+        const Element* dimB = nullptr;
+        const Element* dimBeta = nullptr;
+        const Element* incircle = nullptr;
+        const Element* headEndLine = nullptr;   // 要求①：头部缺失竖线
+        const Element* dimChamfer = nullptr;    // 要求②：杆端倒角角标注
+        bool has45 = false;                     // 要求②：不得残留 45° 倒角
+        bool letterOnlyDim = false;   // 要求③：不得残留纯字母代号标注
+        for (const Element& el : out) {
+            if (el.type == ElementType::Dimension) {
+                ++dims;
+                if (el.text.startsWith(QStringLiteral("("))) dimB = &el;
+                if (el.text == QStringLiteral("30°")) dimBeta = &el;
+                if (el.text.contains(QStringLiteral("×")) && el.text.contains(QStringLiteral("30°"))) dimChamfer = &el;
+                if (el.text.contains(QStringLiteral("45°"))) has45 = true;
+                bool hasDigit = false, hasWide = false;
+                for (QChar ch : el.text) {
+                    if (ch.isDigit()) hasDigit = true;
+                    if (ch.unicode() > 127) hasWide = true;
+                }
+                if (!hasDigit && !hasWide) letterOnlyDim = true;
+            } else if (el.type == ElementType::MText) {
+                ++mtexts;
+                if (el.text.startsWith(QStringLiteral("技术要求"))) notes = &el;
+            }
+            if (el.lineStyle == LineStyle::DashDotDot) ++cl4;
+            if (el.lineStyle == LineStyle::Wave) ++wave;
+            if (el.type == ElementType::Arc && el.name == QStringLiteral("螺栓头部倒角弧")) ++chamArc;
+            if (el.type == ElementType::Arc && el.name == QStringLiteral("螺栓头部倒角中弧")) ++midArc;
+            if (el.type == ElementType::Arc && el.name == QStringLiteral("头部过渡圆角")) ++filletArc;
+            if (el.name == QStringLiteral("螺纹小径") && el.type == ElementType::Line && !el.lineWidthAuto)
+                ++minorThin;
+            if (el.name == QStringLiteral("螺纹根部线") && el.type == ElementType::Line) {
+                ++rootLines;
+                if (!el.lineWidthAuto) ++rootThin;
+                if (!el.pts.empty()) {
+                    if (el.pts[0].x < rootXmin) rootXmin = el.pts[0].x;
+                    if (el.pts[0].x > rootXmax) rootXmax = el.pts[0].x;
+                }
+            }
+            if (el.name == QStringLiteral("螺栓端面六角")) hexEl = &el;
+            if (el.name == QStringLiteral("头部倒角内切圆") && el.type == ElementType::Circle)
+                incircle = &el;
+            if (el.type == ElementType::Line && el.name == QStringLiteral("螺栓头部端面竖线"))
+                headEndLine = &el;
+        }
+        CHECK(out.size() == 68, "螺栓 68 图元（59 基线 + 螺纹根部线 ×8 + 根部线标注 ×1）");
+        CHECK(cl4 == 4, "中心线/轴线=双点划线 ×4（主视+端面×2+放大图）");
+        CHECK(wave == 3, "波浪线 ×3（螺纹过渡 + 放大图折断 ×2）");
+        CHECK(dims == 18, "尺寸/引线标注 18（主视 10 + 端面 2 + 放大图 6）");
+        CHECK(mtexts == 4, "文字 4（放大圈标识 + 放大图名 + 技术要求 + 根部线标注）");
+        CHECK(chamArc == 4 && midArc == 2 && filletArc == 4,
+              "倒角侧弧 ×4（上下 1/4 区）+ 倒角中弧 ×2（中 1/2 区）+ 头下过渡圆弧 ×4");
+        CHECK(minorThin == 2, "螺纹小径=细实线 ×2（手动细档线宽）");
+        CHECK(rootLines == 8, "螺纹根部线=8（4 轴向位置 × 上下两侧，颈部少量示意）");
+        CHECK(rootThin == 8, "螺纹根部线=细实线 ×8（与放大图细线风格一致）");
+        CHECK(rootXmin > 16.5 - 1e-6 && rootXmax < 33.675 + 1e-6,
+              "螺纹根部线均落在完整螺纹区（颈部 x∈[k+lg, tip-c]）");
+        CHECK(!letterOnlyDim, "要求③：所有标注均为真实数值（无纯字母代号）");
+        CHECK(dimB && dimB->dtype == DimensionType::Horizontal, "(b) 参考尺寸存在（水平线性，真实数值）");
+        CHECK(dimBeta && dimBeta->dtype == DimensionType::Angle, "30° 头部倒角角度标注存在（真实数值）");
+        CHECK(headEndLine != nullptr, "要求①：头部端面竖线存在（缺失竖线已补画）");
+        if (headEndLine) {
+            CHECK(std::fabs(headEndLine->pts[0].x) < 1e-9 && std::fabs(headEndLine->pts[1].x) < 1e-9,
+                  "要求①：头部端面竖线位于 x=0");
+            CHECK(std::fabs((headEndLine->pts[1].y - headEndLine->pts[0].y) - 3.0 * eM6 / 4.0) < 1e-6,
+                  "要求①：头部端面竖线竖直跨度=3e/4（与三段倒角弧在 (0,0)/(0,±3R/4) 处相切）");
+        }
+        CHECK(!has45, "要求②：杆端倒角已由 45° 改为 30°，无残留 45°");
+        CHECK(dimChamfer && dimChamfer->dtype == DimensionType::Leader,
+              "要求②：杆端倒角 30° 标注存在（倒角角落在 15°~30°）");
+        CHECK(incircle != nullptr && std::fabs(incircle->radius - 5.0) < 1e-9,
+              "要求④：端面倒角内切圆存在且 r=s/2=5（与六边相切）");
+        CHECK(notes != nullptr, "技术要求文字块存在（含公差）");
+        if (notes) {
+            // 要求①：技术要求须在放大图（其中心 Yd=-(R+16)-8-(R+0.8)*2）最低要素之下
+            const double yd = -(eM6 / 2.0 + 16.0) - 8.0 - (eM6 / 2.0 + 0.8) * 2.0;
+            CHECK(notes->pts[0].y < yd - (eM6 / 2.0 + 2.2) * 2.0 - 2.0,
+                  "要求①：技术要求位于放大图下方空白区（不与图形重叠）");
+        }
+        CHECK(hexEl != nullptr, "端面六角存在");
+        if (hexEl) {
+            const QRectF hex = geo::elementBounds(*hexEl);
+            CHECK(std::fabs(hex.width() - 10.0) < 0.05, "端面六角宽=对边 s=10");
+            CHECK(std::fabs(hex.height() - eM6) < 0.05, "端面六角高=对角 e");
+        }
     }
 
     // ---------- 六角螺母出库 ----------
@@ -10578,7 +10859,7 @@ static bool t_partlib() {
         QVariantMap p; p[QStringLiteral("nominal")] = 6.0;
         BlockDef def;
         CHECK(lib.checkout(QStringLiteral("bolt"), p, def), "checkout(bolt) → BlockDef 成功");
-        CHECK(def.entities.size() == 3, "BlockDef 含 3 图元");
+        CHECK(def.entities.size() == 68, "BlockDef 含 68 图元（螺栓标注工程图）");
         CHECK(def.attdefs.size() >= 3, "BlockDef 含 ≥3 属性定义（标准/公称/名称）");
         // 实例化引用 + 属性提取（BOM 联动）
         const Element ref = block::makeRef(def, Vec3(0, 0, 0), 0.0, 1.0, 1.0);

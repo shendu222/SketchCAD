@@ -175,7 +175,8 @@ public:
     bool setLayerPlot(const QString& name, bool plot);
     bool setLayerAlpha(const QString& name, double alpha);
     // ByLayer 解析：byLayer=true 时返回「图层属性覆盖」后的图元副本（颜色/线型/线宽取自图层，线宽按固定值；
-    //   图层 alpha 叠加到颜色 alpha）；byLayer=false 或图层缺失时原样返回（快照语义）。
+    //   图层 alpha 叠加到颜色 alpha）；byLayer=false 且 byBlock=false（ByObject 显式样式）或图层缺失时
+    //   原样返回（快照语义）；byBlock=true 残留（块内 ByBlock 图元、插入随层）按 ByLayer 同路解析。
     //   渲染（GraphicsView::penFor）与打印（PlotRenderer::paintOne）两侧共用此唯一入口。
     Element resolveElement(const Element& e) const;
     // 命中可拾取性：visible 且(所属图层未冻结) → 可拾取（冻结层零命中）。供 hitTest 与选择集统一判定。
