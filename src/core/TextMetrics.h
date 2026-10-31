@@ -70,10 +70,18 @@ public:
     static double lineWidthMm(const ResolvedTextStyle& rs, const QString& s, double heightMm);
 
     // ---- 多行布局(mm)：先按显式 \n 分段，再按 mtextWidthMm(>0) 真实折行
-    //      （含 CJK 任意断点 + 拉丁按空格/连字符断词）；lineSpacing 作用于行高。----
+    //      （含 CJK 任意断点 + 拉丁按空格/连字符断词）；lineSpacing 作用于行高。
+    //      注：ZWCAD 规范排版（段落缩进/5-3 行距/行内码剥离/9 点锚点盒子）见
+    //      ZwcadTextLayout（渲染端已切换至该模块；本函数保留为通用度量包装）。----
     static TextLayout layout(const ResolvedTextStyle& rs, const QString& text,
                             double heightMm, double mtextWidthMm = 0.0,
                             double lineSpacing = 1.0);
+
+    // ---- 单段折行(mm)：ZwcadTextLayout 与 layout() 共用的唯一折行实现。
+    //      mtextWidthMm<=0 不折行（整段一行）；CJK 任意断点 + 拉丁断词 + 超长硬断。----
+    static QVector<TextLayoutLine> wrapParagraph(const ResolvedTextStyle& rs,
+                                                 const QString& para, double heightMm,
+                                                 double mtextWidthMm);
 
     // ---- Text/MText 图元的世界包围盒(mm)，含 9 点对齐偏移。
     //      屏幕渲染、打印渲染、modelBounds 取景 三处同源调用此函数。----
@@ -99,6 +107,8 @@ public:
     // ---- 不支持特性提示回调（默认 qWarning；测试可替换以捕获）。----
     using WarnFn = void (*)(const QString&);
     static void setWarnHandler(WarnFn fn);
+    // 公开告警入口（ZwcadTextLayout 等外部模块复用同一 warn 通路，测试可捕获）
+    static void warnUnsupported(const QString& msg);
 
     // ---- 清空 LRU 缓存（字体变更/测试隔离后调用）。----
     static void clearCache();

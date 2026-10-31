@@ -26,6 +26,11 @@
 //   * 读：R13(R1013) ~ R2018(R1032) 全系（本层路由 AC1012 及以后版本串）。
 //   * 写：**仅到 R2000 (AC1015)**。R2004/R2007 写请求按"回落 R2000 并如实
 //     报文说明"处理（详见 CadFormats::toDwg 注释与 docs/ 深思文档）。
+//   * ⚠️ 专有/自定义实体不展开：AutoCAD Mechanical 的「标准件实体」（如
+//     STDPART2D）、动态块之外的第三方自定义实体等，LibreDWG 仅识别其类但无法
+//     展开为 LINE/ARC/CIRCLE，转换时打印 "Unhandled Class entity" 告警并跳过，
+//     于是产出的 DXF 为空图。此情形下 fromDwg 会捕获该告警并给针对性报错与
+//     解法（在源程序炸开标准件后另存为 R2000/DXF），而非笼统的"无图元"。
 //
 // 转换器定位顺序（首个命中生效）：
 //   1) 环境变量 SKETCHCAD_DWGTOOLS 指向的目录（开发/自测注入）；
@@ -34,6 +39,11 @@
 // =============================================================================
 namespace SketchCAD {
 namespace dwgbridge {
+
+// 帮助链接：转换器缺失时，UI 弹窗「查看帮助」按钮打开此处
+//（LibreDWG 官方源码/获取与自建说明；与 docs/third-party-notices.md 的源码 URL 一致）。
+inline constexpr const char* kDwgConverterHelpUrl =
+    "https://github.com/LibreDWG/libredwg";
 
 // 转换器是否可用（找到 dwg2dxf + dwgwrite 两个 exe 且可执行）。
 // 纯探测，无副作用（不启动进程）。
@@ -56,8 +66,16 @@ bool canReadVersion(const QString& acadVer);
 // ---- 读桥：任意支持版本 DWG → DXF 字节（交 cadfmt::fromDxf 回读）----
 // 成功返回 true 且 dxfOut 填充；失败返回 false 并把原因写入 *err
 //（错误报文一律含探测到的版本串原文，杜绝"不支持的版本"这类无诊断价值的提示）。
+// diag（可选，出参）：转换器进程的 stderr 文本（成功/失败均捕获）。供调用方在
+// 「桥转换成功但回读为空」时判断是否因专有/自定义实体被转换器丢弃所致。
 bool dwgToDxf(const QByteArray& dwgBytes, QByteArray& dxfOut, QString* err,
-              int timeoutMs = 30000);
+              int timeoutMs = 30000, QString* diag = nullptr);
+
+// 转换器 stderr 诊断中是否出现「专有/自定义实体被丢弃」信号（如 AutoCAD
+// Mechanical 的标准件实体 STDPART2D）。供调用方在「桥转换成功但回读为空」时
+// 给出针对性报错与解决办法，而非笼统的"ENTITIES 段里没有可识别的图元"。
+// diag 为 dwgToDxf 的 diag 输出（转换器 stderr 文本）。
+bool converterDroppedCustomEntities(const QString& diag);
 
 // ---- 写桥：DXF(R2000) 字节 → DWG R2000 字节 ----
 // 输入应为 cadfmt::toDxf(..., DxfVersion::R2000) 的产物。

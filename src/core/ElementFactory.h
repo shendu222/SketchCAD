@@ -55,7 +55,7 @@ public:
                               const QColor& color = QColor(26, 29, 40),
                               int textAlign = 1, double widthFactor = 1.0,
                               const QString& styleName = QString(),
-                              double lineSpacing = 1.3, double mtextWidth = 0.0);
+                              double lineSpacing = 1.0, double mtextWidth = 0.0);
 
     // 表格（Table/明细表）：topLeft=左上角锚点(世界坐标，行向下增长)。
     // rows/cols 钳到 [1,200]；列宽均分 30mm、单元格全空；字高 3.5、文字水平居中。

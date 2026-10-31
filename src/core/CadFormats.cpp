@@ -4,6 +4,7 @@
 #include "TextStyle.h"   // resolveFields：导出前把 %<字段>% 占位解析为求值快照
 #include "Block.h"       // 外部块表读取：block::blockDefFromJson / BlockDef
 #include "DwgBridge.h"   // D1：R2000+ DWG 读写的外部转换器桥（进程外，零 GPL 链入）
+#include "ProxyGraphics.h" // D1b：桥转换空档时回退提取「标准内嵌代理图形」
 #include <QDebug>
 #include <QFileInfo>
 #include <QFile>
@@ -97,7 +98,7 @@ static QString decodeDxfBytes(const QByteArray& data) {
 }
 
 // ---- P0-01 前向声明：R2000 派生与二进制 DXF 辅助（定义见 tokenizeDxf 之后）----
-static QString transformDxfTextToR2000(const QString& body);
+static QString transformDxfTextToModern(const QString& body);
 static QByteArray asciiDxfToBinary(const QByteArray& ascii);
 
 // ----------------------------- 格式判定 -----------------------------
@@ -167,8 +168,10 @@ static int aciFromRgb(const QColor& c) {
 //   1..9    = AutoCAD 标准色（与上面 aciFromRgb 的表互为反函数，语义不动）。
 //   10..255 = 完整 ACI 调色板（源自 LibreDWG rgb_palette，与 AutoCAD 色号表一致：
 //             10..249 色环、250..254 灰阶、255 纯白）。
-//   主题适配：本程序画布为浅色，图纸里 ACI 7（深底 CAD 上显示为"白"的正文色）与
-//             ACI 255（纯白）统一映射为深灰 1A1D28，避免浅底上"白字不可见"。
+//   主题适配：图纸里 ACI 7（深底 CAD 上显示为"白"的正文色）与 ACI 255（纯白）
+//             统一映射为语义标记 aciInkMark()（=1A1D28），由渲染端
+//             DrawingTheme::resolveInk 按当前主题翻转为黑（亮）/白（暗），
+//             既避免浅底上"白字不可见"，也保证暗底上正文线为白。
 static QColor rgbFromAci(int aci) {
     switch (aci) {
         case 1: return QColor(255, 0, 0);
@@ -177,7 +180,7 @@ static QColor rgbFromAci(int aci) {
         case 4: return QColor(0, 255, 255);
         case 5: return QColor(0, 0, 255);
         case 6: return QColor(255, 0, 255);
-        case 7: return QColor(26, 29, 40);
+        case 7: return aciInkMark();
         case 8: return QColor(128, 128, 128);
         case 9: return QColor(192, 192, 192);
         default: break;
@@ -251,10 +254,10 @@ static QColor rgbFromAci(int aci) {
         };
         const unsigned char* c = kAci[aci];
         if (c[0] == 255 && c[1] == 255 && c[2] == 255)
-            return QColor(26, 29, 40);           // 纯白(255) → 深灰（浅底适配，同 ACI 7）
+            return aciInkMark();                // 纯白(255) → 语义标记（同 ACI 7，随主题翻转）
         return QColor(c[0], c[1], c[2]);
     }
-    return QColor(26, 29, 40);                   // 越界（含 0=ByBlock 语义位）→ 默认深灰
+    return aciInkMark();                        // 越界（含 0=ByBlock 语义位）→ 语义标记默认色
 }
 
 // 图层名净化：DXF 是「组码行 + 值行」的文本格式，任何组码的值里都不能含换行，
@@ -329,6 +332,9 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // P0-01：导出目标版本 / 容器（默认 R12 + ASCII，旧调用方零影响、逐字节一致）
     const DxfVersion   reqV = opts ? opts->version   : DxfVersion::R12;
     const DxfContainer reqC = opts ? opts->container : DxfContainer::Ascii;
+    // 现代实体集开关：R2004+ 采用 LWPOLYLINE / 真彩 420 / 透明度 440 / 线宽 370；
+    // R12/R2000 维持原实体集（POLYLINE/VERTEX/SEQEND + ACI 62），保证旧档逐字节不变。
+    const bool modern = (reqV >= DxfVersion::R2004);
 
     // 标注数字要还原成实物尺寸：把绘图比例交给 dim::build
     dim::Style dimSt;
@@ -381,7 +387,7 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // 显式声明版本是必须的：本文件用的是 R12 实体与组码，不声明版本解析器只能猜，
     // 猜错就会出现「实体与版本不自洽」的解析失败（例如 LWPOLYLINE 在 R12 里不存在）。
     L << "0" << "SECTION" << "2" << "HEADER"
-      << "9" << "$ACADVER" << "1" << "AC1009"
+      << "9" << "$ACADVER" << "1" << dxfAcadVer(reqV)
       << "9" << "$DWGCODEPAGE" << "3" << "@@CP@@"
       // $INSUNITS：度量口径元数据（AutoCAD 标准码）。内部几何恒为 mm，此码只声明
       // 「文件里数值的口径」，导入方据此换算——是跨单位交换的语义锚点（见 Units.h）。
@@ -445,19 +451,54 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // ============ 实体段（先行写出；期间收集 *D 匿名块，BLOCKS 段最后拼装）============
     LEnt << "0" << "SECTION" << "2" << "ENTITIES";
 
-    // 实体公共头：图层 + ACI 颜色 + 线型（非实线带出 6 组码，LTYPE 表已定义同名线型）
+    // 实体公共头：图层 + ACI 颜色 + 线型（非实线带出 6 组码，LTYPE 表已定义同名线型）。
+    // R2004+ 额外写入真彩 420 / 透明度 440 / 线宽 370（R12/R2000 仅 ACI 62，逐字节兼容旧档）。
+    //   420：24-bit RGB（高位 02），精确保色——避免降级成最近 ACI 导致的色偏。
+    //   440：32-bit 透明度（高字节 = alpha，0x00=完全透明 … 0xFF=不透明）；仅当图元
+    //        颜色带 alpha(<255) 时写出，不透明图元不写（避免噪声）。
+    //   370：线宽（1/100 mm）；仅当显式手动线宽（lineWidthAuto==false）时写出（随层图元不强制）。
     const auto ent = [&](QStringList& T, const QString& type, const Element& e) {
         T << "0" << type << "8" << dxfLayer(e) << "62" << QString::number(aciFromRgb(e.color));
         if (e.lineStyle != LineStyle::Solid)
             T << "6" << dxfLtypeName(e.lineStyle);
+        if (modern) {
+            const int r = e.color.red(), g = e.color.green(), b = e.color.blue();
+            T << "420" << QString::number((0x02000000) | (r << 16) | (g << 8) | b);
+            const int al = e.color.alpha();
+            if (al < 255)
+                T << "440" << QString::number((al & 0xFF) << 24);
+            if (!e.lineWidthAuto && e.lineWidth > 0) {
+                const int lw = qMax(0, qRound(e.lineWidth * 13.0));
+                if (lw > 0) T << "370" << QString::number(lw);
+            }
+        }
     };
 
-    // 多段线：R12 用 POLYLINE/VERTEX/SEQEND（LWPOLYLINE 是 R13+ 实体，不能出现在 R12 文件里）。
-    // arcFlags[i]=true 表示 pts[i]→pts[i+1] 为圆弧段，用 VERTEX 的 42 组码（bulge=tan(含角/4)）表达，
-    // 保留真实弧段而不是离散成折线。
+    // 多段线：
+    //   R12         —— POLYLINE/VERTEX/SEQEND（LWPOLYLINE 是 R13+ 实体，不能出现在 R12 文件里）。
+    //   R2004+      —— LWPOLYLINE（单一实体，含 90 顶点数 / 70 闭合标志 / 逐顶点 10+20+42 bulge），
+    //                 更紧凑、AutoCAD 2004+ 原生支持，避免 POLYLINE 展开的冗余 token。
+    // arcFlags[i]=true 表示 pts[i]→pts[i+1] 为圆弧段，用 bulge=tan(含角/4) 表达，保留真实弧段。
     const auto polylineEx = [&](QStringList& T, const Element& e, const std::vector<Vec3>& pts,
                                const std::vector<bool>& arcFlags, bool closed) {
         if (pts.size() < 2) return;
+        if (modern) {
+            ent(T, QStringLiteral("LWPOLYLINE"), e);
+            T << "90" << QString::number((int)pts.size())
+              << "70" << (closed ? "1" : "0");
+            const int segCount = closed ? (int)pts.size() : (int)pts.size() - 1;
+            for (int i = 0; i < (int)pts.size(); ++i) {
+                T << "10" << num(pts[i].x) << "20" << num(pts[i].y);
+                if (i < (int)arcFlags.size() && arcFlags[i] && i < segCount) {
+                    const geo::ArcSeg as = geo::arcThrough(pts, i, closed);
+                    if (as.valid && as.radius > 1e-12) {
+                        const double bulge = std::tan(as.sweepDeg * M_PI / 180.0 / 4.0);
+                        if (std::fabs(bulge) > 1e-12) T << "42" << QString::number(bulge, 'f', 9);
+                    }
+                }
+            }
+            return;
+        }
         ent(T, QStringLiteral("POLYLINE"), e);
         T << "66" << "1" << "70" << (closed ? "1" : "0");
         const int segCount = closed ? (int)pts.size() : (int)pts.size() - 1;
@@ -747,6 +788,23 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
                 T << "75" << "0" << "76" << "1";   // style=Normal(奇偶) / predefined 图案
             }
             // nativeHatch 关闭 → 保持旧版行为（静默跳过）
+        } else if (e.type == ElementType::MLeader && !e.pts.empty()) {
+            // 多重引线（MULTILEADER，AutoCAD 2000+ 实体；R12 无原生表达，降级由下方兜底跳过）。
+            // 几何：pts 串联为引线折线（首点=箭头附着点、末点=文字基线起点，中间为折点）。
+            // 标注文字经 304 组码承载；文字高复用 radius。经 transformDxfTextToModern
+            // 注入 5/330/100/OBJECTS 后可被 AutoCAD 2000+ 正确读取。
+            if (reqV >= DxfVersion::R2000) {
+                ent(T, QStringLiteral("MULTILEADER"), e);
+                T << "90" << "0"                                  // 属性覆盖标志（无覆盖）
+                  << "340" << "0"                                 // 引线样式 → 当前样式（硬指针）
+                  << "170" << "1"                                 // 引线数 = 1
+                  << "171" << QString::number((int)e.pts.size()); // 每条引线点数
+                for (const auto& p : e.pts)
+                    T << "10" << num(p.x) << "20" << num(p.y) << "30" << "0.0";
+                if (!e.text.isEmpty()) T << "304" << dxfSafe(e.text);
+                T << "42" << num(e.radius > 0.1 ? e.radius : 3.5); // 标注比例/字高
+            }
+            // 低于 R2000：保持旧版行为（静默跳过，避免写 R12 不支持的实体）
         } else if (e.type == ElementType::BlockRef) {
             // 块引用：优先原生 INSERT（含 ATTRIB 属性值）；外部参照/嵌套过深时兜底
             // expandRef 展开（约束：expandBlockRef 行为仅在块无法原生表达时启用）；
@@ -819,9 +877,10 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     // ---- 定编码：先按占位符生成，再依内容是否有非 ASCII 决定 $DWGCODEPAGE 并编码 ----
     // （占位符与代码页名都是 ASCII，替换不会改变"是否含非 ASCII"的判定，故可两步走）
     QString body = L.join("\r\n");
-    // P0-01：R2000 在 R12 token 流之上注入 AcDb 标记/句柄/OBJECTS 段并改写版本串
-    if (reqV == DxfVersion::R2000)
-        body = transformDxfTextToR2000(body.replace(QLatin1String("AC1009"), QLatin1String("AC1015")));
+    // P0-01 / R2004+：R2000 及以上在 R12 token 流之上注入 AcDb 标记/句柄/OBJECTS 段
+    // （$ACADVER 已由 HEADER 直接写入正确版本串，此处不再做字符串替换）。
+    if (reqV >= DxfVersion::R2000)
+        body = transformDxfTextToModern(body);
     bool asciiOnly = true;
     for (const QChar& c : body)
         if (c.unicode() > 0x7F) { asciiOnly = false; break; }
@@ -1009,11 +1068,13 @@ QByteArray toDwg(const std::vector<Element>& elems, QString* err, double drawing
             } break;
             case ElementType::Text: if(!e.pts.empty()&&!e.text.isEmpty()) dwgAddTextR(R, e.pts[0], e.radius>0.1?e.radius:3.5, 0.0, e.text, layer,color); break;
             case ElementType::MText: {
-                // R12 无 MTEXT：多行 = 首锚点向下按 1.3 倍行距逐行展开为多条 TEXT；
+                // R12 无 MTEXT：多行 = 首锚点向下按行距逐行展开为多条 TEXT；
+                // 行距 = factor × 5/3 × 字高（ZWCAD「3-on-5」规范，与 ZwcadTextLayout 同式）；
                 // %<字段>% 占位先解析为求值快照（与 DXF 导出一致）。
                 if(!e.pts.empty() && !e.text.isEmpty()){
                     const double h = e.radius>0.1?e.radius:3.5;
-                    const double lineH = h*1.3;
+                    const double factor = std::clamp(e.lineSpacing>0?e.lineSpacing:1.0, 0.25, 4.0);
+                    const double lineH = h * factor * (5.0/3.0);
                     QString t = resolveFields(e.text,nullptr);
                     t.replace("\r\n","\n"); t.replace('\r','\n');
                     const QStringList lines = t.split('\n');
@@ -1172,17 +1233,57 @@ bool fromDwg(const QByteArray& data, std::vector<Element>& out, QString* err, Dx
         qWarning() << "[CadFormats] fromDwg: 探测版本 =" << (ver.isEmpty() ? QStringLiteral("(无)") : ver)
                    << "human=" << dwgbridge::versionHuman(ver);
         if (!ver.isEmpty() && ver != QLatin1String("AC1009")) {
-            QByteArray dxfBytes; QString bridgeErr;
+            QByteArray dxfBytes; QString bridgeErr; QString convDiag;
             qWarning() << "[CadFormats] fromDwg: 版本非 R12，进入外部转换器桥（dwgToDxf）";
-            if (!dwgbridge::dwgToDxf(data, dxfBytes, &bridgeErr)) {
+            if (!dwgbridge::dwgToDxf(data, dxfBytes, &bridgeErr, 30000, &convDiag)) {
                 if (err) *err = bridgeErr;
                 qWarning() << "[CadFormats] fromDwg: 桥转换失败 =" << bridgeErr;
                 return false;
             }
             qWarning() << "[CadFormats] fromDwg: 桥转换成功，DXF 字节数 =" << dxfBytes.size()
                        << "，转交 fromDxf 回读";
-            // 桥产出的 R2000 DXF 复用既有解析链（R2000 的 100/5/330 标记被自然忽略）
-            return fromDxf(dxfBytes, out, err, stats);
+            DxfImportStats st; QString readErr;
+            const bool ok = fromDxf(dxfBytes, out, &readErr, &st);
+            if (!ok) {
+                // 桥转换成功但回读读不出图元：先尝试从原始 DWG 提取「标准内嵌代理图形」。
+                // 当转换器（LibreDWG）无法展开自定义/代理实体时，转换出的 DXF 实体段为空，
+                // 但原始 DWG 中往往仍保留着以「内嵌二进制 DXF」保存的显示几何快照
+                // （$PROXYGRAPHICS=1）。直接抠出这段二进制 DXF 解码，可恢复可见几何。
+                // 对 AutoCAD 私有编译代理（如 STDPART2D 标准件的私有显示列表）会诚实返回 0，
+                // 此时回落到下面的针对性报错。
+                if (out.empty()) {
+                    std::vector<Element> proxyEls;
+                    const auto np = proxy::extractProxyGraphics(data, proxyEls);
+                    if (np > 0) {
+                        qWarning() << "[CadFormats] fromDwg: 从原始 DWG 代理图形恢复" << np << "个图元";
+                        for (auto& e : proxyEls) out.push_back(std::move(e));
+                        st.entities = (int)out.size();
+                        st.fallbackEntities = (int)np;
+                        if (stats) *stats = st;
+                        return true;
+                    }
+                }
+                // 区分「真空档」与「专有实体被转换器丢弃」。
+                // 后者（AutoCAD Mechanical 的 STDPART2D 标准件等）几何封装在转换器无法
+                // 展开的自定义实体里，导出的 DXF 为空——应给出根因与可操作解法，
+                // 而非笼统的"ENTITIES 段里没有可识别的图元"。
+                if (err) {
+                    if (dwgbridge::converterDroppedCustomEntities(convDiag))
+                        *err = QStringLiteral(
+                            "无法读取图形：该 DWG 由 AutoCAD Mechanical（或含 Mechanical/参数化标准件实体）"
+                            "生成，图形被封装在专用实体（如 STDPART2D）中，当前转换器 LibreDWG 无法将其展开为"
+                            "线条、圆弧等普通图元，因此导出为空图。\n"
+                            "解决办法：用 AutoCAD Mechanical 打开该文件，对标准件执行「炸开 / 分解(EXPLODE)」，"
+                            "再另存为 DWG 2000 或 DXF 后重新导入 SketchCAD。");
+                    else
+                        *err = readErr;
+                }
+                qWarning() << "[CadFormats] fromDwg: 桥转换成功但回读失败（convDiag 含专有实体告警="
+                           << dwgbridge::converterDroppedCustomEntities(convDiag) << "）=" << readErr;
+                return false;
+            }
+            if (stats) *stats = st;
+            return true;
         }
         if (ver.isEmpty() && data.size() >= 6) {
             // 头 6 字节不是 "AC1" 开头的合法版本串：报出原文，不误读
@@ -1645,6 +1746,7 @@ static QString acDbSubclass(const QString& type) {
     if (t == "XLINE")       return "AcDbXline";
     if (t == "RAY")         return "AcDbRay";
     if (t == "LEADER")      return "AcDbLeader";
+    if (t == "MULTILEADER") return "AcDbMLeader";
     if (t == "LAYER")       return "AcDbLayerTableRecord";
     if (t == "LTYPE")       return "AcDbLinetypeTableRecord";
     if (t == "STYLE" || t == "TEXTSTYLE") return "AcDbTextStyleTableRecord";
@@ -1758,7 +1860,7 @@ static bool binaryDxfToAscii(const QByteArray& data, QByteArray& out, QString* e
 }
 
 // 把 R12 文本 DXF 变换为 R2000（AC1015）文本 DXF：注入句柄/AcDb 标记 + OBJECTS 段。
-static QString transformDxfTextToR2000(const QString& body) {
+static QString transformDxfTextToModern(const QString& body) {
     std::vector<DxfPair> tok = tokenizeDxf(body);
     std::vector<DxfPair> out;
     out.reserve(tok.size() * 2);
@@ -1805,7 +1907,7 @@ static QString transformDxfTextToR2000(const QString& body) {
             || t == "MTEXT" || t == "POINT" || t == "SOLID" || t == "POLYLINE"
             || t == "LWPOLYLINE" || t == "VERTEX" || t == "SEQEND" || t == "ELLIPSE"
             || t == "SPLINE" || t == "BLOCK" || t == "ENDBLK" || t == "XLINE"
-            || t == "RAY" || t == "LEADER" || t == "3DFACE");
+            || t == "RAY" || t == "LEADER" || t == "MULTILEADER" || t == "3DFACE");
         if (section == 3) {                         // 表记录
             out.push_back({100, "AcDbSymbolTableRecord"});
             const QString sub = acDbSubclass(t);
@@ -2630,7 +2732,30 @@ std::vector<BlockDef> blockTableFromDxf(const QString& path) {
 //  P0-01：DXF 版本协商辅助（导出 API）
 // =====================================================================
 QString dxfVersionLabel(DxfVersion v) {
-    return v == DxfVersion::R2000 ? QStringLiteral("R2000") : QStringLiteral("R12");
+    switch (v) {
+        case DxfVersion::R12:   return QStringLiteral("R12");
+        case DxfVersion::R2000: return QStringLiteral("R2000");
+        case DxfVersion::R2004: return QStringLiteral("R2004");
+        case DxfVersion::R2007: return QStringLiteral("R2007");
+        case DxfVersion::R2010: return QStringLiteral("R2010");
+        case DxfVersion::R2013: return QStringLiteral("R2013");
+        case DxfVersion::R2018: return QStringLiteral("R2018");
+    }
+    return QStringLiteral("R12");
+}
+
+// 版本枚举 → AutoCAD 内部版本串（写入 $ACADVER 头部；导入侧据此协商是否支持）。
+QString dxfAcadVer(DxfVersion v) {
+    switch (v) {
+        case DxfVersion::R12:   return QStringLiteral("AC1009");
+        case DxfVersion::R2000: return QStringLiteral("AC1015");
+        case DxfVersion::R2004: return QStringLiteral("AC1018");
+        case DxfVersion::R2007: return QStringLiteral("AC1021");
+        case DxfVersion::R2010: return QStringLiteral("AC1024");
+        case DxfVersion::R2013: return QStringLiteral("AC1027");
+        case DxfVersion::R2018: return QStringLiteral("AC1032");
+    }
+    return QStringLiteral("AC1009");
 }
 
 // AutoCAD 内部版本串 → 人类可读名（用于打开失败时的清晰提示）
@@ -2648,14 +2773,16 @@ QString cadVerToHuman(const QString& acadVer) {
     return QStringLiteral("DWG ") + acadVer;
 }
 
-// 该 AutoCAD 版本串是否支持读取（R12/R13/R14/2000/2000i 支持；R2004+ 拒绝）
+// 该 AutoCAD 版本串是否支持读取。
+//   DXF：R12..R2018 全支持（R2004+ 现可原生读写 LWPOLYLINE / 真彩 420 / 透明度 440 /
+//        线宽 370，故不再限制到 R2000）。未知/未来版本串仍拒绝。
+//   ⚠️ DWG 读取另走 fromDwg 路由（AC1009 自研、AC1012~AC1032 经 LibreDWG 桥），
+//   此处仅约束 DXF 的版本协商，不影响 DWG 桥路由。
 bool isSupportedDxfVersion(const QString& acadVer) {
     const QString s = acadVer.trimmed().toUpper();
-    // 仅接受 ≤ R2000(AC1018) 的 DXF。R2004 及以后（AC1021+）的 DXF 由 DwgBridge
-    // 经 dwg2dxf --as r2000 统一降级为 R2000(AC1015) DXF 后再交本函数回读，
-    // 故此处无需、也不应直接放行 AC1021+（保持「请另存为 2000 或更早版本」契约）。
     return s.isEmpty() || s == "AC1009" || s == "AC1012" || s == "AC1014"
-        || s == "AC1015" || s == "AC1018";
+        || s == "AC1015" || s == "AC1018" || s == "AC1021" || s == "AC1024"
+        || s == "AC1027" || s == "AC1032";
 }
 
 // 探测字节流头部版本串（ASCII 走文本解码，Binary 走二进制组流）；
@@ -2671,8 +2798,12 @@ DxfVersion detectDxfVersion(const QByteArray& data, bool isBinary) {
     }
     const QString av = acadVerFromPairs(tok);
     if (av.isEmpty() || !isSupportedDxfVersion(av)) return DxfVersion::R12;
-    return (av == "AC1015" || av == "AC1014" || av == "AC1018" || av == "AC1012")
-        ? DxfVersion::R2000 : DxfVersion::R12;
+    if (av == "AC1015" || av == "AC1014" || av == "AC1018" || av == "AC1012") return DxfVersion::R2000;
+    if (av == "AC1021") return DxfVersion::R2004;
+    if (av == "AC1024") return DxfVersion::R2010;
+    if (av == "AC1027") return DxfVersion::R2013;
+    if (av == "AC1032") return DxfVersion::R2018;
+    return DxfVersion::R12;
 }
 
 } // namespace cadfmt

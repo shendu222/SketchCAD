@@ -52,6 +52,7 @@
 #include "GripOps.h"         // 夹点热操作（第七阶段）
 #include "QSelect.h"         // 快速选择（QSELECT）四维过滤引擎
 #include "CadFormats.h"      // DXF 导入导出（黄金样本 round-trip）
+#include "ProxyGraphics.h"    // D1b 代理图形提取（decodeProxyGraphicsBlob / extractProxyGraphics）
 #include "Block.h"           // 块在位编辑（BEDIT）：BlockDef / AttributeDef / DynParam / block::makeRef
 #include "Section.h"         // 填充边界联动：SectionStyle / hatchRegionFromElement / hatchPatternFor
 #include "Gdt.h"             // GD&T：FcfSymbol / buildMLeader / buildFcf
@@ -61,6 +62,8 @@
 #include "ui/DocTab.h"      // 多文档标签：DocSession/DocManager 会话核心（t_multidoc）
 #include "ui/CommandLine.h"  // 命令行键盘语义（历史/补全/重复上一命令），t_interaction 直测
 #include "AppSettings.h"     // 应用级配置持久化（t_appsettings / t_recent / t_interaction）
+#include "ui/DrawingTheme.h"  // 绘图区域主题配色（t_drawingTheme：亮/暗两套 + current() 契约）
+#include "ui/ThemeManager.h"  // 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源
 #include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
 #include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
 #include <QTranslator>       // t_i18n：.qm 直载与 contains 探测
@@ -80,6 +83,7 @@
 #include "RecentFiles.h"      // 最近文件 MRU（路径+时间+pin，注入临时 ini 离线直测）
 #include "Diagnostics.h"      // 崩溃不丢稿：日志滚动落盘 + 崩溃转储
 #include "core/TextMetrics.h" // 文字度量单一数据源（屏幕/打印/取景 三处同源）自测
+#include "core/ZwcadTextLayout.h" // ZWCAD 规范文字排版引擎（t_zwcadText 直测）
 #include "SheetSpec.h"        // 标题栏表格化：buildSheetFrame / InsertedTitleBlock（t_titleBlockAux）
 #include "SheetFrameTemplate.h" // 新建图框扩展：三栏预设/模板持久化（t_sheetFrameBars）
 #include "ProjectionSymbol.h" // 辅助元素打印过滤：isProjectionSymbolElement 谓词（t_titleBlockAux）
@@ -6239,6 +6243,10 @@ static void genFormatsGoldens() {
     write(QStringLiteral("golden_r12_bin.dxf"),   toDxfBinary(els, nullptr, 1.0, 4, &blk, &o));
     o.version = DxfVersion::R2000; o.container = DxfContainer::Binary;
     write(QStringLiteral("golden_r2000_bin.dxf"), toDxfBinary(els, nullptr, 1.0, 4, &blk, &o));
+    o.version = DxfVersion::R2004; o.container = DxfContainer::Ascii;
+    write(QStringLiteral("golden_r2004.dxf"), toDxf(els, nullptr, 1.0, 4, &blk, &o));
+    o.version = DxfVersion::R2018; o.container = DxfContainer::Ascii;
+    write(QStringLiteral("golden_r2018.dxf"), toDxf(els, nullptr, 1.0, 4, &blk, &o));
     write(QStringLiteral("golden_r12.dwg"), toDwg(els, nullptr, 1.0));
     fprintf(stderr, "GEN done\n");
 }
@@ -6350,22 +6358,27 @@ static bool t_formatsVersions() {
     CHECK(fromDxf(frag, bf, &ef, &sf), "⑤ 手写 R2000 片段解析成功");
     CHECK(ef.isEmpty() && bf.size() == 1 && bf[0].type == ElementType::Line, "⑤ 手写 R2000 片段得 1 条 LINE");
 
-    // ---------- ⑥ 版本协商：不支持版本返回 false + 明确人类提示 ----------
-    QByteArray bad =
-        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1021\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
-    std::vector<Element> bd; DxfImportStats sd; QString ed;
-    CHECK(!fromDxf(bad, bd, &ed, &sd), "⑥ AC1021(DWG 2004) 被拒绝（不崩溃）");
-    CHECK(ed.indexOf("DWG 2004") >= 0, "⑥ 拒绝信息含人类可读版本名 DWG 2004");
-    CHECK(isSupportedDxfVersion(QStringLiteral("AC1021")) == false, "⑥ isSupportedDxfVersion(AC1021)=false");
+    // ---------- ⑥ 版本协商：未知版本被拒 + DXF R2004+ 现可原生读 ----------
+    // 自 R2004 起本程序已能读写 LWPOLYLINE / 真彩 420 / 透明度 440 / 线宽 370，
+    // 故 DXF 读取不再限制到 R2000；真正的「不支持」仅限未知/未来版本串。
+    QByteArray unknown =
+        "0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC9999\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n";
+    std::vector<Element> bunk; DxfImportStats sunk; QString eunk;
+    CHECK(!fromDxf(unknown, bunk, &eunk, &sunk), "⑥ AC9999（未知版本）被拒绝（不崩溃）");
+    CHECK(eunk.indexOf(QStringLiteral("不支持")) >= 0, "⑥ 拒绝信息明确（不支持的文件版本）");
+    CHECK(isSupportedDxfVersion(QStringLiteral("AC1021")) == true, "⑥ 现支持 DXF R2004(AC1021) 读");
+    CHECK(isSupportedDxfVersion(QStringLiteral("AC1032")) == true, "⑥ 现支持 DXF R2018(AC1032) 读");
     CHECK(isSupportedDxfVersion(QStringLiteral("AC1015")) == true,  "⑥ isSupportedDxfVersion(AC1015)=true");
     CHECK(detectDxfVersion(r20) == DxfVersion::R2000, "⑥ detectDxfVersion(R2000 ASCII)=R2000");
     CHECK(detectDxfVersion(r12) == DxfVersion::R12,   "⑥ detectDxfVersion(R12 ASCII)=R12");
+    CHECK(detectDxfVersion(QByteArray("0\r\nSECTION\r\n2\r\nHEADER\r\n9\r\n$ACADVER\r\n1\r\nAC1032\r\n0\r\nENDSEC\r\n0\r\nEOF\r\n")) == DxfVersion::R2018,
+          "⑥ detectDxfVersion(R2018 ASCII)=R2018");
 
     // ---------- ⑦ 鲁棒性：连续读取 20 个损坏/不支持文件不崩溃、进程不退出 ----------
     int rejected = 0;
     for (int i = 0; i < 20; ++i) {
         QByteArray garbage;
-        if (i == 0) garbage = bad;                                           // 已知不支持版本
+        if (i == 0) garbage = unknown;                                       // 已知不支持版本(AC9999)
         else if (i == 1) garbage = "THIS IS NOT A DXF FILE AT ALL @#$%";
         else if (i == 2) garbage = QByteArray("AutoCAD Binary DXF\r\n", 22);  // 仅哨兵头，无内容
         else garbage = QByteArray("乱码数据####") + QByteArray::number(i);
@@ -6576,6 +6589,43 @@ static bool t_formatsVersions() {
         }
     }
 
+    // ---------- ⑪ 现代实体集特性：真彩 420 / 透明度 440 / 线宽 370 / MULTILEADER ----------
+    {
+        DxfExportOptions o18; o18.version = DxfVersion::R2018;
+        o18.nativeBlocks = o18.nativeDims = o18.nativeHatch = true;
+
+        // ⑪a 半透明 + 显式线宽：验证 440（透明度）与 370（线宽）组码写入
+        Element te; te.type = ElementType::Line;
+        te.pts = {Vec3(0,0,0), Vec3(50,0,0)};
+        te.color = QColor(255, 0, 0, 128);          // alpha=128（半透明）
+        te.lineWidthAuto = false; te.lineWidth = 2.0; // 显式 2px → 370 = 26 (1/100mm)
+        std::vector<Element> teV = { te };
+        QByteArray rTe;
+        { QString e; rTe = toDxf(teV, &e, 1.0, 4, nullptr, &o18); CHECK(e.isEmpty(), "⑪a 半透明线 toDxf 无错"); }
+        CHECK(rTe.indexOf("420") >= 0, "⑪a R2018 半透明线含真彩组码 420");
+        CHECK(rTe.indexOf("440") >= 0, "⑪a R2018 半透明线含透明度组码 440（alpha<255）");
+        CHECK(rTe.indexOf("370") >= 0, "⑪a R2018 显式线宽含线宽组码 370");
+
+        // ⑪b 多重引线（MLeader）→ MULTILEADER（R2000+ 实体，现代路径）
+        Element me; me.type = ElementType::MLeader;
+        me.pts = {Vec3(0,0,0), Vec3(20,10,0), Vec3(40,10,0)};
+        me.text = QStringLiteral("引线说明"); me.radius = 3.5;
+        std::vector<Element> meV = { me };
+        QByteArray rMe;
+        { QString e; rMe = toDxf(meV, &e, 1.0, 4, nullptr, &o18); CHECK(e.isEmpty(), "⑪b 多重引线 toDxf 无错"); }
+        CHECK(rMe.indexOf("MULTILEADER") >= 0, "⑪b R2018 多重引线导出为 MULTILEADER");
+        CHECK(rMe.indexOf("AcDbMLeader") >= 0, "⑪b R2018 MULTILEADER 注入 AcDbMLeader 子类标记");
+        CHECK(rMe.indexOf("304") >= 0, "⑪b R2018 MULTILEADER 含引线文字组码 304");
+
+        // ⑪c 反向保证：R12 不得出现现代组码（不虚标版本，逐字节兼容旧档）
+        DxfExportOptions o12; o12.version = DxfVersion::R12;
+        QByteArray r12t;
+        { QString e; r12t = toDxf(teV, &e, 1.0, 4, nullptr, &o12); CHECK(e.isEmpty(), "⑪c 半透明线 R12 toDxf 无错"); }
+        CHECK(r12t.indexOf("420") < 0 && r12t.indexOf("440") < 0 && r12t.indexOf("370") < 0,
+              "⑪c R12 不写 420/440/370（现代组码不回灌旧档）");
+        CHECK(r12t.indexOf("LWPOLYLINE") < 0, "⑪c R12 不写 LWPOLYLINE（维持 POLYLINE/VERTEX/SEQEND）");
+    }
+
     return g_fail == 0;
 }
 
@@ -6636,6 +6686,64 @@ static bool t_formatsGolden() {
     CHECK(roundtrip(QStringLiteral("golden_r12_bin.dxf"),   true, false), "golden(P0-01): R12 二进制 DXF 往返一致");
     CHECK(roundtrip(QStringLiteral("golden_r2000_bin.dxf"), true, false), "golden(P0-01): R2000 二进制 DXF 往返一致");
     CHECK(roundtrip(QStringLiteral("golden_r12.dwg"),      false, true),  "golden(P0-01): R12 DWG 往返一致");
+
+    // ---------- ⑥ R2018 现代实体集（LWPOLYLINE / 真彩 420 / 透明度 440 / 线宽 370 / MULTILEADER）----------
+    // 解除外交付硬阻塞：客户强制 R2013/R2018 可打开且块/标注/填充语义保留。
+    {
+        const QString p2018 = QDir(dir).filePath(QStringLiteral("golden_r2018.dxf"));
+        CHECK(QFileInfo(p2018).isFile(), "golden(现代): golden_r2018.dxf 已生成");
+        QFile f2018(p2018);
+        CHECK(f2018.open(QIODevice::ReadOnly), "golden(现代): 打开 golden_r2018.dxf");
+        QByteArray raw18 = f2018.readAll(); f2018.close();
+        CHECK(raw18.indexOf("AC1032") >= 0, "golden(现代): R2018 含 $ACADVER AC1032");
+        CHECK(raw18.indexOf("LWPOLYLINE") >= 0, "golden(现代): R2018 采用 LWPOLYLINE（现代多段线）");
+        CHECK(raw18.indexOf("\r\n0\r\nPOLYLINE\r\n") < 0, "golden(现代): R2018 不含 POLYLINE 旧实体类型");
+        CHECK(raw18.indexOf("AcDbPolyline") >= 0, "golden(现代): R2018 注入 AcDbPolyline 子类标记");
+        CHECK(raw18.indexOf("42") >= 0, "golden(现代): R2018 LWPOLYLINE 含顶点 10/20/42 bulge（存在 42 组码）");
+        CHECK(raw18.indexOf("420") >= 0, "golden(现代): R2018 含真彩组码 420（精确保色）");
+        CHECK(raw18.indexOf("AcDbEntity") >= 0, "golden(现代): R2018 注入 AcDb 标记（现代实体集）");
+        CHECK(raw18.indexOf("OBJECTS") >= 0, "golden(现代): R2018 含 OBJECTS 段");
+        CHECK(raw18.indexOf("*MODEL_SPACE") >= 0, "golden(现代): R2018 含 *MODEL_SPACE 块记录");
+
+        // ⑥b 往返：R2018 再导入 → 以 R2018 重导出 → 再导入，实体/块/层计数一致
+        std::vector<Element> a18; DxfImportStats s18; QString e18;
+        CHECK(fromDxf(raw18, a18, &e18, &s18) && e18.isEmpty(), "golden(现代): R2018 再导入成功无错");
+        DxfExportOptions o18; o18.version = DxfVersion::R2018;
+        o18.nativeBlocks = o18.nativeDims = o18.nativeHatch = true;
+        QByteArray out18 = toDxf(a18, nullptr, 1.0, 4, &s18.blocks, &o18);
+        CHECK(!out18.isEmpty() && out18.indexOf("AC1032") >= 0, "golden(现代): R2018 重导出仍为 AC1032");
+        CHECK(out18.indexOf("LWPOLYLINE") >= 0 && out18.indexOf("\r\n0\r\nPOLYLINE\r\n") < 0,
+              "golden(现代): R2018 重导出仍为 LWPOLYLINE（无 POLYLINE 回退）");
+        std::vector<Element> b18; DxfImportStats sb18; QString eb18;
+        CHECK(fromDxf(out18, b18, &eb18, &sb18) && eb18.isEmpty(), "golden(现代): R2018 重导出再导入成功无错");
+        CHECK((int)a18.size() == (int)b18.size(), "golden(现代): R2018 往返实体计数一致");
+        CHECK((int)s18.blocks.size() == (int)sb18.blocks.size(), "golden(现代): R2018 往返块定义计数一致");
+        CHECK(layersOf(a18) == layersOf(b18), "golden(现代): R2018 往返图层集一致");
+
+        // ⑥c 现代实体集不破坏既有语义：块/标注/填充图元在 R2018 往返后仍存在
+        int dim18 = 0, hatch18 = 0, blk18 = 0;
+        for (const auto& el : b18) {
+            if (el.type == ElementType::Dimension) ++dim18;
+            else if (el.type == ElementType::Hatch) ++hatch18;
+            else if (el.type == ElementType::BlockRef) ++blk18;
+        }
+        CHECK(dim18 >= 1 && hatch18 >= 1 && blk18 >= 1, "golden(现代): R2018 往返保留 标注/填充/块引用 语义");
+    }
+
+    // ---------- ⑦ R2004 现代实体集（范围下界验证）----------
+    {
+        const QString p2004 = QDir(dir).filePath(QStringLiteral("golden_r2004.dxf"));
+        CHECK(QFileInfo(p2004).isFile(), "golden(现代): golden_r2004.dxf 已生成");
+        QFile f2004(p2004);
+        CHECK(f2004.open(QIODevice::ReadOnly), "golden(现代): 打开 golden_r2004.dxf");
+        QByteArray raw04 = f2004.readAll(); f2004.close();
+        CHECK(raw04.indexOf("AC1018") >= 0, "golden(现代): R2004 含 $ACADVER AC1018");
+        CHECK(raw04.indexOf("LWPOLYLINE") >= 0, "golden(现代): R2004 采用 LWPOLYLINE");
+        CHECK(raw04.indexOf("420") >= 0, "golden(现代): R2004 含真彩组码 420");
+        std::vector<Element> a04; DxfImportStats s04; QString e04;
+        CHECK(fromDxf(raw04, a04, &e04, &s04) && e04.isEmpty(), "golden(现代): R2004 再导入成功无错");
+        CHECK((int)a04.size() >= 8, "golden(现代): R2004 往返实体计数合理");
+    }
     return true;
 }
 
@@ -7234,6 +7342,35 @@ static void t_appsettings() {
         CHECK(!hasWindow, "appsettings: 导出内容不含 window/ 组（本机状态不下发）");
         CHECK(vals.contains(QLatin1String(SK::kShowGrid)), "appsettings: 导出包含常规键");
     }
+
+    // 13) 内置主题键：默认 light；白名单校验；类型化访问器往返；导出含键
+    {
+        QTemporaryDir td;
+        QSettings qs(td.filePath("s13.ini"), QSettings::IniFormat);
+        AppSettings s(&qs);
+        CHECK(s.theme() == QLatin1String("light"), "appsettings: 主题默认 light");
+        s.setTheme(QStringLiteral("dark"));
+        CHECK(s.theme() == QLatin1String("dark"), "appsettings: 主题写入 dark");
+        s.setTheme(QStringLiteral("system"));
+        CHECK(s.theme() == QLatin1String("system"), "appsettings: 主题写入 system");
+        // 重置后回落默认 light；再对非白名单值做"静默忽略"校验（保持当前值，不回落其他）
+        s.resetToDefaults();
+        CHECK(s.theme() == QLatin1String("light"), "appsettings: 重置后主题回落 light");
+        s.setTheme(QStringLiteral("neon"));        // 非白名单 → 写被忽略，保持默认 light
+        CHECK(s.theme() == QLatin1String("light"), "appsettings: 非白名单主题被忽略、保持 light");
+        // 脏数据写底层 → 读回落默认
+        {
+            QSettings qs2(td.filePath("s13b.ini"), QSettings::IniFormat);
+            qs2.setValue(QLatin1String(SK::kTheme), "rainbow");
+            qs2.sync();
+            AppSettings s2(&qs2);
+            CHECK(s2.theme() == QLatin1String("light"), "appsettings: 脏主题值回落 light");
+        }
+        // 导出 JSON 含 display/theme
+        const QJsonObject root = QJsonDocument::fromJson(s.exportToJsonData()).object();
+        CHECK(root.value(QStringLiteral("values")).toObject().contains(QLatin1String(SK::kTheme)),
+              "appsettings: 导出含 display/theme");
+    }
 }
 
 // ============================================================
@@ -7660,9 +7797,13 @@ static bool t_dwg() {
     using dwgbridge::canReadVersion;
     using dwgbridge::dxfToDwgR2000;
     using dwgbridge::dwgToDxf;
+    using dwgbridge::converterDroppedCustomEntities;
+    using dwgbridge::resolvedToolsDir;
     using dwgbridge::setToolsDirForTest;
     using dwgbridge::versionFromBytes;
     using dwgbridge::versionHuman;
+    using proxy::decodeProxyGraphicsBlob;
+    using proxy::extractProxyGraphics;
 
     // ---- D1 版本串探测（唯一入口）----
     QByteArray r12 = toDwg({});                  // 自产 R12 头作样本
@@ -7694,6 +7835,29 @@ static bool t_dwg() {
     CHECK(emptyTools.isValid(), "DWG D3 临时工具目录创建成功");
     setToolsDirForTest(emptyTools.path());
     CHECK(!available(), "DWG D3 空工具目录 → 桥不可用");
+
+    // ---- D3b 验收硬指标：无转换器时「打开 AC1015 文件」必须失败+报文含 AC1015+不崩溃 ----
+    // 正式安装包若缺 tools/dwg，用户双击 DWG 2000 文件看到的就是这条路径。四条底线：
+    // ① 不得崩溃（本函数正常返回即达成）；② 不得静默产空图（out 必须为空且返回 false）；
+    // ③ 报文必须含**文件版本串原文 AC1015**——用户凭原文才能对上是哪个 AutoCAD 版本，
+    //    只给「DWG 2000」这类可读名无法与文件头/第三方工具输出对照；
+    // ④ 必须明确指向「未安装组件」，不能误报成「文件损坏」把用户引向错误排查方向。
+    {
+        const QByteArray ac1015bytes = QByteArray("AC1015") + QByteArray(256, '\0');
+        std::vector<Element> out; QString err;
+        const bool ok = fromDwg(ac1015bytes, out, &err);
+        CHECK(!ok && out.empty(), "DWG D3b 无转换器打开 AC1015 → 失败且不产图元（不崩溃）");
+        CHECK(err.contains(QLatin1String("AC1015")), "DWG D3b 报文含版本串原文 AC1015（验收硬指标）");
+        CHECK(err.contains(QStringLiteral("未安装")), "DWG D3b 报文含「未安装」组件提示（不误报文件损坏）");
+        CHECK(err.contains(QStringLiteral("DWG 2000")), "DWG D3b 报文含人类可读名 DWG 2000（可读性）");
+        CHECK(err.contains(QStringLiteral("转换组件")), "DWG D3b 报文含「转换组件」定位词（可据以去查 tools/dwg）");
+
+        // dwgToDxf 直连同一分支：文案必须与 fromDwg 同源（单一文案入口，避免两处漂移）
+        QByteArray dxfOut2; QString rawErr;
+        CHECK(!dwgToDxf(ac1015bytes, dxfOut2, &rawErr), "DWG D3b dwgToDxf 直连 AC1015 同样失败");
+        CHECK(rawErr.contains(QLatin1String("AC1015")) && rawErr.contains(QStringLiteral("未安装")),
+              "DWG D3b dwgToDxf 报文案与 fromDwg 同源（含 AC1015 + 未安装）");
+    }
 
     {
         QFile f1(QDir(emptyTools.path()).filePath(QStringLiteral("dwg2dxf.exe")));
@@ -7857,6 +8021,223 @@ static bool t_dwg() {
         }
         CHECK(nDim   >= 1, "DWG D8 导入层将 DIMENSION 还原为原生 ElementType::Dimension（不炸开）");
         CHECK(nHatch >= 1, "DWG D8 导入层将 HATCH 还原为原生 ElementType::Hatch（不炸开）");
+    }
+
+    // ---- D9 专有/自定义实体告警判定（纯函数，始终运行，锁定诊断逻辑）----
+    {
+        CHECK(converterDroppedCustomEntities(
+                  QStringLiteral("Unhandled Class entity 541 STDPART2D (0x3ff) 887/0")),
+              "DWG D9 STDPART2D 告警被识别为专有实体丢弃");
+        CHECK(converterDroppedCustomEntities(
+                  QStringLiteral("Warning: Unhandled Class object 504 ACMESCOPE")),
+              "DWG D9 ACME* 类告警被识别");
+        CHECK(converterDroppedCustomEntities(
+                  QStringLiteral("Warning: Unknown Class object 524 ACMSTANDARDGB")),
+              "DWG D9 Unknown Class object 告警被识别");
+        CHECK(!converterDroppedCustomEntities(QString()),
+              "DWG D9 空诊断=false（正常档不误报）");
+        CHECK(!converterDroppedCustomEntities(
+                  QStringLiteral("Writing DXF file as r2004\nDone.")),
+              "DWG D9 普通转换日志不误判为专有实体丢弃");
+    }
+
+    // ---- D9b 真转换器：Mechanical 标准件 DWG 导入成功（门控）----
+    // 用 SKETCHCAD_DWG_MECH 指向一个真实 Mechanical 标准件 DWG（图形封装在
+    // STDPART2D 等专有实体的 preview 代理流里）。LibreDWG 桥已内置 STDPART2D
+    // 展开（Fix1 布局遍历 + Fix2 preview TLV），验证 fromDwg 成功产出图元，
+    // 不再落入「桥转换成功但回读为空」的拒绝分支。
+    // 门控：转换器可用 + 子进程可创建 + 样本存在（缺任一项则跳过，不污染其他测试）。
+    {
+        bool procOk = false;
+        {
+            // 直接探测真正的转换器 exe（而非 cmd.exe），使本沙箱也可真实跑通端到端。
+            const QString tools = resolvedToolsDir();
+            QProcess probe;
+            probe.setProgram(tools + QStringLiteral("/dwg2dxf.exe"));
+            probe.setArguments({ QStringLiteral("--version") });
+            probe.start();
+            procOk = probe.waitForStarted(3000);
+            if (procOk) { probe.kill(); probe.waitForFinished(2000); }
+        }
+        const QString mechEnv = qEnvironmentVariable("SKETCHCAD_DWG_MECH");
+        if (!procOk)
+            CHECK(true, "DWG D9b 跳过：环境禁止子进程创建");
+        else if (!available() || mechEnv.isEmpty() || !QFile::exists(mechEnv))
+            CHECK(true, "DWG D9b 跳过：转换器不可用或样本缺失（设 SKETCHCAD_DWG_MECH 启用）");
+        else {
+            QFile f(mechEnv);
+            const bool opened = f.open(QIODevice::ReadOnly);
+            CHECK(opened, "DWG D9b 样本可读");
+            const QByteArray bytes = opened ? f.readAll() : QByteArray();
+            std::vector<Element> out; QString err;
+            CHECK(fromDwg(bytes, out, &err),
+                  "DWG D9b Mechanical 标准件 DWG 导入成功（STDPART2D 已展开）");
+            CHECK(!out.empty(), "DWG D9b 产出非空图元（不再是空图）");
+            if (out.empty())
+                fprintf(stderr, "[dwg-diag] D9b err=%s\n", err.toUtf8().constData());
+        }
+    }
+
+    // ---- D10 代理图形提取（修复清单「代理图形提取」项）----
+    // 在没有可用转换器、或转换器丢弃自定义实体的 DWG 上，直接从原始 DWG 抠出
+    // 「标准内嵌二进制 DXF」代理图形解码为图元。验证：单块解码、整档扫描提取、
+    // 对私有编译代理诚实返回 0 且不崩溃。
+    {
+        // 构造「纯二进制 DXF 主体」（无哨兵头、无 4 字节长度前缀）的小工具，
+        // 与 CadFormats.cpp::asciiDxfToBinary 同构（仅去掉哨兵头），用于合成标准代理 blob。
+        struct BinTypeForTest { enum T { Str, Dbl, I16 }; T t; };
+        auto binTypeForTest = [](int code) -> BinTypeForTest {
+            if (code >= 0 && code <= 9) return {BinTypeForTest::Str};
+            if (code >= 10 && code <= 59) return {BinTypeForTest::Dbl};
+            if (code >= 90 && code <= 99) return {BinTypeForTest::I16};
+            if (code == 70) return {BinTypeForTest::I16};
+            return {BinTypeForTest::Str};
+        };
+        auto makeBody = [binTypeForTest](const std::vector<std::pair<int, QString>>& pairs) -> QByteArray {
+            QByteArray out;
+            for (const auto& kv : pairs) {
+                const int code = kv.first;
+                out += char(code & 0xFF); out += char((code >> 8) & 0xFF);   // 组码 int16 LE
+                const BinTypeForTest bt = binTypeForTest(code);
+                if (bt.t == BinTypeForTest::Str) { out += kv.second.toUtf8(); out += char(0x00); }
+                else if (bt.t == BinTypeForTest::Dbl) {
+                    double d = kv.second.toDouble(); quint64 u; std::memcpy(&u, &d, 8);
+                    for (int b = 0; b < 8; ++b) out += char((u >> (8 * b)) & 0xFF);
+                } else { // I16 / I32 统一按 16 位（本测试只用到 70 标志）
+                    qint16 v = (qint16)kv.second.toInt();
+                    out += char(v & 0xFF); out += char((v >> 8) & 0xFF);
+                }
+            }
+            return out;
+        };
+
+        // D10a：单块标准二进制 DXF 代理解码（LINE + CIRCLE）。
+        {
+            QByteArray body = makeBody({
+                {0, QStringLiteral("LINE")}, {8, QStringLiteral("0")},
+                {10, QStringLiteral("0.0")}, {20, QStringLiteral("0.0")}, {30, QStringLiteral("0.0")},
+                {11, QStringLiteral("100.0")}, {21, QStringLiteral("50.0")}, {31, QStringLiteral("0.0")},
+                {0, QStringLiteral("CIRCLE")}, {8, QStringLiteral("0")},
+                {10, QStringLiteral("50.0")}, {20, QStringLiteral("50.0")}, {30, QStringLiteral("0.0")},
+                {40, QStringLiteral("25.0")},
+            });
+            std::vector<Element> els;
+            CHECK(decodeProxyGraphicsBlob(body, els), "DWG D10a 标准二进制 DXF 代理 blob 解码成功");
+            int nLine = 0, nCircle = 0;
+            for (const auto& e : els) {
+                if (e.type == ElementType::Line)   ++nLine;
+                if (e.type == ElementType::Circle) ++nCircle;
+            }
+            CHECK(nLine == 1 && nCircle == 1, "DWG D10a 解出 1 LINE + 1 CIRCLE（图元类型正确）");
+            CHECK(els.size() == 2, "DWG D10a 解出图元总数 = 2");
+            // 坐标往返校验：LINE 端点应接近 (0,0)-(100,50)
+            bool coordOk = false;
+            for (const auto& e : els)
+                if (e.type == ElementType::Line && e.pts.size() == 2
+                    && std::abs(e.pts[0].x) < 1e-3 && std::abs(e.pts[0].y) < 1e-3
+                    && std::abs(e.pts[1].x - 100.0) < 1e-2 && std::abs(e.pts[1].y - 50.0) < 1e-2)
+                    coordOk = true;
+            CHECK(coordOk, "DWG D10a LINE 端点坐标解码正确（往返无损）");
+        }
+
+        // D10b：整档模糊扫描提取（随机噪声 + 注入的真实代理 blob）。
+        {
+            std::mt19937 rng(20261022);
+            std::uniform_int_distribution<int> dist(1, 255);   // 非零噪声，确保不会冒充 code 0
+            QByteArray fake;
+            fake.resize(4096);
+            for (int i = 0; i < fake.size(); ++i) fake[i] = char(dist(rng));   // 0x01~0xFF 噪声
+
+            // 注入一个标准代理 blob（LINE + CIRCLE），前面加 4 字节小端长度前缀。
+            QByteArray body = makeBody({
+                {0, QStringLiteral("LINE")}, {8, QStringLiteral("0")},
+                {10, QStringLiteral("10.0")}, {20, QStringLiteral("20.0")}, {30, QStringLiteral("0.0")},
+                {11, QStringLiteral("60.0")}, {21, QStringLiteral("70.0")}, {31, QStringLiteral("0.0")},
+                {0, QStringLiteral("ARC")}, {8, QStringLiteral("0")},
+                {10, QStringLiteral("40.0")}, {20, QStringLiteral("40.0")}, {30, QStringLiteral("0.0")},
+                {40, QStringLiteral("30.0")}, {50, QStringLiteral("0.0")}, {51, QStringLiteral("180.0")},
+            });
+            const int off = 1024;
+            const quint32 L = (quint32)body.size();
+            fake[off + 0] = char(L & 0xFF); fake[off + 1] = char((L >> 8) & 0xFF);
+            fake[off + 2] = char((L >> 16) & 0xFF); fake[off + 3] = char((L >> 24) & 0xFF);
+            fake.replace(off + 4, body.size(), body);
+
+            std::vector<Element> out;
+            const std::size_t n = extractProxyGraphics(fake, out);
+            CHECK(n >= 2, "DWG D10b 整档扫描从噪声中找回注入的代理几何（>=2 图元）");
+            int nLine = 0, nArc = 0;
+            for (const auto& e : out) {
+                if (e.type == ElementType::Line) ++nLine;
+                if (e.type == ElementType::Arc)  ++nArc;
+            }
+            CHECK(nLine == 1 && nArc == 1, "DWG D10b 找回的图元类型/数量正确（1 LINE + 1 ARC）");
+
+            // 纯噪声档：必须诚实返回 0，且不能崩溃。
+            QByteArray noiseOnly(4096, char(0xAA));     // 0xAAAA 不是 code 0，廉价预筛即拒
+            std::vector<Element> out2;
+            CHECK(extractProxyGraphics(noiseOnly, out2) == 0,
+                  "DWG D10b 纯噪声档诚实返回 0（无误报）");
+            CHECK(out2.empty(), "DWG D10b 纯噪声档不产出任何图元");
+        }
+
+        // D10c：真实私有编译代理 DWG 诚实回退（不崩溃、返回 0）；若样本存在则一并验证。
+        {
+            // 合成一个「私有编译代理」blob（随机二进制，非二进制 DXF）嵌入 DWG 缓冲，
+            // 验证 extractProxyGraphics 对其返回 0 且不崩溃（等价于 STDPART2D 私有格式）。
+            std::mt19937 rng(99);
+            std::uniform_int_distribution<int> dist(0, 255);
+            QByteArray fake; fake.resize(2048);
+            for (int i = 0; i < fake.size(); ++i) fake[i] = char(dist(rng));
+            // 用纯随机字节作为「私有编译代理」blob：首 2 字节大概率非 0x0000，廉价预筛即拒；
+            // 即便碰巧以 0x0000 开头，随机后续也几乎不可能干净解码成有效实体。
+            QByteArray randBlob(64, char(0));
+            for (int i = 0; i < randBlob.size(); ++i) randBlob[i] = char(dist(rng));
+            const int off = 512;
+            const quint32 L = (quint32)randBlob.size();
+            fake[off + 0] = char(L & 0xFF); fake[off + 1] = char((L >> 8) & 0xFF);
+            fake[off + 2] = char((L >> 16) & 0xFF); fake[off + 3] = char((L >> 24) & 0xFF);
+            fake.replace(off + 4, randBlob.size(), randBlob);
+
+            std::vector<Element> out;
+            const std::size_t n = extractProxyGraphics(fake, out);
+            CHECK(n == 0, "DWG D10c 私有编译代理（随机 blob）诚实返回 0");
+            CHECK(out.empty(), "DWG D10c 私有编译代理不产出图元、不崩溃");
+
+            // 真实样本（用户机器上的 M5.dwg）：存在则验证修复后 fromDwg 成功产出
+            // 图元（STDPART2D 的 preview 代理几何已由 dwg2dxf 桥展开，见 LibreDWG
+            // 本地补丁 Fix1 布局遍历 + Fix2 preview TLV 展开）；不存在则跳过。
+            const QString sample = QStringLiteral(
+                "D:/01-CAD/02-avticationCAD/50405/stdcomp/CAD标准件图库/六角盖形螺母 - GB 802-88/M5.dwg");
+            if (QFile::exists(sample)) {
+                QFile f(sample);
+                const bool opened = f.open(QIODevice::ReadOnly);
+                const QByteArray bytes = opened ? f.readAll() : QByteArray();
+                std::vector<Element> pe;
+                // app 端直接字节提取不解 STDPART2D（该路径无修复，专有实体统一交由
+                // 桥转换器 dwg2dxf 展开），仍应诚实返回 0 且不产出图元。
+                CHECK(extractProxyGraphics(bytes, pe) == 0,
+                      "DWG D10c M5.dwg 代理提取诚实返回 0（私有编译格式不可解）");
+                CHECK(pe.empty(), "DWG D10c M5.dwg 直接字节提取不产出图元");
+                // M5.dwg 几何锁在专有的 STDPART2D 的 preview 代理流里（字节级 0 处
+                // 标准代理图形），已由 LibreDWG 桥的本地补丁展开（Fix1 布局遍历
+                // from_version + Fix2 preview TLV 解码）。故 fromDwg 应成功产出图元：
+                // 俯视六边形+两圆 / 侧视轮廓弧，且不崩溃。
+                std::vector<Element> fe; QString err;
+                CHECK(fromDwg(bytes, fe, &err),
+                      "DWG D10c M5.dwg fromDwg 成功产出图元（STDPART2D 已展开）");
+                int nLine = 0, nCircle = 0, nArc = 0;
+                for (const auto& e : fe) {
+                    if (e.type == ElementType::Line) ++nLine;
+                    else if (e.type == ElementType::Circle) ++nCircle;
+                    else if (e.type == ElementType::Arc) ++nArc;
+                }
+                CHECK(nLine >= 6 && nCircle >= 1 && nArc >= 1,
+                      "DWG D10c M5.dwg 图元齐全（俯视六边形+两圆 / 侧视轮廓弧）");
+            } else {
+                CHECK(true, "DWG D10c 跳过：真实样本 M5.dwg 不在本环境");
+            }
+        }
     }
 
     setToolsDirForTest(QString());       // 无条件恢复默认
@@ -8942,18 +9323,26 @@ static bool t_textMetrics() {
     CHECK(std::fabs(cw2[0] - expC0) < 1e-9, "自适应列0宽 = 最长单元格宽 + 2*pad");
 
     // ⑤ 三同源：屏幕/打印/取景均调 elementBoundsMm → 数学相等；
-    //    且 elementBoundsMm 必须由 layout 同参派生（保证三站点像素逐字节一致）
+    //    且 elementBoundsMm 必须由 ZwcadTextLayout 同参派生（保证三站点像素逐字节一致）
     Element e3; e3.type = ElementType::MText; e3.id = 4; e3.pts = {Vec3(5,5,0)};
     e3.text = "X"; e3.radius = 3.5; e3.mtextWidth = 0.0; e3.lineSpacing = 1.0; e3.textAlign = 1;
     QRectF a = TextMetrics::elementBoundsMm(e3, nullptr);
     QRectF b = TextMetrics::elementBoundsMm(e3, nullptr);
     CHECK(a == b, "三同源: elementBoundsMm 多次调用结果一致");
     ResolvedTextStyle rs3 = resolveTextStyle(e3, nullptr);
-    TextLayout L = TextMetrics::layout(rs3, e3.text, rs3.height, 0.0, 1.0);
-    QRectF fromLayout(e3.pts[0].x - L.widthMm/2.0, e3.pts[0].y - L.heightMm, L.widthMm, L.heightMm);
-    CHECK(std::fabs(fromLayout.x()-a.x())<1e-9 && std::fabs(fromLayout.y()-a.y())<1e-9 &&
-          std::fabs(fromLayout.width()-a.width())<1e-9 && std::fabs(fromLayout.height()-a.height())<1e-9,
-          "三同源: elementBoundsMm 与 layout 同参派生坐标一致");
+    {   // bounds 必须与 ZwcadText 模块同参派生（MText 行距 = factor×5/3×字高）
+        ZwcadText::Format tf; tf.heightMm = rs3.height; tf.lineSpacingFactor = 1.0; tf.attach = 1;
+        const ZwcadText::Result R1 = ZwcadText::layoutMText(e3.text, tf, rs3);
+        CHECK(!R1.lines.isEmpty(), "三同源: layoutMText 非空");
+        QRectF fromLayout(e3.pts[0].x + R1.lines[0].xMm,
+                          e3.pts[0].y - (R1.lines[0].yCenterMm + R1.slotHeightMm / 2.0),
+                          R1.lines[0].widthMm, R1.slotHeightMm);
+        CHECK(std::fabs(fromLayout.x()-a.x())<1e-9 && std::fabs(fromLayout.y()-a.y())<1e-9 &&
+              std::fabs(fromLayout.width()-a.width())<1e-9 && std::fabs(fromLayout.height()-a.height())<1e-9,
+              "三同源: elementBoundsMm 与 ZwcadText::layoutMText 同参派生坐标一致");
+        CHECK(std::fabs(R1.slotHeightMm - rs3.height * (5.0/3.0)) < 1e-9,
+              "三同源: MText 单倍行距 = 5/3×字高（DXF 3-on-5 规范）");
+    }
 
     // 单元格溢出省略
     QString el = TextMetrics::elideToWidthMm(rs, "ABCDEF", 3.5, 2.0*charW);
@@ -9069,6 +9458,185 @@ static bool t_sheetFrameOpts() {
     return true;
 }
 
+// ===========================================================================
+// ZWCAD 规范文字排版引擎（t_zwcadText）
+// 验收：① 行序自上而下（修复「末行在顶」bug） ② 5/3 行距（DXF 3-on-5）
+//       ③ 9 点对齐锚点语义 ④ 单行 TEXT 模式 ⑤ 自动换行+段落缩进(\p i/c)
+//       ⑥ 行内格式码剥离(\C\H\L\P\p\Q{}\\) ⑦ 因子合法域钳制 ⑧ 空段保留
+// ===========================================================================
+static bool t_zwcadText() {
+    using namespace SketchCAD;
+    fprintf(stdout, "--- ZWCAD 规范文字排版 ZwcadTextLayout ---\n");
+    const int passBefore = g_pass;
+    const int failBefore = g_fail;
+
+    TextMetrics::setHeadlessOverride(true);
+    const ResolvedTextStyle rs;   // 无头降级度量（charW ≈ 0.62×字高）
+
+    // ---- ① 行序：首行在最上（Y 向下为正 → yCenter 递增）+ 5/3 行距 ----
+    {
+        ZwcadText::Format f; f.heightMm = 3.5; f.lineSpacingFactor = 1.0; f.attach = 1;
+        const auto r = ZwcadText::layoutMText(QStringLiteral("测试1\n测试2\n测试3"), f, rs);
+        CHECK(r.lines.size() == 3, "zwcadText: 3 段 → 3 行");
+        CHECK(r.lines[0].text == QStringLiteral("测试1") &&
+              r.lines[1].text == QStringLiteral("测试2") &&
+              r.lines[2].text == QStringLiteral("测试3"),
+              "zwcadText: 行序=内容序（首行=测试1）");
+        const double s = 3.5 * (5.0 / 3.0);
+        CHECK(std::fabs(r.slotHeightMm - s) < 1e-9, "zwcadText: 单倍行距=5/3×字高（3-on-5）");
+        CHECK(r.lines[0].yCenterMm < r.lines[1].yCenterMm &&
+              r.lines[1].yCenterMm < r.lines[2].yCenterMm,
+              "zwcadText: 行自上而下（yCenter 递增，修复旧「末行在顶」bug）");
+        CHECK(std::fabs(r.lines[0].yCenterMm - 0.5 * s) < 1e-9,
+              "zwcadText: 中上(attach=1) 首行顶边贴锚点（yCenter=0.5×行距）");
+        CHECK(std::fabs(r.heightMm - 3.0 * s) < 1e-9, "zwcadText: 块高=行数×行距");
+        CHECK(std::fabs(r.widthMm - r.lines[0].widthMm) < 1e-9 ||
+              r.widthMm >= r.lines[1].widthMm, "zwcadText: 块宽=最宽行");
+    }
+
+    // ---- ② 9 点对齐：上/中/下锚点语义（2 行，行距 s）----
+    {
+        ZwcadText::Format f; f.heightMm = 3.5; f.lineSpacingFactor = 1.0;
+        const double s = 3.5 * (5.0 / 3.0);
+        f.attach = 1;   // 中上：块在锚点下方
+        auto rT = ZwcadText::layoutMText(QStringLiteral("甲\n乙"), f, rs);
+        CHECK(std::fabs(rT.lines[0].yCenterMm - 0.5 * s) < 1e-9 &&
+              std::fabs(rT.lines[1].yCenterMm - 1.5 * s) < 1e-9,
+              "zwcadText: attach=1 块顶贴锚点（首行中心=0.5s）");
+        f.attach = 4;   // 中心：块关于锚点居中
+        auto rM = ZwcadText::layoutMText(QStringLiteral("甲\n乙"), f, rs);
+        CHECK(std::fabs(rM.lines[0].yCenterMm - (-0.5 * s)) < 1e-9 &&
+              std::fabs(rM.lines[1].yCenterMm - 0.5 * s) < 1e-9,
+              "zwcadText: attach=4 垂直居中（±0.5s）");
+        f.attach = 7;   // 中下：块底贴锚点
+        auto rB = ZwcadText::layoutMText(QStringLiteral("甲\n乙"), f, rs);
+        CHECK(std::fabs(rB.lines[1].yCenterMm - (-0.5 * s)) < 1e-9,
+              "zwcadText: attach=7 块底贴锚点（末行中心=-0.5s）");
+        // 水平：右对齐（attach=2 右上）行右缘=0；中心行中心=0
+        f.attach = 2;
+        auto rR = ZwcadText::layoutMText(QStringLiteral("甲乙"), f, rs);
+        CHECK(std::fabs(rR.lines[0].xMm + rR.lines[0].widthMm) < 1e-9,
+              "zwcadText: attach=2 右对齐（行右缘=锚点）");
+        f.attach = 1;
+        auto rC = ZwcadText::layoutMText(QStringLiteral("甲乙"), f, rs);
+        CHECK(std::fabs(rC.lines[0].xMm + rC.lines[0].widthMm / 2.0) < 1e-9,
+              "zwcadText: attach=1 水平居中（行中心=锚点）");
+    }
+
+    // ---- ③ 单行 TEXT 模式：行槽=字高（无 5/3），9 点对齐 ----
+    {
+        ZwcadText::Format f; f.heightMm = 3.5; f.attach = 1;
+        auto r = ZwcadText::layoutSingleLine(QStringLiteral("单行"), f, rs);
+        CHECK(r.lines.size() == 1, "zwcadText 单行: 1 行");
+        CHECK(std::fabs(r.slotHeightMm - 3.5) < 1e-9,
+              "zwcadText 单行: 行槽=字高（TEXT 无行距概念，不乘 5/3）");
+        CHECK(std::fabs(r.lines[0].yCenterMm - 1.75) < 1e-9,
+              "zwcadText 单行: attach=1 文字在锚点下方（中上）");
+        f.attach = 4;
+        auto rM = ZwcadText::layoutSingleLine(QStringLiteral("单行"), f, rs);
+        CHECK(std::fabs(rM.lines[0].yCenterMm) < 1e-9, "zwcadText 单行: attach=4 中心重合锚点");
+        f.attach = 7;
+        auto rB = ZwcadText::layoutSingleLine(QStringLiteral("单行"), f, rs);
+        CHECK(std::fabs(rB.lines[0].yCenterMm + 1.75) < 1e-9,
+              "zwcadText 单行: attach=7 文字底边贴锚点（TEXT 基线惯例）");
+        // 内嵌换行折叠为空格（TEXT 单行实体语义）
+        auto rN = ZwcadText::layoutSingleLine(QStringLiteral("甲\n乙"), f, rs);
+        CHECK(rN.lines.size() == 1 && !rN.lines[0].text.contains(QLatin1Char('\n')),
+              "zwcadText 单行: 内嵌 \\n 折叠为空格");
+    }
+
+    // ---- ④ 自动换行 + 段落缩进（\p i=首行 c=左缘；l 单位=行槽倍数）----
+    {
+        ZwcadText::Format f; f.heightMm = 3.5; f.lineSpacingFactor = 1.0;
+        f.attach = 0;                       // 左上：x 偏移可见
+        f.wrapWidthMm = 5.0;                // 无头 charW≈2.17 → 每行 2 个拉丁字符
+        const double s = 3.5 * (5.0 / 3.0);
+        auto r = ZwcadText::layoutMText(QStringLiteral("AAAA"), f, rs);
+        CHECK(r.lines.size() == 2, "zwcadText: 列宽 5.0 折 AAAA 为 2 行");
+        CHECK(std::fabs(r.lines[0].xMm) < 1e-9, "zwcadText: 无缩进首行 x=0");
+
+        auto ri = ZwcadText::layoutMText(QStringLiteral("\\pi1.5l;AAAA"), f, rs);
+        CHECK(ri.lines.size() == 2, "zwcadText: 缩进段仍按列宽折行");
+        CHECK(std::fabs(ri.lines[0].xMm - 1.5 * s) < 1e-9,
+              "zwcadText: \\pi1.5l → 首行缩进=1.5×行槽");
+        CHECK(std::fabs(ri.lines[1].xMm) < 1e-9, "zwcadText: 首行缩进不影响后续行");
+
+        // 左缩进（\pc）作用于整段所有行；尾随段不继承（不折行，专注验证偏移）
+        ZwcadText::Format fc; fc.heightMm = 3.5; fc.lineSpacingFactor = 1.0;
+        fc.attach = 0; fc.wrapWidthMm = 0.0;
+        auto rc = ZwcadText::layoutMText(QStringLiteral("\\pc2l;甲乙\\P丙"), fc, rs);
+        CHECK(rc.lines.size() == 2, "zwcadText: 左缩进段 + 次段（不折行 → 2 行）");
+        CHECK(std::fabs(rc.lines[0].xMm - 2.0 * s) < 1e-9 &&
+              std::fabs(rc.lines[1].xMm) < 1e-9,
+              "zwcadText: \\pc2l → 首段整段左缩进 2×行槽；次段无缩进");
+        CHECK(rc.lines[1].text == QStringLiteral("丙"),
+              "zwcadText: \\P 后新段无缩进（缩进随段落生效）");
+    }
+
+    // ---- ⑤ 行内格式码剥离（ZWCAD 源码不按字面渲染）----
+    {
+        const double s = 3.5 * (5.0 / 3.0);
+        const auto ps = ZwcadText::parseParagraphs(
+            QStringLiteral("\\CA1;\\H2x;第一\\L段\\P\\pi1l,c2l;第二{段}\\Q15;尾\\\\终"),
+            s);
+        CHECK(ps.size() == 2, "zwcadText 解析: \\P 分两段");
+        CHECK(ps[0].text == QStringLiteral("第一段"),
+              "zwcadText 解析: \\C\\H 剥离 + {\\L} 开关剥离 + 花括号剥离");
+        CHECK(ps[1].text == QStringLiteral("第二段尾\\终"),
+              "zwcadText 解析: \\Q 剥离 + \\\\ → 字面反斜杠");
+        CHECK(std::fabs(ps[1].firstIndentMm - s) < 1e-9 &&
+              std::fabs(ps[1].leftIndentMm - 2.0 * s) < 1e-9,
+              "zwcadText 解析: \\p i1l/cl2l → 首行 1×行槽 + 左缘 2×行槽");
+        CHECK(std::fabs(ps[0].firstIndentMm) < 1e-9 && std::fabs(ps[0].leftIndentMm) < 1e-9,
+              "zwcadText 解析: 缩进只作用于所在段落");
+        // 空段保留（\P\P = 中间空行）
+        const auto pe = ZwcadText::parseParagraphs(QStringLiteral("甲\\P\\P乙"), s);
+        CHECK(pe.size() == 3 && pe[1].text.isEmpty(),
+              "zwcadText 解析: \\P\\P 中间空段保留（空行）");
+        // 尾随 \P 不产生尾部空段
+        const auto pt = ZwcadText::parseParagraphs(QStringLiteral("甲\\P"), s);
+        CHECK(pt.size() == 1 && pt[0].text == QStringLiteral("甲"),
+              "zwcadText 解析: 尾随 \\P 不产生尾部空段");
+    }
+
+    // ---- ⑥ 行距因子合法域钳制（DXF 44：0.25~4.0）----
+    {
+        ZwcadText::Format f; f.heightMm = 3.5; f.attach = 1;
+        f.lineSpacingFactor = 0.05;
+        auto rLo = ZwcadText::layoutMText(QStringLiteral("甲"), f, rs);
+        CHECK(std::fabs(rLo.slotHeightMm - 3.5 * 0.25 * (5.0 / 3.0)) < 1e-9,
+              "zwcadText: 因子下钳 0.25");
+        f.lineSpacingFactor = 10.0;
+        auto rHi = ZwcadText::layoutMText(QStringLiteral("甲"), f, rs);
+        CHECK(std::fabs(rHi.slotHeightMm - 3.5 * 4.0 * (5.0 / 3.0)) < 1e-9,
+              "zwcadText: 因子上钳 4.0");
+        f.lineSpacingFactor = 2.0;
+        auto r2 = ZwcadText::layoutMText(QStringLiteral("甲\n乙"), f, rs);
+        CHECK(std::fabs(r2.slotHeightMm - 2.0 * 3.5 * (5.0 / 3.0)) < 1e-9,
+              "zwcadText: factor=2 → 行距翻倍");
+    }
+
+    // ---- ⑦ 与取景同源：elementBoundsMm（多行 MText）模块派生 ----
+    {
+        Element e; e.type = ElementType::MText; e.id = 99; e.pts = {Vec3(10, 20, 0)};
+        e.text = QStringLiteral("甲\n乙"); e.radius = 3.5;
+        e.lineSpacing = 1.0; e.textAlign = 1;
+        const QRectF bb = TextMetrics::elementBoundsMm(e, nullptr);
+        ZwcadText::Format f; f.heightMm = 3.5; f.lineSpacingFactor = 1.0; f.attach = 1;
+        const auto r = ZwcadText::layoutMText(e.text, f, rs);
+        const double s = r.slotHeightMm;
+        // attach=1：块顶贴锚点 → 世界框 y ∈ [20−2s, 20]（QRectF：top=最小y），左缘=最左行 x
+        CHECK(std::fabs(bb.top() - (20.0 - 2.0 * s)) < 1e-9 && std::fabs(bb.bottom() - 20.0) < 1e-9,
+              "zwcadText: elementBoundsMm 块顶贴锚点（与渲染同参同源）");
+        CHECK(std::fabs(bb.height() - 2.0 * s) < 1e-9, "zwcadText: 取景块高=2×行距");
+    }
+
+    TextMetrics::setHeadlessOverride(false);
+    fprintf(stdout, "  (ZWCAD 文字排版自测: 通过 %d / 失败 %d)\n",
+            g_pass - passBefore, g_fail - failBefore);
+    return (g_fail - failBefore) == 0;
+}
+
 static bool t_titleBlockAux() {
     using namespace SketchCAD;
     fprintf(stdout, "--- 标题栏表格化 + 辅助元素打印过滤 ---\n");
@@ -9078,17 +9646,27 @@ static bool t_titleBlockAux() {
     TextMetrics::setHeadlessOverride(true);
 
     // 文本块世界包围盒——与 GraphicsView / PlotRenderer 同一锚点语义：
-    // plain Text 锚点 = 块左下角，块自锚点向右上延伸 heightMm（单行 lineH=h）。
+    // 标题栏文本统一 textAlign=4（9 点对齐之「中心」），锚点 = 文字块视觉中心，
+    // 块自锚点向四周各延伸 半宽 × 半高（单行 lineH=h）。
     auto textBlock = [](const Element& e) {
         const ResolvedTextStyle rs;   // 默认构造 = 无样式名图元的渲染解析结果
         const double w = TextMetrics::lineWidthMm(rs, e.text, e.radius);
-        return QRectF(e.pts[0].x, e.pts[0].y, w, e.radius);
+        const double h = e.radius;
+        return QRectF(e.pts[0].x - w / 2.0, e.pts[0].y - h / 2.0, w, h);
     };
     // 块是否落入单元格（QRectF 语义：top()=最小 Y、bottom()=最大 Y）
     auto blockInCell = [](const QRectF& b, const QRectF& c) {
         constexpr double kEps = 1e-6;
         return b.left() >= c.left() - kEps && b.right() <= c.right() + kEps &&
                b.top()  >= c.top()  - kEps && b.bottom() <= c.bottom() + kEps;
+    };
+    // 旧锚点语义复现（仅捕获力段用）：修复前的标题栏文本 textAlign 默认「中上」(=1)，
+    // 锚点 = 水平中心、视觉底边，块自锚点向右上延伸 heightMm（与「居中」=4 不同）。
+    auto oldTextBlock = [](const Element& e) {
+        const ResolvedTextStyle rs;
+        const double w = TextMetrics::lineWidthMm(rs, e.text, e.radius);
+        const double h = e.radius;
+        return QRectF(e.pts[0].x - w / 2.0, e.pts[0].y, w, h);  // 顶=y，底=y+h
     };
 
     // ---- ① 新建图纸标题栏：全部文本块落入各自单元格（A3 横放 + A5 竖放）----
@@ -9098,8 +9676,10 @@ static bool t_titleBlockAux() {
         SketchModel m;
         for (const auto& e : buildSheetFrame(spec)) m.addElement(e);
 
-        int labelCount = 0, fieldCount = 0, escape = 0, noCell = 0, badY = 0, badX = 0;
+        int labelCount = 0, fieldCount = 0, escape = 0, noCell = 0, badY = 0, badX = 0, badAlign = 0;
         QRectF firstLabelCell;
+        // 两区分离回归断言的数据源：同单元格 (cell, 文本块) 对，标签 × 字段两两查交
+        std::vector<std::pair<QRectF, QRectF>> labelBlocks, fieldBlocks;
         for (const auto& e : m.elements()) {
             if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
             const bool isField = e.name.startsWith(QLatin1String("tb:field:"));
@@ -9108,33 +9688,60 @@ static bool t_titleBlockAux() {
             const QRectF cell = titleBlockCellAt(&m, e.pts[0].x, e.pts[0].y);
             if (!cell.isValid()) { ++noCell; continue; }
             if (labelCount == 1 && !isField) firstLabelCell = cell;
-            if (!blockInCell(textBlock(e), cell)) {
+            const QRectF blk = textBlock(e);
+            if (!blockInCell(blk, cell)) {
                 ++escape;
                 fprintf(stderr, "  FAIL: TB① 文本越界 name=%s\n", e.name.toUtf8().constData());
             }
-            // 规范放置：标签贴顶（顶边-1mm-字高）、字段贴底（底边+1mm）、水平左内边距 2mm
-            const bool isLabel = e.name.isEmpty();
-            const double expectY = isLabel ? (cell.bottom() - 1.0 - e.radius)
-                                           : (cell.top() + 1.0);
-            if (std::fabs(e.pts[0].y - expectY) > 1e-9) ++badY;
-            if (std::fabs(e.pts[0].x - (cell.left() + 2.0)) > 1e-9) ++badX;
+            (isField ? fieldBlocks : labelBlocks).push_back({cell, blk});
+            // 规范放置（两区分离，2026-10-31 修复「填写值覆盖标签」）：
+            //   标签 = 顶部标签带（strip）中心；字段 = 去标签带后值区中心；
+            //   水平仍为单元格中心。QRectF：top()=最小Y(世界底)、bottom()=最大Y(世界顶)。
+            const double cx = (cell.left() + cell.right()) / 2.0;
+            const double strip = std::min(kTitleBlockLabelStripMm,
+                                          std::max(0.5, cell.height() * 0.5));
+            if (isField) {
+                const double vy = (cell.top() + cell.bottom() - strip) / 2.0;  // 值区中心
+                if (std::fabs(e.pts[0].y - vy) > 1e-9) ++badY;
+            } else {
+                const double ly = cell.bottom() - strip / 2.0;                 // 标签带中心
+                if (std::fabs(e.pts[0].y - ly) > 1e-9) ++badY;
+            }
+            if (std::fabs(e.pts[0].x - cx) > 1e-9) ++badX;
+            if (e.textAlign != 4) ++badAlign;
         }
         CHECK(noCell == 0, "TB① 每个标题栏文本都能重建所在单元格（网格线可解析）");
         CHECK(escape == 0, "TB① 全部标签/字段文本块落入各自单元格（零越界）");
-        CHECK(badY == 0, "TB① 垂直放置规范：标签贴顶/字段贴底，呼吸边 1mm");
-        CHECK(badX == 0, "TB① 水平放置规范：左内边距 2mm");
+        CHECK(badY == 0, "TB① 垂直两区：标签=标签带中心、字段=值区中心");
+        CHECK(badX == 0, "TB① 水平居中：锚点=单元格水平中心");
+        CHECK(badAlign == 0, "TB① 全部标题栏文本 textAlign=4（中心，与锚点语义匹配）");
         CHECK(labelCount == 12 && fieldCount == 12, "TB① 标签 12 + 字段 12（栏目无丢失）");
+        // 两区分离核心断言（用户可见缺陷回归测试）：同一单元格内灰色标签块与
+        // 填写值块零相交——填写标题栏后标签仍然完整可见、不被覆盖。
+        int overlap = 0;
+        for (const auto& lb : labelBlocks)
+            for (const auto& fb : fieldBlocks)
+                if (lb.first == fb.first && lb.second.intersects(fb.second)) ++overlap;
+        CHECK(overlap == 0, "TB① 同单元格标签块与值块两区分离（填写值零覆盖标签）");
 
-        // 捕获力证明：复现旧实现放置（锚点=单元格顶边-2mm）→ 必越界；
-        // 若此断言失败，说明上面的包含性断言对旧 bug 没有捕获力。
+        // 捕获力证明：用「旧锚点语义 oldTextBlock」复现旧实现的两种错位放置 → 必越界；
+        // 若断言失败，说明上面的包含性断言对旧 bug 没有捕获力。
         if (firstLabelCell.isValid()) {
             for (const auto& e : m.elements()) {
                 if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
                 if (!e.name.isEmpty() || e.text.isEmpty() || e.pts.empty()) continue;
-                Element old = e;
-                old.pts[0].y = firstLabelCell.bottom() - 2.0;   // 旧 labelOff=2
-                CHECK(!blockInCell(textBlock(old), firstLabelCell),
-                      "TB① 捕获力：旧「顶边-2mm」放置必越界（断言能抓旧 bug）");
+                {   // 旧「左对齐」假设：锚点=左内边距处，而渲染按中心 → 文字骑上左边线
+                    Element oldLeft = e;
+                    oldLeft.pts[0].x = firstLabelCell.left() + 2.0;
+                    CHECK(!blockInCell(oldTextBlock(oldLeft), firstLabelCell),
+                          "TB① 捕获力：旧「left+inset 当中心」放置必越界（断言能抓骑线 bug）");
+                }
+                {   // 旧「顶边-2mm」垂直错位：锚点=底边，块自底向上延伸 h → 顶出界
+                    Element old = e;
+                    old.pts[0].y = firstLabelCell.bottom() - 2.0;   // 旧 labelOff=2
+                    CHECK(!blockInCell(oldTextBlock(old), firstLabelCell),
+                          "TB① 捕获力：旧「顶边-2mm」放置必越界（断言能抓旧 bug）");
+                }
                 break;
             }
         }
@@ -9153,13 +9760,17 @@ static bool t_titleBlockAux() {
             m.addElement(e);
 
         int escape = 0, noCell = 0, checked = 0;
+        std::vector<std::pair<QRectF, QRectF>> labelBlocks2, fieldBlocks2;
         for (const auto& e : m.elements()) {
             if (e.layer != QStringLiteral("标题栏") || e.type != ElementType::Text) continue;
             if (e.pts.empty()) continue;
             const QRectF cell = titleBlockCellAt(&m, e.pts[0].x, e.pts[0].y);
             if (!cell.isValid()) { ++noCell; continue; }
             ++checked;
-            if (!blockInCell(textBlock(e), cell)) ++escape;
+            const QRectF blk = textBlock(e);
+            if (!blockInCell(blk, cell)) ++escape;
+            (e.name.startsWith(QLatin1String("tb:field:")) ? fieldBlocks2 : labelBlocks2)
+                .push_back({cell, blk});
             if (e.name == QStringLiteral("tb:field:drawingName")) {
                 CHECK(e.radius < 4.0 - 1e-9, "TB② 长图名触发收缩（字高 < 设计值 4.0）");
                 CHECK(e.radius >= 1.5 - 1e-9, "TB② 收缩不低于下限 1.5mm（绝不截断）");
@@ -9167,6 +9778,12 @@ static bool t_titleBlockAux() {
         }
         CHECK(checked > 0 && noCell == 0, "TB② 插入标题栏文本全部可定位单元格");
         CHECK(escape == 0, "TB② 收缩后全部文本块落入各自单元格（含预填值）");
+        // 两区分离（含预填长值）：值在值区内收缩，标签带不受影响、零重叠
+        int overlap2 = 0;
+        for (const auto& lb : labelBlocks2)
+            for (const auto& fb : fieldBlocks2)
+                if (lb.first == fb.first && lb.second.intersects(fb.second)) ++overlap2;
+        CHECK(overlap2 == 0, "TB② 同单元格标签块与预填值块两区分离（零重叠）");
 
         // 对照：短图名不收缩（保持设计字高 4.0）
         InsertedTitleBlock shortData = data;
@@ -11841,6 +12458,46 @@ static bool t_splitplot() {
     return g_fail == fail0;
 }
 
+// 绘图区域主题配色：亮/暗两套 + current() 与 ThemeManager 的契约
+static bool t_drawingTheme() {
+    const int pass0 = g_pass, fail0 = g_fail;
+    fprintf(stdout, "--- 绘图区域主题配色 DrawingTheme（亮/暗两套 + current 契约） ---\n");
+
+    const DrawingPalette& L = DrawingTheme::light();
+    const DrawingPalette& D = DrawingTheme::dark();
+
+    // 1) 两套静态配色的核心字段被正确填充（刻意复刻原版外观 / 暗色提亮对比度）
+    CHECK(L.canvas == QColor(245, 247, 250), "light.canvas 应为浅灰蓝 (245,247,250)");
+    CHECK(D.canvas == QColor(38, 40, 45),    "dark.canvas 应为近黑灰 (38,40,45)");
+
+    // 2) 明暗两套在关键结构上必须不同（否则暗色切换无意义）
+    CHECK(L.canvas != D.canvas,     "亮/暗画布背景应不同");
+    CHECK(L.gridMajor != D.gridMajor, "亮/暗主网格线应不同");
+    CHECK(L.axisX != D.axisX,       "亮/暗 X 轴色应不同");
+
+    // 3) 暗色画布上主网格线必须比画布更亮（保证可见对比度）
+    auto lum = [](const QColor& c) { return c.red() + c.green() + c.blue(); };
+    CHECK(lum(D.gridMajor) > lum(D.canvas), "暗色主网格应亮于暗色画布（灰度对比）");
+
+    // 4) 坐标轴语义色可区分：X 红、Y 绿
+    CHECK(L.axisX != L.axisY, "X/Y 轴色应可区分");
+
+    // 5) current() 与 ThemeManager 生效模式一致（契约：画布色始终等同于 canvasColor）
+    ThemeManager* tm = ThemeManager::instance();
+    const ThemeManager::Mode saved = tm->mode();   // 保存原模式，测试后还原
+    tm->setMode(ThemeManager::Mode::Light);
+    CHECK(DrawingTheme::current().canvas == ThemeManager::instance()->canvasColor(),
+          "current()(light) 画布 == ThemeManager::canvasColor()");
+    tm->setMode(ThemeManager::Mode::Dark);
+    CHECK(DrawingTheme::current().canvas == ThemeManager::instance()->canvasColor(),
+          "current()(dark) 画布 == ThemeManager::canvasColor()");
+    CHECK(DrawingTheme::current().canvas == D.canvas, "current()(dark) == dark()");
+    tm->setMode(saved);   // 还原，避免影响后续测试（虽无其它测试读主题）
+
+    fprintf(stdout, "  (绘图区域主题自测: 通过 %d / 失败 %d)\n", g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -11970,6 +12627,7 @@ int main(int argc, char** argv) {
     CHECK(t_robustness(),  "鲁棒性守卫 ElementValidate(类型越界/NaN/Inf/超大/退化/重复末点/超长文本/控制字符/缺失引用/打开失败不污染)");
     CHECK(t_fileFuzz(),    "文件 Fuzz 200 随机损坏样本零崩溃零死锁单样本≤5s(JSON/DXF/DWG/二进制DXF)");
     CHECK(t_textMetrics(), "文字度量三处同源(真实度量/LRU缓存/无头降级/9点对齐/折行/列宽/堆叠提示)");
+    CHECK(t_zwcadText(), "ZWCAD 规范文字排版(行序自上而下/5-3行距/9点对齐/单行TEXT/换行缩进/行内码剥离/因子钳制/取景同源)");
     CHECK(t_ucs(),         "用户坐标系 UCS(往返换算/45°@100<0落点≤1e-6/ucs命令定义+CRUD/极轴正交栅格UCS对齐/读数切换/网格方向/不入档)");
     CHECK(t_ucsSheetCenter(), "UCS 幅面中心(新建图纸原点=图纸中央/命令参数坐标随UCS/两路输入同源/raw纯解析回归/世界系恒等/move位移不受UCS)");
     CHECK(t_sheetPageSync(), "新建图纸幅面驱动页面设置(六幅面映射/只动两字段/随图存档往返/图框自愈/零布局PDF横竖端到端/布局seeding/COM批出图)");
@@ -11985,6 +12643,7 @@ int main(int argc, char** argv) {
     t_cuiDepth();
     t_autosave();       // 崩溃不丢稿：自动保存/恢复/设置/诊断（≥12 条 CHECK）
     t_appsettings();    // 应用级配置持久化：默认回填/持久/损坏回落/导入导出/写失败（12 组 CHECK）
+    t_drawingTheme();   // 绘图区域主题配色：亮/暗两套 + current() 与 ThemeManager 契约（主题键 display/theme 不变）
 
     CHECK(t_snapEndpoint(),     "Snap Endpoint");
     CHECK(t_snapCenter(),       "Snap Center");

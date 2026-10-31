@@ -98,6 +98,11 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 Source: "..\resources\logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; 许可协议副本随程序分发（用户可在程序目录内查阅）
 Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
+; GPLv3 许可证全文：`tools\dwg\` 内的 dwg2dxf.exe / dwgwrite.exe 是 LibreDWG
+; （GPLv3）编译的独立进程，随二进制分发**必须**附许可证全文与源码获取地址。
+; build.sh package 已把它放进 StageDir 根与 tools\dwg\（随 recurse 入包），
+; 此处再显式列一条，便于「手工把 ..\stage 当源」的打包路径也不漏。
+Source: "..\COPYING"; DestDir: "{app}"; Flags: ignoreversion
 ; 第三方组件许可声明
 Source: "..\docs\third-party-notices.md"; DestDir: "{app}\third-party-notices"; \
     Flags: ignoreversion skipifsourcedoesntexist

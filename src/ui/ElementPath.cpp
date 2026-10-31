@@ -125,8 +125,12 @@ QPainterPath buildPath(const Element& e, const QRectF& xlineClip) {
                            2 * e.radius, 2 * e.radius);
             // Qt 的圆弧角约定是「在未翻转坐标系中逆时针为正」，即取点公式为 (cx+r·cosθ, cy−r·sinθ)。
             // 本视图已把 Y 轴翻转成数学正方向，世界角 a 对应的 Qt 角就是 −a，否则圆弧会上下镜像。
+            // 世界扫掠先经 arcSweepDeg 归一：end<start 是跨 0° 回绕的合法表示
+            // （DXF 342°→17.6° 实为逆时针 35.2°），直接 -(end-start) 会得 +324.8°，
+            // 画出几乎整圈的补弧（M5.dwg 侧视图大圆的根因）。
+            const double sweep = geo::arcSweepDeg(e.startAngle, e.endAngle);
             path.arcMoveTo(r, -e.startAngle);
-            path.arcTo(r, -e.startAngle, -(e.endAngle - e.startAngle));
+            path.arcTo(r, -e.startAngle, -sweep);
             break;
         }
 

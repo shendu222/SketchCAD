@@ -120,7 +120,7 @@ Element ElementFactory::createMText(const Vec3& pos, const QString& text, double
     e.textAlign    = (textAlign >= 0 && textAlign <= 8) ? textAlign : 1;
     e.widthFactor  = widthFactor > 0 ? widthFactor : 1.0;
     e.styleName    = styleName;
-    e.lineSpacing  = lineSpacing > 0 ? lineSpacing : 1.3;
+    e.lineSpacing  = lineSpacing > 0 ? lineSpacing : 1.0;   // ZWCAD 默认单倍
     e.mtextWidth   = mtextWidth > 0 ? mtextWidth : 0.0;
     return e;
 }

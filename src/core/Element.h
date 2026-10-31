@@ -252,6 +252,13 @@ inline bool operator==(const BlockDynValue& a, const BlockDynValue& b) {
     return a.name == b.name && a.value == b.value && a.state == b.state;
 }
 
+// ACI 正文色的语义标记（单一事实源）：DXF ACI 7 / 255（在深底 CAD 上显示为白的
+// 「正文色」）经 rgbFromAci 统一映射为本色值，图元默认色亦取它。渲染端
+// （DrawingTheme::resolveInk）识别本色并按当前主题翻转：亮主题→黑、暗主题→白；
+// 打印端（PlotRenderer）原样使用（≈黑 → 白底黑线语义不变）；导出端 aciFromRgb
+// 最近邻回映射为 ACI 7，保证往返一致。
+inline QColor aciInkMark() { return QColor(26, 29, 40); }
+
 // 草图图元（统一数据模型）。坐标为世界坐标，遵循标准笛卡尔右手系：X 向右为正、Y 向上为正。
 // （视图层通过 Y 轴翻转把它映射到 Qt 的屏幕坐标，模型层不感知屏幕方向。）
 struct Element {
@@ -259,7 +266,7 @@ struct Element {
     ElementType type = ElementType::Line;
     QString name;
     QString layer = "0";
-    QColor color = QColor(26, 29, 40);   // 默认深灰 1A1D28
+    QColor color = aciInkMark();       // 正文默认色（语义标记，渲染端随主题翻转为黑/白）
     double lineWidth = 1.0;              // 手动线宽(px)：仅当 lineWidthAuto==false 时生效
     LineStyle lineStyle = LineStyle::Solid;  // 线型：实线/虚线/点划线/双点划线
     bool lineWidthAuto = true;           // true=线宽随线型自动派生(见 LineStyleConfig)；
@@ -327,13 +334,14 @@ struct Element {
     //   widthFactor    = 宽度因子（1.0 = 不变形；2.0 = 拉宽一倍），与 STYLE 宽度因子相乘生效
     //   textAlign      = 9 点对齐方式索引（0=左上 1=中上 2=右上 3=左中 4=中心 5=右中 6=左下 7=中下 8=右下）
     //   styleName      = 引用的文字样式名（"" = 继承默认；解析时按 STYLE 表取字体/字高/宽度因子等）
-    //   lineSpacing    = 行距因子（1.0 = 单倍；默认约 1.3 ≈ 国标行距），作用于行高
+    //   lineSpacing    = 行距因子（DXF MTEXT 组码 44 语义，合法域 [0.25,4.0]；
+    //                    1.0 = 单倍 = ZWCAD 默认；行距 = factor × 5/3 × 字高，见 ZwcadTextLayout）
     //   mtextWidth     = 自动换行宽度(mm)；>0 时按此宽度折行，0 = 仅按显式 \n 换行
     // 旧存档无这些键时回落默认（见 Element.cpp::elementFromJson），向后兼容。
     double widthFactor = 1.0;
     int    textAlign   = 1;            // 默认「中上」
     QString styleName;                 // 引用 STYLE 名，空串表示不关联样式
-    double lineSpacing = 1.3;
+    double lineSpacing = 1.0;
     double mtextWidth  = 0.0;         // 0 = 不自动换行
 
     // ---- 编组（GROUP）归属 ----

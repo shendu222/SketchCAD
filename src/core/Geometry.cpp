@@ -321,7 +321,7 @@ double distanceToElement(const Element& e, const Vec3& p) {
             if (e.pts.empty()) return kBig;
             const Vec3& c = e.pts[0];
             const double ang = std::atan2(p.y - c.y, p.x - c.x) * 180.0 / M_PI;
-            const double sweep = e.endAngle - e.startAngle;
+            const double sweep = arcSweepDeg(e.startAngle, e.endAngle);   // 跨0°回绕归一
             if (angleInSweep(ang, e.startAngle, sweep))
                 return std::fabs(p.distTo(c) - e.radius);
             // 角度不在弧段内时，退化为到两个端点的距离
@@ -764,7 +764,7 @@ static bool onArcSpan(const Element& e, const Vec3& p) {
     if (e.type != ElementType::Arc) return true;
     if (e.pts.empty()) return false;
     const double ang = std::atan2(p.y - e.pts[0].y, p.x - e.pts[0].x) * 180.0 / M_PI;
-    return angleInSweep(ang, e.startAngle, e.endAngle - e.startAngle);
+    return angleInSweep(ang, e.startAngle, arcSweepDeg(e.startAngle, e.endAngle));
 }
 
 static void pushUnique(std::vector<Vec3>& v, const Vec3& p) {

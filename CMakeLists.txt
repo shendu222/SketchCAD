@@ -97,10 +97,12 @@ set(CORE_SOURCES
     src/core/Block.cpp
     src/core/Xref.cpp
     src/core/CadFormats.cpp
+    src/core/ProxyGraphics.cpp   # D1b 代理图形提取（decodeProxyGraphicsBlob / extractProxyGraphics）
     src/core/PlotStyle.cpp
     src/core/Layout.cpp
     src/core/TextStyle.cpp
     src/core/TextMetrics.cpp   # 文字度量单一数据源（屏幕/打印/取景三处同源）
+    src/core/ZwcadTextLayout.cpp  # ZWCAD 规范文字排版引擎（段落/缩进/换行/5-3行距/9点对齐唯一入口）
     src/core/QSelect.cpp
     src/core/Units.cpp
     src/core/SpatialIndex.cpp
@@ -125,6 +127,8 @@ target_compile_options(SketchDwgBridge PRIVATE -Wall -Wextra)
 
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
+    src/ui/ThemeManager.cpp     # 内置亮/暗主题单例（setColorScheme + 画布背景色 + themeChanged 广播）
+    src/ui/DrawingTheme.cpp     # 绘图区域全套主题配色（网格/坐标轴/引导线/HUD/徽标/选中/约束…）
     src/ui/ElementPath.cpp
     src/ui/ModelMediator.cpp
     src/ui/DocTab.cpp               # 多文档标签：DocSession/DocManager（纯会话核心，可离线直测）
@@ -292,6 +296,8 @@ add_executable(SketchSelfTest
     src/ui/PrintEngine.cpp
     src/ui/DocTab.cpp               # 多文档会话核心（仅依赖 core，供 t_multidoc 离线直测）
     src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
+    src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
+    src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
 )
 target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
 target_include_directories(SketchSelfTest PRIVATE

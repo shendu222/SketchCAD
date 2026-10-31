@@ -179,7 +179,7 @@ Result tangentPC(const Element& circle, const Vec3& p, const Vec3& cur) {
     if (circle.type == ElementType::Arc) {
         auto inArc = [&](const Vec3& q) {
             const double ang = math::rad2deg(std::atan2(q.y - C.y, q.x - C.x));
-            return geo::angleInSweep(ang, circle.startAngle, circle.endAngle - circle.startAngle);
+            return geo::angleInSweep(ang, circle.startAngle, geo::arcSweepDeg(circle.startAngle, circle.endAngle));
         };
         const bool ok1 = inArc(t1), ok2 = inArc(t2);
         if (ok1 && !ok2) { t2 = t1; }
@@ -214,7 +214,7 @@ Result tangentCC(const Element& c1e, const Element& c2e, const Vec3& cur) {
     auto inArc = [&](const Element& e, const Vec3& pt) -> bool {
         if (e.type != ElementType::Arc) return true;
         const double ang = math::rad2deg(std::atan2(pt.y - e.pts[0].y, pt.x - e.pts[0].x));
-        return geo::angleInSweep(ang, e.startAngle, e.endAngle - e.startAngle);
+        return geo::angleInSweep(ang, e.startAngle, geo::arcSweepDeg(e.startAngle, e.endAngle));
     };
 
     // 收集所有有效切线
@@ -284,7 +284,7 @@ Result tangentOrthogonal(const Element& circle, const Element& refLine, const Ve
     if (circle.type == ElementType::Arc) {
         auto inArc = [&](const Vec3& q) {
             const double ang = math::rad2deg(std::atan2(q.y - C.y, q.x - C.x));
-            return geo::angleInSweep(ang, circle.startAngle, circle.endAngle - circle.startAngle);
+            return geo::angleInSweep(ang, circle.startAngle, geo::arcSweepDeg(circle.startAngle, circle.endAngle));
         };
         const bool ok1 = inArc(t1), ok2 = inArc(t2);
         if (ok1 && !ok2) t2 = t1;

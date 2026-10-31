@@ -15,11 +15,17 @@
 //
 // 支持的格式：
 //   Json — 本程序原生草图格式（完整往返，含样式/标注/文字）；UTF-8
-//   Dxf  — AutoCAD DXF **R12 (AC1009)** 与 **R2000 (AC1015)** 读写（ASCII + 二进制容器）。
+//   Dxf  — AutoCAD DXF **R12 (AC1009) / R2000 (AC1015) / R2004 (AC1018) / R2007 (AC1021) /
+//          R2010 (AC1024) / R2013 (AC1027) / R2018 (AC1032)** 读出 + 写出（ASCII + 二进制容器）。
 //          默认把图元炸开为 LINE/CIRCLE/ARC/POLYLINE/TEXT/SOLID 基元（最大兼容）；
 //          开启 DxfExportOptions 后块/标注/填充按原生实体导出（INSERT/DIMENSION/HATCH），
-//          在 AutoCAD/ZWCAD 中可编辑。R2000 在 R12 token 流之上注入 AcDb 子类标记(100)/
-//          句柄(5)/owner(330)并改写 $ACADVER=AC1015、追加 OBJECTS 段（见 CadFormats.cpp）。
+//          在 AutoCAD/ZWCAD 中可编辑。R2000+ 在 R12 token 流之上注入 AcDb 子类标记(100)/
+//          句柄(5)/owner(330)并改写 $ACADVER、追加 OBJECTS 段（见 CadFormats.cpp）。
+//          R2004+ 进一步采用 LWPOLYLINE（替代 POLYLINE/VERTEX/SEQEND）、真彩组码 420、
+//          透明度 440、线宽 370，满足外交付硬阻塞（客户强制 R2013/R2018 可打开）。
+//          ⚠️ 注意：本程序**不虚标版本号**。DWG 二进制写出受 LibreDWG 桥能力上限约束，
+//          经 toDwgR2000（进程外桥）最高只到 R2000(AC1015)；要交付 R2004+，请导出
+//          **DXF R2004–R2018**（AutoCAD 打开即识别为该版本、语义保留、可另存为 DWG）。
 //   Step — ISO 10303-21（AP214 二维曲线集：LINE/CIRCLE/TRIMMED_CURVE/POLYLINE/ELLIPSE）；ASCII
 //   Dwg  — 原生 DWG R12 (AC1009) 二进制格式。本项目不引入 ODA/LibreDWG 等第三方
 //          库，手写实现最广泛兼容的 R12 子集：实体炸开为 LINE/CIRCLE/ARC/TEXT/
@@ -47,13 +53,22 @@ enum class CadFormat { Unknown, Json, Dxf, Step, Dwg };
 // DXF 目标版本（导出侧选择；导入侧据此协商是否支持）。
 //   R12   — AC1009（默认，与升级前逐字节一致）
 //   R2000 — AC1015（注入 AcDb 子类标记 / 句柄 / owner + 改写 $ACADVER + OBJECTS 段）
-enum class DxfVersion { R12, R2000 };
+//   R2004 — AC1018（LWPOLYLINE + 真彩 420 + 透明度 440 + 线宽 370；AutoCAD 2004+ 原生实体）
+//   R2007 — AC1021（UTF-8 编码；与 R2004+ 同实体集）
+//   R2010 — AC1024
+//   R2013 — AC1027
+//   R2018 — AC1032（客户强制交付目标：AutoCAD 2018 打开即识别该版本、块/标注/填充语义保留）
+// ⚠️ R2004+ 一律采用「现代实体集」（LWPOLYLINE / 420 / 440 / 370）；R12 仍走
+//    POLYLINE/VERTEX/SEQEND + ACI 62，保证与旧版逐字节兼容。
+enum class DxfVersion { R12, R2000, R2004, R2007, R2010, R2013, R2018 };
 
 // DXF 容器形态：ASCII 文本（默认）或二进制 DXF（带 22 字节哨兵头的紧凑二进制）。
 enum class DxfContainer { Ascii, Binary };
 
-// 版本枚举 → 简短标签（"R12" / "R2000"），用于下拉与日志。
+// 版本枚举 → 简短标签（"R12" / "R2000" / "R2018" …），用于下拉与日志。
 QString dxfVersionLabel(DxfVersion v);
+// 版本枚举 → AutoCAD 内部版本串（"AC1009" / "AC1015" / "AC1032" …），用于 $ACADVER 头部。
+QString dxfAcadVer(DxfVersion v);
 // AutoCAD 内部版本串（"AC1009"/"AC1015"/"AC1021"…）→ 人类可读名（"DWG R12"/"DWG 2000"…）。
 QString cadVerToHuman(const QString& acadVer);
 // 该 AutoCAD 版本串 SketchCAD 是否支持读取。

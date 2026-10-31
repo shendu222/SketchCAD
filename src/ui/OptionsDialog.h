@@ -80,9 +80,13 @@ private:
     QCheckBox* chkLwd_ = nullptr;
     QCheckBox* chkGpu_ = nullptr;
     QCheckBox* chkOff_ = nullptr;
+    // 界面主题（内置亮/暗切换）
+    QComboBox* themeBox_ = nullptr;
     // 文件位置
     QLineEdit* saveDirEdit_ = nullptr;
     QLineEdit* tmplEdit_ = nullptr;
+    // DWG 转换组件路径覆盖（空 = 默认查找 tools/dwg 或环境变量）
+    QLineEdit* dwgToolsEdit_ = nullptr;
     // 自动保存
     QComboBox* intervalBox_ = nullptr;
     QSpinBox* backupSpin_ = nullptr;

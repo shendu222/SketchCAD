@@ -319,7 +319,7 @@ Element elementFromJson(const QJsonObject& o) {
     e.widthFactor = json::getDouble(o, "widthFactor", 1.0);
     e.textAlign   = json::getInt(o, "textAlign", 1);
     e.styleName   = json::getString(o, "styleName", QString());
-    e.lineSpacing = json::getDouble(o, "lineSpacing", 1.3);
+    e.lineSpacing = json::getDouble(o, "lineSpacing", 1.0);   // ZWCAD 默认单倍行距（DXF 44）
     e.mtextWidth  = json::getDouble(o, "mtextWidth", 0.0);
     // ---- 表格（Table）专用字段（旧存档缺键 → 回落默认，向后兼容）----
     // 行列数钳到 [1,200]：防损坏数据把渲染/导出撑爆

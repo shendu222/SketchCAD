@@ -11,6 +11,7 @@
 #include <QPainterPath>
 #include "core/TextStyle.h"         // resolveTextStyle / resolveFields / wrapText
 #include "core/TextMetrics.h"     // 文字度量单一数据源：屏幕/打印/取景三处同源
+#include "core/ZwcadTextLayout.h"  // ZWCAD 规范文字排版引擎（锚点/行距/缩进/换行唯一入口）
 #include <QPen>
 #include <QBrush>
 #include <QPixmap>
@@ -417,9 +418,17 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
 
     // 字段（FIELD）占位解析
     const QString display = resolveFields(e.text, c.model);
-    // 三处同源：用 TextMetrics 统一布局(mm)，再乘 scaleDev 映射到设备像素。
+    // ZWCAD 规范排版（唯一入口，与屏幕端同参同源）：锚点数学全部在模块内
+    //（修复旧「块画到锚点上方 + 行序颠倒」的坐标系推导错误，见 ZwcadTextLayout.h）。
     const double mw = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
-    const TextLayout lay = TextMetrics::layout(ts, display, th, mw, isM ? e.lineSpacing : 1.0);
+    ZwcadText::Format tf;
+    tf.heightMm          = th;
+    tf.lineSpacingFactor = e.lineSpacing;
+    tf.attach            = e.textAlign;
+    tf.wrapWidthMm       = mw;
+    const ZwcadText::Result lay = isM
+        ? ZwcadText::layoutMText(display, tf, ts)
+        : ZwcadText::layoutSingleLine(display, tf, ts);
 
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
@@ -438,23 +447,14 @@ void paintText(QPainter* p, const Element& e, Ctx& c) {
     p->setFont(f);
     const QFontMetricsF fm(f);
     const double hh = fm.height();
-    const double lineHpx = lay.lineHeightMm * c.scaleDev;
-    const int    align   = e.textAlign;                 // 9 点对齐（与 GraphicsView 同源）
-    const int    hA = align % 3, vA = align / 3;
-    const double totalHpx = lay.heightMm * c.scaleDev;
-    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
+
     p->setPen(rs.color);
     p->setBrush(Qt::NoBrush);
-    for (int i = 0; i < lay.lines.size(); ++i) {
-        const double wpx = lay.lines[i].widthMm * c.scaleDev;
-        const double yc = startYv - (i + 0.5) * lineHpx;
-        // 锚点=对齐点：左→行首在锚点；中→行中心在锚点；右→行尾在锚点
-        double x0;
-        if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -wpx / 2;
-        else              x0 = -wpx;
-        const QRectF box(x0, yc - hh / 2, wpx, hh);
-        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
+    // LineBox：Y 向下为正（与 scale(1/s,-1/s) 后局部系一致），行序自上而下。
+    for (const auto& lb : lay.lines) {
+        const QRectF box(lb.xMm * c.scaleDev, lb.yCenterMm * c.scaleDev - hh / 2.0,
+                         lb.widthMm * c.scaleDev, hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lb.text);
     }
     p->restore();
 }

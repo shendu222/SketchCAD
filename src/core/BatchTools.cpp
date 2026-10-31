@@ -250,19 +250,18 @@ SignResult batchSign(const SketchModel& m, const QHash<QString, QString>& fields
         u.newElem  = e;
         u.newElem.text = it.value();
 
-        // 单元格适配：复用 TitleBlockLayout 单一入口；网格无效 → 保留原锚点（绝不猜）
+        // 单元格适配：复用 fitTitleBlockText 单一入口（tb:field:* → 值区中心，
+        // 与灰色标签两区分离永不重叠；网格无效 → 保留原锚点，绝不猜）。
+        // ⚠️ 不得退回 fitCellText 直调：旧写法把 QRectF bottom()(=世界顶)当
+        // bottom 传、top()(=世界底)当 top 传，整格居中时对称无害，一旦引入
+        // 分区语义即上下颠倒——统一走 fitTitleBlockText 由其内部正确映射。
         const QRectF cell = titleBlockCellAt(&m, e.pts[0].x, e.pts[0].y);
         if (cell.isValid()) {
-            const CellTextFit fit = fitCellText(it.value(), e.radius,
-                                                cell.left(), cell.right(),
-                                                cell.bottom(), cell.top(),
-                                                /*stickTop=*/false);
-            u.newElem.pts[0] = Vec3(fit.x, fit.y, 0);
-            u.newElem.radius = fit.height;
+            const Vec3 o0 = e.pts[0];
+            const bool heightChanged = fitTitleBlockText(u.newElem, cell);
             const Vec3& n0 = u.newElem.pts[0];
-            const Vec3& o0 = e.pts[0];
             const bool moved = std::fabs(n0.x - o0.x) > 1e-9 || std::fabs(n0.y - o0.y) > 1e-9;
-            u.refit = fit.shrunk || moved || std::fabs(u.newElem.radius - e.radius) > 1e-9;
+            u.refit = heightChanged || moved;
         }
         res.updates.push_back(u);
         hitKeys.insert(key);

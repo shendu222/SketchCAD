@@ -25,8 +25,10 @@ using SettingKeys::kGpuAcceleration;
 using SettingKeys::kOffscreenFallback;
 using SettingKeys::kConstraintSolver;
 using SettingKeys::kHighDpiRounding;
+using SettingKeys::kTheme;
 using SettingKeys::kDefaultSaveDir;
 using SettingKeys::kDefaultTemplate;
+using SettingKeys::kDwgToolsOverride;
 using SettingKeys::kLastDir;
 using SettingKeys::kRecentList;
 using SettingKeys::kAutosaveInterval;
@@ -181,6 +183,13 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         { kShowLineWeight, false, boolVal },
         { kGpuAcceleration, true, boolVal },
         { kOffscreenFallback, false, boolVal },
+        // ---- display（界面主题：内置亮/暗切换）----
+        // system=跟随系统 / light=亮色 / dark=暗色（默认 light）；非白名单值回落默认 light。
+        { kTheme, QStringLiteral("light"),
+          [](const QVariant& v) {
+              return stringWhitelistVal(v, { QLatin1String("system"), QLatin1String("light"),
+                                             QLatin1String("dark") });
+          } },
         // ---- solver（约束求解特性开关，默认开）----
         { kConstraintSolver, true, boolVal },
         { kHighDpiRounding, QStringLiteral("Round"),
@@ -192,6 +201,8 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         // ---- files ----
         { kDefaultSaveDir,  QString(), stringVal },
         { kDefaultTemplate, QString(), stringVal },
+        // DWG 转换组件目录覆盖（空 = 默认查找；非空 = 覆盖 SKETCHCAD_DWGTOOLS）
+        { kDwgToolsOverride, QString(), stringVal },
         { kLastDir,         QString(), stringVal },
         { kRecentList, QStringList(), stringListVal },
         { kRecentEntries, QString(), recentEntriesVal },
@@ -496,6 +507,9 @@ void AppSettings::setDefaultSaveDir(const QString& d) { setValue(QLatin1String(k
 QString AppSettings::defaultTemplate() const { return value(QLatin1String(kDefaultTemplate)).toString(); }
 void AppSettings::setDefaultTemplate(const QString& p) { setValue(QLatin1String(kDefaultTemplate), p); }
 
+QString AppSettings::dwgToolsOverride() const { return value(QLatin1String(kDwgToolsOverride)).toString(); }
+void AppSettings::setDwgToolsOverride(const QString& d) { setValue(QLatin1String(kDwgToolsOverride), d); }
+
 QString AppSettings::lastDir() const { return value(QLatin1String(kLastDir)).toString(); }
 void AppSettings::setLastDir(const QString& d) { setValue(QLatin1String(kLastDir), d); }
 
@@ -521,6 +535,9 @@ void AppSettings::setFirstRunNoticeShown(bool b) { setValue(QLatin1String(kFirst
 
 QString AppSettings::highDpiRoundingPolicy() const { return value(QLatin1String(kHighDpiRounding)).toString(); }
 void AppSettings::setHighDpiRoundingPolicy(const QString& p) { setValue(QLatin1String(kHighDpiRounding), p); }
+
+QString AppSettings::theme() const { return value(QLatin1String(kTheme)).toString(); }
+void AppSettings::setTheme(const QString& t) { setValue(QLatin1String(kTheme), t); }
 
 QString AppSettings::printerName() const { return value(QLatin1String(kPrinterDevice)).toString(); }
 void AppSettings::setPrinterName(const QString& name) { setValue(QLatin1String(kPrinterDevice), name); }

@@ -32,6 +32,7 @@
 #include "core/ToolRegistry.h"
 #include "ui/GraphicsView.h"
 #include "ui/ModelMediator.h"
+#include "ui/ThemeManager.h"    // 内置亮/暗主题：选项改动 → applySettingLive 即时重绘
 #include "ui/RulerWidget.h"
 #include <QTabBar>
 #include <QStackedWidget>
@@ -96,6 +97,7 @@
 #include "core/Modify.h"
 #include "core/ChamferFillet.h"
 #include "core/CadFormats.h"
+#include "core/DwgBridge.h"             // DWG 转换组件探测/版本串/帮助链接（缺失指引弹窗）
 
 #include <QMenuBar>
 #include <QMenu>
@@ -107,6 +109,7 @@
 #include <QDialogButtonBox>
 #include <QToolBar>
 #include <QToolButton>
+#include <QStyle>          // 主题切换钩子：unpolish/polish 强制 chrome 重取调色板
 #include <QShortcut>     // 正交 F8 / 栅格吸附 F9 的全局快捷键
 #include <QComboBox>
 #include <QProgressDialog>   // P0-04：大图纸解析进度（可取消）
@@ -571,6 +574,18 @@ void MainWindow::loadAppSettingsOnStartup() {
     applySettingLive(QLatin1String(kRightClickIdleRepeat),
                      appSettings_->value(QLatin1String(kRightClickIdleRepeat)));
 
+    // 内置亮/暗主题：启动即按持久值应用一次（main.cpp 已先行应用，这里幂等重放以保证一致）
+    applySettingLive(QLatin1String(kTheme), appSettings_->value(QLatin1String(kTheme)));
+
+    // DWG 转换组件路径覆盖（选项页 → 环境变量 SKETCHCAD_DWGTOOLS）：启动即生效。
+    // DwgBridge 每次解析目录时读该环境变量（优先于 exe 同级 tools/dwg）；
+    // 留空则清除，回落默认查找（exe 同级 tools/dwg 或向上搜索开发目录）。
+    {
+        const QString dwgDir = appSettings_->dwgToolsOverride();
+        if (dwgDir.isEmpty()) qunsetenv("SKETCHCAD_DWGTOOLS");
+        else qputenv("SKETCHCAD_DWGTOOLS", QDir::toNativeSeparators(dwgDir).toLocal8Bit());
+    }
+
     // 自动保存参数已由 setupAutoSave 从 AppSettings 读入，无需重复。
 
     // 上次退出时的打印页面设置快照 → 本次「打印设置/预览/导出 PDF」的起始值
@@ -587,13 +602,43 @@ void MainWindow::loadAppSettingsOnStartup() {
     // 之后所有设置变更（对话框应用/取消回滚/导入）都走这一条统一消费点
     connect(appSettings_, &AppSettings::settingChanged,
             this, &MainWindow::applySettingLive);
+
+    // 内置亮/暗主题切换 → 非画布 chrome（工具条/菜单栏/状态栏）强制重整：
+    // QSS 里的 palette() 引用与引擎化图标（icons::ThemeIconEngine 绘制时解析主题色）
+    // 在重整/重绘后即时取新主题色。修复运行时切换主题下工具条/菜单栏滞留旧配色、
+    // 暗底深字对比度过低的问题（启动即定主题的路径本就正确，此钩子兜底运行时切换）。
+    connect(ThemeManager::instance(), &SketchCAD::ThemeManager::themeChanged,
+            this, [this] {
+        const auto refresh = [](QWidget* w) {
+            if (!w) return;
+            w->style()->unpolish(w);
+            w->style()->polish(w);
+            w->update();
+        };
+        // 重新套用工具条外观：applyToolBarLook 内部按 effectiveMode() 分支设置文字颜色
+        // （亮色=纯黑 / 暗色=保持原生），必须在切换时重跑，否则 QSS 仍是旧主题的分支，
+        // 会导致明暗切换后工具条文字颜色滞留。重跑是幂等的（仅重置样式/边距/图标尺寸）。
+        for (QToolBar* tb : findChildren<QToolBar*>()) {
+            applyToolBarLook(tb);
+            refresh(tb);
+        }
+        refresh(menuBar());
+        refresh(statusBar_);
+    });
 }
 
 // settingChanged 统一消费点：对话框「应用」即时预览、「取消」回滚、启动回放共用。
 // 每个分支把值写入它的真实归宿（模型/自动保存/最近文件），不另存第二份状态。
 void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
-    if (!model_) return;
     using namespace SettingKeys;
+    // DWG 转换组件路径覆盖：不依赖模型，先于 model_ 守卫处理（写环境变量即时生效）
+    if (key == QLatin1String(kDwgToolsOverride)) {
+        const QString dwgDir = v.toString().trimmed();
+        if (dwgDir.isEmpty()) qunsetenv("SKETCHCAD_DWGTOOLS");
+        else qputenv("SKETCHCAD_DWGTOOLS", QDir::toNativeSeparators(dwgDir).toLocal8Bit());
+        return;
+    }
+    if (!model_) return;
     if (key == QLatin1String(kShowGrid)) {
         model_->setShowGrid(v.toBool());
     } else if (key == QLatin1String(kGridSnap)) {
@@ -639,6 +684,11 @@ void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
         // 对话框类（选项/新建图纸等）下次打开自然使用新语言，无需驻留重建。
         SketchCAD::I18n::installTranslator(SketchCAD::I18n::resolveLanguage(v.toString()));
         rebuildMenusForLanguage();
+    } else if (key == QLatin1String(kTheme)) {
+        // 内置亮/暗主题：即时重绘（GraphicsView 订阅 ThemeManager::themeChanged 自刷新画布）。
+        // 持久化由 AppSettings 负责，这里只把值灌进 ThemeManager 的视觉层。
+        SketchCAD::ThemeManager::instance()->setMode(
+            SketchCAD::ThemeManager::modeFromString(v.toString()));
     }
     // 其余键（目录/打印设备/用户信息/语言/GPU 预留）由消费点在各自使用时机读取，
     // 无需即时动作。
@@ -682,6 +732,46 @@ void MainWindow::openOptionsDialog() {
     if (appSettings_->lastWriteFailed())
         model_->log(QStringLiteral("配置写入失败：%1").arg(appSettings_->lastError()),
                     QStringLiteral("error"));
+}
+
+// DWG 转换组件缺失指引（意图 D③）：模态弹窗展示版本串原文 + 「未安装 DWG 转换组件」
+// + 帮助链接。打开/另存两条路径共用；不静默失败、不崩溃。
+// 无头自测（窗口未 show）不弹窗——错误串/日志已在调用方写好，测试断言走文本通道。
+void MainWindow::warnDwgConverterMissing(bool isRead, const QString& ver, const QString& humanVer) {
+    if (!isVisible()) return;
+    QString text;
+    if (isRead) {
+        const QString verDesc = ver.isEmpty()
+            ? QStringLiteral("未知版本")
+            : QStringLiteral("%1 / %2").arg(ver, humanVer);
+        text = QStringLiteral(
+            "无法打开该 DWG 文件（版本：%1）：未安装 DWG 转换组件。\n\n"
+            "SketchCAD 对该版本的 DWG 依赖外部转换器 LibreDWG（dwg2dxf / dwgwrite）进行读取。\n"
+            "请任选其一安装后重试：\n"
+            "  • 安装包已内置该组件，位于程序目录下的 tools/dwg/；\n"
+            "  • 或在「工具 → 选项 → 文件位置 → DWG 转换组件路径」指定目录；\n"
+            "  • 或设置环境变量 SKETCHCAD_DWGTOOLS 指向含 dwg2dxf.exe 的目录。\n\n"
+            "提示：R12（AC1009）版 DWG 无需转换组件，可直接打开。")
+            .arg(verDesc);
+    } else {
+        text = QStringLiteral(
+            "未安装 DWG 转换组件，无法写出 DWG R2000。\n\n"
+            "本次已按 R12（AC1009）原生格式写出，AutoCAD R12 及以上版本均可打开。\n"
+            "如需写出 DWG R2000，请先安装转换器 LibreDWG（dwg2dxf / dwgwrite）：\n"
+            "  • 安装包已内置该组件，位于程序目录下的 tools/dwg/；\n"
+            "  • 或在「工具 → 选项 → 文件位置 → DWG 转换组件路径」指定目录；\n"
+            "  • 或设置环境变量 SKETCHCAD_DWGTOOLS 指向含 dwgwrite.exe 的目录。");
+    }
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(isRead ? QStringLiteral("无法打开 DWG") : QStringLiteral("DWG 写出说明"));
+    box.setText(text);
+    box.setInformativeText(QStringLiteral("点击「查看帮助」获取转换组件的下载与安装说明。"));
+    QPushButton* helpBtn = box.addButton(QStringLiteral("查看帮助"), QMessageBox::ActionRole);
+    box.addButton(QStringLiteral("确定"), QMessageBox::AcceptRole);
+    box.exec();
+    if (box.clickedButton() == helpBtn)
+        QDesktopServices::openUrl(QUrl(QString::fromUtf8(dwgbridge::kDwgConverterHelpUrl)));
 }
 
 // ---- 最近文件 ----
@@ -907,6 +997,9 @@ void MainWindow::auditShortcutConflicts() {
 
 void MainWindow::buildMenu() {
     QMenuBar* bar = menuBar();
+    // 菜单栏 chrome 显式绑到应用调色板（同 applyToolBarLook 的理由）：防止
+    // 「应用=亮色 + 系统暗色」错配态下原生 chrome 变暗而菜单文字仍是深色。
+    bar->setStyleSheet(QStringLiteral("QMenuBar { background: palette(window); }"));
 
     // 统一带快捷键的动作构造（键盘通路与鼠标菜单一一对应）
     auto mk = [this](QMenu* menu, const QString& text, const QKeySequence& key, auto fn) {
@@ -942,43 +1035,21 @@ void MainWindow::buildMenu() {
     QMenu* f = new QMenu(tr("文件(&F)"), this);
     f->setObjectName("menuFile");
     mk(f, tr("新建"),        QKeySequence::New,  [this] {
-            NewDrawingDialog dlg(this);
-            if (dlg.exec() != QDialog::Accepted) return;
-            // 模板化新建唯一入口：多文档新标签 + applyNewDrawing（既有流）+ 标题栏样式
-            createTemplatedDrawing(dlg.selectedSpec(), dlg.selectedScaleRatio(),
-                                   dlg.titleBlockStyle());
+            // 空白新建：直接给一张空白图面，不再弹「图纸尺寸 + 图框内容」选择——
+            // 该选择流程由【图纸】>【新建图框】（SheetFrameDialog）与启动页模板
+            // 按钮承担，【新建】保持独立语义 = 空白画布（Ctrl+N 即得，零打断）。
+            createBlankDrawing();
         })
         ->setIcon(icons::make("new"));
-    mk(f, tr("填写标题栏..."), QKeySequence(), [this] {
-            TitleBlockForm dlg(model_, this);
-            dlg.exec();
-        })->setIcon(icons::make("titleblock"));
-    mk(f, tr("插入标准标题栏..."), QKeySequence(), [this] {
-            insertStandardTitleBlock();
-        })->setIcon(icons::make("titleblock"));
-    mk(f, tr("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
-            generateFramedTitleBlock();
-        })->setIcon(icons::make("titleblock"));
-    // 绘图比例属于「图纸属性」而非视图属性，故放在文件菜单（GB/T 14690 技术制图 比例）
-    mk(f, tr("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
-            changeDrawingScale();
-        })->setIcon(icons::make("scale"));
-    // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档
-    mk(f, tr("单位与图纸界限..."), QKeySequence(), [this] {
-            openUnitsLimits();
-        })->setIcon(icons::make("limits"));
-    // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档
-    mk(f, tr("捕捉设置..."), QKeySequence(), [this] {
-            openSnapSettings();
-        })->setIcon(icons::make("snap"));
-    // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）
-    mk(f, tr("自动保存设置..."), QKeySequence(), [this] {
-            openAutoSaveOptions();
-        })->setIcon(icons::make("save"));
     mk(f, tr("打开..."),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
     mk(f, tr("保存..."),      QKeySequence::Save, [this] { saveFile(); })
         ->setIcon(icons::make("save"));
+    // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）。
+    // 属文件保存行为，故保留在【文件】菜单（与 打开/保存 同组）。
+    mk(f, tr("自动保存设置..."), QKeySequence(), [this] {
+            openAutoSaveOptions();
+        })->setIcon(icons::make("save"));
     // 最近打开：动态子菜单（条目数 = 选项里的「最近文件数」，列表随成功读档更新；
     // 缺失文件灰显提示、点击移除单条；右键条目 → 固定/取消固定、从列表删除）
     recentMenu_ = new QMenu(tr("最近打开(&R)"), f);
@@ -1027,11 +1098,37 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("print"));
     bar->addMenu(pr);
 
-    // ---- 顶级菜单：图纸（图框/标题栏/明细栏生成）----
+    // ---- 顶级菜单：图纸（图框/标题栏/明细栏生成 + 图纸属性/设置）----
+    // 下列「填写标题栏 / 插入标准标题栏 / 按幅面生成图框与标题栏 / 绘图比例 /
+    // 单位与图纸界限 / 捕捉设置」原置于【文件】菜单，均属图纸语义而非文件操作，
+    // 已按用户要求迁至本菜单，避免【文件】菜单混入与文件无关的子项。
     QMenu* sh = new QMenu(tr("图纸(&G)"), this);
     sh->setObjectName("menuSheet");
     mk(sh, tr("新建图框..."), QKeySequence(), [this] { openSheetFrameDialog(); })
         ->setIcon(icons::make("titleblock"));
+    mk(sh, tr("填写标题栏..."), QKeySequence(), [this] {
+            TitleBlockForm dlg(model_, this);
+            dlg.exec();
+        })->setIcon(icons::make("titleblock"));
+    mk(sh, tr("插入标准标题栏..."), QKeySequence(), [this] {
+            insertStandardTitleBlock();
+        })->setIcon(icons::make("titleblock"));
+    mk(sh, tr("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
+            generateFramedTitleBlock();
+        })->setIcon(icons::make("titleblock"));
+    sh->addSeparator();
+    // 绘图比例属于「图纸属性」而非视图属性，已迁至【图纸】菜单（GB/T 14690 技术制图 比例）
+    mk(sh, tr("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
+            changeDrawingScale();
+        })->setIcon(icons::make("scale"));
+    // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档，置于【图纸】菜单
+    mk(sh, tr("单位与图纸界限..."), QKeySequence(), [this] {
+            openUnitsLimits();
+        })->setIcon(icons::make("limits"));
+    // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档，置于【图纸】菜单
+    mk(sh, tr("捕捉设置..."), QKeySequence(), [this] {
+            openSnapSettings();
+        })->setIcon(icons::make("snap"));
     bar->addMenu(sh);
 
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
@@ -1702,7 +1799,7 @@ void MainWindow::buildMenu() {
     aGrid->setChecked(model_->showGrid());
     aGrid_ = aGrid;   // gridToggled 连接在 hookActiveDoc 登记（随活动文档换绑）
 
-    // 绘图比例入口已迁至【文件】菜单（属图纸属性），此处不再重复提供，避免同一功能两处出现
+    // 绘图比例入口已迁至【图纸】菜单（属图纸属性），此处不再重复提供，避免同一功能两处出现
 
     QMenu* plane = new QMenu(tr("视图方向"), this);
     plane->setIcon(icons::make("plane_xy"));
@@ -1958,12 +2055,15 @@ void MainWindow::buildMenu() {
     })->setIcon(icons::make("about"));
     bar->addMenu(h);
 
-    // ---- 顶级菜单排序：创建顺序 ≠ 显示顺序，按「核心 → 输出 → 辅助 → 帮助」的
-    // CAD 惯例统一重排。逐个把 want[i] 插到 want[i+1] 之前（从后往前），即可把
-    // 乱序的菜单栏收敛为目标顺序；不 clear、不 delete，动作可见性（工作空间
-    // 按 objectName 显隐）与快捷键绑定均不受影响，语言切换重建后同样经此排序。
+    // ---- 顶级菜单排序：创建顺序 ≠ 显示顺序，按「标准 CAD 顺序」统一重排——
+    // 文件固定首位、帮助固定末位；中间为 编辑 → 视图 → 绘图 → 图纸 → 测量查询 →
+    // 脚本 → 界面 → 插件 → 扩展工具 → 工具，打印/追踪 并入末位之前。所有顶级菜单
+    // 均列入 ordered（含 图纸 sh、扩展工具 ex，二者此前遗漏导致游离于目标序列之外）。
+    // 逐个把 want[i] 插到 want[i+1] 之前（从后往前）收敛为目标顺序；不 clear、不 delete，
+    // 动作可见性（工作空间按 objectName 显隐）与快捷键绑定均不受影响，
+    // 语言切换重建后同样经此排序。
     {
-        const QList<QMenu*> ordered{ f, e, s, v, q, pr, k, tools, scr, cui, plug, h };
+        const QList<QMenu*> ordered{ f, e, v, s, sh, q, scr, cui, plug, ex, tools, pr, k, h };
         QList<QAction*> want;
         for (QMenu* m : ordered) want << m->menuAction();
         for (int i = want.size() - 1; i >= 0; --i)
@@ -3173,9 +3273,25 @@ void MainWindow::applyToolBarLook(QToolBar* tb) {
     // 收紧按钮内边距：系统默认留白偏大（每个按钮 80~116px），24 个按钮会把两行
     // 都顶到 1360px 以上，窄屏（1280）仍会触发 ">>" 溢出按钮、尾部按钮被收起。
     // 这里只改 padding / spacing，不改配色与边框，图标和文字依旧完整显示。
-    tb->setStyleSheet(QStringLiteral(
-        "QToolButton { padding: 2px 4px; }"
-        "QToolBar    { spacing: 2px; }"));
+    // ⚠️ background: palette(window)：windows11 样式的工具条 chrome 在「应用=亮色主题
+    // + 系统暗色」时会跟随系统变暗而调色板仍是亮色 → 深字暗底对比度过低（用户实测）。
+    // 显式把背景绑到应用调色板，保证 chrome 与按钮文字/图标永远同侧。
+    // ⚠️ 工具栏文字颜色随主题分支（用户要求：亮色主题文字必须为纯黑，清晰可读）：
+    //   - 亮色：显式 color:#000000，保证深藏青图标墨色之外，文字本身一定是纯黑，绝不发灰/发蓝；
+    //   - 暗色：保持原 QSS 不变（不显式覆盖 color），文字由原生样式/调色板驱动为白字，
+    //     与已验证的暗色主题表现一致。
+    //   ⚠️ 此 color 只作用于 QToolButton 的「文字标签」，不影响矢量图标——图标墨色由
+    //   icons::inkColor() 在 ThemeIconEngine::paint 绘制时即时取色，与 QSS color 无关。
+    const bool tbLight = ThemeManager::instance()->effectiveMode() == ThemeManager::Mode::Light;
+    if (tbLight) {
+        tb->setStyleSheet(QStringLiteral(
+            "QToolButton { padding: 2px 4px; color: #000000; }"
+            "QToolBar    { spacing: 2px; background: palette(window); }"));
+    } else {
+        tb->setStyleSheet(QStringLiteral(
+            "QToolButton { padding: 2px 4px; }"
+            "QToolBar    { spacing: 2px; background: palette(window); }"));
+    }
 }
 
 // 统一按钮最小宽度：短标签（1~2 个汉字，如「圆」「删除」「XY」）与长标签留白一致，
@@ -4186,6 +4302,33 @@ void MainWindow::createTemplatedDrawing(const SheetSpec& spec, double ratio,
     syncTabTitle(docs_->activeIndex());
 }
 
+// 空白新建唯一入口：菜单「新建」（Ctrl+N）直接给一张空白图面——不弹幅面/图框
+// 选择（该流程在【图纸】>【新建图框】与启动页模板按钮中）。空白图仍带：
+//   · 标准图层模板（GB/T 14665 表6，与模板新建一致，图层下拉不为空）；
+//   · A4 横向 1:1 的 SheetSpec 基准（打印页面尺寸/字高派生/随图存档的数据源，
+//     用户另存前无须关心；需要别的幅面用【新建图框】一键生成）。
+// 不生成任何图框/标题栏图元；坐标原点保持世界 0,0（无图框即无幅面中心语义）。
+void MainWindow::createBlankDrawing() {
+    DocSession* s = docs_->addNewDoc();
+    makeDocPage(s);
+    docTabs_->addTab(docTabText(docs_->count() - 1));
+    switchToDoc(docs_->count() - 1);
+    const SheetSpec spec = SheetSpec::make(SheetFormat::A4, /*landscape=*/true);
+    setCurrentSheetFormat(spec.format);                // 字高等「随幅面」的量据此派生
+    model_->clear();
+    model_->setDrawingPath(QString());                 // 新图尚未存盘 → 外部参照无相对路径基准
+    model_->setScaleRatio(1.0, false);                 // 默认 1:1，不压撤销
+    for (const Layer& l : standardLayers())
+        model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
+    model_->setSheetSpec(spec);                        // 打印页面尺寸/方向的数据源
+    syncPrintSettingsToSheet();                        // 修复「新建横向、出图纵向」同理
+    model_->log(QStringLiteral("已新建空白图纸（A4 横向 1:1，无图框/标题栏；需要图框请用【图纸】>【新建图框】）"),
+                QStringLiteral("info"));
+    view_->fitToRect(QRectF(0.0, 0.0, spec.width, spec.height));
+    s->markClean();                                    // 空白图不是用户改动
+    syncTabTitle(docs_->activeIndex());
+}
+
 // 移除标题栏层全部图元（网格线 + tb:label/tb:field 文本同层）
 void MainWindow::removeTitleBlockElements() {
     std::vector<int> ids;
@@ -4452,9 +4595,9 @@ namespace {
 QStringList saveNameFilters() {
     return {
         QStringLiteral("草图文件 (*.json)"),
-        QStringLiteral("AutoCAD DXF (R12/R2000) 图形交换 (*.dxf)"),
+        QStringLiteral("AutoCAD DXF (R12/R2000/R2004–R2018) 图形交换 (*.dxf)"),
         QStringLiteral("STEP 三维交换 (*.step *.stp)"),
-        QStringLiteral("AutoCAD DWG 图形 (*.dwg)"),
+        QStringLiteral("AutoCAD DWG 图形 (*.dwg) —— 写出最高 R2000（原生 R12 / 桥接 R2000）；R2004+ 请选 DXF"),
     };
 }
 // 从过滤器文本（如 "AutoCAD DXF 图形交换 (*.dxf)"）里取第一个通配符的扩展名
@@ -4504,7 +4647,10 @@ void MainWindow::saveFile() {
     if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
 
     // DWG：已实现原生 R12 (AC1009) 二进制写出（见 CadFormats::toDwg），直接落盘即可。
-    // DXF：弹出版本下拉（R12 默认 / R2000），写入 dxfSaveOptions_ 供 writeDrawing 采用。
+    // ⚠️ 交付上限：本程序 DWG 写出最高到 R2000（经 LibreDWG 桥 toDwgR2000，
+    // 见 CadFormats.h）；客户强制的 R2004–R2018 须改用 DXF（AutoCAD 打开即认该版本、
+    // 块/标注/填充语义保留、可另存为 DWG）。文件过滤器已标注此上限。
+    // DXF：弹出版本下拉（R12 默认，可选至 R2018），写入 dxfSaveOptions_ 供 writeDrawing 采用。
     if (fmt == cadfmt::CadFormat::Dxf)
         dxfSaveOptions_.version = chooseDxfVersion();
     if (writeDrawing(fn, nullptr)) {
@@ -4570,6 +4716,7 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     QByteArray out;
     // 把绘图比例传给导出层，保证标注数字导出的是实物尺寸（GB/T 14690）
     const double ds = model_->scaleRatio();
+    bool needDwgMissingNote = false;   // 无转换器 → 回落 R12 写出后弹缺失指引
     switch (fmt) {
     case cadfmt::CadFormat::Dxf: {
         // 原生导出：块/标注/填充以原生实体写出（AutoCAD/ZWCAD 打开后标注与填充可编辑、
@@ -4582,9 +4729,23 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
                             &model_->blockTable(), &no);
         break;
     }
-    case cadfmt::CadFormat::Dwg:
-        out = cadfmt::toDwg(exp, &e, ds);
+    case cadfmt::CadFormat::Dwg: {
+        // 目标「DWG R2000 写出」：转换器可用时优先桥接 R2000（见 CadFormats::toDwgR2000）；
+        // 转换器缺失或桥写失败时回落原生 R12（AutoCAD R12+ 可开），并在落盘后弹缺失指引，
+        // 绝不静默降级（意图 D：转换器缺失给可执行指引而非静默失败）。
+        if (dwgbridge::available()) {
+            out = cadfmt::toDwgR2000(exp, &e, ds);
+            if (out.isEmpty()) {
+                const QString r2000Err = e;
+                out = cadfmt::toDwg(exp, &e, ds);            // 桥写失败 → 回落 R12 保底
+                if (!out.isEmpty() && e.isEmpty()) e = r2000Err;
+            }
+        } else {
+            out = cadfmt::toDwg(exp, &e, ds);
+            if (!out.isEmpty()) needDwgMissingNote = true;   // 落盘成功后弹指引
+        }
         break;
+    }
     case cadfmt::CadFormat::Step: {
         cadfmt::StepStats st;
         out = cadfmt::toStep(exp, &st, &e, ds).toUtf8();
@@ -4616,6 +4777,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     model_->setDrawingPath(path);
     // 自动保存的「原路径」随之更新（换名/另存为后，下次恢复写回新位置）
     if (autoSave_) autoSave_->setCurrentDrawing(path);
+    // 无转换器 → 已按 R12 写出：落盘**之后**再弹缺失指引（文件已保存，仅提示如何获得 R2000）
+    if (needDwgMissingNote) warnDwgConverterMissing(false, QString(), QString());
     if (err) *err = e;
     model_->log(QStringLiteral("已保存：%1（%2，%3 字节）%4")
                     .arg(path).arg(cadfmt::formatName(fmt)).arg(out.size()).arg(e));
@@ -4828,6 +4991,20 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
 
     if (fmt == cadfmt::CadFormat::Dwg) {
         qWarning() << "[MainWindow] readDrawingImpl: 进入 DWG 分支，开始解析（后台线程）";
+        // 前置守卫（意图 D③）：R12(AC1009) 走自研原生解析、无需转换器；R13+ 需外部
+        // 转换器桥。转换组件缺失时，直接给出「版本串原文 + 未安装 DWG 转换组件 + 帮助
+        // 链接」的可执行指引，并返回明确错误（不静默失败、不崩溃）。
+        const QString dwgVer = dwgbridge::versionFromBytes(raw);
+        const bool dwgNeedsBridge = !dwgVer.isEmpty() && dwgVer != QLatin1String("AC1009");
+        if (dwgNeedsBridge && !dwgbridge::available()) {
+            const QString human = dwgbridge::versionHuman(dwgVer);
+            if (err) *err = QStringLiteral("未安装 DWG 转换组件，无法读取 %1（%2）").arg(human, dwgVer);
+            model_->log(QStringLiteral("DWG 解析失败：未安装 DWG 转换组件，无法读取版本 %1（%2）")
+                            .arg(human, dwgVer), "error");
+            qWarning() << "[MainWindow] readDrawingImpl: 转换组件缺失，拒绝打开" << dwgVer;
+            warnDwgConverterMissing(true, dwgVer, human);
+            return false;
+        }
         std::vector<Element> imported;
         QString e;
         cadfmt::DxfImportStats st;
@@ -5726,17 +5903,37 @@ void MainWindow::openCleanup() {
     dlg.exec();
 }
 
-// P0-01：DXF 导出版本选择（R12 默认，R2000 可编辑性更好）。返回用户选择的版本。
+// P0-01 / 外交付：DXF 导出版本选择（R12 默认，R2000 可编辑性更好；R2004+ 采用现代实体集）。
+// 返回用户选择的版本。DWG 写出走独立通道，UI 已标注「最高 R2000」。
 cadfmt::DxfVersion MainWindow::chooseDxfVersion() {
+    struct Opt { QString label; cadfmt::DxfVersion v; };
+    static const Opt opts[] = {
+        {QStringLiteral("R12 (AC1009)"),   cadfmt::DxfVersion::R12},
+        {QStringLiteral("R2000 (AC1015)"), cadfmt::DxfVersion::R2000},
+        {QStringLiteral("R2004 (AC1018)"), cadfmt::DxfVersion::R2004},
+        {QStringLiteral("R2007 (AC1021)"), cadfmt::DxfVersion::R2007},
+        {QStringLiteral("R2010 (AC1024)"), cadfmt::DxfVersion::R2010},
+        {QStringLiteral("R2013 (AC1027)"), cadfmt::DxfVersion::R2013},
+        {QStringLiteral("R2018 (AC1032)"), cadfmt::DxfVersion::R2018},
+    };
     QStringList items;
-    items << QStringLiteral("R12 (AC1009) —— 兼容性最佳，所有 CAD 均可打开")
-          << QStringLiteral("R2000 (AC1015) —— 原生实体带 AcDb 标记/句柄，可编辑性更好");
+    for (const auto& o : opts) {
+        QString desc;
+        if (o.v >= cadfmt::DxfVersion::R2004)
+            desc = QStringLiteral("现代实体 LWPOLYLINE/真彩420/透明度440/线宽370，AutoCAD 2004+ 可编辑");
+        else if (o.v == cadfmt::DxfVersion::R2000)
+            desc = QStringLiteral("原生实体带 AcDb 标记/句柄，可编辑性更好");
+        else
+            desc = QStringLiteral("兼容性最佳，所有 CAD 均可打开");
+        items << (o.label + QStringLiteral(" —— ") + desc);
+    }
     bool ok = false;
     QString sel = QInputDialog::getItem(this, QStringLiteral("选择 DXF 版本"),
-                                        QStringLiteral("导出 DXF 时使用的 AutoCAD 版本："),
+                                        QStringLiteral("导出 DXF 时使用的 AutoCAD 版本（R2004+ 可被正版 AutoCAD 识别为该版本并直接另存为 DWG）："),
                                         items, 0, false, &ok);
-    if (!ok || sel.startsWith(QStringLiteral("R12"))) return cadfmt::DxfVersion::R12;
-    return cadfmt::DxfVersion::R2000;
+    if (!ok) return cadfmt::DxfVersion::R12;
+    for (const auto& o : opts) if (sel.startsWith(o.label)) return o.v;
+    return cadfmt::DxfVersion::R12;
 }
 
 void MainWindow::exportDxf() {

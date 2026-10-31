@@ -17,6 +17,7 @@
 #include "core/I18n.h"         // 国际化：语言解析 + QTranslator 装载
 #include "core/DwgBridge.h"     // 启动诊断：DWG 转换组件发现状态
 #include "ui/MainWindow.h"
+#include "ui/ThemeManager.h"    // 内置亮/暗主题：首窗显示前据注册表应用一次
 
 #ifdef Q_OS_WIN
 #ifndef WIN32_LEAN_AND_MEAN
@@ -36,10 +37,12 @@ constexpr int kMinSplashMs = 2500;
 constexpr int kMinVisibleAfterReadyMs = 800;
 
 // 候选封面图路径：exe 同目录（build/ 或 dist/ 打包布局）→ 工程根（源码运行时 build 的上级）
-// → 当前工作目录；每种目录下按 jpeg/jpg/png/bmp 依次尝试（BMP 为 Qt 内建格式，
-// 即使 Qt 的图像格式插件未随程序部署也能解码，用作最后兜底）。
+// → 当前工作目录；每种目录下按候选名依次尝试。
+// ⚠️ 首选 SketchCAD.png（项目新品牌封面）；保留 CAD封面.* 作为旧部署/回退兼容。
+//    PNG 由 Qt 内建 qpng 支持，不依赖 imageformats 插件，分发更稳。
 QStringList locateCoverCandidates() {
-    const QStringList names = { QStringLiteral("CAD封面.jpeg"), QStringLiteral("CAD封面.jpg"),
+    const QStringList names = { QStringLiteral("SketchCAD.png"),
+                                QStringLiteral("CAD封面.jpeg"), QStringLiteral("CAD封面.jpg"),
                                 QStringLiteral("CAD封面.png"),  QStringLiteral("CAD封面.bmp") };
     const QString exeDir = QCoreApplication::applicationDirPath();
     QStringList out;
@@ -171,6 +174,17 @@ int main(int argc, char** argv) {
     }
 
     QApplication app(argc, argv);
+
+    // ---- 内置亮/暗主题：在首个窗口显示前应用（默认 light）----
+    // AppSettings 单例在 MainWindow 构造期才创建，故此处直接读同路径注册表单键
+    // display/theme（HKCU\Software\SketchCAD，与 AppSettings 同路径）。
+    // 运行时切换由 OptionsDialog → settingChanged(kTheme) → MainWindow::applySettingLive 完成。
+    {
+        const QSettings pre(QSettings::NativeFormat, QSettings::UserScope,
+                            QStringLiteral("SketchCAD"), QString());
+        const QString th = pre.value(QLatin1String("display/theme"), QStringLiteral("light")).toString();
+        SketchCAD::ThemeManager::instance()->setMode(SketchCAD::ThemeManager::modeFromString(th));
+    }
 
     // ---- 界面语言装载（必须在 QApplication 之后：installTranslator 需要应用实例）----
     // 主窗口/对话框构造中的 tr() 由此取到译文；zh-CN 为源语言不装翻译器。

@@ -144,6 +144,7 @@ namespace {
 struct RunResult {
     bool ok = false;
     QString err;
+    QString stderrText;   // 转换器 stderr（成功/失败均捕获，供诊断专有实体丢弃等）
 };
 
 // 同步执行转换器；捕获 stderr 供诊断；超时/崩溃/非零退出统一归一。
@@ -167,6 +168,7 @@ RunResult runConverter(const QString& exe, const QStringList& args,
     proc.start(exe, args);
     if (!proc.waitForStarted(5000)) {
         // QProcess::error 枚举：0=FailedToStart 1=Crashed 2=Timedout 4=WriteError 5=Unknown
+        r.stderrText = QString::fromLocal8Bit(proc.readAllStandardError());
         r.err = QStringLiteral("DWG 转换器无法启动: %1（QProcess::error=%2）")
                     .arg(exe).arg(int(proc.error()));
         qWarning() << "[DwgBridge] runConverter: 启动失败" << r.err
@@ -176,17 +178,20 @@ RunResult runConverter(const QString& exe, const QStringList& args,
     if (!proc.waitForFinished(timeoutMs)) {
         if (proc.state() == QProcess::Running) proc.kill();
         proc.waitForFinished(2000);
+        r.stderrText = QString::fromLocal8Bit(proc.readAllStandardError());
         r.err = QStringLiteral("DWG 转换器超时（>%1s）或无响应").arg(timeoutMs / 1000);
         qWarning() << "[DwgBridge] runConverter: 超时" << r.err;
         return r;
     }
     if (proc.exitStatus() == QProcess::CrashExit) {
+        r.stderrText = QString::fromLocal8Bit(proc.readAllStandardError());
         r.err = QStringLiteral("DWG 转换器异常退出（文件可能损坏或含不支持结构）");
         qWarning() << "[DwgBridge] runConverter: 崩溃" << r.err;
         return r;
     }
     if (proc.exitCode() != 0) {
         const QByteArray msg = proc.readAllStandardError();
+        r.stderrText = QString::fromLocal8Bit(msg);
         r.err = QStringLiteral("DWG 转换器返回错误（exit=%1）%2")
                     .arg(proc.exitCode())
                     .arg(msg.isEmpty() ? QString()
@@ -196,7 +201,12 @@ RunResult runConverter(const QString& exe, const QStringList& args,
                    << "stderr=" << QString::fromLocal8Bit(msg).left(200).trimmed();
         return r;
     }
-    qWarning() << "[DwgBridge] runConverter: 成功" << exe;
+    // 成功路径：转换器返回 0，但 stderr 仍可能含"Unhandled Class entity"/"Unknown
+    // Class object"等告警——这些告警意味着部分实体（如 AutoCAD Mechanical 的
+    // STDPART2D 标准件）被无声跳过，导致产出 DXF 为空。必须捕获供上层诊断。
+    r.stderrText = QString::fromLocal8Bit(proc.readAllStandardError());
+    qWarning() << "[DwgBridge] runConverter: 成功" << exe
+               << "stderr(前200)=" << r.stderrText.left(200).trimmed();
     r.ok = true;
     return r;
 }
@@ -205,7 +215,7 @@ RunResult runConverter(const QString& exe, const QStringList& args,
 bool convert(const QString& exe, const QStringList& args,
              const QByteArray& inBytes, const QString& inName,
              const QString& outName, QByteArray& outBytes, QString* err,
-             const QString& verCtx, int timeoutMs) {
+             const QString& verCtx, int timeoutMs, QString* diag = nullptr) {
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         if (err) *err = QStringLiteral("无法创建 DWG 转换临时目录");
@@ -224,6 +234,7 @@ bool convert(const QString& exe, const QStringList& args,
     realArgs.replaceInStrings(QStringLiteral("@OUT@"), QDir::toNativeSeparators(outPath));
 
     const RunResult r = runConverter(exe, realArgs, tmp.path(), timeoutMs);
+    if (diag) *diag = r.stderrText.trimmed();   // 无论成败都回传 stderr 供诊断
     if (!r.ok) {
         if (err) *err = r.err + (verCtx.isEmpty() ? QString()
                                                   : QStringLiteral("（%1）").arg(verCtx));
@@ -253,13 +264,19 @@ bool convert(const QString& exe, const QStringList& args,
 //       LibreDWG 的 r2004 输出 $ACADVER=AC1018，落在 fromDxf 白名单内）
 // ---------------------------------------------------------------------------
 bool dwgToDxf(const QByteArray& dwgBytes, QByteArray& dxfOut, QString* err,
-              int timeoutMs) {
+              int timeoutMs, QString* diag) {
     if (err) err->clear();
     qWarning() << "[DwgBridge] dwgToDxf: 入口，输入字节数 =" << dwgBytes.size();
     if (!available()) {
-        if (err) *err = QStringLiteral("未安装 DWG 转换组件（tools/dwg），无法读取 %1")
-                            .arg(versionHuman(versionFromBytes(dwgBytes)));
-        qWarning() << "[DwgBridge] dwgToDxf: available()==false，未安装转换组件（tools/dwg 缺失）";
+        // 缺失转换组件：报文必须含**版本串原文**（如 AC1015）与人类可读名，
+        // 供 UI 弹窗与日志如实展示（验收：打开 AC1015 失败报文含 AC1015 且不崩溃）。
+        const QString rawVer = versionFromBytes(dwgBytes);
+        if (err) *err = rawVer.isEmpty()
+            ? QStringLiteral("未安装 DWG 转换组件（tools/dwg），无法读取该 DWG 文件")
+            : QStringLiteral("未安装 DWG 转换组件（tools/dwg），无法读取 %1（%2）")
+                  .arg(versionHuman(rawVer), rawVer);
+        qWarning() << "[DwgBridge] dwgToDxf: available()==false，未安装转换组件（tools/dwg 缺失），rawVer ="
+                   << (rawVer.isEmpty() ? QStringLiteral("(无)") : rawVer);
         return false;
     }
     const QString ver = versionFromBytes(dwgBytes);
@@ -292,12 +309,31 @@ bool dwgToDxf(const QByteArray& dwgBytes, QByteArray& dxfOut, QString* err,
                      QStringLiteral("--as"), QStringLiteral("r2004"),
                      QStringLiteral("-o"), QStringLiteral("@OUT@") },
                    dwgBytes, QStringLiteral("in.dwg"), QStringLiteral("out.dxf"),
-                   dxfOut, err, verCtx, timeoutMs);
+                   dxfOut, err, verCtx, timeoutMs, diag);
     if (!ok)
         qWarning() << "[DwgBridge] dwgToDxf: 转换失败" << (err ? *err : QString());
     else
         qWarning() << "[DwgBridge] dwgToDxf: 成功，输出 DXF 字节数 =" << dxfOut.size();
     return ok;
+}
+
+// ---------------------------------------------------------------------------
+// 专有/自定义实体被转换器丢弃判定（供 fromDwg 在"桥成功但回读为空"时给针对性报错）
+// ---------------------------------------------------------------------------
+bool converterDroppedCustomEntities(const QString& diag) {
+    if (diag.isEmpty()) return false;
+    // 直接命中 LibreDWG 的告警原文（大小写不敏感）：
+    //   "Unhandled Class entity 541 STDPART2D"        （AutoCAD Mechanical 标准件）
+    //   "Unhandled Class object ..." / "Unknown Class object ..."
+    // 这些是转换器"识别到实体但无法展开为普通图元"的明确信号。
+    static const char* kSignals[] = {
+        "STDPART2D", "UNHANDLED CLASS ENTITY", "UNKNOWN CLASS OBJECT",
+        "UNHANDLED CLASS", "ACME", "AMGSTD", "AMDT",
+    };
+    const QString s = diag.toUpper();
+    for (const char* sig : kSignals)
+        if (s.contains(QLatin1String(sig))) return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------

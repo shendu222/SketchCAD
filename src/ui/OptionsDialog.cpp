@@ -167,6 +167,20 @@ QWidget* OptionsDialog::buildDisplayPage() {
     chkOff_ = new QCheckBox(QStringLiteral("允许离屏渲染回退（预留）"), this);
     chkOff_->setToolTip(QStringLiteral("GPU 不可用时回退到离屏渲染；当前版本仅记录偏好"));
     form->addRow(chkOff_);
+    // 界面主题（内置亮/暗切换）：跟随系统 / 亮色 / 暗色
+    auto* sepTheme = new QLabel(this);
+    sepTheme->setFrameShape(QFrame::HLine);
+    form->addRow(sepTheme);
+    themeBox_ = new QComboBox(this);
+    addComboItem(themeBox_, tr("跟随系统"), QStringLiteral("system"));
+    addComboItem(themeBox_, tr("亮色（默认）"), QStringLiteral("light"));
+    addComboItem(themeBox_, tr("暗色"), QStringLiteral("dark"));
+    form->addRow(tr("界面主题："), themeBox_);
+    auto* themeHint = new QLabel(
+        QStringLiteral("切换后立即生效；「跟随系统」会随 Windows 深浅色自动变化。"), this);
+    themeHint->setStyleSheet(QStringLiteral("color: gray;"));
+    themeHint->setWordWrap(true);
+    form->addRow(QString(), themeHint);
     auto* inner = new QWidget(this);
     inner->setLayout(form);
     return formWrap(inner);
@@ -202,6 +216,29 @@ QWidget* OptionsDialog::buildFilesPage() {
             QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;所有文件 (*)"));
         if (!f.isEmpty()) tmplEdit_->setText(f);
     });
+    // DWG 转换组件路径（覆盖 SKETCHCAD_DWGTOOLS）：读取/写出 R2000+ DWG 依赖
+    // 外部 LibreDWG 转换器（dwg2dxf / dwgwrite）。空 = 用程序目录 tools/dwg 或环境变量。
+    dwgToolsEdit_ = new QLineEdit(this);
+    dwgToolsEdit_->setPlaceholderText(
+        QStringLiteral("（空 = 使用程序目录 tools/dwg 或环境变量 SKETCHCAD_DWGTOOLS）"));
+    auto* dwgRow = new QHBoxLayout();
+    dwgRow->addWidget(dwgToolsEdit_, 1);
+    auto* dwgBtn = new QPushButton(QStringLiteral("浏览..."), this);
+    dwgRow->addWidget(dwgBtn);
+    form->addRow(QStringLiteral("DWG 转换组件路径："), dwgRow);
+    connect(dwgBtn, &QPushButton::clicked, this, [this] {
+        const QString d = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("选择含 dwg2dxf.exe / dwgwrite.exe 的目录"), dwgToolsEdit_->text());
+        if (!d.isEmpty()) dwgToolsEdit_->setText(d);
+    });
+    auto* dwgHint = new QLabel(
+        QStringLiteral("读取/写出 R2000+ DWG 需要 LibreDWG 转换组件（dwg2dxf / dwgwrite，GPLv3，"
+                       "以独立进程运行，主程序不链接其代码）。\n"
+                       "安装包已在 tools/dwg/ 内置；如需自定义位置，在此指定（覆盖环境变量 SKETCHCAD_DWGTOOLS）。\n"
+                       "留空则自动查找程序目录 tools/dwg/ 或环境变量。"), this);
+    dwgHint->setStyleSheet(QStringLiteral("color: gray;"));
+    dwgHint->setWordWrap(true);
+    form->addRow(QString(), dwgHint);
     auto* hint = new QLabel(
         QStringLiteral("打开/保存对话框将优先定位到默认存盘目录；\n"
                        "最近使用过的目录会自动记忆（不属于图形内容，不随图存档）。"), this);
@@ -316,8 +353,10 @@ void OptionsDialog::loadWidgets() {
     chkLwd_->setChecked(s_->showLineWeight());
     chkGpu_->setChecked(s_->gpuAcceleration());
     chkOff_->setChecked(s_->offscreenFallback());
+    themeBox_->setCurrentIndex(comboIndexOfData(themeBox_, s_->theme()));
     saveDirEdit_->setText(s_->defaultSaveDir());
     tmplEdit_->setText(s_->defaultTemplate());
+    dwgToolsEdit_->setText(s_->dwgToolsOverride());
     intervalBox_->setCurrentIndex(comboIndexOfData(intervalBox_, s_->autosaveIntervalMinutes()));
     backupSpin_->setValue(s_->backupCount());
     diskSpin_->setValue(s_->lowDiskThresholdMb());
@@ -341,8 +380,10 @@ void OptionsDialog::loadWidgetsFromDefaults() {
     chkLwd_->setChecked(AppSettings::defaultValue(QLatin1String(kShowLineWeight)).toBool());
     chkGpu_->setChecked(AppSettings::defaultValue(QLatin1String(kGpuAcceleration)).toBool());
     chkOff_->setChecked(AppSettings::defaultValue(QLatin1String(kOffscreenFallback)).toBool());
+    themeBox_->setCurrentIndex(comboIndexOfData(themeBox_, AppSettings::defaultValue(QLatin1String(kTheme))));
     saveDirEdit_->setText(AppSettings::defaultValue(QLatin1String(kDefaultSaveDir)).toString());
     tmplEdit_->setText(AppSettings::defaultValue(QLatin1String(kDefaultTemplate)).toString());
+    dwgToolsEdit_->setText(AppSettings::defaultValue(QLatin1String(kDwgToolsOverride)).toString());
     intervalBox_->setCurrentIndex(
         comboIndexOfData(intervalBox_, AppSettings::defaultValue(QLatin1String(kAutosaveInterval))));
     backupSpin_->setValue(AppSettings::defaultValue(QLatin1String(kBackupCount)).toInt());
@@ -366,8 +407,10 @@ void OptionsDialog::collectWidgets() {
     s_->setShowLineWeight(chkLwd_->isChecked());
     s_->setGpuAcceleration(chkGpu_->isChecked());
     s_->setOffscreenFallback(chkOff_->isChecked());
+    s_->setTheme(themeBox_->currentData().toString());
     s_->setDefaultSaveDir(saveDirEdit_->text().trimmed());
     s_->setDefaultTemplate(tmplEdit_->text().trimmed());
+    s_->setDwgToolsOverride(dwgToolsEdit_->text().trimmed());
     s_->setAutosaveIntervalMinutes(intervalBox_->currentData().toInt());
     s_->setBackupCount(backupSpin_->value());
     s_->setLowDiskThresholdMb(diskSpin_->value());

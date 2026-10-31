@@ -320,6 +320,7 @@ static void appendStandardTitleBlock(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = s; e.radius = h;
+        e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("标题栏"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -330,6 +331,7 @@ static void appendStandardTitleBlock(std::vector<Element>& out,
         e.text = QString();                 // 初始为空，由用户填写
         e.name = QStringLiteral("tb:field:") + key;
         e.radius = h;
+        e.textAlign = 4;   // 中心对齐：后续任意长度的填写值都保持在格内（超宽由 refit 收缩）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -355,14 +357,16 @@ static void appendStandardTitleBlock(std::vector<Element>& out,
     const double y2 = by0 + 24.0;         // 材料/审核 带
     const double y3 = by0 + 36.0;         // 图号比例/设计 带（其上为图纸名称/单位）
 
+    // 标签→顶部标签带中心、字段→值区（去标签带）中心：两区分离，
+    // 填写值永不覆盖标签（同 fitTitleBlockText 写回端同一契约）
     auto labelInCell = [&](double left, double right, double bottom, double top,
                            const QString& s, double h) {
-        const CellTextFit f = fitCellText(s, h, left, right, bottom, top, true);
+        const CellTextFit f = fitCellLabelText(s, h, left, right, bottom, top);
         label(f.x, f.y, s, f.height);
     };
     auto fieldInCell = [&](double left, double right, double bottom, double top,
                            const QString& key, double h) {
-        const CellTextFit f = fitCellText(QString(), h, left, right, bottom, top, false);
+        const CellTextFit f = fitCellFieldValue(QString(), h, left, right, bottom, top);
         field(f.x, f.y, key, f.height);
     };
 
@@ -504,6 +508,7 @@ static double appendBom(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = s; e.radius = h;
+        e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（列内居中，见 TitleBlockLayout.h）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -551,6 +556,7 @@ static double appendGridBar(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = s; e.radius = h;
+        e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（列内居中）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -599,6 +605,7 @@ static void appendCodeBar(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = s; e.radius = h;
+        e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("图框"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -609,6 +616,7 @@ static void appendCodeBar(std::vector<Element>& out,
         e.text = QString();                 // 初始为空，随标题栏关联字段填写
         e.name = QStringLiteral("tb:field:") + key;
         e.radius = h;
+        e.textAlign = 4;   // 中心对齐：填写后仍居中（超宽由 refit 收缩）
         e.layer = QStringLiteral("图框"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -619,7 +627,7 @@ static void appendCodeBar(std::vector<Element>& out,
     seg(x0, y0, x0, y1, 2.0); seg(x1, y0, x1, y1, 2.0);
     seg(x0 + capW, y0, x0 + capW, y1, 1.0);
 
-    // 文本：fitCellText 同一入口（标签贴顶 / 字段贴底 / 超宽降字高）
+    // 文本：fitCellText 同一入口（锚点=格内中心 / 超宽降字高）
     const double hTxt = std::clamp(bandH * 0.45, 2.0, 3.5);
     {
         const CellTextFit f = fitCellText(preset.caption, hTxt, x0, x0 + capW, y0, y1, true);
@@ -824,6 +832,7 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = s; e.radius = h;
+        e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("标题栏"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -832,6 +841,7 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
         Element e;
         e.type = ElementType::Text; e.pts = {Vec3(x, y, 0)};
         e.text = value; e.name = QStringLiteral("tb:field:") + key; e.radius = h;
+        e.textAlign = 4;   // 中心对齐：预填长值已收缩适配，居中渲染
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
         out.push_back(std::move(e));
@@ -848,16 +858,17 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
     const double y2 = by0 + 24.0;   // 图号比例/绘制日期 带
     const double y3 = by0 + 36.0;   // 图纸名称 带（其上为高带）
 
-    // 文本放置：与 buildSheetFrame 同一入口 fitCellText（标签贴顶 / 字段贴底 /
-    // 超宽按比例降字高）。此处字段带 data 预填值，长图名在生成期即收缩适配。
+    // 文本放置：标签→顶部标签带中心（fitCellLabelText）、字段→值区中心
+    // （fitCellFieldValue）。两区分离永不重叠——此处字段带 data 预填值，
+    // 长图名在生成期即在值区内收缩适配，不会压住「图纸名称」等标签。
     auto labelInCell = [&](double left, double right, double bottom, double top,
                            const QString& s, double h) {
-        const CellTextFit f = fitCellText(s, h, left, right, bottom, top, true);
+        const CellTextFit f = fitCellLabelText(s, h, left, right, bottom, top);
         label(f.x, f.y, s, f.height);
     };
     auto fieldInCell = [&](double left, double right, double bottom, double top,
                            const QString& key, const QString& val, double h) {
-        const CellTextFit f = fitCellText(val, h, left, right, bottom, top, false);
+        const CellTextFit f = fitCellFieldValue(val, h, left, right, bottom, top);
         field(f.x, f.y, key, val, f.height);
     };
 

@@ -1,5 +1,6 @@
 #pragma once
 #include <QIcon>
+#include <QIconEngine>
 #include <QPixmap>
 #include <QPainter>
 #include <QPainterPath>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include "../core/Element.h"          // LineStyle / toPenStyle
 #include "../core/LineStyleConfig.h"  // lineStyleIsThick（粗/细档）
+#include "ThemeManager.h"             // 内置亮/暗主题：图标墨色随主题即时解析
 
 // ---------------------------------------------------------------------------
 // 图标库：全部用 QPainter 在代码里矢量绘制，不使用 .qrc / png 外部资源。
@@ -29,9 +31,16 @@
 namespace SketchCAD {
 namespace icons {
 
-inline QColor inkColor()   { return QColor(0x1F, 0x33, 0x52); }  // 主几何线条
-inline QColor markColor()  { return QColor(0xD1, 0x4B, 0x3F); }  // 控制点 / 强调
-inline QColor guideColor() { return QColor(0x9A, 0xA6, 0xB8); }  // 辅助线 / 虚线
+// 主几何线条墨色：随应用主题即时解析——暗色工具栏/菜单上用浅墨（深藏青在暗底
+// 上对比度过低几乎不可见，用户实测反馈），亮色保持原深藏青。
+// ⚠️ 必须在「绘制时」调用本函数取色（引擎化 make() 保证），禁止启动期烘焙进静态位图。
+inline QColor inkColor() {
+    return ThemeManager::instance()->effectiveMode() == ThemeManager::Mode::Dark
+        ? QColor(0xE8, 0xEE, 0xF6)   // 暗色主题：浅灰蓝
+        : QColor(0x1F, 0x33, 0x52);  // 亮色主题：深藏青（原色，亮色主题观感零变化）
+}
+inline QColor markColor()  { return QColor(0xD1, 0x4B, 0x3F); }  // 控制点 / 强调（红，两主题均可辨）
+inline QColor guideColor() { return QColor(0x9A, 0xA6, 0xB8); }  // 辅助线 / 虚线（灰蓝，两主题均可辨）
 
 namespace detail {
 
@@ -1052,19 +1061,66 @@ inline void paintGlyph(QPainter& g, const QString& id)
 
 } // namespace detail
 
+// ---------------------------------------------------------------------------
+// 主题感知矢量图标引擎：每次绘制时实时解析 inkColor()/guideColor() 等主题色。
+// 为什么不用启动期烘焙位图：图标只 make() 一次挂到 QAction 上，暗/亮主题切换后
+// 位图里的旧主题色不会跟随（暗色下深墨图标几乎不可见）。引擎让 QIcon 在每次
+// widget 重绘时重新走 paintGlyph，主题切换即时换色，无需重建任何 QAction。
+// ---------------------------------------------------------------------------
+class ThemeIconEngine : public QIconEngine {
+public:
+    explicit ThemeIconEngine(QString id) : id_(std::move(id)) {}
+
+    void paint(QPainter* p, const QRect& rect, QIcon::Mode /*mode*/,
+               QIcon::State /*state*/) override {
+        if (rect.isEmpty()) return;
+        p->save();
+        p->setRenderHint(QPainter::Antialiasing, true);
+        p->setRenderHint(QPainter::TextAntialiasing, true);
+        // 24x24 逻辑画布 → 目标矩形等比缩放居中（与旧 kSize 画布约定一致）
+        const qreal s = qMin<qreal>(rect.width(), rect.height()) / detail::kSize;
+        p->translate(rect.center());
+        p->scale(s, s);
+        p->translate(-detail::kSize / 2.0, -detail::kSize / 2.0);
+        detail::paintGlyph(*p, id_);
+        p->restore();
+    }
+
+    // 固定 2x 光栅化（与旧 make() 行为一致），高分屏不发虚
+    QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override {
+        QPixmap pm(size * 2);
+        pm.setDevicePixelRatio(2.0);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        paint(&p, QRect(QPoint(0, 0), size), mode, state);
+        p.end();
+        return pm;
+    }
+
+    // Qt6 高 DPI 路径：按请求 scale 出物理像素位图并标注 dpr，保持锐利
+    QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State state,
+                         qreal scale) override {
+        QPixmap pm(int(size.width() * scale), int(size.height() * scale));
+        pm.setDevicePixelRatio(scale);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        paint(&p, QRect(QPoint(0, 0), size), mode, state);
+        p.end();
+        return pm;
+    }
+
+    QIconEngine* clone() const override { return new ThemeIconEngine(id_); }
+    QString key() const override { return QStringLiteral("sketchcad-theme-icon"); }
+
+private:
+    QString id_;
+};
+
 // 生成工具/菜单图标。id 见 paintGlyph 内的分支。
+// 返回引擎化图标：墨色随 ThemeManager 主题在每次绘制时解析（暗色=浅墨，亮色=深藏青）。
 inline QIcon make(const QString& id)
 {
-    const qreal dpr = 2.0;   // 固定 2x 光栅化，缩放到 16/20/24px 都保持锐利
-    QPixmap pm(int(detail::kSize * dpr), int(detail::kSize * dpr));
-    pm.setDevicePixelRatio(dpr);
-    pm.fill(Qt::transparent);
-    QPainter g(&pm);
-    g.setRenderHint(QPainter::Antialiasing, true);
-    g.setRenderHint(QPainter::TextAntialiasing, true);
-    detail::paintGlyph(g, id);
-    g.end();
-    return QIcon(pm);
+    return QIcon(new ThemeIconEngine(id));
 }
 
 // 纯色色块图标：工具条颜色按钮与预设色菜单项共用
@@ -1083,7 +1139,10 @@ inline QIcon swatch(const QColor& c)
     return QIcon(pm);
 }
 
-// 线宽示意图标：按 px 画一条对应粗细的横线，下拉框里一眼可辨
+// 线宽示意图标：按 px 画一条对应粗细的横线，下拉框里一眼可辨。
+// 双描边（白色光晕 + 深墨线条）：同一图标既要进白底的下拉框（QComboBox 实测恒白底，
+// windows11 样式行为），也要进暗色调色板的下拉菜单（线宽/线型菜单）——单色墨无法
+// 同时在两种底色上可辨，白色光晕保证暗底可读且在白底上不可见。
 inline QIcon widthBar(double px)
 {
     const qreal dpr = 2.0;
@@ -1092,7 +1151,9 @@ inline QIcon widthBar(double px)
     pm.fill(Qt::transparent);
     QPainter g(&pm);
     g.setRenderHint(QPainter::Antialiasing, true);
-    g.setPen(QPen(inkColor(), px, Qt::SolidLine, Qt::RoundCap));
+    g.setPen(QPen(QColor(255, 255, 255, 210), px + 2.0, Qt::SolidLine, Qt::RoundCap));
+    g.drawLine(QPointF(3.5, 12.0), QPointF(20.5, 12.0));
+    g.setPen(QPen(QColor(0x1F, 0x33, 0x52), px, Qt::SolidLine, Qt::RoundCap));
     g.drawLine(QPointF(3.5, 12.0), QPointF(20.5, 12.0));
     g.end();
     return QIcon(pm);
@@ -1100,6 +1161,7 @@ inline QIcon widthBar(double px)
 
 // 线型示意图标：用对应 Qt::PenStyle 画一条横线，下拉框里一眼可辨。
 // 粗线档（GB/T 14665-2012 表1）用更粗的笔，使「虚线 / 粗虚线」「点画线 / 粗点画线」可区分。
+// 双描边同 widthBar：白色光晕 + 深墨（白底下拉框 / 暗底菜单两用）。
 inline QIcon lineStyleIcon(LineStyle ls)
 {
     const qreal dpr = 2.0;
@@ -1109,8 +1171,9 @@ inline QIcon lineStyleIcon(LineStyle ls)
     QPainter g(&pm);
     g.setRenderHint(QPainter::Antialiasing, true);
     const qreal w = lineStyleIsThick(ls) ? 2.6 : 1.4;
-    QPen pen(inkColor(), w, toPenStyle(ls), Qt::RoundCap, Qt::RoundJoin);
-    g.setPen(pen);
+    g.setPen(QPen(QColor(255, 255, 255, 210), w + 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    g.drawLine(QPointF(3.5, 12.0), QPointF(20.5, 12.0));
+    g.setPen(QPen(QColor(0x1F, 0x33, 0x52), w, toPenStyle(ls), Qt::RoundCap, Qt::RoundJoin));
     g.drawLine(QPointF(3.5, 12.0), QPointF(20.5, 12.0));
     g.end();
     return QIcon(pm);

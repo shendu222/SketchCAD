@@ -102,7 +102,7 @@ std::vector<Vec3> quadrantPoints(const Vec3& c, double r, double startDeg, doubl
     std::vector<Vec3> out;
     const double q[4] = {0.0, 90.0, 180.0, 270.0};
     for (double ang : q) {
-        if (isArc && !geo::angleInSweep(ang, startDeg, endDeg - startDeg)) continue;
+        if (isArc && !geo::angleInSweep(ang, startDeg, geo::arcSweepDeg(startDeg, endDeg))) continue;
         const double a = ang * M_PI / 180.0;
         out.push_back(Vec3(c.x + r * std::cos(a), c.y + r * std::sin(a), c.z));
     }
@@ -210,7 +210,7 @@ static Vec3 nearestPointOnElement(const Element& e, const Vec3& w, Vec3& nr) {
             Vec3 p = c + rad * e.radius;
             if (e.type == ElementType::Arc) {
                 const double ang = rad.angleDeg();
-                if (!geo::angleInSweep(ang, e.startAngle, e.endAngle - e.startAngle))
+                if (!geo::angleInSweep(ang, e.startAngle, geo::arcSweepDeg(e.startAngle, e.endAngle)))
                     p = c;   // 落在弧段外：回退圆心（由 Endpoint 兜底）
             }
             return p;
@@ -289,7 +289,7 @@ bool perpendicularFoot(const Vec3& w, const Element& e, Vec3& foot) {
             Vec3 p = c + rad * e.radius;
             if (e.type == ElementType::Arc) {
                 const double ang = rad.angleDeg();
-                if (!geo::angleInSweep(ang, e.startAngle, e.endAngle - e.startAngle)) return false;
+                if (!geo::angleInSweep(ang, e.startAngle, geo::arcSweepDeg(e.startAngle, e.endAngle))) return false;
             }
             foot = p;
             return true;
@@ -423,7 +423,7 @@ SnapResult snap(const std::vector<Element>& elems, const Vec3& w,
             for (int k = 0; k < n; ++k) {
                 if (e.type == ElementType::Arc) {
                     const double ang = (out[k] - e.pts[0]).angleDeg();
-                    if (!geo::angleInSweep(ang, e.startAngle, e.endAngle - e.startAngle)) continue;
+                    if (!geo::angleInSweep(ang, e.startAngle, geo::arcSweepDeg(e.startAngle, e.endAngle))) continue;
                 }
                 consider(out[k], SnapType::Tangent, e.id);
             }

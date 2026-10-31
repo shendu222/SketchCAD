@@ -40,9 +40,12 @@
 #include "core/ElementFactory.h"
 #include "core/TextStyle.h"
 #include "core/TextMetrics.h"     // 文字度量单一数据源：屏幕/打印/取景三处同源
+#include "core/ZwcadTextLayout.h"  // ZWCAD 规范文字排版引擎（锚点/行距/缩进/换行唯一入口）
 #include "core/CommandPrompt.h"   // 选项关键字匹配（C/闭合、U/放弃）
 #include "core/ConstraintSolver.h"   // 过约束/冲突诊断（需求④）：diagnose 重算冲突集合
 #include "core/ShapeSelect.h"        // 栏选/圈围/圈交判定（fence/wp/cp）
+#include "ui/ThemeManager.h"          // 内置亮/暗主题：画布背景随主题翻色
+#include "ui/DrawingTheme.h"          // 绘图区域全套主题配色（网格/坐标轴/引导线/HUD…）
 
 // ============================ 平移排查调试日志 ============================
 // 右键拖不动时，把每一步鼠标/右键事件的现场写入 %TEMP%/sketchcad_pan.log，
@@ -119,14 +122,8 @@ static double worldLengthOf(const Element& e) {
     }
 }
 
-static const QColor GRID_MINOR(244, 182, 182); // 淡红 F4B6B6
-static const QColor GRID_MAJOR(230, 138, 138); // 略深淡红 E68A8A
-static const QColor AXIS_X(200, 60, 60);
-static const QColor AXIS_Y(40, 150, 80);
-static const QColor HL(31, 95, 139);           // 选中高亮蓝
-static const QColor PREVIEW(31, 95, 139, 215);
-static const QColor GUIDE(120, 140, 170, 170);
-static const QColor WARN(214, 48, 49);     // 过约束/冲突高亮红
+// 以下视觉常量全部改为读取 DrawingTheme::current()（见各绘制函数），
+// 以支持绘图区域亮/暗主题联动；不再以文件级 static const 硬编码。
 
 // 构造线(Xline)的兜底裁剪范围 —— 与 GraphicsView 构造里的
 // scene_->setSceneRect(QRectF(-1e5,-1e5,2e5,2e5)) 保持一致。
@@ -244,8 +241,8 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
     if (!preview && pxMax < 2.0) {
         // 屏幕上不足 2px：画一个 1px 实心点，代价 O(1)
         const Element re = model ? model->resolveElement(el) : el;
-        QPen dp(re.color); dp.setCosmetic(true); dp.setWidthF(1.0);
-        p->setPen(dp); p->setBrush(re.color);
+        QPen dp(DrawingTheme::resolveInk(re.color)); dp.setCosmetic(true); dp.setWidthF(1.0);
+        p->setPen(dp); p->setBrush(DrawingTheme::resolveInk(re.color));
         const QPointF c = br.center();
         p->drawRect(QRectF(c.x() - 0.5 / z, c.y() - 0.5 / z, 1.0 / z, 1.0 / z));
         p->setBrush(Qt::NoBrush);
@@ -255,7 +252,7 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
 
     // 构造辅助线（虚线细线）：让「圆心+半径」「三点定圆」「圆弧扫掠」的几何关系在拖动时可见
     if (!guides.empty()) {
-        QPen gp(GUIDE);
+        QPen gp(DrawingTheme::current().guide);
         gp.setCosmetic(true);
         gp.setWidthF(1.0);
         gp.setStyle(Qt::DashLine);
@@ -280,11 +277,12 @@ void ElementItem::paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) 
 // 波浪线/双折线由 buildPath 自定义路径绘制，这里用实线笔（避免叠加虚线）。
 // 抽取为独立函数：块引用内的子图元复用同一套笔参数，观感与独立图元完全一致。
 QPen ElementItem::penFor(const Element& e) const {
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     // ByLayer 动态解析：随层图元在此统一解析为「图层属性覆盖」后的副本，
     // 渲染与打印共用 model->resolveElement，使改层色/线型/线宽全层实时联动。
     const Element re = model ? model->resolveElement(e) : e;
     const double lt = model ? model->ltscale() : 1.0;   // 全局线型比例 LTSCALE
-    QPen pen(preview ? PREVIEW : (warn ? WARN : (highlight ? HL : re.color)));
+    QPen pen(preview ? th.preview : (warn ? th.warn : (highlight ? th.selection : DrawingTheme::resolveInk(re.color))));
     pen.setCosmetic(true);                       // 线宽按屏幕像素固定，缩放不改变视觉粗细
     const double effW = re.effectiveLineWidth();  // 图纸 mm（自动=当前线组粗/细档；手动=覆盖值）
     double wpx  = mmToScreenPx(std::max(0.05, effW));  // 换算为屏幕像素
@@ -372,7 +370,7 @@ void ElementItem::paintOne(QPainter* p, const Element& e) const {
         const double r = 3.5 / z;                 // 屏幕恒定 3.5px，任何缩放下清晰可见
         const QPointF c = qpt(e.pts[0]);
         p->setBrush(Qt::NoBrush);
-        p->setPen(QPen(e.color, 1.2 / z, Qt::SolidLine, Qt::RoundCap));
+        p->setPen(QPen(DrawingTheme::resolveInk(e.color), 1.2 / z, Qt::SolidLine, Qt::RoundCap));
         p->drawEllipse(c, r, r);                  // 点：小圆 + 十字准星，强调「节点」语义
         p->drawLine(QPointF(c.x() - 2 * r, c.y()), QPointF(c.x() + 2 * r, c.y()));
         p->drawLine(QPointF(c.x(), c.y() - 2 * r), QPointF(c.x(), c.y() + 2 * r));
@@ -397,7 +395,7 @@ void ElementItem::paintHatch(QPainter* p, const Element& e) const {
     const QPainterPath path = buildPath(e);   // 外边界 + 内孔，OddEvenFill
 
     // 外轮廓（剖切边界）线宽 = 图元自身线宽（填充后保留原粗实线，不变细）
-    QPen outlinePen(highlight ? HL : e.color);
+    QPen outlinePen(highlight ? DrawingTheme::current().selection : DrawingTheme::resolveInk(e.color));
     outlinePen.setCosmetic(true);
     outlinePen.setStyle(Qt::SolidLine);
     const double effW = std::max(0.6, mmToScreenPx(e.effectiveLineWidth()));
@@ -410,7 +408,7 @@ void ElementItem::paintHatch(QPainter* p, const Element& e) const {
     if (mode == HatchDraw::SolidFill) {
         // 狭小区域：涂黑代替剖面线（4.5 允许涂色/点阵代替剖面符号）
         p->setPen(outlinePen);
-        p->setBrush(e.color);
+        p->setBrush(DrawingTheme::resolveInk(e.color));
         if (!path.isEmpty()) p->drawPath(path);
         return;
     }
@@ -440,7 +438,7 @@ void ElementItem::paintHatch(QPainter* p, const Element& e) const {
         p->save();
         p->setClipPath(path);
         p->setPen(Qt::NoPen);
-        p->setBrush(e.color);
+        p->setBrush(DrawingTheme::resolveInk(e.color));
         const double r = 0.9;   // 点半径（屏幕像素，cosmetic）
         for (const auto& d : dots)
             p->drawEllipse(qpt(d), r, r);
@@ -454,7 +452,7 @@ void ElementItem::paintHatch(QPainter* p, const Element& e) const {
 void ElementItem::paintBoundary(QPainter* p, const Element& e) const {
     const QPainterPath path = buildPath(e);   // 外边界 + 内孔，OddEvenFill
     if (path.isEmpty()) return;
-    QPen pen(highlight ? HL : e.color);
+    QPen pen(highlight ? DrawingTheme::current().selection : DrawingTheme::resolveInk(e.color));
     pen.setCosmetic(true);
     pen.setStyle(Qt::DashLine);
     const double effW = std::max(0.6, mmToScreenPx(e.effectiveLineWidth()));
@@ -628,7 +626,7 @@ void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
         tri << qpt(tip) << qpt(Vec3(base.x + n.x, base.y + n.y, base.z))
             << qpt(Vec3(base.x - n.x, base.y - n.y, base.z));
         p->setPen(Qt::NoPen);
-        p->setBrush(e.color);
+        p->setBrush(DrawingTheme::resolveInk(e.color));
         p->drawPolygon(tri);
         p->setBrush(Qt::NoBrush);
     }
@@ -636,7 +634,7 @@ void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
     // 多行文字（逐行锚点已在几何里；用屏幕恒定字号绘制）
     if (!g.texts.empty()) {
         p->save();
-        p->setPen(e.color);
+        p->setPen(DrawingTheme::resolveInk(e.color));
         for (const auto& t : g.texts) {
             if (t.text.isEmpty()) continue;
             p->save();
@@ -669,7 +667,7 @@ void ElementItem::paintFcf(QPainter* p, const Element& e) const {
 
     if (!g.texts.empty()) {
         p->save();
-        p->setPen(e.color);
+        p->setPen(DrawingTheme::resolveInk(e.color));
         for (const auto& t : g.texts) {
             if (t.text.isEmpty()) continue;
             p->save();
@@ -697,9 +695,19 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
     // 字段（FIELD）占位解析：%<CODE>% → 当前值（纯文本无占位则原样返回）
     const QString display = resolveFields(e.text, model);
 
-    // 三处同源：用 TextMetrics 统一布局(mm)，再乘 z 映射到设备像素（与打印/取景一致）。
+    // ZWCAD 规范排版（唯一入口）：段落/缩进/换行/5-3 行距/9 点对齐盒子全部由
+    // ZwcadTextLayout 计算——渲染端只逐行画 LineBox，不再自行推导锚点数学
+    //（修复：旧 yc=startYv−(i+0.5)·lineH 在「局部 y 向下」坐标系按「y 向上」
+    //  推导 → 块画到锚点上方且行序颠倒，与 elementBoundsMm 互相矛盾）。
     const double mw = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
-    const TextLayout lay = TextMetrics::layout(rs, display, th, mw, isM ? e.lineSpacing : 1.0);
+    ZwcadText::Format tf;
+    tf.heightMm          = th;
+    tf.lineSpacingFactor = e.lineSpacing;
+    tf.attach            = e.textAlign;
+    tf.wrapWidthMm       = mw;
+    const ZwcadText::Result lay = isM
+        ? ZwcadText::layoutMText(display, tf, rs)
+        : ZwcadText::layoutSingleLine(display, tf, rs);
 
     p->save();
     p->translate(e.pts[0].x, e.pts[0].y);
@@ -719,25 +727,15 @@ void ElementItem::paintText(QPainter* p, const Element& e) const {
         p->shear(std::tan(rs.obliquingAngle * M_PI / 180.0), 0.0);
 
     const QFontMetricsF fm(f);
-    const double hh = fm.height();                        // 设备像素（用于垂直居中）
-    const double lineHpx = lay.lineHeightMm * z;          // 单行高度(设备px)
-    const int    align   = e.textAlign;                   // 9 点对齐（Text 默认 1=中上；导入带 72/73 真值）
-    const int    hA = align % 3, vA = align / 3;           // 0左/1中/右 ; 0上/1中/2下
-    const double totalHpx = lay.heightMm * z;
-    const double startYv = (vA == 0) ? 0.0 : (vA == 1) ? totalHpx / 2.0 : totalHpx;
+    const double hh = fm.height();                        // 设备像素（用于行槽内垂直居中）
 
-    p->setPen(e.color);
+    p->setPen(DrawingTheme::resolveInk(e.color));
     p->setBrush(Qt::NoBrush);
-    for (int i = 0; i < lay.lines.size(); ++i) {
-        const double wpx = lay.lines[i].widthMm * z;
-        const double yc = startYv - (i + 0.5) * lineHpx;    // 行中心（局部 y 向上）
-        // 锚点=对齐点：左→行首在锚点；中→行中心在锚点；右→行尾在锚点
-        double x0;
-        if (hA == 0)      x0 = 0;
-        else if (hA == 1) x0 = -wpx / 2;
-        else              x0 = -wpx;
-        const QRectF box(x0, yc - hh / 2, wpx, hh);
-        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lay.lines[i].text);
+    // LineBox 坐标系：锚点为原点、Y 向下为正——与 scale(1/z,-1/z) 后的局部系一致，
+    // 直接按 mm×z 映射；行序 = lines 顺序 = 屏幕自上而下（ZWCAD 语义）。
+    for (const auto& lb : lay.lines) {
+        const QRectF box(lb.xMm * z, lb.yCenterMm * z - hh / 2.0, lb.widthMm * z, hh);
+        p->drawText(box, Qt::AlignLeft | Qt::AlignVCenter, lb.text);
     }
     p->restore();
 }
@@ -769,7 +767,7 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
     const double totalW = xs[C];
     const double totalH = R * rh;
 
-    QPen pen(preview ? PREVIEW : (highlight ? HL : e.color));
+    QPen pen(preview ? DrawingTheme::current().preview : (highlight ? DrawingTheme::current().selection : DrawingTheme::resolveInk(e.color)));
     pen.setCosmetic(true);                                // 网格线宽随屏幕像素，缩放不变粗细
     const double effW = std::max(0.6, mmToScreenPx(e.effectiveLineWidth()));
     pen.setWidthF(highlight ? effW + 1.0 : effW);
@@ -795,7 +793,7 @@ void ElementItem::paintTable(QPainter* p, const Element& e) const {
     const double pad = 1.0 * z;                           // 单元格内边距 1mm
     const double hh = fm.height();
     const int hA = std::clamp(e.textAlign, 0, 2);         // 0=左 1=中 2=右
-    p->setPen(e.color);
+    p->setPen(DrawingTheme::resolveInk(e.color));
     // 单元格文字样式（字高/字体/宽度因子）用于真实度量与溢出省略
     ResolvedTextStyle crs;
     crs.fontFamily  = rs.fontFamily;
@@ -857,7 +855,16 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     setFrameShape(QFrame::NoFrame);  // 去掉边框，使视口与标尺在网格布局中完全对齐
     setMouseTracking(true);
     setRenderHint(QPainter::Antialiasing);
-    setBackgroundBrush(QColor(245, 247, 250));
+    // 画布背景与全部绘图区视觉元素随内置主题翻色：
+    // drawBackground/drawAxes/drawForeground 在绘制时统一读取 DrawingTheme::current()，
+    // 故主题切换只需一次 viewport 重绘（FullViewportUpdate 单缓冲帧、无闪烁）。
+    // 订阅 ThemeManager::themeChanged：运行时切换主题即时刷新本视图（含多文档各独立视图）。
+    setBackgroundBrush(SketchCAD::ThemeManager::instance()->canvasColor());
+    connect(SketchCAD::ThemeManager::instance(), &SketchCAD::ThemeManager::themeChanged,
+            this, [this] {
+                setBackgroundBrush(SketchCAD::ThemeManager::instance()->canvasColor());
+                viewport()->update();
+            });
     setViewportUpdateMode(QGraphicsView::FullViewportUpdate);
     setAcceptDrops(true);
     setContextMenuPolicy(Qt::NoContextMenu);   // 右键留给「结束连续绘制」
@@ -1435,6 +1442,7 @@ static Vec3 constraintAnchor(const SketchModel* m, const ConstraintRecord& r) {
 void GraphicsView::drawConstraintMarkers(QPainter* p) {
     const auto& recs = model_->constraints();
     if (recs.empty()) return;
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     p->save();
     const double s = 5.0 / zoom_;                       // 图标半边长（场景单位，屏幕恒大小）
     for (const auto& r : recs) {
@@ -1446,7 +1454,7 @@ void GraphicsView::drawConstraintMarkers(QPainter* p) {
             if (!ea && !eb) continue;
         }
         const double cx = a.x, cy = a.y;
-        const QColor col = r.satisfied ? QColor(30, 150, 110) : QColor(220, 120, 30);
+        const QColor col = r.satisfied ? th.constraintOk : th.constraintWarn;
         QPen sp(col); sp.setWidthF(1.4 / zoom_); sp.setCosmetic(true);
         p->setPen(sp);
         p->setBrush(col);
@@ -1472,7 +1480,7 @@ void GraphicsView::drawConflictOverlay(QPainter* p) {
     const QString msg = QStringLiteral("⚠ 检测到过约束 / 冲突：图元 #%1（请移除矛盾或冗余约束）")
                            .arg(s.join(" #"));
     const QPointF tl = mapToScene(10, 10);            // 视口左上角，屏幕恒定位置
-    drawPixelText(p, tl, msg, WARN, 13, true);
+    drawPixelText(p, tl, msg, DrawingTheme::current().warn, 13, true);
     p->restore();
 }
 
@@ -1534,9 +1542,10 @@ void GraphicsView::onViewChanged() { viewport()->update(); }
 // ---------------------------- 背景与坐标系 ----------------------------
 
 void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     ++paintCount_;                                  // P0-04：实际绘制帧计数（节流自测用）
     lastPaintMs_ = QDateTime::currentMSecsSinceEpoch();
-    p->fillRect(rect, QColor(245, 247, 250));
+    p->fillRect(rect, th.canvas);                   // 画布背景随主题翻色
 
     if (model_->showGrid()) {
         const Ucs& ucs = model_->currentUcs();
@@ -1582,13 +1591,13 @@ void GraphicsView::drawBackground(QPainter* p, const QRectF& rect) {
                 p->drawLines(ls);
                 p->restore();
             };
-            if (1.0 * zoom_ >= 3.0)       { gridU(1.0,  GRID_MINOR, 1.0); gridU(10.0,  GRID_MAJOR, 1.0); }
-            else if (10.0 * zoom_ >= 3.0) { gridU(10.0, GRID_MINOR, 1.0); gridU(100.0, GRID_MAJOR, 1.0); }
-            else                          { gridU(100.0, GRID_MAJOR, 1.0); }
+            if (1.0 * zoom_ >= 3.0)       { gridU(1.0,  th.gridMinor, 1.0); gridU(10.0,  th.gridMajor, 1.0); }
+            else if (10.0 * zoom_ >= 3.0) { gridU(10.0, th.gridMinor, 1.0); gridU(100.0, th.gridMajor, 1.0); }
+            else                          { gridU(100.0, th.gridMajor, 1.0); }
         } else {
-            if (1.0 * zoom_ >= 3.0)       { grid(1.0,  GRID_MINOR, 1.0); grid(10.0,  GRID_MAJOR, 1.0); }
-            else if (10.0 * zoom_ >= 3.0) { grid(10.0, GRID_MINOR, 1.0); grid(100.0, GRID_MAJOR, 1.0); }
-            else                          { grid(100.0, GRID_MAJOR, 1.0); }
+            if (1.0 * zoom_ >= 3.0)       { grid(1.0,  th.gridMinor, 1.0); grid(10.0,  th.gridMajor, 1.0); }
+            else if (10.0 * zoom_ >= 3.0) { grid(10.0, th.gridMinor, 1.0); grid(100.0, th.gridMajor, 1.0); }
+            else                          { grid(100.0, th.gridMajor, 1.0); }
         }
     }
 
@@ -1601,6 +1610,7 @@ void GraphicsView::drawAxes(QPainter* p) const {
 
     // 坐标系图标随当前 UCS 摆放：UCS=世界时变换为恒等（行为不变）；
     // UCS 平移/旋转时图标落在 UCS 原点、按 UCS 角旋转（AutoCAD UCS 图标语义）。
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     const Ucs& ucs = model_->currentUcs();
     p->save();
     if (!ucs.isWorld()) {
@@ -1608,12 +1618,12 @@ void GraphicsView::drawAxes(QPainter* p) const {
         p->rotate(math::rad2deg(ucs.angleRad));
     }
 
-    QPen ax(AXIS_X); ax.setCosmetic(true); ax.setWidthF(1.6);
-    QPen ay(AXIS_Y); ay.setCosmetic(true); ay.setWidthF(1.6);
+    QPen ax(th.axisX); ax.setCosmetic(true); ax.setWidthF(1.6);
+    QPen ay(th.axisY); ay.setCosmetic(true); ay.setWidthF(1.6);
 
     p->setPen(ax);
     p->drawLine(QLineF(0, 0, L, 0));
-    p->setBrush(AXIS_X);
+    p->setBrush(th.axisX);
     p->setPen(Qt::NoPen);
     QPolygonF hx;
     hx << QPointF(L, 0) << QPointF(L - head, head * 0.40) << QPointF(L - head, -head * 0.40);
@@ -1621,19 +1631,19 @@ void GraphicsView::drawAxes(QPainter* p) const {
 
     p->setPen(ay);
     p->drawLine(QLineF(0, 0, 0, L));    // Y 翻转后，+Y 在屏幕上就是朝上
-    p->setBrush(AXIS_Y);
+    p->setBrush(th.axisY);
     p->setPen(Qt::NoPen);
     QPolygonF hy;
     hy << QPointF(0, L) << QPointF(head * 0.40, L - head) << QPointF(-head * 0.40, L - head);
     p->drawPolygon(hy);
 
-    p->setBrush(QColor(70, 74, 84));
+    p->setBrush(th.originCross);
     p->drawEllipse(QPointF(0, 0), 2.4 / zoom_, 2.4 / zoom_);
     p->setBrush(Qt::NoBrush);
 
-    drawPixelText(p, QPointF(L + 5.0 / zoom_, 0),          "X", AXIS_X, 12, true);
-    drawPixelText(p, QPointF(5.0 / zoom_, L + 2.0 / zoom_), "Y", AXIS_Y, 12, true);
-    drawPixelText(p, QPointF(4.0 / zoom_, -4.0 / zoom_),    "O", QColor(70, 74, 84), 11, false);
+    drawPixelText(p, QPointF(L + 5.0 / zoom_, 0),          "X", th.axisX, 12, true);
+    drawPixelText(p, QPointF(5.0 / zoom_, L + 2.0 / zoom_), "Y", th.axisY, 12, true);
+    drawPixelText(p, QPointF(4.0 / zoom_, -4.0 / zoom_),    "O", th.axisLabel, 11, false);
     p->restore();
 }
 
@@ -1985,6 +1995,7 @@ void GraphicsView::logSnapToggle(const QString& name, bool on) {
 }
 
 void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     QGraphicsView::drawForeground(p, rect);
 
     p->save();
@@ -1994,11 +2005,11 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     // 框选橡皮筋：场景坐标系下的虚线矩形 + 半透明填充
     if (marqueeActive_) {
         p->save();
-        QPen mp(QColor(70, 130, 255));
+        QPen mp(th.marquee);
         mp.setStyle(Qt::DashLine);
         mp.setCosmetic(true);                 // 线宽按屏幕像素，不随缩放变化
         p->setPen(mp);
-        p->setBrush(QColor(70, 130, 255, 28));
+        p->setBrush(th.marqueeFill);
         p->drawRect(marquee_.normalized());
         p->restore();
     }
@@ -2006,11 +2017,11 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     // 窗口缩放框选橡皮筋：绿色虚线矩形 + 半透明填充（与多选框选区分配色）
     if (zoomBoxActive_) {
         p->save();
-        QPen zp(QColor(30, 160, 90));
+        QPen zp(th.zoomBox);
         zp.setStyle(Qt::DashLine);
         zp.setCosmetic(true);                 // 线宽按屏幕像素，不随缩放变化
         p->setPen(zp);
-        p->setBrush(QColor(30, 160, 90, 24));
+        p->setBrush(th.zoomBoxFill);
         p->drawRect(zoomBoxRect_.normalized());
         p->restore();
     }
@@ -2028,12 +2039,12 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             for (const auto& v : poly) qp << QPointF(v.x, v.y);
             hl.addPolygon(qp);
         }
-        QPen hp(QColor(255, 140, 0));
+        QPen hp(th.regionPick);
         hp.setCosmetic(true);                 // 线宽按屏幕像素，不随缩放变化
         hp.setWidthF(1.6);
         hp.setStyle(Qt::DashLine);
         p->setPen(hp);
-        p->setBrush(QColor(255, 140, 0, 40));
+        p->setBrush(th.regionPickFill);
         if (!hl.isEmpty()) p->drawPath(hl);
         p->restore();
     }
@@ -2127,7 +2138,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         // ① 临时追踪点（TK）：青色小叉
         if (!model_->trackPoints().empty()) {
             p->save();
-            QPen tkp(QColor(0, 170, 170));
+            QPen tkp(th.tempTkGuide);
             tkp.setWidthF(1.2 / zoom_); tkp.setCosmetic(true);
             p->setPen(tkp);
             const double s = 4.0 / zoom_;
@@ -2141,7 +2152,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         // ② 对象追踪对齐线（已获取的 OSNAP 锚点）：蓝色水平/垂直虚线
         if (tc.objectTrack && !otrackAnchors_.empty()) {
             p->save();
-            QPen op(QColor(0, 150, 220, 170));
+            QPen op(th.objTrackGuide);
             op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
             p->setPen(op);
             for (const auto& a : otrackAnchors_) {
@@ -2163,7 +2174,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             }
             const auto angs = snap::polarAngles(tc, ld, model_->currentUcs().angleRad * 180.0 / M_PI);
             p->save();
-            QPen pp(QColor(220, 140, 0, 170));
+            QPen pp(th.polarGuide);
             pp.setStyle(Qt::DashLine); pp.setWidthF(1.0 / zoom_); pp.setCosmetic(true);
             p->setPen(pp);
             for (double deg : angs) {
@@ -2179,7 +2190,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             const Vec3 base = pendingPts_.back();
             const Ucs& ucs = model_->currentUcs();
             p->save();
-            QPen op(QColor(90, 100, 120, 150));
+            QPen op(th.orthoGuide);
             op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
             p->setPen(op);
             p->drawLine(QPointF(base.x - R * ucs.xAxis().x, base.y - R * ucs.xAxis().y),
@@ -2193,9 +2204,9 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         if (trackNow_.hit) {
             p->save();
             const double s = 6.0 / zoom_;
-            const QColor c = (trackNow_.mode == snap::TrackMode::Polar)       ? QColor(230, 150, 0)
-                           : (trackNow_.mode == snap::TrackMode::TempTK)      ? QColor(0, 170, 170)
-                                                                              : QColor(0, 150, 220);
+            const QColor c = (trackNow_.mode == snap::TrackMode::Polar)       ? th.trackDropPolar
+                           : (trackNow_.mode == snap::TrackMode::TempTK)      ? th.trackDropTk
+                                                                              : th.trackDropObj;
             QPen tp(c); tp.setWidthF(1.4 / zoom_); tp.setCosmetic(true);
             p->setPen(tp);
             p->drawLine(QPointF(trackNow_.point.x - s, trackNow_.point.y),
@@ -2219,7 +2230,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     QFont f = p->font();
     f.setPixelSize(12);
     p->setFont(f);
-    p->setPen(QColor(108, 116, 132));
+    p->setPen(th.hudText);
     // HUD 首行：工作平面 + 当前 UCS（世界系显示 WCS，命名/临时 UCS 显示名称/原点/旋转角）
     const Ucs& ucsHud = model_->currentUcs();
     const QString ucsTxt = ucsHud.isWorld()
@@ -2235,7 +2246,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                             .arg((int)PICK_TOL_PX));
     if (drawToolActive_) {
         const auto mk = [](bool on) { return on ? QStringLiteral("✓") : QStringLiteral("✗"); };
-        p->setPen(QColor(70, 130, 255));
+        p->setPen(th.hudAccentBlue);
         p->drawText(10, 36, QString("捕捉开关  [E]端点%1  [T]切线%2  [M]中点%3  [C]圆心%4  [X]交点%5   （绘制中按对应键切换）")
                                 .arg(mk(snapCfg_.endpoint))
                                 .arg(mk(snapCfg_.tangent))
@@ -2248,7 +2259,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
                                 .arg(mk(snapCfg_.parallel)).arg(mk(snapCfg_.extension)).arg(mk(snapCfg_.midBetween)));
         // 追踪状态行：极轴（含增量角）/ 对象追踪 / 临时追踪点数量（命令行 polar/otrack/tk 可控制）
         const auto& tc = model_->trackConfig();
-        p->setPen(QColor(190, 140, 40));
+        p->setPen(th.hudAccentOrange);
         p->drawText(10, 72, QString("追踪      极轴%1（增量 %2°%3）  对象追踪%4  临时追踪点 %5 个")
                                 .arg(mk(tc.polar))
                                 .arg(tc.polarIncrement, 0, 'f', 0)
@@ -2261,7 +2272,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     // 因此这行文字即"当前真相"，任何入口改动都会即时反映到这里。
     {
         const auto on = [](bool b) { return b ? QStringLiteral("✓") : QStringLiteral("✗"); };
-        p->setPen(QColor(80, 120, 90));
+        p->setPen(th.hudAccentGreen);
         p->drawText(10, drawToolActive_ ? 90 : 36,
                     QString("输入约束  [F8]正交%1  [F9]栅格吸附%2（步长 %3 mm）  捕捉容差 %4 px")
                         .arg(on(model_->orthoMode()))
@@ -2276,7 +2287,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     {
         const QString cl = model_->currentLayer();
         const Layer* L = model_->findLayer(cl);
-        const QColor lc = (L && L->color.isValid()) ? L->color : QColor(26, 29, 40);
+        const QColor lc = (L && L->color.isValid()) ? L->color : th.layerDefault;
         const QString txt = QStringLiteral("当前图层：") + cl;
         QFont bf = p->font(); bf.setPixelSize(13); bf.setBold(true);
         QFontMetrics fm(bf);
@@ -2288,15 +2299,15 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         const int bx = viewport()->width() - bw - margin;
         const int by = margin;
         p->setPen(Qt::NoPen);
-        p->setBrush(QColor(255, 255, 255, 235));        // 半透明白底
+        p->setBrush(th.badgeBg);                        // 半透明底
         p->drawRoundedRect(bx, by, bw, bh, 6, 6);
-        p->setPen(QColor(120, 130, 150));               // 边框
+        p->setPen(th.badgeBorder);                      // 边框
         p->setBrush(Qt::NoBrush);
         p->drawRoundedRect(bx, by, bw, bh, 6, 6);
         p->setPen(Qt::NoPen);
         p->setBrush(lc);                                // 图层色块
         p->drawRoundedRect(bx + padX, by + (bh - sw) / 2, sw, sw, 2, 2);
-        p->setPen(QColor(28, 32, 42));
+        p->setPen(th.badgeText);
         p->setFont(bf);
         p->drawText(bx + padX + sw + 6, by + padY + fm.ascent(), txt);
     }
@@ -3351,8 +3362,9 @@ void GraphicsView::updateGripPreview(const Vec3& w) {
             if (c.remove) continue;
             path.addPath(ElementItem::buildPath(c.replacement));
         }
-        // 预览画成虚线橙色（区别于正式图元），且不进 scene 索引参与命中
-        gripPreviewItem_ = scene_->addPath(path, QPen(QColor(230, 145, 56), 0, Qt::DashLine));
+        // 预览画成虚线暖色（区别于正式图元），且不进 scene 索引参与命中
+        const DrawingTheme::Palette& th = DrawingTheme::current();
+        gripPreviewItem_ = scene_->addPath(path, QPen(th.grip, 0, Qt::DashLine));
         gripPreviewItem_->setZValue(1001);
     }
     viewport()->update();
@@ -3437,6 +3449,7 @@ void GraphicsView::finalizeShapePick() {
 }
 
 void GraphicsView::drawHandles(QPainter* p) const {
+    const DrawingTheme::Palette& th = DrawingTheme::current();
     const double r = 3.5 / zoom_;
     auto box = [&](const Vec3& v, const QColor& fill, const QColor& line, double k) {
         p->setBrush(fill);
@@ -3448,19 +3461,19 @@ void GraphicsView::drawHandles(QPainter* p) const {
     // 选中图元的全部控制点
     if (const Element* s = model_->selected()) {
         for (const auto& v : geo::elementHandles(*s))
-            box(v, QColor(255, 255, 255), HL, 1.0);
+            box(v, QColor(255, 255, 255), th.selection, 1.0);
     }
     // 光标下的控制点：放大并染色；有联动时用暖色提示「拖它会带走别人」
     if (hoverHandle_ && !gripHot_) {
         const bool linked = hoverLinked_ > 1;
-        box(hoverPos_, linked ? QColor(230, 145, 56) : HL, QColor(31, 95, 139), 1.6);
+        box(hoverPos_, linked ? th.grip : th.selection, th.gripLine, 1.6);
     }
     // 热夹点：实心橙块标识当前基准点（热态中恒定显示）
     if (gripHot_)
-        box(gripData_.base, QColor(230, 145, 56), QColor(31, 95, 139), 1.8);
+        box(gripData_.base, th.grip, th.gripLine, 1.8);
     // 已指定的剪切边界：描一层醒目的粗线，避免「我到底选了哪几条」全靠记
     if (!trimBounds_.empty()) {
-        QPen bp(QColor(214, 69, 65, 200));
+        QPen bp(th.trimBound);
         bp.setCosmetic(true); bp.setWidthF(3.0); bp.setStyle(Qt::DashLine);
         p->setPen(bp);
         p->setBrush(Qt::NoBrush);

@@ -29,6 +29,16 @@ double wrapDeg180(double d);   // -> (-180, 180]
 double wrapDeg360(double d);   // -> [0, 360)
 // a 是否落在以 start 起、扫掠 sweep 度（可正可负）的圆弧角范围内
 bool   angleInSweep(double a, double start, double sweep);
+// 圆弧从 start 逆时针转到 end 的扫掠量（度）。DXF 与本程序的 (start,end) 约定
+// 逆时针为正，end < start 表示跨 0° 回绕（如 342°→17.6° 实为 35.2°）；若直接把
+// end-start 传给消费方，负扫掠会把判定落到补弧、渲染画出 324.8° 的补弧大圆，
+// 因此凡消费扫掠量（命中/捕捉/切线过滤/渲染）必须先经此归一。
+// end == start 保持 0（不回绕），沿用既有「空弧」语义；整圆由 Circle 表达。
+inline double arcSweepDeg(double start, double end) {
+    double s = end - start;
+    if (s < 0.0) s += 360.0;
+    return s;
+}
 
 // ---------- 样条 ----------
 // Catmull-Rom 插值 -> 三次贝塞尔控制点序列。

@@ -32,8 +32,8 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
     sbHeight_->setValue(3.5); sbHeight_->setDecimals(2);
     sbWidthFactor_->setRange(0.1, 10.0); sbWidthFactor_->setSingleStep(0.1);
     sbWidthFactor_->setValue(1.0); sbWidthFactor_->setDecimals(2);
-    sbLineSpacing_->setRange(0.5, 5.0); sbLineSpacing_->setSingleStep(0.1);
-    sbLineSpacing_->setValue(1.3); sbLineSpacing_->setDecimals(2);
+    sbLineSpacing_->setRange(0.25, 4.0); sbLineSpacing_->setSingleStep(0.1);   // DXF 44 合法域
+    sbLineSpacing_->setValue(1.0); sbLineSpacing_->setDecimals(2);   // ZWCAD 单倍
     sbWrap_->setRange(0.0, 10000.0); sbWrap_->setSingleStep(1.0);
     sbWrap_->setValue(0.0); sbWrap_->setDecimals(1);
     sbWrap_->setSpecialValueText(QStringLiteral("不自动换行"));
@@ -90,7 +90,7 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
         sbHeight_->setValue(initial->radius > 0.1 ? initial->radius : 3.5);
         sbWidthFactor_->setValue(initial->widthFactor > 0 ? initial->widthFactor : 1.0);
         cbAlign_->setCurrentIndex(initial->textAlign >= 0 && initial->textAlign <= 8 ? initial->textAlign : 1);
-        sbLineSpacing_->setValue(initial->lineSpacing > 0 ? initial->lineSpacing : 1.3);
+        sbLineSpacing_->setValue(initial->lineSpacing > 0 ? initial->lineSpacing : 1.0);
         sbWrap_->setValue(initial->mtextWidth > 0 ? initial->mtextWidth : 0.0);
         const int si = cbStyle_->findData(initial->styleName);
         if (si >= 0) cbStyle_->setCurrentIndex(si);

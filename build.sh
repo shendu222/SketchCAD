@@ -106,8 +106,10 @@ sync_hatch "$ROOT/build/hatch"
 echo "[OK] 剖面 PAT 图案已同步到 build/hatch/"
 
 # 同步启动画面封面到 exe 同级（main.cpp 按候选路径查找；缺失时自动跳过启动画面）。
+# ⚠️ 首选 SketchCAD.png（新品牌封面）；保留 CAD封面.jpeg 作为旧部署回退兼容。
 sync_cover() {
     local dst="$1"
+    [ -f "$ROOT/SketchCAD.png" ] && cp "$ROOT/SketchCAD.png" "$dst/"
     [ -f "$ROOT/CAD封面.jpeg" ] && cp "$ROOT/CAD封面.jpeg" "$dst/"
 }
 sync_cover "$ROOT/build/"
@@ -144,6 +146,16 @@ if [ "$MODE" = "dist" ]; then
         mkdir -p "$ROOT/dist/tools/dwg"
         cp -r "$ROOT/build/tools/dwg/." "$ROOT/dist/tools/dwg/"
         echo "[OK] DWG 转换器已部署到 dist/tools/dwg/（$(ls "$ROOT/dist/tools/dwg" | wc -l) 个文件）"
+        # GPLv3 合规：转换器是独立进程分发的 LibreDWG 构建产物，随二进制必须
+        # 附带 GPLv3 全文（COPYING）与源码获取地址（见 third-party-notices.md）。
+        # 缺 COPYING 即构成许可证违约，故与 exe 同目录落盘、不可省略。
+        if [ -f "$ROOT/COPYING" ]; then
+            cp "$ROOT/COPYING" "$ROOT/dist/tools/dwg/COPYING"
+            echo "[OK] GPLv3 许可证全文已随转换器落盘（dist/tools/dwg/COPYING）"
+        else
+            echo "[错误] 仓库根缺少 COPYING（GPLv3 全文），分发转换器将违反许可证" >&2
+            exit 1
+        fi
     else
         echo "[警告] build/tools/dwg 不存在（先执行普通构建以触发 CMake POST_BUILD 部署），dist 将不含 DWG 转换器" >&2
     fi
@@ -290,6 +302,17 @@ if [ "$MODE" = "package" ]; then
         mkdir -p "$STAGE/tools/dwg"
         cp -r "$ROOT/build/tools/dwg/." "$STAGE/tools/dwg/"
         echo "[OK] DWG 转换器已汇入安装包暂存目录（$STAGE/tools/dwg）"
+        # GPLv3 合规：安装包内必须同时含 GPLv3 全文与源码获取地址。
+        # 落两份（tools/dwg/COPYING 就近 + 根 COPYING 供第三方声明页指向），
+        # 前者为「与二进制同在」的强约束，后者便于用户按常规路径查阅。
+        if [ -f "$ROOT/COPYING" ]; then
+            cp "$ROOT/COPYING" "$STAGE/tools/dwg/COPYING"
+            cp "$ROOT/COPYING" "$STAGE/COPYING"
+            echo "[OK] GPLv3 许可证全文已入包（COPYING / tools/dwg/COPYING）"
+        else
+            echo "[错误] 仓库根缺少 COPYING（GPLv3 全文），安装包含 GPL 转换器即违约" >&2
+            exit 1
+        fi
     else
         echo "[警告] build/tools/dwg 不存在，安装包将不含 DWG 转换器（DWG 将无法打开）" >&2
     fi

@@ -3,6 +3,7 @@
 // 详见 TextMetrics.h 头部说明。所有度量以世界 mm 为单位，无头安全。
 // ============================================================================
 #include "TextMetrics.h"
+#include "ZwcadTextLayout.h"   // ZWCAD 规范排版唯一入口（elementBoundsMm 派生自该模块）
 
 #include "Element.h"      // Element / ElementType
 #include "SketchModel.h"  // SketchModel（仅指针/前向，编译期依赖轻）
@@ -74,6 +75,7 @@ double TextMetrics::fallbackCharWidth() { return g_fallbackCharWidth; }
 
 void TextMetrics::setWarnHandler(WarnFn fn) { if (fn) g_warn = fn; }
 void TextMetrics::warn(const QString& msg) { if (g_warn) g_warn(msg); }
+void TextMetrics::warnUnsupported(const QString& msg) { warn(msg); }
 
 void TextMetrics::clearCache() { g_cache.map.clear(); g_cache.order.clear(); }
 
@@ -158,30 +160,13 @@ static bool canBreakBefore(const QString& s, int i) {
            u == 0x3002 /*。*/ || u == 0xFF1B /*；*/ || u == 0xFF1A /*：*/;
 }
 
-TextLayout TextMetrics::layout(const ResolvedTextStyle& rs, const QString& text,
-                              double heightMm, double mtextWidthMm, double lineSpacing) {
-    TextLayout out;
-    out.lineHeightMm = heightMm * (lineSpacing > 0.0 ? lineSpacing : 1.0);
-    if (text.isEmpty() || heightMm <= 0.0) { out.heightMm = 0.0; return out; }
-
-    if (containsStackedFraction(text))
-        warn(QStringLiteral("[TextMetrics] MText 堆叠分数({\\S 上/下;}) 本轮不支持，按原文字面渲染（未静默退化）"));
-
-    const QStringList paras = text.split(QLatin1Char('\n'));
-    double maxW = 0.0;
-    bool wrap = mtextWidthMm > 0.1;
-
-    for (const QString& para : paras) {
-        if (!wrap || para.isEmpty()) {
-            TextLayoutLine l;
-            l.text    = para;
-            l.widthMm = lineWidthMm(rs, para, heightMm);
-            out.lines.append(l);
-            maxW = std::max(maxW, l.widthMm);
-            continue;
-        }
+QVector<TextLayoutLine> TextMetrics::wrapParagraph(const ResolvedTextStyle& rs,
+                                                   const QString& para, double heightMm,
+                                                   double mtextWidthMm) {
+    QVector<TextLayoutLine> out;
+    int lineStart = 0;                  // 当前行起点（始终在函数作用域，收尾行复用）
+    if (!para.isEmpty() && mtextWidthMm > 0.1) {
         // 贪心折行：CJK 任意字间可断；拉丁按空格/连字符/标点断词；超长硬断。
-        int  lineStart = 0;
         int  lastBreak = -1;            // 当前行内最近的可断点（空格/标点索引）
         double w = 0.0;
         for (int i = 0; i < para.size(); ++i) {
@@ -200,8 +185,7 @@ TextLayout TextMetrics::layout(const ResolvedTextStyle& rs, const QString& text,
                 TextLayoutLine l;
                 l.text    = para.mid(lineStart, breakAt - lineStart);
                 l.widthMm = lineWidthMm(rs, l.text, heightMm);
-                out.lines.append(l);
-                maxW = std::max(maxW, l.widthMm);
+                out.append(l);
                 lineStart = breakAt;
                 w = lineWidthMm(rs, para.mid(lineStart, i - lineStart + 1), heightMm);
                 lastBreak = -1;
@@ -209,12 +193,34 @@ TextLayout TextMetrics::layout(const ResolvedTextStyle& rs, const QString& text,
                 w += cw;
             }
         }
-        // 收尾行
-        TextLayoutLine l;
-        l.text    = para.mid(lineStart);
-        l.widthMm = lineWidthMm(rs, l.text, heightMm);
-        out.lines.append(l);
-        maxW = std::max(maxW, l.widthMm);
+    }
+    // 收尾行（未折行段落即整段一行；空段保留空行）
+    TextLayoutLine l;
+    l.text    = para.mid(lineStart);
+    l.widthMm = lineWidthMm(rs, l.text, heightMm);
+    out.append(l);
+    return out;
+}
+
+TextLayout TextMetrics::layout(const ResolvedTextStyle& rs, const QString& text,
+                              double heightMm, double mtextWidthMm, double lineSpacing) {
+    TextLayout out;
+    out.lineHeightMm = heightMm * (lineSpacing > 0.0 ? lineSpacing : 1.0);
+    if (text.isEmpty() || heightMm <= 0.0) { out.heightMm = 0.0; return out; }
+
+    if (containsStackedFraction(text))
+        warn(QStringLiteral("[TextMetrics] MText 堆叠分数({\\S 上/下;}) 本轮不支持，按原文字面渲染（未静默退化）"));
+
+    const QStringList paras = text.split(QLatin1Char('\n'));
+    double maxW = 0.0;
+    const bool wrap = mtextWidthMm > 0.1;
+
+    for (const QString& para : paras) {
+        const auto lines = wrapParagraph(rs, para, heightMm, wrap ? mtextWidthMm : 0.0);
+        for (const auto& l : lines) {
+            out.lines.append(l);
+            maxW = std::max(maxW, l.widthMm);
+        }
     }
 
     out.widthMm  = maxW;
@@ -224,24 +230,40 @@ TextLayout TextMetrics::layout(const ResolvedTextStyle& rs, const QString& text,
 
 // ---------------------------------------------------------------------------
 // Text / MText 世界包围盒（mm，含 9 点对齐）
+// 布局经 ZwcadTextLayout（ZWCAD 规范唯一入口，与屏幕/打印渲染同参同源）。
+// LineBox 的 Y 向下为正 → 世界系(Y 向上)换算：world_y = anchor.y − yDown。
 // ---------------------------------------------------------------------------
 QRectF TextMetrics::elementBoundsMm(const Element& e, const SketchModel* model) {
     if (e.pts.empty() || e.text.isEmpty()) return QRectF();
     const ResolvedTextStyle rs = resolveTextStyle(e, model);
-    const double h = rs.height;                       // mm（已是 style×图元 合并后的字高）
     const QString display = resolveFields(e.text, model);
     const bool isM = (e.type == ElementType::MText);
-    const double mw = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
-    const double ls = isM ? e.lineSpacing : 1.0;
-    const TextLayout lay = layout(rs, display, h, mw, ls);
 
-    const int  align = e.textAlign;                   // 9 点对齐（与 paint 两处同源）
-    const int  hA = align % 3, vA = align / 3;       // 0左/中/右 ; 0上/中/下
-    const double W = lay.widthMm, H = lay.heightMm;
-    const double xL = (hA == 0) ? 0.0 : (hA == 1) ? -W / 2.0 : -W;
-    const double yTop = (vA == 0) ? 0.0 : (vA == 1) ? H / 2.0 : H;
-    const double yBot = yTop - H;
-    return QRectF(e.pts[0].x + xL, e.pts[0].y + yBot, W, H);
+    ZwcadText::Format tf;
+    tf.heightMm          = rs.height;
+    tf.lineSpacingFactor = isM ? e.lineSpacing : 1.0;
+    tf.attach            = e.textAlign;
+    tf.wrapWidthMm       = (isM && e.mtextWidth > 0.1) ? e.mtextWidth : 0.0;
+    const ZwcadText::Result lay = isM
+        ? ZwcadText::layoutMText(display, tf, rs)
+        : ZwcadText::layoutSingleLine(display, tf, rs);
+    if (lay.lines.isEmpty()) return QRectF();
+
+    double minX = 0.0, maxX = 0.0, topDown = 0.0, botDown = 0.0;
+    bool first = true;
+    for (const auto& lb : lay.lines) {
+        minX = first ? lb.xMm : std::min(minX, lb.xMm);
+        maxX = first ? lb.xMm + lb.widthMm : std::max(maxX, lb.xMm + lb.widthMm);
+        topDown = first ? lb.yCenterMm - lay.slotHeightMm / 2.0
+                        : std::min(topDown, lb.yCenterMm - lay.slotHeightMm / 2.0);
+        botDown = first ? lb.yCenterMm + lay.slotHeightMm / 2.0
+                        : std::max(botDown, lb.yCenterMm + lay.slotHeightMm / 2.0);
+        first = false;
+    }
+    const double W = maxX - minX;
+    const double H = botDown - topDown;
+    // 9 点对齐（Y 向下）：上→块顶贴锚点(world 顶=ay) / 中→居中 / 下→块底贴锚点
+    return QRectF(e.pts[0].x + minX, e.pts[0].y - botDown, W, H);
 }
 
 // ---------------------------------------------------------------------------

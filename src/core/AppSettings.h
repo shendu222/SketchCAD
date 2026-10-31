@@ -57,6 +57,10 @@ inline constexpr const char* kFieldAutoUpdate   = "fields/autoUpdateOnOpen";
 inline constexpr const char* kDimensionDrive    = "dimension/driveOn";
 inline constexpr const char* kDefaultSaveDir    = "files/defaultSaveDir";
 inline constexpr const char* kDefaultTemplate   = "files/defaultTemplate";
+// DWG 外部转换组件（LibreDWG dwg2dxf/dwgwrite）目录覆盖：空 = 使用默认查找
+//（exe 同级 tools/dwg 或环境变量 SKETCHCAD_DWGTOOLS）。由选项页写入，
+// 主窗口启动/变更时以 qputenv 覆盖 SKETCHCAD_DWGTOOLS（DwgBridge 解析优先）。
+inline constexpr const char* kDwgToolsOverride  = "files/dwgToolsOverride";
 inline constexpr const char* kLastDir           = "files/lastDir";
 inline constexpr const char* kRecentList        = "files/recentList";
 // 最近文件富条目（RecentFiles 持久化文本：JSON 数组 [{p,t,pin},...]，含打开时间与固定标记）。
@@ -80,6 +84,8 @@ inline constexpr const char* kPrinterDevice     = "print/device";
 inline constexpr const char* kPrintDefaultsJson = "print/defaultSettings";
 inline constexpr const char* kUserName          = "user/name";
 inline constexpr const char* kUserCompany       = "user/company";
+// 界面主题（内置亮/暗切换）：system=跟随系统 / light=亮色 / dark=暗色（默认 light）
+inline constexpr const char* kTheme             = "display/theme";
 inline constexpr const char* kWindowGeometry    = "window/geometry";
 inline constexpr const char* kWindowState       = "window/state";
 } // namespace SettingKeys
@@ -164,6 +170,8 @@ public:
     QString language() const;          void setLanguage(const QString& l);// zh-CN / en
     QString defaultSaveDir() const;    void setDefaultSaveDir(const QString& d);
     QString defaultTemplate() const;   void setDefaultTemplate(const QString& p);
+    // DWG 转换组件目录覆盖（空 = 默认查找；非空 = 覆盖 SKETCHCAD_DWGTOOLS）
+    QString dwgToolsOverride() const;  void setDwgToolsOverride(const QString& d);
     QString lastDir() const;           void setLastDir(const QString& d);
     QStringList recentFiles() const;   void setRecentFiles(const QStringList& l);
     bool   gpuAcceleration() const;    void setGpuAcceleration(bool b);   // 预留：渲染路径消费
@@ -176,6 +184,8 @@ public:
     bool   telemetryEnabled() const;   void setTelemetryEnabled(bool b);
     bool   firstRunNoticeShown() const; void setFirstRunNoticeShown(bool b);
     QString highDpiRoundingPolicy() const; void setHighDpiRoundingPolicy(const QString& p);
+    // 界面主题：system/light/dark（默认 light）；控制内置亮/暗切换
+    QString theme() const;           void setTheme(const QString& t);
     QString printerName() const;       void setPrinterName(const QString& name);
     // 打印页面设置快照（PrintSettings::toJson 的 JSON 文本；空 = 未设置）
     QString printDefaultsJson() const; void setPrintDefaultsJson(const QString& json);

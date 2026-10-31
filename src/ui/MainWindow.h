@@ -303,9 +303,12 @@ private:
     // 恢复项优先（P0-02 快照），其次 新建（空白 / A0~A4 模板+标题栏样式）/ 打开最近 / 打开其他。
     // 对话框只做选择不动模型；执行统一在 exec 返回后分派（与 CrashRecoveryDialog 同设计）。
     void showStartupPage();
-    // 模板化新建的唯一入口：菜单「新建」与启动页模板按钮共用同一 new drawing 流
+    // 模板化新建的唯一入口：启动页模板按钮共用同一 new drawing 流
     //（applyNewDrawing 原样）；TitleBlockStyle::None 时在同一撤销步内静默移除标题栏层。
     void createTemplatedDrawing(const SheetSpec& spec, double ratio, TitleBlockStyle tb);
+    // 空白新建唯一入口：菜单「新建」（Ctrl+N）直接给空白图面（标准图层 + A4 横向
+    // 1:1 规格基准，无图框/标题栏图元，零弹窗）；幅面与图框走【新建图框】。
+    void createBlankDrawing();
     // 【图纸】>【新建图框】：弹窗收集图框选项 → 新文档生成；applySheetFrame 为纯落盘封装
     void openSheetFrameDialog();
     void applySheetFrame(const SheetFrameOptions& opts, double scaleRatio);
@@ -345,6 +348,9 @@ private:
     void applySettingLive(const QString& key, const QVariant& v);   // settingChanged 统一消费点（含取消回滚）
     void saveAppSettingsOnClose();              // 关闭保存：几何/布局/显示开关/打印设置 + 写失败提示
     void openOptionsDialog();                   // 工具 → 选项...
+    // DWG 转换组件缺失指引（意图 D③）：版本串原文 + 「未安装 DWG 转换组件」+ 帮助链接。
+    // isRead=true 为打开场景（ver/humanVer 为文件版本串与可读名）；false 为另存场景。
+    void warnDwgConverterMissing(bool isRead, const QString& ver, const QString& humanVer);
     // 最近文件（files/recentEntries 消费方；MRU 语义在 core/RecentFiles）
     void pushRecentFile(const QString& path);   // 成功读档/存盘后登记（去重置顶、按上限截断）
     void rebuildRecentMenu();                   // 重建「最近打开」子菜单（缺失项灰显/右键固定删除）
