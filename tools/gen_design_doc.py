@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成《航空CAD-草图绘制模块-C++实现设计思考文档》"""
+"""生成《我是慎独-草图绘制模块-C++实现设计思考文档》"""
 import os
 from docx import Document
 from docx.shared import Pt, RGBColor, Cm
@@ -8,7 +8,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-OUT = r"D:\01-CAD\02-avticationCAD\docs\航空CAD-草图绘制模块-C++实现设计思考文档.docx"
+OUT = r"D:\01-CAD\02-avticationCAD\docs\我是慎独-草图绘制模块-C++实现设计思考文档.docx"
 
 CN = "微软雅黑"
 MONO = "Consolas"
@@ -156,7 +156,7 @@ def build():
     doc.add_paragraph()
     doc.add_paragraph()
     p = doc.add_paragraph()
-    r = p.add_run("航空CAD 草图绘制模块")
+    r = p.add_run("我是慎独 草图绘制模块")
     r.font.size = Pt(28)
     r.bold = True
     r.font.color.rgb = ACCENT
@@ -180,13 +180,13 @@ def build():
     doc.add_paragraph()
     table(doc,
           ["项目", "内容"],
-          [["模块名称", "航空CAD 系统 — 草图绘制模块"],
+          [["模块名称", "我是慎独 系统 — 草图绘制模块"],
            ["实现语言", "C++17（GNU C++17 方言）"],
            ["GUI 框架", "Qt 6.10.1（Widgets）"],
            ["编译工具链", "MinGW-w64 GCC 13.1.0 + CMake 3.30 + Ninja 1.12"],
            ["代码规模", "26 个源文件，约 2,300 行（含 200 行自测）"],
            ["自测结果", "57 项断言全部通过，编译零告警"],
-           ["需求依据", "《航空CAD-草图绘制-详细功能规格与设计说明书》"],
+           ["需求依据", "《我是慎独-草图绘制-详细功能规格与设计说明书》"],
            ["文档版本", "v1.0"]],
           widths=[4.0, 11.5])
 

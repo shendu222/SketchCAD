@@ -44,7 +44,7 @@ def bullet(text):
 
 # ---------------- 标题 ----------------
 title = doc.add_heading("直线绘制实时快捷键捕捉切换 — 深度思考", level=0)
-sub = doc.add_paragraph("航空CAD 草图绘制模块 · 增强需求的技术剖析与实现纪要")
+sub = doc.add_paragraph("我是慎独 草图绘制模块 · 增强需求的技术剖析与实现纪要")
 sub.runs[0].italic = True
 sub.runs[0].font.size = Pt(10)
 

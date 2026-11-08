@@ -88,6 +88,14 @@ inline constexpr const char* kUserCompany       = "user/company";
 inline constexpr const char* kTheme             = "display/theme";
 inline constexpr const char* kWindowGeometry    = "window/geometry";
 inline constexpr const char* kWindowState       = "window/state";
+// AI 自然语言助手（LLM 嵌入）：云端 / 本地 / 离线模拟可切换
+inline constexpr const char* kAiEnabled     = "ai/enabled";       // 总开关
+inline constexpr const char* kAiProvider    = "ai/provider";      // cloud / local / mock
+inline constexpr const char* kAiBaseUrl     = "ai/baseUrl";       // OpenAI 兼容 base（含 /v1）
+inline constexpr const char* kAiApiKey      = "ai/apiKey";
+inline constexpr const char* kAiModel       = "ai/model";
+inline constexpr const char* kAiAutoExecute = "ai/autoExecute";   // 非破坏性命令是否自动执行
+inline constexpr const char* kAiMaxTokens   = "ai/maxTokens";
 } // namespace SettingKeys
 
 class AppSettings : public QObject {
@@ -194,6 +202,15 @@ public:
     // 窗口几何/面板布局：QByteArray 以 base64 字符串落注册表（类型稳定往返）
     QByteArray windowGeometry() const; void setWindowGeometry(const QByteArray& g);
     QByteArray windowState() const;    void setWindowState(const QByteArray& st);
+
+    // ---- AI 自然语言助手配置（云端 / 本地可切换）----
+    bool   aiEnabled() const;        void setAiEnabled(bool b);
+    QString aiProvider() const;      void setAiProvider(const QString& p);   // cloud / local / mock
+    QString aiBaseUrl() const;       void setAiBaseUrl(const QString& u);
+    QString aiApiKey() const;        void setAiApiKey(const QString& k);
+    QString aiModel() const;         void setAiModel(const QString& m);
+    bool   aiAutoExecute() const;    void setAiAutoExecute(bool b);
+    int    aiMaxTokens() const;      void setAiMaxTokens(int n);
 
 signals:
     // 兼容既有订阅（AutoSaveOptionsDialog 流程）

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成《航空CAD-草图绘制模块-深度思考（直线绘制智能捕捉）》聚焦文档。
+"""生成《我是慎独-草图绘制模块-深度思考（直线绘制智能捕捉）》聚焦文档。
 
 仅导出本轮「画直线时的智能点位捕捉（端点/圆心/交点/切点）」的设计推演。
 """
@@ -8,9 +8,9 @@ from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 
-OUT = r"D:/01-CAD/02-avticationCAD/docs/航空CAD-草图绘制模块-深度思考（直线绘制智能捕捉）.docx"
+OUT = r"D:/01-CAD/02-avticationCAD/docs/我是慎独-草图绘制模块-深度思考（直线绘制智能捕捉）.docx"
 
-DOC_TITLE = "航空CAD 草图绘制模块 — 深度思考（直线绘制智能捕捉）"
+DOC_TITLE = "我是慎独 草图绘制模块 — 深度思考（直线绘制智能捕捉）"
 SUBTITLE = "C++17 / Qt6 实现 · 端点/圆心/交点/切点捕捉 · 切线几何 · 与画线交互同源"
 
 doc = Document()

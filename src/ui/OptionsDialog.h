@@ -13,6 +13,8 @@ class QDoubleSpinBox;
 class QCheckBox;
 class QLineEdit;
 class QPushButton;
+class QGroupBox;
+class QLabel;
 
 namespace SketchCAD {
 
@@ -33,10 +35,18 @@ class OptionsDialog : public QDialog {
 public:
     explicit OptionsDialog(AppSettings* settings, QWidget* parent = nullptr);
 
+signals:
+    // 数据库配置被本对话框内「保存并连接」修改后发出，供主窗口刷新状态栏 / 菜单可用态
+    void databaseConfigChanged();
+
 private slots:
     void onApply();
     void onCancel();
     void onResetDefaults();
+    void onDbDriverChanged(int index);
+    void onDbBrowse();
+    void onDbTest();
+    void onDbSave();
 
 private:
     QWidget* buildGeneralPage();
@@ -46,7 +56,12 @@ private:
     QWidget* buildPrintPage();
     QWidget* buildUserPage();
     QWidget* buildPrivacyPage();
+    QWidget* buildDatabasePage();
+    QWidget* buildAiPage();            // AI 自然语言助手（云端/本地/离线可切换）
     void addPage(const QString& title, QWidget* page);
+
+    void loadDbPage();                  // 控件 <- DrawingDb 当前连接信息
+    void refreshDbStatus();            // 刷新「数据库」页状态标签
 
     void loadWidgets();                 // 控件 <- AppSettings 当前值
     void loadWidgetsFromDefaults();     // 控件 <- 默认值（重置草稿，不落盘）
@@ -98,6 +113,28 @@ private:
     QLineEdit* companyEdit_ = nullptr;
     // 隐私
     QCheckBox* chkTelemetry_ = nullptr;
+
+    // AI 自然语言助手（云端/本地/离线可切换）
+    QComboBox* aiEnabledBox_   = nullptr;   // 总开关：开/关
+    QComboBox* aiProviderBox_   = nullptr;   // cloud / local / mock
+    QLineEdit* aiBaseUrlEdit_   = nullptr;   // OpenAI 兼容 base（含 /v1）
+    QLineEdit* aiApiKeyEdit_    = nullptr;
+    QLineEdit* aiModelEdit_     = nullptr;
+    QCheckBox* aiAutoExecChk_   = nullptr;   // 非破坏性命令是否自动执行
+    QSpinBox*  aiMaxTokensSpin_ = nullptr;
+
+    // 数据库（独立于 AppSettings：连接信息存本地 JSON 配置文件，由 DrawingDb 管理）
+    QComboBox* dbTypeBox_      = nullptr;
+    QGroupBox* dbSqliteGroup_  = nullptr;
+    QLineEdit* dbFileEdit_     = nullptr;
+    QGroupBox* dbMysqlGroup_   = nullptr;
+    QLineEdit* dbHostEdit_     = nullptr;
+    QLineEdit* dbPortEdit_     = nullptr;
+    QLineEdit* dbNameEdit_     = nullptr;
+    QLineEdit* dbUserEdit_     = nullptr;
+    QLineEdit* dbPassEdit_     = nullptr;
+    QLabel*    dbStatusLabel_  = nullptr;
+    QLabel*    dbDriverHintLabel_ = nullptr;   // MySQL 驱动缺失时的提示（默认隐藏）
 };
 
 } // namespace SketchCAD

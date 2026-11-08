@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 #   → configure_file 生成 build/app.rc（注入 exe 文件属性 VERSIONINFO）
 #   → build.sh package 模式读取本行，拼出 SketchCAD-<版本>-Setup.exe
 # 三者（关于对话框 / exe 属性 / 安装包文件名）因此天然一致，不会各自漂移。
-project(SketchCAD VERSION 1.1.0 LANGUAGES CXX)
+project(SketchCAD VERSION 1.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,7 +18,7 @@ list(APPEND CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64/lib/cmake")
 set(CMAKE_C_COMPILER   "C:/Qt/Tools/mingw1310_64/bin/gcc.exe")
 set(CMAKE_CXX_COMPILER "C:/Qt/Tools/mingw1310_64/bin/g++.exe")
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent LinguistTools)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent LinguistTools Sql)
 
 # ---- DRY：公共核心源文件列表，供所有目标共用 ----
 set(CORE_SOURCES
@@ -113,6 +113,15 @@ set(CORE_SOURCES
     src/core/Diagnostics.cpp   # 诊断：Qt 日志滚动落盘 + Windows 崩溃 mini-dump + 会话标记
     src/core/DiagBundle.cpp    # 诊断包：Stored-ZIP 写入器 + 打包编排（纯 core 可无头直测）
     src/core/Telemetry.cpp     # 遥测出口（默认关闭零外发；开关+出口双门闩）
+    src/core/DrawingDb.cpp     # 绘图数据库存储层（SQLite，启动静默连接；图档+模板 CRUD）
+    # ---- AI 自然语言助手（LLM 嵌入；云端/本地/离线 Mock 可切换）----
+    # LlmProvider 为含 Q_OBJECT 的抽象基类，薄 .cpp 接管 moc 生成的 vtable/metaobject
+    src/ai/LlmProvider.cpp
+    src/ai/OpenAiProvider.cpp  # OpenAI 兼容后端（/v1/chat/completions + SSE 流式）
+    src/ai/MockProvider.cpp    # 离线规则后端（无 key 联调 / 无头自测）
+    src/ai/tooldefs.cpp        # 工具 schema（查询工具 + runSketchCommand 动作工具）
+    src/ai/AppContextProvider.cpp  # 文档状态采集（选择/图层/视图）
+    src/ai/NlAssistant.cpp      # 编排层：LLM ⇄ 工具 ⇄ interp_->execute 循环
 )
 
 # ---- D1：DWG 外部转换器隔离层（独立静态库目标）----
@@ -189,6 +198,9 @@ set(UI_SOURCES
     src/ui/CrashRecoveryDialog.cpp   # 启动时发现 .sv$ 快照 → 恢复/丢弃
     src/ui/AutoSaveOptionsDialog.cpp # 自动保存间隔设置（关/5/10/15/30）
     src/ui/OptionsDialog.cpp        # 统一「选项」对话框（分类树 + 表单，应用/取消/重置）
+    src/ui/DbDrawingsDialog.cpp     # 数据库绘图记录/模板表格对话框（打开/删除/应用/保存）
+    src/ui/DbConfigDialog.cpp      # 数据库配置对话框（连接信息 → 本地 JSON 配置文件）
+    src/ui/AiAssistantPanel.cpp     # AI 自然语言助手对话面板（流式显示 + 命令审批条）
 )
 
 # ---- 主程序 ----
@@ -198,7 +210,7 @@ add_executable(SketchCAD
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql Qt6::Network SketchDwgBridge)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
@@ -226,9 +238,9 @@ endif()
 # 从 project(... VERSION ...) 生成，供「关于」对话框等 C++ 侧读取，
 # 使界面显示的版本与 exe 属性、安装包名同源于一个数字。
 # 【重要】SketchSelfTest 不链接本头文件：自测不关心版本，保持目标最小化。
-set(SKETCHCAD_COMPANY_NAME  "航空CAD")
+set(SKETCHCAD_COMPANY_NAME  "我是慎独")
 set(SKETCHCAD_PRODUCT_NAME  "SketchCAD 草图设计系统")
-set(SKETCHCAD_COPYRIGHT     "Copyright (C) 2026 航空CAD. All rights reserved.")
+set(SKETCHCAD_COPYRIGHT     "Copyright (C) 2026 我是慎独. All rights reserved.")
 # Windows VERSIONINFO 要求四段式数字版本：semver 是三段，故第四段补 0。
 # 例：1.1.0 → 1.1.0.0（补丁位留给预发布修订，如 1.1.0.1）。
 set(SKETCHPAD_VERSION       "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.0")
@@ -299,7 +311,7 @@ add_executable(SketchSelfTest
     src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
     src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
 )
-target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql Qt6::Network SketchDwgBridge)
 target_include_directories(SketchSelfTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -319,7 +331,7 @@ add_executable(SketchBenchmark
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
 target_include_directories(SketchBenchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -334,7 +346,7 @@ add_executable(PlotStyleSamples
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
 target_include_directories(PlotStyleSamples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -349,7 +361,7 @@ add_executable(ReadmeShots
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
 target_include_directories(ReadmeShots PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -364,7 +376,7 @@ add_executable(DwgOpenVerify
     ${CORE_SOURCES}
     ${UI_SOURCES}
 )
-target_link_libraries(DwgOpenVerify PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent SketchDwgBridge)
+target_link_libraries(DwgOpenVerify PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
 target_include_directories(DwgOpenVerify PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
@@ -447,7 +459,7 @@ if(WIN32)
       ${CORE_SOURCES}
   )
   target_link_libraries(SketchCADAutomation PRIVATE
-      Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml
+      Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Sql
       SketchDwgBridge
       ole32 oleaut32 advapi32 uuid)
   target_include_directories(SketchCADAutomation PRIVATE

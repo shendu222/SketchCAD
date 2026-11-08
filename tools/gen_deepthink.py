@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成《航空CAD-草图绘制模块-深度思考过程（四项增强）》深度思考文档。
+"""生成《我是慎独-草图绘制模块-深度思考过程（四项增强）》深度思考文档。
 
 该文档导出本轮四项增强的设计推演：直线属性扩展、GB/T 4458.4-2003 尺寸标注、
 端点拖拽联动、剪切扩展至全图元类型。覆盖「为什么这样做」而非仅「做了什么」。
@@ -9,9 +9,9 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 
-OUT = r"D:/01-CAD/02-avticationCAD/docs/航空CAD-草图绘制模块-深度思考过程（四项增强）.docx"
+OUT = r"D:/01-CAD/02-avticationCAD/docs/我是慎独-草图绘制模块-深度思考过程（四项增强）.docx"
 
-DOC_TITLE = "航空CAD 草图绘制模块 — 深度思考过程（四项增强 + 后续优化）"
+DOC_TITLE = "我是慎独 草图绘制模块 — 深度思考过程（四项增强 + 后续优化）"
 SUBTITLE = "C++17 / Qt6 实现 · 直线属性 · GB/T 4458.4-2003 标注 · 端点联动 · 全图元剪切 · 框选多选 · 选区智能标注"
 
 doc = Document()
@@ -89,7 +89,7 @@ sr.font.size = Pt(11)
 sr.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
 
 doc.add_paragraph()
-P("本文档记录航空CAD草图绘制模块（sketch-cad-cpp，C++17 / Qt 6.10.1 / MinGW-w64 GCC 13.1.0）"
+P("本文档记录我是慎独草图绘制模块（sketch-cad-cpp，C++17 / Qt 6.10.1 / MinGW-w64 GCC 13.1.0）"
   "本轮四项功能增强的设计推演与权衡。重点不在于「改了哪些代码」，而在于「为什么这样改」、"
   "「放弃了哪些替代方案」以及「这些决策如何相互咬合」。每一节的结论都对应一处可在源码中核查的落点。")
 

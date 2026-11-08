@@ -1,10 +1,12 @@
 #include "OptionsDialog.h"
 
 #include "core/AppSettings.h"
+#include "core/DrawingDb.h"
 
 #include <QTreeWidget>
 #include <QStackedWidget>
 #include <QComboBox>
+#include <QStandardItemModel>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
@@ -18,6 +20,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QPrinterInfo>
+#include <QDir>
 
 namespace SketchCAD {
 
@@ -77,6 +80,8 @@ OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
     addPage(tr("打印"),     buildPrintPage());
     addPage(tr("用户"),     buildUserPage());
     addPage(tr("隐私"),     buildPrivacyPage());
+    addPage(tr("数据库"),   buildDatabasePage());
+    addPage(tr("AI 助手"),  buildAiPage());
 
     connect(catTree_, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* cur, QTreeWidgetItem*) {
@@ -94,6 +99,7 @@ OptionsDialog::OptionsDialog(AppSettings* settings, QWidget* parent)
         snapshot_.insert(QLatin1String(sp.key), s_->value(QLatin1String(sp.key)));
 
     loadWidgets();
+    loadDbPage();
 }
 
 // ---- 页面构建 ----
@@ -333,6 +339,242 @@ QWidget* OptionsDialog::buildPrivacyPage() {
     return formWrap(inner);
 }
 
+QWidget* OptionsDialog::buildDatabasePage() {
+    auto* form = new QFormLayout();
+
+    // 当前连接状态（查看当前连接信息）
+    dbStatusLabel_ = new QLabel(this);
+    dbStatusLabel_->setWordWrap(true);
+    form->addRow(QStringLiteral("当前状态："), dbStatusLabel_);
+
+    // 数据库类型
+    dbTypeBox_ = new QComboBox(this);
+    dbTypeBox_->addItem(tr("SQLite（文件型，零配置）"), QStringLiteral("QSQLITE"));
+    dbTypeBox_->addItem(tr("MySQL（服务器型）"), QStringLiteral("QMYSQL"));
+    // 当前 Qt 构建可能缺失 QMYSQL 插件：禁用该选项并给出提示，避免误选后出现硬编码驱动错误。
+    const bool mysqlOk = QSqlDatabase::isDriverAvailable(QStringLiteral("QMYSQL"));
+    if (!mysqlOk) {
+        const int idx = dbTypeBox_->findData(QStringLiteral("QMYSQL"));
+        if (idx >= 0) {
+            if (auto* m = qobject_cast<QStandardItemModel*>(dbTypeBox_->model())) {
+                if (QStandardItem* item = m->item(idx)) item->setEnabled(false);
+            }
+        }
+    }
+    form->addRow(QStringLiteral("数据库类型："), dbTypeBox_);
+
+    dbDriverHintLabel_ = new QLabel(
+        tr("⚠ MySQL 驱动不可用：当前环境缺少 Qt 的 QMYSQL 插件（qsqlmysql.dll 与 libmysql.dll）。\n"
+           "已禁用 MySQL 连接，数据库功能默认使用内置 SQLite，可正常工作。\n"
+           "如需启用 MySQL，请将 qsqlmysql.dll 放入程序目录的 sqldrivers/ 子目录并配置 libmysql.dll 路径后重启。"), this);
+    dbDriverHintLabel_->setWordWrap(true);
+    dbDriverHintLabel_->setStyleSheet(QStringLiteral("color: #c8761a;"));
+    dbDriverHintLabel_->setVisible(!mysqlOk);
+    form->addRow(QString(), dbDriverHintLabel_);
+
+    // SQLite 设置
+    dbSqliteGroup_ = new QGroupBox(tr("SQLite 设置"), this);
+    auto* sf = new QFormLayout(dbSqliteGroup_);
+    dbFileEdit_ = new QLineEdit(dbSqliteGroup_);
+    dbFileEdit_->setPlaceholderText(QStringLiteral("留空则使用默认：~/SketchCAD/sketchcad_drawings.db"));
+    auto* fileRow = new QHBoxLayout();
+    fileRow->addWidget(dbFileEdit_, 1);
+    auto* fileBtn = new QPushButton(QStringLiteral("浏览..."), dbSqliteGroup_);
+    fileRow->addWidget(fileBtn);
+    sf->addRow(QStringLiteral("数据库文件："), fileRow);
+
+    // MySQL 设置
+    dbMysqlGroup_ = new QGroupBox(tr("MySQL 设置"), this);
+    auto* mf = new QFormLayout(dbMysqlGroup_);
+    dbHostEdit_ = new QLineEdit(dbMysqlGroup_);
+    dbPortEdit_ = new QLineEdit(dbMysqlGroup_);
+    dbPortEdit_->setFixedWidth(90);
+    dbPortEdit_->setText(QStringLiteral("3306"));
+    dbNameEdit_ = new QLineEdit(dbMysqlGroup_);
+    dbUserEdit_ = new QLineEdit(dbMysqlGroup_);
+    dbPassEdit_ = new QLineEdit(dbMysqlGroup_);
+    dbPassEdit_->setEchoMode(QLineEdit::Password);
+    mf->addRow(QStringLiteral("主机："), dbHostEdit_);
+    mf->addRow(QStringLiteral("端口："), dbPortEdit_);
+    mf->addRow(QStringLiteral("数据库名："), dbNameEdit_);
+    mf->addRow(QStringLiteral("用户名："), dbUserEdit_);
+    mf->addRow(QStringLiteral("密码："), dbPassEdit_);
+
+    form->addRow(dbSqliteGroup_);
+    form->addRow(dbMysqlGroup_);
+
+    // 操作按钮
+    auto* btnRow = new QHBoxLayout();
+    auto* testBtn = new QPushButton(QStringLiteral("测试连接"), this);
+    auto* saveBtn = new QPushButton(QStringLiteral("保存并连接"), this);
+    btnRow->addWidget(testBtn);
+    btnRow->addWidget(saveBtn);
+    btnRow->addStretch(1);
+    form->addRow(btnRow);
+
+    connect(dbTypeBox_, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &OptionsDialog::onDbDriverChanged);
+    connect(fileBtn, &QPushButton::clicked, this, &OptionsDialog::onDbBrowse);
+    connect(testBtn, &QPushButton::clicked, this, &OptionsDialog::onDbTest);
+    connect(saveBtn,  &QPushButton::clicked, this, &OptionsDialog::onDbSave);
+
+    auto* hint = new QLabel(
+        QStringLiteral("数据库连接信息保存在本地配置文件 ~/SketchCAD/db_config.json，程序启动即按此连接；"
+                       "修改后点击「保存并连接」立即生效（无需关闭本对话框）。"
+                       "未连接时程序自动使用文件存储，不影响绘图。"), this);
+    hint->setStyleSheet(QStringLiteral("color: gray;"));
+    hint->setWordWrap(true);
+    form->addRow(QString(), hint);
+
+    onDbDriverChanged(dbTypeBox_->currentIndex());   // 初始化可见性
+
+    auto* inner = new QWidget(this);
+    inner->setLayout(form);
+    return formWrap(inner);
+}
+
+QWidget* OptionsDialog::buildAiPage() {
+    auto* form = new QFormLayout();
+
+    aiEnabledBox_ = new QComboBox(this);
+    addComboItem(aiEnabledBox_, tr("启用"), true);
+    addComboItem(aiEnabledBox_, tr("停用"), false);
+    form->addRow(tr("AI 助手总开关："), aiEnabledBox_);
+
+    aiProviderBox_ = new QComboBox(this);
+    addComboItem(aiProviderBox_, tr("云端（OpenAI 兼容：DeepSeek/通义/智谱…）"), QStringLiteral("cloud"));
+    addComboItem(aiProviderBox_, tr("本地（Ollama / llama.cpp 等本地服务）"),    QStringLiteral("local"));
+    addComboItem(aiProviderBox_, tr("离线模拟（无需网络/密钥，规则联调）"),     QStringLiteral("mock"));
+    form->addRow(tr("后端类型："), aiProviderBox_);
+
+    aiBaseUrlEdit_ = new QLineEdit(this);
+    aiBaseUrlEdit_->setPlaceholderText(QStringLiteral("OpenAI 兼容 base，含 /v1，如 https://api.openai.com/v1 或 http://localhost:11434/v1"));
+    auto* urlRow = new QHBoxLayout();
+    urlRow->addWidget(aiBaseUrlEdit_, 1);
+    form->addRow(tr("服务地址："), urlRow);
+
+    aiApiKeyEdit_ = new QLineEdit(this);
+    aiApiKeyEdit_->setPlaceholderText(QStringLiteral("云端后端需要；本地/离线可为空"));
+    aiApiKeyEdit_->setEchoMode(QLineEdit::Password);
+    form->addRow(tr("API 密钥："), aiApiKeyEdit_);
+
+    aiModelEdit_ = new QLineEdit(this);
+    aiModelEdit_->setPlaceholderText(QStringLiteral("模型名，如 gpt-4o-mini / deepseek-chat / qwen-plus"));
+    form->addRow(tr("模型："), aiModelEdit_);
+
+    aiMaxTokensSpin_ = new QSpinBox(this);
+    aiMaxTokensSpin_->setRange(64, 8192);
+    aiMaxTokensSpin_->setSuffix(QStringLiteral(" token"));
+    form->addRow(tr("单次回复上限："), aiMaxTokensSpin_);
+
+    aiAutoExecChk_ = new QCheckBox(QStringLiteral("非破坏性命令自动执行（关闭则需逐条确认）"), this);
+    aiAutoExecChk_->setToolTip(QStringLiteral(
+        "开启：画圆/直线等不会破坏现有图形的命令，助手直接执行。\n"
+        "关闭：每条命令执行前都先展示，由你确认。\n"
+        "破坏性命令（删除/修剪/分解…）无论此项如何，都需你手动确认。"));
+    form->addRow(aiAutoExecChk_);
+
+    auto* hint = new QLabel(
+        QStringLiteral("自然语言助手会复用现有命令体系（与命令行同一套语法）执行你的意图。\n"
+                       "云服务会把你的绘图指令文本发送给所选 LLM 服务商；"
+                       "离线模拟（mock）完全在本机运行、不上传任何数据。\n"
+                       "修改「后端类型 / 服务地址 / 密钥 / 模型」后点「应用」或「确定」立即生效。"), this);
+    hint->setStyleSheet(QStringLiteral("color: gray;"));
+    hint->setWordWrap(true);
+    form->addRow(QString(), hint);
+
+    auto* inner = new QWidget(this);
+    inner->setLayout(form);
+    return formWrap(inner);
+}
+
+void OptionsDialog::loadDbPage() {
+    DrawingDb* db = DrawingDb::instance();
+    int idx = dbTypeBox_->findData(db->driver());
+    if (idx < 0) idx = 0;
+    // 已保存配置若是 QMYSQL 但当前驱动缺失，则回落 SQLite，避免选中被禁用的项。
+    if (db->driver() == QStringLiteral("QMYSQL") && !QSqlDatabase::isDriverAvailable(QStringLiteral("QMYSQL")))
+        idx = 0;
+    dbTypeBox_->setCurrentIndex(idx);
+    dbFileEdit_->setText(db->dbPath());
+    dbHostEdit_->setText(db->host());
+    dbPortEdit_->setText(QString::number(db->port()));
+    dbNameEdit_->setText(db->dbName());
+    dbUserEdit_->setText(db->user());
+    dbPassEdit_->setText(db->pass());
+    onDbDriverChanged(idx);
+    refreshDbStatus();
+}
+
+void OptionsDialog::refreshDbStatus() {
+    DrawingDb* db = DrawingDb::instance();
+    if (db->isConnected()) {
+        const QString kind = db->driver() == QStringLiteral("QSQLITE")
+            ? QStringLiteral("SQLite 文件型") : QStringLiteral("MySQL 服务器型");
+        dbStatusLabel_->setText(QStringLiteral("已连接（%1）").arg(kind));
+        dbStatusLabel_->setStyleSheet(QStringLiteral("color: #2e8b57; font-weight: bold;"));
+    } else {
+        dbStatusLabel_->setText(QStringLiteral("未连接（使用文件存储）"));
+        dbStatusLabel_->setStyleSheet(QStringLiteral("color: #c8761a; font-weight: bold;"));
+    }
+}
+
+void OptionsDialog::onDbDriverChanged(int index) {
+    const bool isSqlite = dbTypeBox_->itemData(index).toString() == QStringLiteral("QSQLITE");
+    dbSqliteGroup_->setVisible(isSqlite);
+    dbMysqlGroup_->setVisible(!isSqlite);
+}
+
+void OptionsDialog::onDbBrowse() {
+    const QString cur = dbFileEdit_->text().isEmpty() ? QDir::homePath() : dbFileEdit_->text();
+    const QString path = QFileDialog::getSaveFileName(this, tr("选择 SQLite 数据库文件"),
+        cur, tr("SQLite 数据库 (*.db *.sqlite);;所有文件 (*.*)"));
+    if (!path.isEmpty()) dbFileEdit_->setText(path);
+}
+
+void OptionsDialog::onDbTest() {
+    const QString driver = dbTypeBox_->currentData().toString();
+    const QString dbPath = dbFileEdit_->text().trimmed();
+    const QString host   = dbHostEdit_->text().trimmed();
+    const int     port   = dbPortEdit_->text().toInt();
+    const QString dbName = dbNameEdit_->text().trimmed();
+    const QString user   = dbUserEdit_->text();
+    const QString pass   = dbPassEdit_->text();
+    const QString err = DrawingDb::testConnection(driver, dbPath, host, port, dbName, user, pass);
+    if (err.isEmpty())
+        QMessageBox::information(this, tr("测试连接"), tr("连接成功。"));
+    else
+        QMessageBox::warning(this, tr("测试连接"), tr("连接失败：\n%1").arg(err));
+}
+
+void OptionsDialog::onDbSave() {
+    DrawingDb* db = DrawingDb::instance();
+    const QString driver = dbTypeBox_->currentData().toString();
+    // 防御：驱动缺失时直接提示并放弃保存，避免写入不可用的连接配置。
+    if (!QSqlDatabase::isDriverAvailable(driver)) {
+        QMessageBox::warning(this, tr("保存并连接"),
+            tr("当前 Qt 构建未包含该数据库驱动（%1），无法保存并连接。\n请改用内置的 SQLite，或将对应驱动插件放入程序目录的 sqldrivers/ 子目录后重启。").arg(driver));
+        return;
+    }
+    const QString dbPath = dbFileEdit_->text().trimmed();
+    const QString host   = dbHostEdit_->text().trimmed();
+    const int     port   = dbPortEdit_->text().toInt();
+    const QString dbName = dbNameEdit_->text().trimmed();
+    const QString user   = dbUserEdit_->text();
+    const QString pass   = dbPassEdit_->text();
+
+    db->closeConnection();
+    db->setConnectionInfo(driver, dbPath, host, dbName, user, pass);
+    db->setPort(port);
+    if (!db->saveConfigToFile()) {
+        QMessageBox::warning(this, tr("数据库配置"),
+            tr("配置已应用，但写入配置文件失败：%1\n下次启动可能回落默认连接。").arg(db->lastError()));
+    }
+    db->connect();
+    refreshDbStatus();
+    emit databaseConfigChanged();   // 通知主窗口刷新状态栏 / 菜单可用态
+}
+
 void OptionsDialog::addPage(const QString& title, QWidget* page) {
     new QTreeWidgetItem(catTree_, QStringList{ title });   // 以 catTree_ 为父 → 自动成为顶层项
     pages_->addWidget(page);
@@ -364,6 +606,14 @@ void OptionsDialog::loadWidgets() {
     userNameEdit_->setText(s_->userName());
     companyEdit_->setText(s_->userCompany());
     chkTelemetry_->setChecked(s_->telemetryEnabled());
+    // AI 自然语言助手
+    aiEnabledBox_->setCurrentIndex(comboIndexOfData(aiEnabledBox_, s_->aiEnabled()));
+    aiProviderBox_->setCurrentIndex(comboIndexOfData(aiProviderBox_, s_->aiProvider()));
+    aiBaseUrlEdit_->setText(s_->aiBaseUrl());
+    aiApiKeyEdit_->setText(s_->aiApiKey());
+    aiModelEdit_->setText(s_->aiModel());
+    aiMaxTokensSpin_->setValue(s_->aiMaxTokens());
+    aiAutoExecChk_->setChecked(s_->aiAutoExecute());
 }
 
 void OptionsDialog::loadWidgetsFromDefaults() {
@@ -392,6 +642,14 @@ void OptionsDialog::loadWidgetsFromDefaults() {
     userNameEdit_->setText(AppSettings::defaultValue(QLatin1String(kUserName)).toString());
     companyEdit_->setText(AppSettings::defaultValue(QLatin1String(kUserCompany)).toString());
     chkTelemetry_->setChecked(AppSettings::defaultValue(QLatin1String(kTelemetryEnabled)).toBool());
+    // AI 自然语言助手（默认值回填草稿；须点应用/确定才生效）
+    aiEnabledBox_->setCurrentIndex(comboIndexOfData(aiEnabledBox_, AppSettings::defaultValue(QLatin1String(kAiEnabled)).toBool()));
+    aiProviderBox_->setCurrentIndex(comboIndexOfData(aiProviderBox_, AppSettings::defaultValue(QLatin1String(kAiProvider)).toString()));
+    aiBaseUrlEdit_->setText(AppSettings::defaultValue(QLatin1String(kAiBaseUrl)).toString());
+    aiApiKeyEdit_->setText(AppSettings::defaultValue(QLatin1String(kAiApiKey)).toString());
+    aiModelEdit_->setText(AppSettings::defaultValue(QLatin1String(kAiModel)).toString());
+    aiMaxTokensSpin_->setValue(AppSettings::defaultValue(QLatin1String(kAiMaxTokens)).toInt());
+    aiAutoExecChk_->setChecked(AppSettings::defaultValue(QLatin1String(kAiAutoExecute)).toBool());
 }
 
 void OptionsDialog::collectWidgets() {
@@ -418,6 +676,14 @@ void OptionsDialog::collectWidgets() {
     s_->setUserName(userNameEdit_->text().trimmed());
     s_->setUserCompany(companyEdit_->text().trimmed());
     s_->setTelemetryEnabled(chkTelemetry_->isChecked());
+    // AI 自然语言助手
+    s_->setAiEnabled(aiEnabledBox_->currentData().toBool());
+    s_->setAiProvider(aiProviderBox_->currentData().toString());
+    s_->setAiBaseUrl(aiBaseUrlEdit_->text().trimmed());
+    s_->setAiApiKey(aiApiKeyEdit_->text().trimmed());
+    s_->setAiModel(aiModelEdit_->text().trimmed());
+    s_->setAiMaxTokens(aiMaxTokensSpin_->value());
+    s_->setAiAutoExecute(aiAutoExecChk_->isChecked());
 }
 
 // ---- 动作 ----

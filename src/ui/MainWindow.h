@@ -63,6 +63,12 @@ class AppSettings;          // 全局设置（AppSettings.h 仍需在 cpp 中包
 class RecentFiles;          // 最近文件 MRU（core/RecentFiles.h 在 cpp 中包含）
 class OptionsDialog;        // 统一「选项」对话框（ui/OptionsDialog.h 在 cpp 中包含）
 class ModelMediator;        // 模型↔面板中介者（多文档切换时 rewire）
+class DbDrawingsDialog;     // 数据库绘图记录/模板对话框（ui/DbDrawingsDialog.h 在 cpp 中包含）
+class DbConfigDialog;       // 数据库配置对话框（ui/DbConfigDialog.h 在 cpp 中包含）
+class NlAssistant;          // AI 自然语言助手编排层（ai/NlAssistant.h 在 cpp 中包含）
+class AppContextProvider;   // 文档状态采集（ai/AppContextProvider.h 在 cpp 中包含）
+class LlmProvider;         // LLM 后端抽象（ai/LlmProvider.h 在 cpp 中包含）
+class AiAssistantPanel;     // AI 对话面板（ui/AiAssistantPanel.h 在 cpp 中包含）
 
 // 主窗口：菜单栏、工具条、三栏 dock 布局、面板联动、文件 IO
 class MainWindow : public QMainWindow {
@@ -156,12 +162,32 @@ private:
     LogPanel* logPanel_;
     CommandLine* cmdLine_;
     StatusBar* statusBar_;
+    // ---- 数据库绘图存储（启动静默连接；失败降级为纯文件存储）----
+    QLabel*      dbStatusLabel_ = nullptr;   // 状态栏数据库连接状态标签
+    QMenu*       dbMenu_ = nullptr;          // 「数据库」顶级菜单
+    // 「数据库配置」始终可点（即使连接失败也要能打开修正配置）；
+    // 下列三个依赖连接的操作，未连接时禁用。
+    QAction*     dbActRecords_ = nullptr;    // 绘图记录...
+    QAction*     dbActSaveDb_  = nullptr;    // 保存当前图纸到数据库...
+    QAction*     dbActTmpl_    = nullptr;    // 另存当前图纸为模板...
+    DbDrawingsDialog* dbDlg_ = nullptr;      // 数据库绘图记录对话框（懒构造，单例复用）
+    DbConfigDialog*  dbCfgDlg_ = nullptr;     // 数据库配置对话框（懒构造，单例复用）
     // ---- 崩溃不丢稿：自动保存 + 恢复 ----
     // autoSave_ 持有定时器与快照逻辑（core/AutoSave）；appSettings_ 持配置（HKCU）。
     // 快照字节提供者 = model_->toDrawingBytes()（与写盘同一序列化入口）。
     AutoSave*    autoSave_ = nullptr;
     AppSettings* appSettings_ = nullptr;
     bool recovering_ = false;   // 恢复流程中：抑制「操作计数」与自动保存，避免刚读档就被覆盖
+
+    // ---- AI 自然语言助手（LLM 嵌入；云端/本地/离线可切换）----
+    // 编排层 NlAssistant 在 appSettings_ 就绪后由 initAiAssistant() 构建；
+    // 对话面板 AiAssistantPanel 在 buildDocks() 构建并停靠（初始隐藏，菜单/面板开关唤起）。
+    NlAssistant*        aiAssistant_ = nullptr;     // 编排层（LLM ⇄ 工具 ⇄ interp_->execute 循环）
+    AppContextProvider* aiCtx_       = nullptr;     // 文档状态采集（选择/图层/最近命令）
+    LlmProvider*       aiProvider_  = nullptr;     // 当前 LLM 后端（按 ai/provider 设置创建）
+    AiAssistantPanel*   aiPanel_     = nullptr;     // 对话面板（展示 + 采集）
+    QDockWidget*       aiDock_       = nullptr;     // 面板停靠容器
+    QString            aiProviderType_;            // 当前后端类型（cloud/local/mock），用于热替换判定
 
     // ---- 应用级配置持久化 + 最近文件 ----
     QMenu* recentMenu_ = nullptr;        // 文件 > 最近打开（动态子菜单）
@@ -299,6 +325,30 @@ private:
     void saveFile();
     void openFile();
 
+    // ---- 数据库绘图存储 ----
+    // 启动时尝试连接；失败不报错、不中断（静默降级到纯文件存储），仅状态栏回显。
+    void initDatabase();
+    // 状态栏刷新连接状态文本（已连接 / 未连接（使用文件））
+    void updateDbStatus();
+    // 打开「数据库绘图记录」对话框（表格 + 操作列 + 保存/另存模板）
+    void onShowDbDrawings();
+    // 打开「数据库配置」对话框（编辑连接信息并保存到本地配置文件）
+    void onShowDbConfig();
+    // 配置对话框「确定」回传：应用连接信息 + 写配置文件 + 重连 + 刷新状态
+    void onDbConfigAccepted(const QString& driver, const QString& dbPath,
+                            const QString& host, const QString& dbName,
+                            const QString& user, const QString& pass, int port);
+    // 当前图纸 -> drawings 表（JSON 文本）
+    void saveCurrentToDatabase(const QString& name);
+    // 当前图纸 -> templates 表（JSON 文本 + 当前图纸尺寸作为参考尺寸）
+    void saveCurrentAsTemplate(const QString& name);
+    // drawings 表按 id 取回 JSON -> 临时文件 -> readDrawing（复用既有打开/渲染逻辑，零重复）
+    void openDrawingFromDb(int id);
+    // templates 表按 id 取回 JSON + 参考尺寸 -> readDrawing -> 按用户新尺寸 setScaleRatio（同形异尺寸）
+    void applyTemplateFromDb(int id);
+    // 共用：把 JSON 文本落临时文件并经 openDocInteractive/readDrawing 载入（返回是否成功）
+    bool loadDrawingJsonViaTempFile(const QString& json, QString* errOut);
+
     // ---- 启动页：启动=继续上次工作 ----
     // 恢复项优先（P0-02 快照），其次 新建（空白 / A0~A4 模板+标题栏样式）/ 打开最近 / 打开其他。
     // 对话框只做选择不动模型；执行统一在 exec 返回后分派（与 CrashRecoveryDialog 同设计）。
@@ -348,6 +398,10 @@ private:
     void applySettingLive(const QString& key, const QVariant& v);   // settingChanged 统一消费点（含取消回滚）
     void saveAppSettingsOnClose();              // 关闭保存：几何/布局/显示开关/打印设置 + 写失败提示
     void openOptionsDialog();                   // 工具 → 选项...
+    // AI 自然语言助手：appSettings_ 就绪后构建编排层 + 后端 + 上下文采集并接线；
+    // applyAiSettings 在选项变更（settingChanged 命中 ai/ 键）时热更新后端参数/类型。
+    void initAiAssistant();
+    void applyAiSettings();
     // DWG 转换组件缺失指引（意图 D③）：版本串原文 + 「未安装 DWG 转换组件」+ 帮助链接。
     // isRead=true 为打开场景（ver/humanVer 为文件版本串与可读名）；false 为另存场景。
     void warnDwgConverterMissing(bool isRead, const QString& ver, const QString& humanVer);

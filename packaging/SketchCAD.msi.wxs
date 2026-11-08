@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SketchCAD MSI 安装程序源（WiX Toolset v5，命名空间 v4/wxs）
+
+  由 build.sh package 模式调用：
+    wix build -arch x64 \
+      -d StageDir=<pkg-stage 目录> \
+      -d AppVersion=<CMake project VERSION> \
+      -out dist/SketchCAD-<版本>-Setup.msi \
+      packaging/SketchCAD.msi.wxs
+
+  与 Inno Setup 的 .exe 安装包共用**同一个** pkg-stage 暂存目录，
+  因此两者装入的文件集合完全一致，不存在「MSI 版少一个 DLL」的漂移。
+  版本只经 -d AppVersion 注入，与 CMakeLists.txt 的 project(VERSION) 同源。
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="SketchCAD 草图设计系统"
+           Manufacturer="我是慎独"
+           Version="$(var.AppVersion)"
+           UpgradeCode="{3F6B1D2A-8C47-4E59-9A0B-7D2E5C8F1A64}"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <!-- MSI 的 Summary Information 流是 ANSI 编码，非 ASCII 字符会被写成 '?'；
+         故摘要字段一律 ASCII。产品名/厂商的中文由 Package 的 Name / Manufacturer
+         写入 Property 表（UTF-8 代码页 65001），在「程序和功能」中显示正常。 -->
+    <SummaryInformation Description="SketchCAD CAD Drawing System Installer"
+                         Manufacturer="SketchCAD" />
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 SketchCAD，无法降级安装。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="SketchCAD 草图设计系统" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <!-- 64 位 Program Files（与 Inno Setup 的 {autopf} 对齐） -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="SketchCAD" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramMenuDir" Name="SketchCAD 草图设计系统" />
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- Files 元素由 WiX 自动为每个文件生成独立 Component，
+         并保留子目录结构（imageformats/、tools/dwg/、sqldrivers/ 等）。 -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.StageDir)\**" />
+    </ComponentGroup>
+
+    <Component Id="StartMenuShortcuts" Directory="AppProgramMenuDir"
+               Guid="{9C1E5A70-4B2D-4F83-8E16-2A7D0B9C4F31}">
+      <Shortcut Id="StartMenuApp" Name="SketchCAD 草图设计系统"
+                Target="[INSTALLFOLDER]SketchCAD.exe" WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut Id="StartMenuReadme" Name="使用说明"
+                Target="[INSTALLFOLDER]README.md" />
+      <RemoveFolder Id="RemoveAppProgramMenuDir" Directory="AppProgramMenuDir" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\SketchCAD\Msi" Name="StartMenu"
+                     Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcut" Directory="DesktopFolder"
+               Guid="{B4D7E218-6A93-4C05-9F8B-1E3C6A0D7529}">
+      <Shortcut Id="DesktopApp" Name="SketchCAD 草图设计系统"
+                Target="[INSTALLFOLDER]SketchCAD.exe" WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKCU" Key="Software\SketchCAD\Msi" Name="Desktop"
+                     Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

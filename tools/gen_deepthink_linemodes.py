@@ -20,7 +20,7 @@ style._element.rPr.rFonts.set(qn('w:eastAsia'), FONT)
 style.font.size = Pt(10.5)
 
 # 标题
-T = doc.add_heading("航空CAD-草图绘制模块-深度思考", level=0)
+T = doc.add_heading("我是慎独-草图绘制模块-深度思考", level=0)
 T.alignment = WD_ALIGN_PARAGRAPH.CENTER
 r = T.runs[0]
 r.font.name = FONT

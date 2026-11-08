@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""生成《航空CAD-草图绘制模块-深度思考（框选多选与选区智能标注）》聚焦文档。
+"""生成《我是慎独-草图绘制模块-深度思考（框选多选与选区智能标注）》聚焦文档。
 
 该文档仅导出最近一轮「框选多选 + 选区智能标注」两项修改的设计推演，
 与既有综合文档（四项增强）并列，便于单独核查本轮改动。
@@ -9,9 +9,9 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
 
-OUT = r"D:/01-CAD/02-avticationCAD/docs/航空CAD-草图绘制模块-深度思考（框选多选与选区智能标注）.docx"
+OUT = r"D:/01-CAD/02-avticationCAD/docs/我是慎独-草图绘制模块-深度思考（框选多选与选区智能标注）.docx"
 
-DOC_TITLE = "航空CAD 草图绘制模块 — 深度思考（框选多选与选区智能标注）"
+DOC_TITLE = "我是慎独 草图绘制模块 — 深度思考（框选多选与选区智能标注）"
 SUBTITLE = "C++17 / Qt6 实现 · 橡皮筋框选 · 选择集下沉模型 · 选区驱动智能标注"
 
 doc = Document()
@@ -194,7 +194,7 @@ H1("三、验证结论")
 bullet("干净构建（CMake + Ninja + MinGW GCC 13.1.0）：0 警告 / 0 错误。")
 bullet("核心自测 SketchSelfTest：125 项通过 / 0 失败；本轮新增 §18（多选集合 + 智能标注）共 16 项用例。")
 bullet("主要改动文件：src/core/SketchModel.h/.cpp、src/ui/GraphicsView.cpp/.h、src/ui/MainWindow.cpp、src/core/CommandInterpreter.cpp、tests/selftest.cpp。")
-bullet("本思考文档与综合文档《航空CAD-草图绘制模块-深度思考过程（四项增强 + 后续优化）》互补：综合文档覆盖架构基线与前四项增强，本文档聚焦最近一轮的框选多选与选区智能标注。")
+bullet("本思考文档与综合文档《我是慎独-草图绘制模块-深度思考过程（四项增强 + 后续优化）》互补：综合文档覆盖架构基线与前四项增强，本文档聚焦最近一轮的框选多选与选区智能标注。")
 
 doc.add_paragraph()
 end = doc.add_paragraph()

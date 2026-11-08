@@ -112,10 +112,10 @@ BLOCK "040904b0"              // ② 用 Unicode StringFileInfo 块（65001 = UT
 ```
 FileVersion     : 1.1.0.0
 ProductVersion  : 1.1.0.0
-CompanyName     : 航空CAD
+CompanyName     : 我是慎独
 ProductName     : SketchCAD 草图设计系统
 FileDescription : SketchCAD 草图设计系统
-LegalCopyright  : Copyright (C) 2026 航空CAD. All rights reserved.
+LegalCopyright  : Copyright (C) 2026 我是慎独. All rights reserved.
 ```
 
 ### 2.3 windres 的三个语法坑
@@ -303,7 +303,7 @@ ISCC 于是报 `You may not specify more than one script filename`。
 | 验收标准 | 状态 | 证据 |
 |---|---|---|
 | ① 全新虚拟机安装 → 绘制/保存/打开 → 卸载无残留 | **待人工验证** | 见第 8 节清单。包体 16MB，含 Qt+MinGW 运行时，目标机无需装 Qt/编译器 |
-| ② 关于 = exe 属性 = 安装包名 | ✅ | 三者同源；`[OK] 版本一致：安装包名 1.1.0 \| exe 属性 1.1.0.0`；实测 exe 属性为 `1.1.0.0` / 航空CAD |
+| ② 关于 = exe 属性 = 安装包名 | ✅ | 三者同源；`[OK] 版本一致：安装包名 1.1.0 \| exe 属性 1.1.0.0`；实测 exe 属性为 `1.1.0.0` / 我是慎独 |
 | ③ `./build.sh package` 产出并打印校验和 | ✅ | `PKG_EXIT=0`；产出 `dist/SketchCAD-1.1.0-Setup.exe`(16MB) + `dist/checksums.sha256`；`sha256sum -c` 通过 |
 | ④ `./build.sh dist` 行为不变 | ✅ | dist 改用同一个 `deploy_qt`，成功时产物完全一致；仅在 windeployqt 失败时由「静默产出坏包」改为「明确报错」 |
 | 边界：不改业务逻辑 | ✅ | 仅改 `MainWindow.cpp` 的「关于」菜单回调（`model_->log` → `QMessageBox::about` + 版本宏），绘图/文件 IO 逻辑零改动 |

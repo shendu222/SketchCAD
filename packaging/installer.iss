@@ -16,7 +16,7 @@
 
 #define AppName        "SketchCAD"
 #define AppNameCN      "SketchCAD 草图设计系统"
-#define AppPublisher   "航空CAD"
+#define AppPublisher   "我是慎独"
 #define AppExeName     "SketchCAD.exe"
 ; 注意：Inno 预处理指令只认 ';' 注释，**不认 C 风格 // 注释**（会在 ISPP 阶段报
 ; "Expression expected but slash found"）。写注释一律用分号。
@@ -24,11 +24,15 @@
 ; AppId 必须用花括号包住 GUID：字面量里的单个 { } 会被 ISCC 当成常量引用。
 #define AppId          "{{7C3E9A41-5B62-4D18-9F0C-2A6E3B8D4C57}"
 
-; ---- 版本：由 build.sh 通过 -DAppVersion= 传入（ISCC 支持命令行定义覆盖）----
+; ---- 版本：由 build.sh 通过 -DAppVersion= / -DAppVersionFull= 传入 ----
+; ISCC 支持命令行定义覆盖；这里的默认值仅供手工直接 ISCC 编译时兜底。
+; AppVersionFull 必须同步（旧实现把它写死为 1.1.0.0，升级版本后 exe 属性会漂移）。
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
-#define AppVersionFull "1.1.0.0"
+#ifndef AppVersionFull
+  #define AppVersionFull "1.1.1.0"
+#endif
 
 [Setup]
 AppId={#AppId}

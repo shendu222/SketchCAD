@@ -1,4 +1,70 @@
-# SketchCAD v1.1.0 发布说明（Release Notes）
+# SketchCAD v1.1.1 发布说明（Release Notes）
+
+- 发布版本：**v1.1.1**
+- 发布日期：2026-11-08
+- 适用平台：Windows（Qt 6 + MinGW 构建）
+- 版本性质：**启动故障修复版（Hotfix）**，功能与 v1.1.0 保持一致
+- 代码托管：GitHub（`shendu222/sketchCAD`）与 Gitee（`markhenrychen/sketch-cad`）同步，内容一致
+
+---
+
+## 一、本版本解决的问题
+
+**症状**：程序启动后主界面尚未显示即退出，多次运行稳定复现。
+
+**根本原因**（实证定位）：`MainWindow::buildDocks()` 中新增的 AI 助手停靠窗口 `aiDock_`
+被加入了统一的 `setFeatures` 遍历列表与 `setVisible(false)` 调用，但其构造语句被放在函数末尾 ——
+遍历执行时 `aiDock_` 仍为 `nullptr`，对空指针调用 `QDockWidget::setFeatures()` 触发
+`0xc0000005`（访问违例）。崩溃发生在 `MainWindow` 构造期，早于 `main()` 中的 `w.show()`，
+因此用户只能看到启动画面一闪而过，主界面永远不出现。
+
+gdb 调用栈（修复前）：
+
+```
+#0 QDockWidget::setFeatures(...)  Qt6Widgets.dll
+#1 SketchCAD::MainWindow::buildDocks()
+#2 SketchCAD::MainWindow::MainWindow(QWidget*)
+#3 main()
+```
+
+**修复范围**：仅 `src/ui/MainWindow.cpp` 的 `buildDocks()` —— 把 AI 助手面板与停靠窗口的
+创建、`addDockWidget()` 前移到遍历之前，删除函数末尾的重复创建块。不改变任何既有功能、
+布局参数、菜单项或模型行为。
+
+**修复后预期行为**：启动画面正常展示 → 停留结束 → 主窗口正常显示并保持运行；
+AI 助手停靠窗口初始隐藏，可从「视图 > 面板」或「工具 > AI 助手」唤起。
+
+## 二、发行产物（两种安装程序）
+
+| 文件 | 格式 | 说明 |
+| --- | --- | --- |
+| `SketchCAD-1.1.1-Setup.exe` | Inno Setup 6 引导式安装程序 | 含许可协议页、可选桌面图标与文件关联、开始菜单与卸载入口 |
+| `SketchCAD-1.1.1-Setup.msi` | Windows Installer (WiX) 程序包 | 适用于 `msiexec` 静默部署 / 组策略分发，支持版本升级 |
+
+两者打包的是**同一批**经校验的程序文件（主程序、Qt 运行时、图像与 SQL 插件、
+`tools/dwg` 转换器、GPLv3 `COPYING`、`LICENSE.txt`、README、启动封面与剖面图案）。
+校验值见 `dist/checksums.sha256`。
+
+安装示例：
+
+```
+SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+```
+
+## 三、质量校验
+
+- 双目标（SketchCAD / SketchSelfTest）`-Wall -Wextra` 零警告构建通过。
+- 全量自测：`通过 3165 / 失败 0`（EXIT=0）。
+- 主程序实跑：主窗口标题 `SketchCAD`、窗口句柄有效、`Responding = True`，进程稳定驻留。
+- `build/SketchCAD.exe` 与 `dist/SketchCAD.exe` 字节一致。
+- 版本一致性：CMake `project(VERSION 1.1.1)` → `version.h` / `app.rc` / 安装包名 / 安装器属性同源。
+
+---
+
+## 附录：历史版本 v1.1.0 发布说明
+
+> 以下为 v1.1.0 原始发布说明，保留作为版本历史。
 
 - 发布版本：**v1.1.0**
 - 发布日期：2026-10-31

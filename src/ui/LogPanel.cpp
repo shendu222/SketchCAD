@@ -9,7 +9,7 @@ LogPanel::LogPanel(QWidget* p) : QPlainTextEdit(p) {
     setReadOnly(true);
     setMaximumBlockCount(2000);
     setStyleSheet("QPlainTextEdit{background:#1e2230;color:#d6dbe5;font-family:Consolas,monospace;font-size:12px;}");
-    appendPlainText(QStringLiteral("[系统] 航空CAD 草图模块 — 执行信息面板已就绪"));
+    appendPlainText(QStringLiteral("[系统] 我是慎独 草图模块 — 执行信息面板已就绪"));
 }
 
 void LogPanel::appendLog(const QString& msg, const QString& type) {

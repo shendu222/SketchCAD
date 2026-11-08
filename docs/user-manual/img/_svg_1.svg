@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" width="720" xmlns="http://www.w3.org/2000/svg" font-family="Microsoft YaHei, sans-serif">
+      <rect x="2" y="2" width="716" height="220" fill="#fff" stroke="#cdd8e6"/>
+      <text x="16" y="26" fill="#24344c" font-size="13">草图约束工作流</text>
+      <!-- boxes -->
+      <rect x="30" y="70" width="130" height="56" rx="8" fill="#eef3f9" stroke="#2E5AAC"/>
+      <text x="46" y="94" fill="#24344c" font-size="12">① 绘制草图</text>
+      <text x="42" y="112" fill="#5b6b7e" font-size="11">粗略线条</text>
+      <rect x="210" y="70" width="150" height="56" rx="8" fill="#eef3f9" stroke="#2E5AAC"/>
+      <text x="222" y="94" fill="#24344c" font-size="12">② 添加约束</text>
+      <text x="220" y="112" fill="#5b6b7e" font-size="11">几何 + 尺寸</text>
+      <rect x="410" y="70" width="150" height="56" rx="8" fill="#eef3f9" stroke="#2E5AAC"/>
+      <text x="422" y="94" fill="#24344c" font-size="12">③ 求解器计算</text>
+      <text x="420" y="112" fill="#5b6b7e" font-size="11">满足全部关系</text>
+      <rect x="610" y="70" width="80" height="56" rx="8" fill="#e8f5ec" stroke="#2e8b57"/>
+      <text x="624" y="94" fill="#1e5b39" font-size="12">④ 定型</text>
+      <text x="620" y="112" fill="#1e5b39" font-size="11">参数化</text>
+      <!-- arrows -->
+      <g stroke="#2E5AAC" stroke-width="2" marker-end="url(#ar)">
+        <line x1="160" y1="98" x2="208" y2="98"/>
+        <line x1="360" y1="98" x2="408" y2="98"/>
+        <line x1="560" y1="98" x2="608" y2="98"/>
+      </g>
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#2E5AAC"/></marker></defs>
+      <text x="16" y="180" fill="#5b6b7e" font-size="11.5">修改任一尺寸 → 求解器重新计算 → 关联几何同步更新（参数化驱动）。</text>
+    </svg>

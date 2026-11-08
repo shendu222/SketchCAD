@@ -66,6 +66,12 @@
 #include "ui/ThemeManager.h"  // 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源
 #include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
 #include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
+#include "ai/NlAssistant.h"   // AI 自然语言助手（MockProvider → runSketchCommand 派发，t_nlAssistant 直测）
+#include "ai/MockProvider.h"
+#include "ai/AppContextProvider.h"
+#include "core/Element.h"      // 元素类型枚举（t_nlAssistant 图元计数）
+#include <QEventLoop>
+#include <QTimer>
 #include <QTranslator>       // t_i18n：.qm 直载与 contains 探测
 #include <QImage>            // t_i18n：DPI 元数据 dotsPerMeter 换算锚点
 #include <QLocale>           // t_i18n：区域口径（日期/小数点）
@@ -12498,6 +12504,70 @@ static bool t_drawingTheme() {
     return g_fail == fail0;
 }
 
+// 自然语言助手：MockProvider（离线规则）下，用户自然语言 → runSketchCommand 工具调用
+// → interp_->execute 落到现有命令体系 → 模型出现对应图元。验证「LLM 当自然语言前端、
+// 复用既有命令」这一核心路径，无需网络 / 密钥。
+static bool t_nlAssistant() {
+    const int pass0 = g_pass, fail0 = g_fail;
+    fprintf(stdout, "--- 自然语言助手 NlAssistant（MockProvider → runSketchCommand 派发） ---\n");
+
+    SketchModel m;
+    CommandInterpreter interp(&m);
+    MockProvider provider;
+    AppContextProvider ctx(&m);
+    NlAssistant assistant(&interp, &provider, &ctx, &m);
+
+    QStringList executed;
+    QObject::connect(&assistant, &NlAssistant::commandExecuted,
+                     [&](const QString& line, bool ok) { if (ok) executed.append(line); });
+
+    bool done = false;
+    QString errText;
+    QEventLoop loop;
+    QObject::connect(&assistant, &NlAssistant::finished,
+                     [&](bool, const QString& e) { done = true; errText = e; loop.quit(); });
+    QTimer timer;
+    timer.setSingleShot(true);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    timer.start(5000);
+
+    assistant.sendUserMessage(QStringLiteral("画一个圆心(0,0)半径50的圆"));
+    loop.exec();
+
+    CHECK(done, "对话应在步数内结束");
+    CHECK(errText.isEmpty(), "对话不应出错");
+    CHECK(!executed.isEmpty(), "应至少执行了一条命令");
+
+    bool hasCircle = false;
+    for (const QString& l : executed)
+        if (l.startsWith(QStringLiteral("circle")) && l.contains(QStringLiteral("0,0")) && l.contains(QStringLiteral("50")))
+            hasCircle = true;
+    CHECK(hasCircle, "应执行 circle 0,0 50");
+
+    int circles = 0;
+    for (const Element& e : m.elements())
+        if (e.type == ElementType::Circle) ++circles;
+    CHECK(circles == 1, "模型应新增 1 个圆图元");
+
+    // 失败闭环：未知意图不触发工具，不改动模型
+    SketchModel m2;
+    CommandInterpreter interp2(&m2);
+    NlAssistant assistant2(&interp2, &provider, &ctx, &m2);
+    bool done2 = false;
+    QEventLoop loop2;
+    QObject::connect(&assistant2, &NlAssistant::finished, [&](bool, const QString&) { done2 = true; loop2.quit(); });
+    QTimer t2; t2.setSingleShot(true);
+    QObject::connect(&t2, &QTimer::timeout, &loop2, &QEventLoop::quit);
+    t2.start(5000);
+    assistant2.sendUserMessage(QStringLiteral("今天天气怎么样"));
+    loop2.exec();
+    CHECK(done2, "未知意图对话应正常结束");
+    CHECK(m2.elementCount() == 0, "未知意图不应改动模型");
+
+    fprintf(stdout, "  (自然语言助手自测: 通过 %d / 失败 %d)\n", g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -12633,6 +12703,7 @@ int main(int argc, char** argv) {
     CHECK(t_sheetPageSync(), "新建图纸幅面驱动页面设置(六幅面映射/只动两字段/随图存档往返/图框自愈/零布局PDF横竖端到端/布局seeding/COM批出图)");
     CHECK(t_sheetFrameBars(), "新建图框扩展(附加栏/代号栏同名关联/参数栏/左分区开关/装订宽度/预设注册表/模板JSON往返)");
     CHECK(t_dimDriven(), "尺寸驱动编辑(直线/圆/角度驱动+相邻联动+标注文本同步+域刷新+单步撤销+dimedit入口)");
+    CHECK(t_nlAssistant(), "自然语言助手 NlAssistant(MockProvider→runSketchCommand 派发→interp_->execute→图元落模)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");

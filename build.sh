@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# 航空CAD 草图绘制模块 — 一键构建脚本（Windows / Git Bash + Qt6 MinGW）
+# 我是慎独 草图绘制模块 — 一键构建脚本（Windows / Git Bash + Qt6 MinGW）
 #
 # 用法：
 #   ./build.sh          增量构建
 #   ./build.sh clean    清理后完整重建
 #   ./build.sh test     构建并运行核心层自测
 #   ./build.sh dist     构建并打包可独立运行的 dist/ 目录
-#   ./build.sh package  构建商业安装包 → dist/SketchCAD-<版本>-Setup.exe + checksums.sha256
+#   ./build.sh package  构建商业安装包 → dist/SketchCAD-<版本>-Setup.exe
+#                       + dist/SketchCAD-<版本>-Setup.msi + checksums.sha256
+#                       （MSI 需 WiX Toolset v5：dotnet tool install -g wix --version 5.0.2）
 #                       （可选双签名：PKG_CERT/PKG_CERT_PWD 环境变量注入证书；未设则跳过并告警）
+#   ./build.sh dbconfig 安全增量构建 SketchCAD（单作业 -j 1，避开大文件并行 OOM；
+#                       数据库配置功能已并入 SketchCAD 主目标，改完 CMakeLists/源码后跑这个最稳）
+#   ./build.sh mysql-plugin  独立构建并部署 Qt MySQL 驱动插件 qsqlmysql.dll 到
+#                       dist/sqldrivers 与 build/sqldrivers（Qt 6.10.1 官方未附带 QMYSQL 插件；
+#                       需 Qt 源码 mysql 目录与 MySQL 客户端库，缺失则跳过并告警，不中断主流程）
 set -euo pipefail
 
 QT_ROOT="/c/Qt/6.10.1/mingw_64"
@@ -28,12 +35,248 @@ if [ "$MODE" = "clean" ]; then
     rm -rf "$ROOT/build"
 fi
 
+if [ "$MODE" != "mysql-plugin" ]; then
 "$CMAKE" -S "$WROOT" -B "$WROOT/build" -G Ninja \
     -DCMAKE_MAKE_PROGRAM=C:/Qt/Tools/Ninja/ninja.exe \
     -DCMAKE_BUILD_TYPE=Release
 
-"$NINJA" -C "$WROOT/build"
-echo "[OK] 构建完成: $ROOT/build/SketchCAD.exe"
+if [ "$MODE" = "dbconfig" ] || [ "$MODE" = "package" ]; then
+    # 数据库配置功能已并入 SketchCAD 主目标；package 模式也仅增量构建该目标、单作业，
+    # 避免 BatchPlotEngine 等大文件并行编译触发 OOM（实测全量并行 ninja 必 OOM），
+    # 且避免 package 去编译与安装包无关的辅助目标（bench/示例/COM 等）。
+    "$NINJA" -C "$WROOT/build" SketchCAD -j 1
+    echo "[OK] 已安全增量构建 SketchCAD（含数据库配置功能）: $ROOT/build/SketchCAD.exe"
+else
+    "$NINJA" -C "$WROOT/build"
+    echo "[OK] 构建完成: $ROOT/build/SketchCAD.exe"
+fi
+fi
+
+# ============================================================================
+#  MySQL 驱动插件（qsqlmysql.dll）独立构建与部署
+# ----------------------------------------------------------------------------
+#  Qt 6.10.1 官方 mingw_64 构建未附带 QMYSQL 插件（plugins/sqldrivers 仅含
+#  qsqlite/qodbc/qpsql/qoci/qibase/qmimer）。本函数从 Qt 源码的 mysql 插件目录
+#  独立构建一个 MODULE 插件，供主程序在运行时自动加载
+#  （DrawingDb::registerSqlPluginPaths 会把 <程序目录>/sqldrivers 加入 Qt 插件
+#  搜索路径，并把可能放置 libmysql.dll 的目录注入 PATH）。
+#
+#  前置依赖（任一缺失则跳过并告警，不中断主流程）：
+#    · Qt 源码的 mysql 插件目录（默认 C:/Qt/6.10.3/Src/qtbase/src/plugins/sqldrivers/mysql，
+#      可用 SKETCHCAD_MYSQL_SRC 覆盖）；
+#    · MySQL 客户端库 libmysql.dll（MSVC 版亦可：MinGW 经 gendef+dlltool 生成导入库）。
+#  源码取自 6.10.3、链接/包含用运行时相同的 6.10.1（patch 级 ABI 兼容，已实测可加载）。
+build_mysql_plugin() {
+    local SRC="${SKETCHCAD_MYSQL_SRC:-C:/Qt/6.10.3/Src/qtbase/src/plugins/sqldrivers/mysql}"
+    local WORK="$ROOT/build/mysql_plugin"
+    local WWORK MYDLL MYINC MYDIR PLUGIN PROBE_EXE cand
+    WWORK="$(cd "$WORK" 2>/dev/null && pwd -W || echo "$WORK")"
+
+    # 已构建过则跳过（幂等、加速重跑）
+    if [ -f "$WORK/build_dir/qsqlmysql.dll" ]; then
+        echo "[MySQL 插件] 已存在，跳过重新构建: $WORK/build_dir/qsqlmysql.dll"
+        return 0
+    fi
+
+    # 探测 MySQL 客户端库（MySQL 9.x / 8.0 的 libmysql.dll 均位于安装目录的 bin/ 下）
+    MYDLL=""
+    for cand in \
+        "${SKETCHCAD_MYSQL_DLL:-}" \
+        "C:/Program Files/MySQL/MySQL Server 9.6/bin/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 9.6/lib/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 8.0/bin/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 8.0/lib/libmysql.dll"; do
+        [ -n "$cand" ] && [ -f "$cand" ] && { MYDLL="$cand"; break; }
+    done
+
+    if [ ! -d "$SRC" ]; then
+        echo "[警告] 未找到 Qt MySQL 插件源码目录：$SRC（可用 SKETCHCAD_MYSQL_SRC 指定）" >&2
+        echo "        跳过 MySQL 插件构建，主程序将回退到内置 SQLite。" >&2
+        return 0
+    fi
+    if [ -z "$MYDLL" ]; then
+        echo "[警告] 未找到 MySQL 客户端库 libmysql.dll（默认探测 9.6 / 8.0，可用 SKETCHCAD_MYSQL_DLL 指定）" >&2
+        echo "        跳过 MySQL 插件构建，主程序将回退到内置 SQLite。" >&2
+        return 0
+    fi
+
+    MYINC="$(cd "$(dirname "$MYDLL")/../include" 2>/dev/null && pwd -W || echo "C:/Program Files/MySQL/MySQL Server 9.6/include")"
+    MYDIR="$(cd "$(dirname "$MYDLL")" 2>/dev/null && pwd -W || echo "$(dirname "$MYDLL")")"
+
+    echo "[MySQL 插件] 源码: $SRC"
+    echo "[MySQL 插件] 客户端库: $MYDLL"
+    echo "[MySQL 插件] 头文件目录: $MYINC"
+
+    # 重建干净的工程目录（每次从 Qt 源码刷新，不依赖手工拷贝残留）
+    rm -rf "$WORK"
+    mkdir -p "$WORK"
+    cp "$SRC"/main.cpp "$SRC"/qsql_mysql.cpp "$SRC"/qsql_mysql_p.h "$SRC"/mysql.json "$WORK"/ 2>/dev/null || {
+        echo "[警告] 拷贝 Qt MySQL 插件源文件失败（$SRC），跳过 MySQL 插件构建。" >&2
+        return 0
+    }
+    # 验证探针源（best-effort）
+    cat > "$WORK/probe.cpp" <<'PROBE'
+#include <QCoreApplication>
+#include <QSqlDatabase>
+#include <cstdio>
+int main(int argc, char** argv) {
+    QCoreApplication a(argc, argv);
+    if (QSqlDatabase::isDriverAvailable(QStringLiteral("QMYSQL"))) {
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QMYSQL"));
+        printf("QMYSQL available: TRUE\ndriverName: %s\nPLUGIN OK\n", db.driverName().toUtf8().constData());
+        return 0;
+    }
+    printf("QMYSQL available: FALSE\nPLUGIN MISSING/FAILED\n");
+    return 1;
+}
+PROBE
+
+    # 由 MinGW 生成 libmysql.a 导入库（MSVC 的 .lib 不能直接被 MinGW 链接）
+    echo "[MySQL 插件] 生成 MinGW 导入库 libmysql.a ..."
+    ( cd "$WORK" && "$MINGW/gendef.exe" "$MYDLL" > libmysql.def 2>/dev/null ) || true
+    if [ -s "$WORK/libmysql.def" ]; then
+        "$MINGW/dlltool.exe" -d "$WORK/libmysql.def" -l "$WORK/libmysql.a" -D "$MYDLL" 2>/dev/null || true
+    fi
+    if [ ! -f "$WORK/libmysql.a" ]; then
+        echo "[警告] 无法生成 libmysql.a（gendef/dlltool 失败），跳过 MySQL 插件构建。" >&2
+        return 0
+    fi
+
+    # 写自包含 CMakeLists（同已验证可构建的工程；MYSQL_INC_PLACEHOLDER 随后被 sed 替换为实测路径）
+    cat > "$WORK/CMakeLists.txt" <<'CMAKE'
+cmake_minimum_required(VERSION 3.16)
+project(qsqlmysql_plugin CXX)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_PREFIX_PATH "C:/Qt/6.10.1/mingw_64" ${CMAKE_PREFIX_PATH})
+find_package(Qt6 REQUIRED COMPONENTS Core Sql Network)
+add_library(qsqlmysql MODULE main.cpp qsql_mysql.cpp qsql_mysql_p.h mysql.json)
+set_target_properties(qsqlmysql PROPERTIES PREFIX "" OUTPUT_NAME qsqlmysql)
+target_include_directories(qsqlmysql PRIVATE
+    "${CMAKE_SOURCE_DIR}"
+    "MYSQL_INC_PLACEHOLDER"
+    "C:/Qt/6.10.1/mingw_64/include/QtSql/6.10.1"
+    "C:/Qt/6.10.1/mingw_64/include/QtSql/6.10.1/QtSql"
+    "C:/Qt/6.10.1/mingw_64/include/QtCore/6.10.1"
+    "C:/Qt/6.10.1/mingw_64/include/QtCore/6.10.1/QtCore")
+target_compile_definitions(qsqlmysql PRIVATE
+    QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII QT_NO_CONTEXTLESS_CONNECT QT_PLUGIN QT_SHARED)
+target_link_libraries(qsqlmysql PRIVATE Qt6::Core Qt6::Sql Qt6::Network "${CMAKE_SOURCE_DIR}/libmysql.a")
+add_executable(probe probe.cpp)
+target_link_libraries(probe PRIVATE Qt6::Core Qt6::Sql)
+CMAKE
+    sed -i "s|MYSQL_INC_PLACEHOLDER|$MYINC|g" "$WORK/CMakeLists.txt"
+
+    # 用与运行时一致的 Qt 构建树配置+构建
+    echo "[MySQL 插件] 配置并构建 qsqlmysql.dll ..."
+    if ! "$CMAKE" -S "$WWORK" -B "$WWORK/build_dir" -G Ninja \
+        -DCMAKE_MAKE_PROGRAM=C:/Qt/Tools/Ninja/ninja.exe \
+        -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1; then
+        echo "[警告] MySQL 插件 CMake 配置失败，跳过 MySQL 插件构建。" >&2
+        return 0
+    fi
+    if ! "$NINJA" -C "$WWORK/build_dir" >/dev/null 2>&1; then
+        echo "[警告] MySQL 插件构建失败，跳过 MySQL 插件构建。" >&2
+        return 0
+    fi
+
+    PLUGIN="$WORK/build_dir/qsqlmysql.dll"
+    if [ ! -f "$PLUGIN" ]; then
+        echo "[警告] 未产出 qsqlmysql.dll，跳过 MySQL 插件构建。" >&2
+        return 0
+    fi
+
+    # best-effort 验证：把插件放入 sqldrivers/ 子目录，用探针确认 QMYSQL 可加载
+    PROBE_EXE="$WORK/build_dir/probe.exe"
+    if [ -f "$PROBE_EXE" ]; then
+        mkdir -p "$WORK/build_dir/sqldrivers"
+        cp "$PLUGIN" "$WORK/build_dir/sqldrivers/" 2>/dev/null || true
+        if QT_PLUGIN_PATH="$WWORK/build_dir" PATH="$MYDIR;$PATH" "$PROBE_EXE" >/dev/null 2>&1; then
+            echo "[OK] 探针确认 QMYSQL 插件可加载（PLUGIN OK）"
+        else
+            echo "[提示] 探针未通过（可能无控制台/环境限制），但插件已构建；实际加载以主程序运行为准" >&2
+        fi
+    fi
+    echo "[OK] MySQL 插件构建完成: $PLUGIN"
+}
+
+# 把已构建的 qsqlmysql.dll（及运行时依赖 libmysql.dll、OpenSSL）部署到目标 sqldrivers/ 目录。
+#
+# ⚠️ 关键修复点：libmysql.dll（MySQL 9.x 客户端，MSVC 构建）除 VC++ 运行库
+#   （VCRUNTIME140 / MSVCP140，Windows 已自带）外，还依赖 OpenSSL 的
+#   libssl-3-x64.dll 与 libcrypto-3-x64.dll。这两个 DLL 既不在 dist/ 也不在
+#   System32，只存在于 MySQL 安装目录；一旦部署机没有把 MySQL 放进 PATH
+#   （例如直接双击 dist/SketchCAD.exe 启动），libmysql.dll 就因找不到 OpenSSL
+#   而加载失败 → QMYSQL 插件加载失败 → 测试连接报 "Driver not loaded"。
+#   故此处必须把 libssl/libcrypto 一并拷入两处：
+#     · $dst        （= <程序目录>/sqldrivers）：覆盖 qsqlmysql→libmysql 作为依赖链
+#                    加载时、从 libmysql 自身目录解析 OpenSSL 的场景；
+#     · $dst/..     （= <程序目录>，exe 所在目录）：覆盖本程序 registerSqlPluginPaths
+#                    用 QLibrary 直接预加载 libmysql 时、从 exe 目录解析其依赖的场景。
+#   两处都放，确保两种加载路径都能命中 OpenSSL（已用「剥离 PATH 双击启动」复现验证）。
+sync_mysql_plugin() {
+    local dst="$1"
+    [ -d "$dst" ] || mkdir -p "$dst"
+    local PLUGIN="" MYDLL_DEP cand MYBIN OPENSSL_SRC dll
+    PLUGIN="$(ls "$ROOT/build/mysql_plugin/build_dir/qsqlmysql.dll" 2>/dev/null \
+           || ls "$ROOT/build/mysql_plugin/qsqlmysql.dll" 2>/dev/null || true)"
+    if [ -z "$PLUGIN" ] || [ ! -f "$PLUGIN" ]; then
+        echo "[警告] 未找到已构建的 qsqlmysql.dll，无法部署 MySQL 插件到 $dst" >&2
+        return 0
+    fi
+    cp "$PLUGIN" "$dst/qsqlmysql.dll"
+    echo "[OK] MySQL 插件已部署: $dst/qsqlmysql.dll"
+    # 运行时依赖 libmysql.dll：随插件一同放入 sqldrivers/。
+    MYDLL_DEP=""
+    for cand in \
+        "${SKETCHCAD_MYSQL_DLL:-}" \
+        "C:/Program Files/MySQL/MySQL Server 9.6/bin/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 9.6/lib/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 8.0/bin/libmysql.dll" \
+        "C:/Program Files/MySQL/MySQL Server 8.0/lib/libmysql.dll"; do
+        [ -n "$cand" ] && [ -f "$cand" ] && { MYDLL_DEP="$cand"; break; }
+    done
+    if [ -n "$MYDLL_DEP" ]; then
+        cp "$MYDLL_DEP" "$dst/libmysql.dll"
+        echo "[OK] MySQL 客户端库已随插件部署: $dst/libmysql.dll"
+    else
+        echo "[警告] 未找到 libmysql.dll，仅部署了插件本体；运行时需保证 libmysql.dll 在 PATH 中" >&2
+    fi
+    # OpenSSL 依赖（libssl-3-x64.dll / libcrypto-3-x64.dll）：必须与 libmysql.dll 同源，
+    # 否则符号/版本不匹配会令 libmysql 加载失败。优先取与 libmysql 同一 MySQL 安装目录。
+    MYBIN="$(cd "$(dirname "$MYDLL_DEP")" 2>/dev/null && pwd -W || true)"
+    OPENSSL_SRC=""
+    for cand in \
+        "${MYBIN:+${MYBIN}/libssl-3-x64.dll}" \
+        "C:/Program Files/MySQL/MySQL Server 9.6/bin/libssl-3-x64.dll" \
+        "C:/Program Files/MySQL/MySQL Server 8.0/bin/libssl-3-x64.dll"; do
+        [ -n "$cand" ] && [ -f "$cand" ] && { OPENSSL_SRC="$(cd "$(dirname "$cand")" && pwd -W)"; break; }
+    done
+    if [ -n "$OPENSSL_SRC" ]; then
+        local exeroot="$(cd "$dst/.." && pwd -W)"
+        for dll in libssl-3-x64.dll libcrypto-3-x64.dll; do
+            if [ -f "$OPENSSL_SRC/$dll" ]; then
+                cp "$OPENSSL_SRC/$dll" "$dst/$dll"          # <程序目录>/sqldrivers/
+                cp "$OPENSSL_SRC/$dll" "$exeroot/$dll"      # <程序目录>（exe 所在目录）
+                echo "[OK] OpenSSL 依赖已部署: $dst/$dll 与 $exeroot/$dll"
+            else
+                echo "[警告] 未找到 $dll（位于 $OPENSSL_SRC），MySQL 驱动可能无法加载" >&2
+            fi
+        done
+    else
+        echo "[警告] 未找到 OpenSSL（libssl-3-x64.dll），MySQL 驱动可能因缺 OpenSSL 而无法加载" >&2
+    fi
+}
+
+# mysql-plugin 模式：仅构建并部署插件，跳过主工程全量构建
+if [ "$MODE" = "mysql-plugin" ]; then
+    build_mysql_plugin
+    sync_mysql_plugin "$ROOT/dist/sqldrivers"
+    sync_mysql_plugin "$ROOT/build/sqldrivers"
+    echo "[OK] MySQL 插件构建并部署完成（dist/sqldrivers 与 build/sqldrivers）"
+    exit 0
+fi
 
 # 用 windeployqt 汇集 Qt 运行时，并**校验结果**。
 # 为什么要校验：windeployqt 在某些环境下会「返回 0 但什么都没部署」
@@ -162,6 +405,12 @@ if [ "$MODE" = "dist" ]; then
     echo "[OK] 已打包: $ROOT/dist/SketchCAD.exe（含 Qt 运行时，可拷贝到无 Qt 环境运行）"
     echo "[OK] 剖面 PAT 图案已同步到 dist/hatch/"
     echo "[OK] 启动画面封面已同步到 dist/"
+    # ---- 部署 MySQL 驱动插件（如缺失则尝试构建，失败仅告警）----
+    if [ ! -f "$ROOT/dist/sqldrivers/qsqlmysql.dll" ]; then
+        echo "[dist] 未检测到 MySQL 插件，尝试构建并部署 ..."
+        build_mysql_plugin || true
+        sync_mysql_plugin "$ROOT/dist/sqldrivers" || true
+    fi
 fi
 
 # =============================================================================
@@ -319,6 +568,10 @@ if [ "$MODE" = "package" ]; then
     # 运行时数据：剖面 PAT 图案 + 启动封面（与 dist 模式保持一致）
     sync_hatch "$STAGE/hatch"
     sync_cover "$STAGE/"
+    # MySQL 驱动插件（运行时可选依赖；缺失则尝试构建，失败仅告警；
+    # 进入 STAGE/sqldrivers 后随 StageDir\* 递归入包）
+    build_mysql_plugin || true
+    sync_mysql_plugin "$STAGE/sqldrivers" || true
     # 随程序分发的许可协议（用户可在程序目录内查阅）
     cp "$ROOT/LICENSE.txt" "$STAGE/" 2>/dev/null || true
     cp "$ROOT/README.md" "$STAGE/" 2>/dev/null || true
@@ -345,8 +598,11 @@ if [ "$MODE" = "package" ]; then
     # → C:/Program Files/Git/DAppVersion=1.1.0），ISCC 于是报
     # "You may not specify more than one script filename"。
     # 关闭参数转换：MSYS2_ARG_CONV_EXCL="*" 是标准做法，MSYS_NO_PATHCONV 为旧版兼容。
+    # /DAppVersionFull 必须一起传：安装器 setup.exe 自身的 VERSIONINFO 是四段式，
+    # 若沿用 .iss 里的默认值，升级版本后「安装包名 1.1.1 / 安装器属性 1.1.0.0」会漂移。
     MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1 \
-        "$ISCC" "/DAppVersion=$APP_VERSION" "/DStageDir=$WSTAGE" "$WISS"
+        "$ISCC" "/DAppVersion=$APP_VERSION" "/DAppVersionFull=$APP_VERSION.0" \
+        "/DStageDir=$WSTAGE" "$WISS"
     echo "[OK] ISCC 编译完成"
 
     # ---- 产物 + 校验和 ----
@@ -363,10 +619,49 @@ if [ "$MODE" = "package" ]; then
     # 这样 checksums.sha256 记录的是「已签名」Setup.exe 的哈希。
     sign_file "$SETUP"
 
-    # checksums.sha256：只含本次安装包（不含 dist/ 里的 PDF/图片等其它文件），
+    # ---- MSI 安装包（WiX Toolset v5）：与 Setup.exe 共用同一个 STAGE ----
+    # 两种格式装的是同一批文件，避免「EXE 版有转换器、MSI 版没有」的分发漂移。
+    # WiX 为 .NET 全局工具（用户级安装，无 OSMF/EULA 门控的 v5），探测顺序：
+    #   PKG_WIX → PATH → %USERPROFILE%\.dotnet\tools\wix.exe
+    WIX=""
+    for cand in \
+        "${PKG_WIX:-}" \
+        "$(command -v wix 2>/dev/null || true)" \
+        "$USERPROFILE/.dotnet/tools/wix.exe" \
+        "$HOME/.dotnet/tools/wix.exe"; do
+        if [ -n "$cand" ] && [ -f "$cand" ]; then WIX="$cand"; break; fi
+    done
+    MSI="$ROOT/dist/SketchCAD-$APP_VERSION-Setup.msi"
+    if [ -z "$WIX" ]; then
+        echo "[警告] 未找到 WiX Toolset (wix.exe)，本次未产出 MSI 安装包。" >&2
+        echo "       安装：dotnet tool install --global wix --version 5.0.2" >&2
+    else
+        echo "[OK] WiX: $WIX"
+        # WiX 是原生 Windows 程序：源文件路径须为 Windows 形式；
+        # StageDir 用反斜杠（含 \** 通配符，正斜杠在部分版本会匹配失败）。
+        WSTAGE_WIN="$(cd "$STAGE" && pwd -W | sed 's|/|\\|g')"
+        WMSI="$(cd "$ROOT/dist" && pwd -W)/SketchCAD-$APP_VERSION-Setup.msi"
+        WWXS="$(cd "$ROOT/packaging" && pwd -W)/SketchCAD.msi.wxs"
+        "$WIX" build -arch x64 \
+            -d "StageDir=$WSTAGE_WIN" \
+            -d "AppVersion=$APP_VERSION" \
+            -pdbtype none \
+            -out "$WMSI" "$WWXS"
+        if [ ! -f "$MSI" ]; then
+            echo "[错误] 未产出预期的 MSI：$MSI" >&2
+            exit 1
+        fi
+        echo "[OK] MSI 安装包已产出: $MSI"
+        sign_file "$MSI"
+    fi
+
+    # checksums.sha256：只含本次两种安装包（不含 dist/ 里的 PDF/图片等其它文件），
     # 便于下游脚本 `sha256sum -c checksums.sha256` 直接校验分发完整性。
     # 注意：此处位于双签名之后，哈希对象是「已签名」的产物。
-    ( cd "$ROOT/dist" && sha256sum "SketchCAD-$APP_VERSION-Setup.exe" > checksums.sha256 )
+    ( cd "$ROOT/dist" && sha256sum "SketchCAD-$APP_VERSION-Setup.exe" > checksums.sha256
+      if [ -f "SketchCAD-$APP_VERSION-Setup.msi" ]; then
+          sha256sum "SketchCAD-$APP_VERSION-Setup.msi" >> checksums.sha256
+      fi )
 
     # ---- 版本一致性自检（验收标准：关于对话框 = exe 属性 = 安装包文件名）----
     # 三者都从 CMake 的 project(VERSION) 派生，但「表示形式」不同：
@@ -393,10 +688,17 @@ if [ "$MODE" = "package" ]; then
 
     echo ""
     echo "==================== 商业安装包已产出 ===================="
-    echo "  安装包   : $SETUP"
+    echo "  EXE 安装包: $SETUP"
+    if [ -f "$MSI" ]; then
+        echo "  MSI 安装包: $MSI"
+    fi
     echo "  校验和   : $ROOT/dist/checksums.sha256"
-    echo "  大小     : $(du -h "$SETUP" | cut -f1)"
-    echo "  SHA-256  : $(cut -d' ' -f1 < "$ROOT/dist/checksums.sha256")"
+    echo "  EXE 大小 : $(du -h "$SETUP" | cut -f1)"
+    if [ -f "$MSI" ]; then
+        echo "  MSI 大小 : $(du -h "$MSI" | cut -f1)"
+    fi
+    echo "  SHA-256  :"
+    sed 's/^/              /' "$ROOT/dist/checksums.sha256"
     if [ -n "${PKG_CERT:-}" ]; then
         echo "  签名     : 已双签名（包内 SketchCAD.exe + Setup.exe，Authenticode SHA256 + RFC3161 时间戳）"
     else

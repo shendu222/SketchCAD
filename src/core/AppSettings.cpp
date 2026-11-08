@@ -45,6 +45,13 @@ using SettingKeys::kFirstRunNotice;
 using SettingKeys::kUserName;
 using SettingKeys::kUserCompany;
 using SettingKeys::kWindowGeometry;
+using SettingKeys::kAiEnabled;
+using SettingKeys::kAiProvider;
+using SettingKeys::kAiBaseUrl;
+using SettingKeys::kAiApiKey;
+using SettingKeys::kAiModel;
+using SettingKeys::kAiAutoExecute;
+using SettingKeys::kAiMaxTokens;
 using SettingKeys::kWindowState;
 
 namespace {
@@ -247,6 +254,16 @@ const QVector<AppSettings::Spec>& AppSettings::specTable() {
         // ---- window（本机状态；不参与导出）----
         { kWindowGeometry, QString(), base64Val },
         { kWindowState, QString(), base64Val },
+        // ---- ai（自然语言助手；云端 / 本地 / 离线模拟可切换）----
+        // 默认关闭（隐私：未显式开启不发起任何网络请求）；provider 默认 cloud。
+        { kAiEnabled, false, boolVal },
+        { kAiProvider, QStringLiteral("cloud"),
+          [](const QVariant& v) { return stringWhitelistVal(v, { QLatin1String("cloud"), QLatin1String("local"), QLatin1String("mock") }); } },
+        { kAiBaseUrl, QStringLiteral("https://api.openai.com/v1"), stringVal },
+        { kAiApiKey, QString(), stringVal },
+        { kAiModel, QStringLiteral("gpt-4o-mini"), stringVal },
+        { kAiAutoExecute, true, boolVal },
+        { kAiMaxTokens, 1024, [](const QVariant& v) { return intRangeVal(v, 64, 8192); } },
     };
     return table;
 }
@@ -564,6 +581,28 @@ QByteArray AppSettings::windowState() const {
 void AppSettings::setWindowState(const QByteArray& st) {
     setValue(QLatin1String(kWindowState), QString::fromLatin1(st.toBase64()));
 }
+
+// ---- AI 自然语言助手 ----
+bool AppSettings::aiEnabled() const { return value(QLatin1String(kAiEnabled)).toBool(); }
+void AppSettings::setAiEnabled(bool b) { setValue(QLatin1String(kAiEnabled), b); }
+
+QString AppSettings::aiProvider() const { return value(QLatin1String(kAiProvider)).toString(); }
+void AppSettings::setAiProvider(const QString& p) { setValue(QLatin1String(kAiProvider), p); }
+
+QString AppSettings::aiBaseUrl() const { return value(QLatin1String(kAiBaseUrl)).toString(); }
+void AppSettings::setAiBaseUrl(const QString& u) { setValue(QLatin1String(kAiBaseUrl), u); }
+
+QString AppSettings::aiApiKey() const { return value(QLatin1String(kAiApiKey)).toString(); }
+void AppSettings::setAiApiKey(const QString& k) { setValue(QLatin1String(kAiApiKey), k); }
+
+QString AppSettings::aiModel() const { return value(QLatin1String(kAiModel)).toString(); }
+void AppSettings::setAiModel(const QString& m) { setValue(QLatin1String(kAiModel), m); }
+
+bool AppSettings::aiAutoExecute() const { return value(QLatin1String(kAiAutoExecute)).toBool(); }
+void AppSettings::setAiAutoExecute(bool b) { setValue(QLatin1String(kAiAutoExecute), b); }
+
+int AppSettings::aiMaxTokens() const { return value(QLatin1String(kAiMaxTokens)).toInt(); }
+void AppSettings::setAiMaxTokens(int n) { setValue(QLatin1String(kAiMaxTokens), n); }
 
 // ---- 内部 ----
 

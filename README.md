@@ -6,7 +6,7 @@
 
 > **一款基于 Qt 6 的轻量级 2D CAD 设计软件** —— C++17 · 纯 Qt Widgets · 60+ 绘图命令 · GB/T 国标支持
 
-<img src="resources/badges/build.svg" alt="build: passing" /> <img src="resources/badges/license.svg" alt="license: Proprietary" /> <img src="resources/badges/version.svg" alt="version: 1.1.0" />
+<img src="resources/badges/build.svg" alt="build: passing" /> <img src="resources/badges/license.svg" alt="license: Proprietary" /> <img src="resources/badges/version.svg" alt="version: 1.1.1" />
 
 SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程；内置法兰、箱体、轴承、剖切、工艺三视图等**参数化制图模板**，输入参数即可自动生成成套图面。
 

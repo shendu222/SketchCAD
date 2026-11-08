@@ -50,6 +50,12 @@
 #include "ui/StatusBar.h"
 #include "ui/icons.h"
 #include "ui/NewDrawingDialog.h"
+#include "ui/DbDrawingsDialog.h"   // 数据库绘图记录/模板对话框
+#include "ui/DbConfigDialog.h"     // 数据库配置对话框（连接信息 → 本地配置文件）
+#include "core/DrawingDb.h"        // 绘图数据库存储层（启动静默连接；失败降级纯文件存储）
+#include <QTemporaryFile>
+#include <QFile>
+#include <QDir>
 #include "ui/SheetFrameDialog.h"   // 【图纸】>【新建图框】对话框
 #include "ui/PaperSizeDialog.h"
 #include "ui/TitleBlockForm.h"
@@ -88,6 +94,13 @@
 #include "core/PartLibrary.h"      // P4/P5 零件库（齿轮/紧固件出库）
 #include "core/GbFastenerTable.h"  // P5 GB 紧固件规格表（FastenerKind / sizes）
 #include "core/I18n.h"                  // 界面语言单一入口（翻译器装载/语言解析）
+// ---- AI 自然语言助手（LLM 嵌入；云端/本地/离线可切换）----
+#include "ai/NlAssistant.h"             // 编排层（LLM ⇄ 工具 ⇄ interp_->execute 循环）
+#include "ai/AppContextProvider.h"      // 文档状态采集（选择/图层/最近命令）
+#include "ai/OpenAiProvider.h"          // OpenAI 兼容后端（云端/本地）
+#include "ai/MockProvider.h"            // 离线规则后端（无 key 联调/自测）
+#include "ai/tooldefs.h"               // 工具 schema（查询 + runSketchCommand）
+#include "ui/AiAssistantPanel.h"        // 对话面板（流式显示 + 命令审批条）
 #include "core/RecentFiles.h"           // 最近文件 MRU（路径+时间+pin）
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
 #include "core/Diagnostics.h"           // 日志滚动落盘（供保存失败等记日志）
@@ -209,11 +222,16 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     cmdLine_ = new CommandLine(model_, interp_);
     statusBar_ = new StatusBar();
     setStatusBar(statusBar_);
+    // 数据库状态标签（启动静默连接后回显；未连接则降级为纯文件存储）
+    dbStatusLabel_ = new QLabel(QStringLiteral("数据库: 未连接（使用文件）"), statusBar_);
+    dbStatusLabel_->setContentsMargins(6, 0, 6, 0);
+    statusBar_->addPermanentWidget(dbStatusLabel_);
 
     // 先建面板与工具条，菜单需要引用它们的显隐开关（toggleViewAction）
     buildDocks();
     buildToolbar();
     buildMenu();
+    initDatabase();   // 尝试连接数据库（失败静默降级），回显状态栏并启用/禁用数据库菜单
     initCui();   // 注册内置 UI 元素、载入默认别名/CUIx、应用界面配置（#360/#361）
 
     buildParamBar();   // 参数输入条先建（中央部件自上而下组装时需要）
@@ -224,7 +242,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     statusBar_->setCount(0);
     statusBar_->setPlaneInfo(planeName(model_->plane()));
     statusBar_->setDrawScale(model_->scaleLabel());
-    model_->log(QStringLiteral("航空CAD 草图模块已启动 (C++17 / Qt6)"));
+    model_->log(QStringLiteral("我是慎独 草图模块已启动 (C++17 / Qt6)"));
 
     // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「状态栏按钮」与「快捷键」----
     // 单一状态源在 SketchModel：按钮点击、F8/F9 快捷键、命令行 ortho/snap 三者都只调
@@ -290,6 +308,10 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     // 应用级配置持久化：注册表读入用户习惯（几何/布局/显示开关/最近文件）。
     // setupAutoSave 已建好 appSettings_；此函数只做读取与回放，不阻塞启动。
     loadAppSettingsOnStartup();
+
+    // AI 自然语言助手：appSettings_ 已就绪、aiPanel_ 已由 buildDocks 建好，
+    // 此处构建编排层 + LLM 后端 + 文档上下文采集器并完成面板⇄助手接线。
+    initAiAssistant();
 
     // 快捷键冲突自检：全部快捷键注册完毕后扫描重复绑定，warn 日志提示。
     auditShortcutConflicts();
@@ -727,11 +749,125 @@ void MainWindow::saveAppSettingsOnClose() {
 void MainWindow::openOptionsDialog() {
     if (!appSettings_) return;
     OptionsDialog dlg(appSettings_, this);
+    // 配置中心内「保存并连接」后即时刷新状态栏 / 数据库菜单可用态
+    connect(&dlg, &OptionsDialog::databaseConfigChanged, this, [this] { updateDbStatus(); });
     dlg.exec();
     // 应用/取消的写失败提示由对话框负责；此处仅补日志留痕
     if (appSettings_->lastWriteFailed())
         model_->log(QStringLiteral("配置写入失败：%1").arg(appSettings_->lastError()),
                     QStringLiteral("error"));
+}
+
+// ---- AI 自然语言助手：编排层构建 + 面板⇄助手接线 + 选项热更新 ----
+// 设计约束（见 docs/ai-nl-assistant-design-analysis.md）：
+//   * 所有建模动作只经 interp_->execute（与菜单 / 命令行同一命令体系，天然可撤销）；
+//   * 面板只负责展示与采集，编排全在 NlAssistant；
+//   * 云端/本地共用 OpenAI 兼容协议，离线 mock 完全本机运行（零外发）。
+void MainWindow::initAiAssistant() {
+    if (aiAssistant_) return;                                  // 幂等：只构建一次
+    if (!appSettings_ || !interp_ || !aiPanel_) return;
+
+    // 1) 文档上下文采集器：注入选择集 / 图层 / 最近命令三个真实数据源
+    //    （lambda 捕获 this，读的是「活动」model_，切文档后自动指向新图）
+    aiCtx_ = new AppContextProvider(model_, this);
+    aiCtx_->setSelectionProvider([this]() -> QString {
+        if (!model_) return QString();
+        if (!model_->hasSelection()) return QStringLiteral("当前没有选中对象。");
+        const auto& ids = model_->selection();
+        QStringList types;
+        for (int id : ids) {
+            const Element* e = model_->element(id);
+            if (e) types << QString::fromUtf8(elementTypeName(e->type));
+        }
+        return QStringLiteral("已选中 %1 个对象：%2")
+            .arg((int)ids.size()).arg(types.join(QStringLiteral("、")));
+    });
+    aiCtx_->setLayersProvider([this]() -> QString {
+        if (!model_) return QString();
+        QStringList names;
+        for (int i = 0; i < model_->layerCount(); ++i)
+            names << model_->layerAt(i).name;
+        return QStringLiteral("共 %1 个图层：%2")
+            .arg(model_->layerCount()).arg(names.join(QStringLiteral("、")));
+    });
+    aiCtx_->setRecentCommandsProvider([this]() -> QString {
+        if (!appSettings_) return QString();
+        return appSettings_->value(QLatin1String(SettingKeys::kRecentCommands))
+            .toStringList().join(QStringLiteral("、"));
+    });
+
+    // 2) LLM 后端：cloud / local 都走 OpenAI 兼容协议（仅 baseUrl 不同），mock 离线
+    aiProviderType_ = appSettings_->aiProvider();
+    if (aiProviderType_ == QStringLiteral("mock")) aiProvider_ = new MockProvider(this);
+    else                                          aiProvider_ = new OpenAiProvider(this);
+
+    // 3) 编排层（首次填充 LlmOptions）
+    aiAssistant_ = new NlAssistant(interp_, aiProvider_, aiCtx_, model_, this);
+    applyAiSettings();
+
+    // 4) 面板 ⇄ 助手接线
+    connect(aiPanel_, &AiAssistantPanel::userMessage, this, [this](const QString& text) {
+        if (!aiAssistant_) return;
+        if (!appSettings_->aiEnabled()) {
+            aiPanel_->appendCommandResult(
+                QStringLiteral("AI 助手已停用（工具 → 选项 → AI 助手）"), false);
+            return;
+        }
+        aiAssistant_->sendUserMessage(text);
+    });
+    connect(aiPanel_, &AiAssistantPanel::stopRequested, this,
+            [this] { if (aiAssistant_) aiAssistant_->stop(); });
+    connect(aiPanel_, &AiAssistantPanel::approveRequested, this,
+            [this] { if (aiAssistant_) aiAssistant_->approvePending(); });
+    connect(aiPanel_, &AiAssistantPanel::cancelRequested, this,
+            [this] { if (aiAssistant_) aiAssistant_->cancelPending(); });
+
+    connect(aiAssistant_, &NlAssistant::tokenDelta,
+            aiPanel_, &AiAssistantPanel::appendAssistantDelta);
+    connect(aiAssistant_, &NlAssistant::assistantMessage,
+            aiPanel_, &AiAssistantPanel::setAssistantMessage);
+    connect(aiAssistant_, &NlAssistant::approvalRequested,
+            aiPanel_, &AiAssistantPanel::showApproval);
+    connect(aiAssistant_, &NlAssistant::commandExecuted,
+            aiPanel_, &AiAssistantPanel::appendCommandResult);
+    connect(aiAssistant_, &NlAssistant::finished,
+            aiPanel_, &AiAssistantPanel::onFinished);
+    // 命令执行留痕进主日志面板（与菜单 / 命令行同源可见，便于追溯与排错）
+    connect(aiAssistant_, &NlAssistant::commandExecuted, this,
+            [this](const QString& line, bool ok) {
+        model_->log(QStringLiteral("AI 助手执行：%1（%2）")
+                        .arg(line, ok ? QStringLiteral("成功") : QStringLiteral("失败")),
+                    ok ? QStringLiteral("info") : QStringLiteral("warn"));
+    });
+
+    // 5) 选项变更热更新。「取消回滚」走同一 settingChanged 通道，后端参数也随之回退。
+    connect(appSettings_, &AppSettings::settingChanged, this,
+            [this](const QString& key, const QVariant&) {
+        if (key.startsWith(QStringLiteral("ai/"))) applyAiSettings();
+    });
+}
+
+void MainWindow::applyAiSettings() {
+    if (!aiAssistant_ || !appSettings_) return;
+
+    LlmOptions o;
+    o.baseUrl     = appSettings_->aiBaseUrl();
+    o.apiKey      = appSettings_->aiApiKey();
+    o.model       = appSettings_->aiModel();
+    o.maxTokens   = appSettings_->aiMaxTokens();
+    o.temperature = 0.2;
+    aiAssistant_->setOptions(o);
+
+    // 后端类型变化（cloud/local ↔ mock）→ 热替换 provider，保留助手与对话历史。
+    const QString want = appSettings_->aiProvider();
+    if (want == aiProviderType_) return;
+    if (aiAssistant_->isBusy()) aiAssistant_->stop();   // 先终止在途请求，避免回调悬垂
+    LlmProvider* old = aiProvider_;
+    if (want == QStringLiteral("mock")) aiProvider_ = new MockProvider(this);
+    else                                aiProvider_ = new OpenAiProvider(this);
+    aiProviderType_ = want;
+    aiAssistant_->setProvider(aiProvider_);
+    if (old) old->deleteLater();   // 延迟销毁：不在回调栈内释放可能仍在使用的对象
 }
 
 // DWG 转换组件缺失指引（意图 D③）：模态弹窗展示版本串原文 + 「未安装 DWG 转换组件」
@@ -1097,6 +1233,33 @@ void MainWindow::buildMenu() {
     mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); })
         ->setIcon(icons::make("print"));
     bar->addMenu(pr);
+
+    // ---- 顶级菜单：数据库（启动静默连接；失败则整菜单禁用，沿用纯文件存储）----
+    // 要求：① 启动检测连接（失败不报错不中断）② 状态栏显示连接状态 ③ 表格展示记录+打开
+    //       ④ 模板：保存图纸尺寸参数，套用「相同形状、不同尺寸」。
+    QMenu* dbm = new QMenu(tr("数据库(&D)"), this);
+    dbm->setObjectName("menuDatabase");
+    mk(dbm, tr("数据库配置..."), QKeySequence(), [this] { onShowDbConfig(); });
+    dbm->addSeparator();
+    dbActRecords_ = mk(dbm, tr("绘图记录..."), QKeySequence(), [this] { onShowDbDrawings(); });
+    dbActSaveDb_  = mk(dbm, tr("保存当前图纸到数据库..."), QKeySequence(), [this] {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, tr("保存到数据库"),
+            tr("输入图纸名称："), QLineEdit::Normal, QString(), &ok);
+        if (ok && !name.trimmed().isEmpty()) saveCurrentToDatabase(name.trimmed());
+    });
+    dbActTmpl_    = mk(dbm, tr("另存当前图纸为模板..."), QKeySequence(), [this] {
+        bool ok = false;
+        QString name = QInputDialog::getText(this, tr("另存为模板"),
+            tr("输入模板名称（将记录当前图纸尺寸作为参考尺寸）："),
+            QLineEdit::Normal, QString(), &ok);
+        if (ok && !name.trimmed().isEmpty()) saveCurrentAsTemplate(name.trimmed());
+    });
+    dbMenu_ = dbm;
+    bar->addMenu(dbm);
+    // 菜单随 buildMenu 重建（含语言切换），重建后按当前连接状态校正依赖连接的操作项可用态
+    // （「数据库配置」始终可点：即使连接失败也要能打开修正配置）
+    updateDbStatus();
 
     // ---- 顶级菜单：图纸（图框/标题栏/明细栏生成 + 图纸属性/设置）----
     // 下列「填写标题栏 / 插入标准标题栏 / 按幅面生成图框与标题栏 / 绘图比例 /
@@ -1822,6 +1985,7 @@ void MainWindow::buildMenu() {
     panels->addAction(logDock_->toggleViewAction());
     panels->addAction(cmdDock_->toggleViewAction());
     panels->addAction(designDock_->toggleViewAction());
+    panels->addAction(aiDock_->toggleViewAction());
     panels->addSeparator();
     if (toolbar_)  panels->addAction(toolbar_->toggleViewAction());
     if (toolbar2_) panels->addAction(toolbar2_->toggleViewAction());
@@ -2023,6 +2187,10 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::lineStyleIcon(LineStyle::DashDot));
     mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); })
         ->setIcon(icons::make("properties"));
+    // ---- AI 自然语言助手：唤起对话面板（若已隐藏则显示并聚焦）----
+    mk(tools, QStringLiteral("AI 助手(&A)..."), QKeySequence("Ctrl+Shift+A"), [this] {
+        if (aiPanel_) aiPanel_->focusInput();
+    });
     bar->addMenu(tools);
 
     QMenu* h = new QMenu(tr("帮助(&H)"), this);
@@ -2040,7 +2208,7 @@ void MainWindow::buildMenu() {
         // 版本号来自 version.h（CMake project VERSION 生成的宏），
         // 与 exe 文件属性（app.rc）、安装包名（installer.iss）同源于同一个版本号，
         // 三者天然一致，不会出现「关于显示 1.1.0、属性却是 1.0.0」的商用事故。
-        model_->log(QStringLiteral("航空CAD 草图模块 v%1 — C++17 / Qt6 实现")
+        model_->log(QStringLiteral("我是慎独 草图模块 v%1 — C++17 / Qt6 实现")
                         .arg(QString::fromLatin1(SKETCHCAD_VERSION)));
         QMessageBox::about(this, QStringLiteral("关于 SketchCAD"),
             QStringLiteral(
@@ -3836,6 +4004,15 @@ void MainWindow::buildDocks() {
     designDock_->setObjectName("dockDesignCenter");
     designDock_->setWidget(designPanel_);
 
+    // ---- AI 自然语言助手对话面板 ----
+    // ⚠️ 必须在下方 setFeatures 循环 / 初始隐藏之前创建：aiDock_ 参与该循环，
+    //    若此处为空指针将对 nullptr 调用 QDockWidget::setFeatures → 0xc0000005，
+    //    且崩溃发生在 MainWindow 构造期（w.show() 之前），表现为主界面未显示即退出。
+    aiPanel_ = new AiAssistantPanel(this);
+    aiDock_ = new QDockWidget(QStringLiteral("AI 助手"), this);
+    aiDock_->setObjectName("dockAiAssistant");
+    aiDock_->setWidget(aiPanel_);
+
     // 左栏：上 BOM 树 / 中 图元面板 / 下 图层
     addDockWidget(Qt::LeftDockWidgetArea, bomDock_);
     splitDockWidget(bomDock_, elemDock_, Qt::Vertical);
@@ -3846,14 +4023,17 @@ void MainWindow::buildDocks() {
     splitDockWidget(constraintDock_, logDock_, Qt::Vertical);
     // 设计中心：右侧独立停靠（初始隐藏，可从「视图 > 面板」勾出）
     addDockWidget(Qt::RightDockWidgetArea, designDock_);
+    // AI 助手：右侧独立停靠（初始隐藏，同上）
+    addDockWidget(Qt::RightDockWidgetArea, aiDock_);
     // 底部：命令行
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, aiDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
     designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
+    aiDock_->setVisible(false);       // 初始隐藏（同上）
 
     // 初始分栏比例：左 240 / 右 300；左栏上下各分
     resizeDocks({bomDock_, propDock_}, {240, 300}, Qt::Horizontal);
@@ -4068,6 +4248,10 @@ void MainWindow::hookActiveDoc() {
     constraintBar_->setModel(model_);
     scriptHost_->setModel(model_);
     pluginManager_->setModel(model_);
+    // AI 助手：编排层与上下文采集器持有活动模型指针，切文档时同步重绑
+    //（助手可能在 setupAutoSave() 之前尚未构建，故做空指针保护）
+    if (aiAssistant_) aiAssistant_->setModel(model_);
+    if (aiCtx_)       aiCtx_->setModel(model_);
     if (autoSave_) autoSave_->setCurrentDrawing(docs_->active() ? docs_->active()->filePath : QString());
 
     // ---- 活动文档状态回显到常驻 UI ----
@@ -4404,7 +4588,7 @@ public:
 
     explicit StartupPage(SketchCAD::RecentFiles* recent, int maxShown, QWidget* parent)
         : QDialog(parent), recent_(recent), maxShown_(maxShown) {
-        setWindowTitle(QStringLiteral("航空CAD — 继续"));
+        setWindowTitle(QStringLiteral("我是慎独 — 继续"));
         resize(420, 480);
 
         auto* root = new QVBoxLayout(this);
@@ -4796,6 +4980,227 @@ void MainWindow::openFile() {
     if (fn.isEmpty()) { qWarning() << "[MainWindow] openFile: 未选择文件（取消）"; return; }
     if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
     openDocInteractive(fn);
+}
+
+// ==================== 数据库绘图存储（需求：启动静默连接 / JSON 存读 / 状态栏+表格 / 模板） ====================
+
+void MainWindow::initDatabase() {
+    // 启动：先读取本地配置文件作为数据库连接输入；文件不存在/损坏则回落默认 SQLite 路径。
+    // 随后尝试连接；失败不报错、不中断，沿用纯文件存储（仅状态栏回显）。
+    // 两层 try/catch 兜底，确保任何异常都不影响主程序启动。
+    try {
+        DrawingDb::instance()->loadConfigFromFile();
+    } catch (...) {
+        // 配置读取失败（极端损坏）→ 回落默认 SQLite 路径，不向上抛。
+    }
+    try {
+        DrawingDb::instance()->connect();   // 内部 ensureSchema() 自动建表（表不存在时）
+    } catch (...) {
+        // connect() 内部已静默置失败态；此处仅兜底，不向上抛。
+    }
+    updateDbStatus();
+}
+
+void MainWindow::updateDbStatus() {
+    if (!dbStatusLabel_) return;
+    const bool ok = DrawingDb::instance()->isConnected();
+    if (ok) {
+        dbStatusLabel_->setText(QStringLiteral("数据库: 已连接"));
+        dbStatusLabel_->setStyleSheet(QStringLiteral("color:#1B7A1B;"));
+    } else {
+        dbStatusLabel_->setText(QStringLiteral("数据库: 未连接（使用文件）"));
+        dbStatusLabel_->setStyleSheet(QStringLiteral("color:#9A6B00;"));
+    }
+    if (dbActRecords_) dbActRecords_->setEnabled(ok);
+    if (dbActSaveDb_)   dbActSaveDb_->setEnabled(ok);
+    if (dbActTmpl_)     dbActTmpl_->setEnabled(ok);
+}
+
+void MainWindow::onShowDbDrawings() {
+    if (!DrawingDb::instance()->isConnected()) return;   // 未连接则不可见（菜单本身也已禁用）
+    if (!dbDlg_) {
+        dbDlg_ = new DbDrawingsDialog(this);
+        connect(dbDlg_, &DbDrawingsDialog::openDrawingRequested,
+                this, &MainWindow::openDrawingFromDb);
+        connect(dbDlg_, &DbDrawingsDialog::applyTemplateRequested,
+                this, &MainWindow::applyTemplateFromDb);
+        connect(dbDlg_, &DbDrawingsDialog::saveCurrentRequested,
+                this, &MainWindow::saveCurrentToDatabase);
+        connect(dbDlg_, &DbDrawingsDialog::saveTemplateRequested,
+                this, &MainWindow::saveCurrentAsTemplate);
+    }
+    dbDlg_->refresh();
+    dbDlg_->show();
+    dbDlg_->raise();
+    dbDlg_->activateWindow();
+}
+
+void MainWindow::onShowDbConfig() {
+    if (!dbCfgDlg_) {
+        dbCfgDlg_ = new DbConfigDialog(this);
+        connect(dbCfgDlg_, &DbConfigDialog::configAccepted,
+                this, &MainWindow::onDbConfigAccepted);
+    }
+    dbCfgDlg_->refresh();   // 预填当前连接信息
+    dbCfgDlg_->show();
+    dbCfgDlg_->raise();
+    dbCfgDlg_->activateWindow();
+}
+
+void MainWindow::onDbConfigAccepted(const QString& driver, const QString& dbPath,
+                                    const QString& host, const QString& dbName,
+                                    const QString& user, const QString& pass, int port) {
+    DrawingDb* db = DrawingDb::instance();
+    db->closeConnection();                                 // 断开旧连接，准备按新配置重连
+    db->setConnectionInfo(driver, dbPath, host, dbName, user, pass);
+    db->setPort(port);
+    // 无论连接是否成功，都先把配置落到本地文件（启动即按此输入）
+    if (!db->saveConfigToFile()) {
+        model_->log(QStringLiteral("数据库配置已应用，但写入配置文件失败：%1").arg(db->lastError()),
+                    QStringLiteral("warn"));
+    } else {
+        model_->log(QStringLiteral("数据库配置已保存到：%1").arg(DrawingDb::defaultConfigPath()),
+                    QStringLiteral("info"));
+    }
+    // 尝试按新配置连接；失败静默降级（状态栏/菜单可用态会随之刷新）
+    try { db->connect(); } catch (...) { /* connect 内部已静默置失败态 */ }
+    updateDbStatus();
+    if (dbDlg_) dbDlg_->refresh();
+}
+
+void MainWindow::saveCurrentToDatabase(const QString& name) {
+    if (!DrawingDb::instance()->isConnected()) return;
+    const QString json = QString::fromUtf8(model_->toDrawingBytes());
+    int id = 0;
+    if (DrawingDb::instance()->insertDrawing(name, json, &id)) {
+        model_->log(QStringLiteral("已保存到数据库：%1（id=%2）").arg(name).arg(id),
+                    QStringLiteral("info"));
+        if (dbDlg_) dbDlg_->refresh();
+    } else {
+        QMessageBox::warning(this, QStringLiteral("保存失败"),
+            QStringLiteral("写入数据库失败：") + DrawingDb::instance()->lastError());
+    }
+}
+
+void MainWindow::saveCurrentAsTemplate(const QString& name) {
+    if (!DrawingDb::instance()->isConnected()) return;
+    const QString json = QString::fromUtf8(model_->toDrawingBytes());
+    // 记录当前图纸尺寸作为「参考尺寸」（套用时按比例缩放得到「相同形状、不同尺寸」）
+    double refW = 0.0, refH = 0.0;
+    if (model_->hasSheetSpec()) {
+        refW = model_->sheetSpec().width;
+        refH = model_->sheetSpec().height;
+    }
+    int id = 0;
+    if (DrawingDb::instance()->insertTemplate(name, json, refW, refH, &id)) {
+        model_->log(QStringLiteral("已另存为模板：%1（id=%2，参考尺寸 %3×%4 mm）")
+                        .arg(name).arg(id).arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1),
+                    QStringLiteral("info"));
+        if (dbDlg_) dbDlg_->refresh();
+    } else {
+        QMessageBox::warning(this, QStringLiteral("保存失败"),
+            QStringLiteral("写入模板失败：") + DrawingDb::instance()->lastError());
+    }
+}
+
+// 把 DB 中的 JSON 落临时文件，复用既有 readDrawing 完成全部还原/校验/渲染（零重复代码、零回归）。
+bool MainWindow::loadDrawingJsonViaTempFile(const QString& json, QString* errOut) {
+    QTemporaryFile tmp;
+    tmp.setAutoRemove(false);
+    tmp.setFileTemplate(QDir::tempPath() + QStringLiteral("/sketchcad_db_XXXXXX.json"));
+    if (!tmp.open()) {
+        if (errOut) *errOut = QStringLiteral("无法创建临时文件");
+        return false;
+    }
+    tmp.write(json.toUtf8());
+    tmp.close();   // 关闭后再交给 readDrawing 打开（readDrawing 内部会重新打开）
+    const QString path = tmp.fileName();
+    // openDocInteractive 内部走 readDrawing（JSON 分支），解析完成后文件已被读取关闭，
+    // 此时删除临时文件不影响已载入的模型数据。
+    const int idx = openDocInteractive(path);
+    if (idx < 0) {
+        QFile::remove(path);
+        if (errOut) *errOut = QStringLiteral("打开失败");
+        return false;
+    }
+    // 该临时文件路径不应进入「最近打开」（readDrawing 内已 push，这里撤销）
+    if (recent_) { recent_->remove(path); rebuildRecentMenu(); }
+    // 载入成功：清掉临时路径，避免后续「保存」误写临时文件；按未命名新文档对待。
+    if (docs_ && docs_->active()) docs_->active()->filePath.clear();
+    QFile::remove(path);
+    return true;
+}
+
+void MainWindow::openDrawingFromDb(int id) {
+    if (!DrawingDb::instance()->isConnected()) return;
+    QString json = DrawingDb::instance()->getDrawingJson(id);
+    if (json.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("打开失败"),
+            QStringLiteral("读取图档失败：") + DrawingDb::instance()->lastError());
+        return;
+    }
+    QString err;
+    if (!loadDrawingJsonViaTempFile(json, &err)) {
+        if (!err.isEmpty())
+            QMessageBox::warning(this, QStringLiteral("打开失败"), err);
+    }
+}
+
+void MainWindow::applyTemplateFromDb(int id) {
+    if (!DrawingDb::instance()->isConnected()) return;
+    double refW = 0.0, refH = 0.0;
+    const QString json = DrawingDb::instance()->getTemplateJson(id);
+    if (json.isEmpty() || !DrawingDb::instance()->getTemplateRefSize(id, &refW, &refH)) {
+        QMessageBox::warning(this, QStringLiteral("套用失败"),
+            QStringLiteral("读取模板失败：") + DrawingDb::instance()->lastError());
+        return;
+    }
+    // 先按模板几何新建一份文档（复用既有打开逻辑）
+    QString err;
+    if (!loadDrawingJsonViaTempFile(json, &err)) {
+        if (!err.isEmpty()) QMessageBox::warning(this, QStringLiteral("套用失败"), err);
+        return;
+    }
+
+    // 询问目标尺寸（宽,高，单位 mm），默认回填模板参考尺寸
+    bool ok = false;
+    const QString sizeText = QInputDialog::getText(this, QStringLiteral("套用模板"),
+        QStringLiteral("模板参考尺寸 %1 × %2 mm。\n输入目标图纸尺寸（宽,高，单位 mm），如 420,297：")
+            .arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1),
+        QLineEdit::Normal,
+        QStringLiteral("%1,%2").arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1), &ok);
+    if (!ok || sizeText.trimmed().isEmpty()) return;   // 取消：保留模板原始尺寸
+
+    const QStringList parts = sizeText.split(QStringLiteral(","), Qt::SkipEmptyParts);
+    if (parts.size() != 2) {
+        QMessageBox::warning(this, QStringLiteral("尺寸无效"),
+            QStringLiteral("请输入「宽,高」两个数值，例如 420,297。"));
+        return;
+    }
+    bool okw = false, okh = false;
+    const double newW = parts.at(0).toDouble(&okw);
+    const double newH = parts.at(1).toDouble(&okh);
+    if (!okw || !okh || newW <= 0 || newH <= 0 || refW <= 0) {
+        QMessageBox::warning(this, QStringLiteral("尺寸无效"),
+            QStringLiteral("宽/高必须为正数，且模板参考尺寸需 > 0。"));
+        return;
+    }
+
+    // 均匀缩放保留「相同形状」：以宽度为基准比例因子
+    const double factor = newW / refW;
+    const double s0 = model_->scaleRatio();
+    model_->setScaleRatio(s0 * factor, true);   // 围绕内容中心等比缩放（跳过图框/标题栏层）
+
+    // 同步图纸幅面到目标尺寸（setSheetSpec 仅校验幅面枚举，自定义宽高随结构体一并写入）
+    SheetSpec sp = model_->hasSheetSpec() ? model_->sheetSpec() : SheetSpec();
+    sp.width = newW;
+    sp.height = newH;
+    model_->setSheetSpec(sp);
+
+    model_->log(QStringLiteral("已套用模板并按 %1 × %2 mm 缩放（比例因子 %3）")
+                    .arg(newW, 0, 'f', 1).arg(newH, 0, 'f', 1).arg(factor, 0, 'f', 3),
+                QStringLiteral("info"));
+    if (view_) view_->fitToRect(QRectF(0.0, 0.0, newW, newH));
 }
 
 // ==================== P0-04：大图纸打开（后台解析 + 内存优雅降级） ====================
