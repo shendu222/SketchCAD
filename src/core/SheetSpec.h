@@ -234,4 +234,18 @@ const QVector<ParamBarPreset>&      paramBarPresets();
 // 默认构造的 SheetFrameOptions 与旧 buildSheetFrame(spec) 行为完全一致（向后兼容）。
 std::vector<Element> buildSheetFrameWithOptions(const SheetFrameOptions& opts);
 
+// ===================== 图框幅面驱动（标准知识库消费）=====================
+// 标准图框留边（GB/T 14689）：由 sheet_sizes 标准表按所选幅面查得，而非硬编码魔数，
+// 使「各幅面下的布局比例符合制图规范」。
+//   c = 留装订边时非装订三边的留边；e = 不留装订边时四边留边（装订边 a 沿用 opts.bindingWidth）。
+// 标准库缺表/键或解析失败时回落既有标准常量，保证零回归。
+struct SheetFrameMargins { double c = 5.0; double e = 10.0; };
+SheetFrameMargins standardSheetFrameMargins(SheetFormat fmt);
+
+// 把图框方案应用到模型：仅替换「图框 / 标题栏」两层图元（保留其他层用户内容），
+// 使图框、边框及标题栏随所选幅面自动联动更新；两层不存在则补建。
+// scaleRatio 预留（当前联动更新不改变绘图比例，避免误缩放既有内容）。
+class SketchModel;
+void applySheetFrameToModel(SketchModel* model, const SheetFrameOptions& opts, double scaleRatio = 1.0);
+
 } // namespace SketchCAD

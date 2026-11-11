@@ -8,6 +8,14 @@
 
 <img src="resources/badges/build.svg" alt="build: passing" /> <img src="resources/badges/license.svg" alt="license: Proprietary" /> <img src="resources/badges/version.svg" alt="version: 1.1.1" />
 
+<p align="center">
+  <img src="resources/posters/SketchCAD-v1.1.1-poster.png" width="420" alt="SketchCAD v1.1.1 发布海报（含下载地址二维码）" />
+</p>
+
+> **v1.1.1 已发布** —— 启动故障修复版（Hotfix）：修复程序启动后主界面尚未显示即退出的问题，功能与 v1.1.0 保持一致；同时提供 **EXE**（Inno Setup）与 **MSI**（Windows Installer）两种安装程序。
+>
+> **下载地址**：[https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) · 完整发布说明见 [RELEASE_NOTES.md](RELEASE_NOTES.md)
+
 SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程；内置法兰、箱体、轴承、剖切、工艺三视图等**参数化制图模板**，输入参数即可自动生成成套图面。
 
 ---
@@ -87,10 +95,20 @@ UI 用户界面层（Qt Widgets）经 `ModelMediator` 驱动核心引擎；`core
 
 ### 一键安装
 
-下载最新安装包后双击运行，或通过命令行静默安装：
+v1.1.1 提供两种安装程序，均可在 [Release 页面](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) 下载（也可扫描上方发布海报中的二维码）：
+
+| 安装程序 | 适用场景 |
+| :--- | :--- |
+| `SketchCAD-1.1.1-Setup.exe` | Inno Setup 引导安装：许可协议、可选桌面图标与文件关联 |
+| `SketchCAD-1.1.1-Setup.msi` | Windows Installer：`msiexec` 静默部署 / 组策略分发 |
+
+两者打包自同一批程序文件，内容一致；下载后可用随发行版提供的 `checksums.sha256` 执行 `sha256sum -c` 校验完整性。
+
+双击运行 EXE 即可安装，或通过命令行静默安装：
 
 ```cmd
-SketchCAD-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+msiexec /i SketchCAD-1.1.1-Setup.msi /qn
 ```
 
 ### 首次使用
@@ -102,7 +120,7 @@ SketchCAD-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ### 环境要求
 
 - **操作系统**: Windows 10 / 11 (x64)
-- **运行库**: MSVC 2022 Runtime
+- **运行库**: 安装包已随附 Qt 6 与 MinGW 运行库，无需另装 MSVC 运行库
 - **最低配置**: 4GB RAM, 200MB 磁盘空间
 
 ---
@@ -122,7 +140,7 @@ SketchCAD-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ./build.sh                    # 编译 → build/SketchCAD.exe
 ./build.sh test               # 运行测试 (403/0 通过)
 ./build.sh dist               # 打包 windeployqt 到 dist/
-./build.sh package            # 生成安装包 → dist/SketchCAD-<version>-Setup.exe
+./build.sh package            # 生成 EXE + MSI 安装包 → dist/SketchCAD-<version>-Setup.exe / .msi
 
 # 方式 2：CMake 直接构建
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -211,11 +229,17 @@ qselect type=直线 layer=0  # 快速选择 0 层的所有直线
 ### 安装 / 卸载参数
 
 ```cmd
-:: 静默安装
-SketchCAD-<version>-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+:: 静默安装（EXE）
+SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
-:: 静默卸载
-SketchCAD-<version>-Setup.exe /VERYSILENT
+:: 静默安装（MSI）
+msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+
+:: 静默卸载（EXE 安装后，程序目录内）
+unins000.exe /VERYSILENT
+
+:: 静默卸载（MSI 安装后）
+msiexec /x SketchCAD-1.1.1-Setup.msi /qn
 ```
 
 ---
@@ -245,6 +269,7 @@ SketchCAD-<version>-Setup.exe /VERYSILENT
 
 | 问题现象 | 建议解决方案 |
 | :--- | :--- |
+| **启动后主界面未显示即退出** | 升级至 **v1.1.1**（该版本修复了停靠窗口初始化顺序导致的启动崩溃），详见 `RELEASE_NOTES.md` |
 | **启动无响应** | 检查 Qt 运行环境路径 `C:\Qt\6.10.1` 是否正确配置 |
 | **绘图显示异常** | 尝试关闭 `closed` / `hatch` 相关显示选项后重试 |
 | **COM 调用失败** | 确认已运行安装程序，注册表项已正确写入 |

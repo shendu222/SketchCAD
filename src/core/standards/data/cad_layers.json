@@ -1,0 +1,22 @@
+{
+  "_standard": "GB/T 18617/ISO 13567",
+  "color_粗实线": "white",
+  "color_细实线": "green",
+  "color_波浪线": "green",
+  "color_双折线": "green",
+  "color_虚线": "yellow",
+  "color_细点画线": "red",
+  "color_粗点画线": "brown",
+  "color_双点画线": "pink",
+  "text_height_alpha": "3.5",
+  "text_height_hanzi": "5",
+  "layer_01": "轮廓线",
+  "layer_02": "隐藏线",
+  "layer_03": "剖切线",
+  "layer_04": "中心线",
+  "layer_05": "剖面线",
+  "layer_06": "标注",
+  "layer_07": "文字",
+  "layer_08": "尺寸标注",
+  "layer_09": "符号"
+}

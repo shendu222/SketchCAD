@@ -1,7 +1,7 @@
 # SketchCAD 自然语言助手（LLM 嵌入）设计方案
 
 > 状态：设计已讨论确定；**P0–P2 已实现并通过验收**（2026-11-08），P3–P5 待续
-> 讨论结论：云端+本地可切换 / 混合工具（少量查询工具 + 单一动作工具）/ 破坏性命令需审批 / 首版仅「命令映射 + 对话 UI」
+> 讨论结论：云端+本地可切换 / 混合工具（少量查询工具 + 单一动作工具）/ 破坏性命令需审批 / 首版仅「LLM 生成命令 + 对话 UI」
 > 目标：让用户用自然语言操作 SketchCAD（绘图 / 修改 / 查询 / 标注 / 约束 / 图层 / 块 / 视图 …），
 > 复用现有命令体系，不重新发明命令。
 
@@ -159,7 +159,7 @@ break / explode / undo` 列入清单，`NlAssistant::processToolCalls` 挂起并
 | 1 | 后端 | **云端 + 本地可切换**（不绑定厂商），另加 `mock` 离线后端；默认云端 |
 | 2 | NL→动作表示 | **混合**：少量查询工具 + 单一 `runSketchCommand(line)` 动作工具 |
 | 3 | 安全模型 | **破坏性操作默认审批**，非破坏性自动执行，全部改动可 Ctrl+Z |
-| 4 | 首版范围 | **仅「命令映射 + 对话 UI」**，不含本地模型实测 |
+| 4 | 首版范围 | **仅「LLM 生成命令 + 对话 UI」**，不含本地模型实测 |
 
 > 第 5 项（中文优先模型/提示词）归入 P4：当前 system prompt 与工具描述已全中文，
 > 具体模型选型与语法提示词调优留待真实模型联调后迭代。
@@ -202,3 +202,36 @@ break / explode / undo` 列入清单，`NlAssistant::processToolCalls` 挂起并
   （MockProvider → `circle 0,0 50` 经 `interp_->execute` 落模 → 模型恰有 1 个 Circle；
   非绘图指令不产生图元）。
 - 端到端（配置真实 key → 面板输入 → 画布出现图形）仍需人工联调，属 P4/P5。
+
+---
+
+## 9. 修正记录：回归「LLM 真正嵌入核心链路」（2026-11-09）
+
+**背景**：曾误引入 `NlCommandMapper` 的归一化/正则/关键词确定性映射，并在
+`NlAssistant::sendUserMessage()` 中据此**绕过模型直接执行**，导致
+`LlmProvider::chat()` 不再是核心处理环节；自测甚至把「无 provider 也能执行」
+当作正确行为固化。该实现与本文 §2、§3.2 的架构相悖，已整体纠正。
+
+**纠正后的链路（对外接口一字未改）**
+
+```
+用户输入 → sendUserMessage（原文入历史）→ runTurn()
+  → LlmProvider::chat(history, tools, options)   ← 模型做语义理解 / 参数抽取 / 命令生成
+  → 模型产出 runSketchCommand(line) 或结构化文本命令
+  → interp_->execute(line) → Tool 结果回灌 → 模型生成最终回复
+```
+
+- `sendUserMessage()` 删除全部本地规则分支；`provider_ == nullptr` 显式报错且**零执行**。
+- `buildSystemPrompt()` 动态注入 `CommandCatalog::usage` 的真实命令语法表
+  + 参数抽取 few-shot 示例，让模型依据事实写对 `circle 0,0 20` 这类命令串。
+- `tooldefs.cpp` 的 `runSketchCommand` 描述改用真实命令示例（原 `delete last` 并不存在）。
+- `NlCommandMapper` 保留 `NlParseResult` 与 `parse(const QString&)` 签名，
+  但重定义为**模型输出解码层**：仅解码模型以 JSON 文本返回的命令对象
+  （兼容不支持 function-calling 的本地模型 / 网关），不含任何归一化、关键词或正则抽取。
+- `MainWindow` / `AiAssistantPanel` / `LlmProvider` / 破坏性审批 / 上下文注入 /
+  撤销链 / 后端热替换全部未改；默认 `ai/provider=cloud` → `OpenAiProvider` 真实模型。
+
+**验收**：新增 `t_llmIntegration`（23 断言），用脚本化模型后端证明「用户原文原样入模、
+命令串由模型 tool call 决定、工具结果回灌、最终文本由模型生成、无后端零执行」；
+`t_nlAssistant`（MockProvider）保持回归。双目标零警告构建 + 自测 `EXIT=0`，
+全量 `通过 3189 / 失败 0`。

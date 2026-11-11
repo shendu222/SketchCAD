@@ -21,6 +21,7 @@
 #include "SheetSpec.h"   // SheetSpec / SheetFormat：图纸幅面规格（打印页面尺寸与方向的数据源）
 #include "ConstraintSolver.h"   // 显式几何约束表（ConstraintRecord）
 #include "Ucs.h"      // 用户坐标系（输入/显示变换，不改图元世界坐标语义）
+#include "weld/WeldSymbol.h"   // WeldSpec（焊缝符号交互放置暂存，纯数据，无循环依赖）
 
 namespace SketchCAD {
 
@@ -461,6 +462,13 @@ public:
     QString activeTool() const { return activeTool_; }
     void setPlane(Plane p);
     Plane plane() const { return plane_; }
+    // ---- 焊缝符号交互放置暂存 ----
+    // 对话框确认后把 WeldSpec 暂存在此，由 WeldTool::onActivate 读取；
+    // 放置（onPress）或取消（右键）后清空，随 activeTool 一致，属交互态、不入存档。
+    void setPendingWeldSpec(const WeldSpec& s) { pendingWeldSpec_ = s; pendingWeldSpecValid_ = true; }
+    const WeldSpec& pendingWeldSpec() const { return pendingWeldSpec_; }
+    bool hasPendingWeldSpec() const { return pendingWeldSpecValid_; }
+    void clearPendingWeldSpec() { pendingWeldSpecValid_ = false; }
 
     // ---- 用户坐标系（UCS）----
     // UCS 是「输入/显示变换」层，**绝不改动**图元存储的世界坐标语义（Element.pts 恒为世界坐标）。
@@ -824,6 +832,8 @@ private:
     std::vector<int> selectedIds_;      // 当前选择集（框选 / 加选后可能含多个）
     QString activeTool_ = "select";
     Plane plane_ = Plane::XY;
+    WeldSpec pendingWeldSpec_;       // 焊缝符号交互放置暂存（随 activeTool 一致，不入存档）
+    bool pendingWeldSpecValid_ = false;
     // ---- 用户坐标系（UCS）：纯输入/显示变换状态，不入存档、不入撤销栈 ----
     Ucs currentUcs_ = Ucs("WORLD", Vec3(0, 0, 0), 0.0);   // 默认世界系
     QMap<QString, Ucs> ucsTable_;                          // 命名 UCS 表（内存态，不序列化）

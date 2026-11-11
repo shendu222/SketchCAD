@@ -1,0 +1,11 @@
+{
+  "_standard": "GB/T 1800/GB/T 1801/GB/T 1804",
+  "IT_grades": "IT01,IT0,IT1,IT2,IT3,IT4,IT5,IT6,IT7,IT8,IT9,IT10,IT11,IT12,IT13,IT14,IT15,IT16,IT17,IT18",
+  "shaft_deviations": "a,b,c,cd,d,e,ef,f,fg,g,h,j,js,k,m,n,p,r,rb,rc,s,sb,sc,t,ta,u,v,x,y,z,za,zb,zc",
+  "hole_deviations": "A,B,C,CD,D,E,EF,F,FG,G,H,J,JS,K,M,N,P,R,RB,RC,S,SB,SC,T,TA,U,V,X,Y,Z,ZA,ZB,ZC",
+  "H_lower": "0",
+  "h_upper": "0",
+  "js_rule": "±IT/2",
+  "default_linear_tol": "f,m,c,v",
+  "size_segments": "≤3,>3~6,>6~10,>10~18,>18~30,>30~50,>50~80,>80~120,>120~180,>180~250,>250~315,>315~400,>400~500"
+}

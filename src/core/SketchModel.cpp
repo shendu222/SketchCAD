@@ -24,6 +24,9 @@ SketchModel::SketchModel(QObject* p) : QObject(p) {
     // 文字样式表默认含一条 "Standard"（与 AutoCAD 一致）：空字体族 = 走系统默认，
     // 字高 0 = 用图元自身 radius，宽度因子 1，无倾斜，非粗/斜体。
     textStyles_.push_back(TextStyle{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false});
+    // 追加 GB/T 14691 长仿宋体默认样式 "LongFangSong"（新建文字默认采用，汉字长仿宋体、
+    // 字宽≈h/√2、字号下限 3.5mm）；仅影响新建文字，不改写既有文档已保存文字。
+    textStyles_.push_back(gbLongFangSongStyle());
     // 标注样式表默认含一条 "Standard"（GB/T 4458.4 国标默认）：保证 dimStyleFor 永不为空，
     // 旧档读入（无 dimStyles 键）也回落成这一张，语义等价于原"单全局 DimStyle"。
     {
@@ -2586,6 +2589,10 @@ void SketchModel::setTextStylesFromJson(const QJsonArray& arr) {
     // 兜底：任何情况都至少保留一条 "Standard"，保证渲染/解析非 null
     if (textStyles_.empty())
         textStyles_.push_back(TextStyle{QStringLiteral("Standard"), QString(), 0.0, 1.0, 0.0, false, false});
+    // 内置默认样式 LongFangSong 始终存在：旧档（无此样式）读入后也补一条，
+    // 保证「新建文字默认采用长仿宋体」在读入旧文档后依然可解析（fontFamily/宽度因子不丢失）。
+    if (!findTextStyle(QString::fromUtf8(kGBLongFangSongName)))
+        textStyles_.push_back(gbLongFangSongStyle());
     emit textStylesChanged();
 }
 

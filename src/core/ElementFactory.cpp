@@ -1,5 +1,6 @@
 #include "ElementFactory.h"
 #include "SketchModel.h"
+#include "TextStyle.h"   // kGBLongFangSongName：新建文字默认长仿宋体样式
 #include <algorithm>
 
 namespace SketchCAD {
@@ -99,6 +100,8 @@ Element ElementFactory::createText(const Vec3& pos, const QString& text, double 
     e.lineWidth = 1.0;
     e.lineWidthAuto = true;
     e.lineStyle = LineStyle::Solid;
+    // GB/T 14691 长仿宋体默认样式：新建文字默认采用 LongFangSong（不改既有已保存文字）
+    e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 
@@ -119,7 +122,8 @@ Element ElementFactory::createMText(const Vec3& pos, const QString& text, double
     // 多行文字专属字段（其余走 Element 默认值）
     e.textAlign    = (textAlign >= 0 && textAlign <= 8) ? textAlign : 1;
     e.widthFactor  = widthFactor > 0 ? widthFactor : 1.0;
-    e.styleName    = styleName;
+    // GB/T 14691 长仿宋体默认样式：显式传入样式名则沿用，否则默认 LongFangSong
+    e.styleName    = !styleName.isEmpty() ? styleName : QString::fromUtf8(kGBLongFangSongName);
     e.lineSpacing  = lineSpacing > 0 ? lineSpacing : 1.0;   // ZWCAD 默认单倍
     e.mtextWidth   = mtextWidth > 0 ? mtextWidth : 0.0;
     return e;

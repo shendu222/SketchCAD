@@ -9,6 +9,7 @@
 #include "ui/tools/BoundaryTool.h"
 #include "ui/tools/MTextTool.h"
 #include "ui/tools/TableTool.h"
+#include "ui/tools/WeldTool.h"
 #include "ui/tools/PolylineEditTool.h"
 #include "ui/tools/ShapeSelectTool.h"
 #include "ui/GraphicsView.h"
@@ -197,6 +198,9 @@ void ToolManager::registerBuiltins() {
 
     // ---- 表格（TABLE）：点击放置左上角 → 弹出表格编辑器 ----
     registerTool("table",      std::make_unique<TableTool>());
+
+    // ---- 焊缝符号（WELD）：交互放置，ghost 实时跟随 + 对象捕捉 + 单击落盘 ----
+    registerTool("weld",       std::make_unique<WeldTool>());
 }
 
 } // namespace SketchCAD

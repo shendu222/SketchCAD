@@ -5,9 +5,12 @@
 #include "core/Element.h"
 #include "core/SketchModel.h"
 #include "ai/tooldefs.h"
+#include "ai/NlCommandMapper.h"   // 仅用于解码「模型输出」的结构化命令（兼容非 function-calling 后端）
+#include "core/standards/StandardsDB.h" // 标准知识库：query_standards 工具数据源（与命令/面板共用单例）
 
 #include <QJsonObject>
 #include <QMap>
+#include <QStringList>
 
 namespace SketchCAD {
 
@@ -40,12 +43,21 @@ void NlAssistant::sendUserMessage(const QString& text) {
     u.role = LlmRole::User;
     u.content = text;
     history_.append(u);
+
+    // 用户原文原样进入模型：语义理解、参数抽取、命令串生成与结果说明
+    // 全部由 LlmProvider 背后的模型完成。此处不得存在任何本地规则映射，
+    // 也不得有「绕过模型直接执行」的快捷路径。
     runTurn();
 }
 
 void NlAssistant::runTurn() {
     if (aborted_) { finalize({}, QStringLiteral("已取消")); return; }
-    if (provider_ == nullptr || interp_ == nullptr) { finalize({}, QStringLiteral("助手未正确初始化")); return; }
+    // LLM 是核心处理环节，缺后端必须显式报错，绝不回落到本地规则。
+    if (provider_ == nullptr) {
+        finalize({}, QStringLiteral("未配置 LLM 后端（工具 → 选项 → AI 助手）"));
+        return;
+    }
+    if (interp_ == nullptr) { finalize({}, QStringLiteral("命令解释器未正确初始化")); return; }
     if (step_ >= kMaxSteps) { finalize({}, QStringLiteral("达到最大对话步数，已停止")); return; }
     ++step_;
     accContent_.clear();
@@ -63,15 +75,33 @@ void NlAssistant::runTurn() {
 
 void NlAssistant::handleDone(const QString& err) {
     if (!err.isEmpty()) { finalize({}, err); return; }
+
+    QVector<LlmToolCall> calls = accToolCalls_;
+    // 兼容路径：部分本地模型/网关不产生 function-calling，改以结构化 JSON
+    // 文本给出命令对象。解码的对象是【模型输出】，等价于一次工具调用；
+    // 命令内容仍完全由模型决定，本地只做协议解码。
+    if (calls.isEmpty()) {
+        const NlParseResult r = NlCommandMapper::parse(accContent_);
+        if (r.ok && !r.commandLine.isEmpty()) {
+            LlmToolCall tc;
+            tc.id = QStringLiteral("model_text_%1").arg(step_);
+            tc.name = QStringLiteral("runSketchCommand");
+            tc.arguments = QJsonObject{{ QStringLiteral("line"), r.commandLine }};
+            calls.append(tc);
+        }
+    }
+
     LlmMessage assistant;
     assistant.role = LlmRole::Assistant;
     assistant.content = accContent_;
-    assistant.toolCalls = accToolCalls_;
+    assistant.toolCalls = calls;   // 与后续 Tool 消息配对，保证对话协议合法
     history_.append(assistant);
-    if (accToolCalls_.isEmpty()) {
+
+    if (calls.isEmpty()) {
+        // 无工具调用 = 模型生成的最终文本回复（不是本地拼装的模板文案）
         finalize(accContent_, QString());
     } else {
-        processToolCalls(accToolCalls_);
+        processToolCalls(calls);
     }
 }
 
@@ -151,10 +181,33 @@ void NlAssistant::finalize(const QString& assistantText, const QString& error) {
 
 QString NlAssistant::buildSystemPrompt() const {
     QString p = QStringLiteral(
-        "你是 SketchCAD 草图设计软件的内置自然语言助手。请尽量复用现有命令体系："
-        "用 runSketchCommand 工具执行命令（参数 line 为完整命令串，语法与界面命令行一致，"
-        "例如 circle 0,0 50、line 0,0 100,0、delete last）。不确定语法时先用 getCommandHelp 查询。"
-        "需要了解当前图形状态时用 getSelection / getLayers / listElements。不要输出代码块，直接调用工具完成用户意图。");
+        "你是 SketchCAD 草图设计软件的内置自然语言助手。"
+        "用户用自然语言描述绘图或操作意图；你必须先理解语义、抽取参数，"
+        "再调用 runSketchCommand 工具给出完整命令串（参数 line）。"
+        "命令语法与界面命令行完全一致，不要输出代码块，不要复述命令，直接调用工具。"
+        "\n参数抽取示例：「给我绘制一个圆心在0，0、半径为20的圆」→ line=\"circle 0,0 20\"；"
+        "「从 0,0 画一条到 100,0 的直线」→ line=\"line 0,0 100,0\"。"
+        "\n执行结果会以 tool 消息回传给你，请据此用中文简要说明结果（结果文本也由你生成）。"
+        "\n不确定语法时先用 getCommandHelp(name) 查询；需要图纸状态时用 "
+        "getSelection / getLayers / listElements。");
+
+    // 把真实命令语法喂给模型（唯一数据源 CommandCatalog::usage），
+    // 让「自然语言 → 参数 → 命令串」这一步由模型依据事实完成，而非凭记忆猜参数顺序。
+    // 只注入常用核心命令以控制上下文体积；其余命令模型可用 getCommandHelp 按需查询。
+    static const char* const kCore[] = {
+        "circle", "circle3p", "arc", "line", "line_h", "line_v", "line_angle",
+        "rect", "poly", "point", "text", "delete", "undo", "redo", "clear",
+        "select_all", "select_none", "zoom", "move", "rotate"
+    };
+    QStringList syntax;
+    for (const char* nm : kCore) {
+        const CommandInfo* info = CommandCatalog::find(QString::fromLatin1(nm));
+        if (info && !info->usage.isEmpty())
+            syntax.append(QStringLiteral("  %1").arg(info->usage));
+    }
+    if (!syntax.isEmpty())
+        p += QStringLiteral("\n可用命令语法（usage，必须严格遵守）：\n") + syntax.join(QLatin1Char('\n'));
+
     if (ctx_) p += QStringLiteral("\n当前图纸上下文：") + ctx_->contextJson();
     return p;
 }
@@ -193,6 +246,28 @@ QString NlAssistant::runQueryTool(const QString& name, const QJsonObject& args) 
         if (!info->usage.isEmpty()) out += QStringLiteral("\n用法：") + info->usage;
         if (!info->example.isEmpty()) out += QStringLiteral("\n示例：") + info->example;
         return out;
+    }
+
+    if (name == QStringLiteral("query_standards")) {
+        const QString table = args.value(QStringLiteral("table")).toString().trimmed().toLower();
+        const QString key = args.value(QStringLiteral("key")).toString().trimmed();
+        if (table.isEmpty())
+            return QStringLiteral("缺少参数 table（标准表名）。");
+        const StandardsDB& db = StandardsDB::instance();
+        const QJsonObject obj = db.tableObject(table);
+        if (obj.isEmpty())
+            return QStringLiteral("未知标准表：") + table +
+                   QStringLiteral("（可用：") + db.allTables().join(QChar(' ')) + QStringLiteral("）");
+        if (key.isEmpty()) {
+            QJsonObject out;
+            out[table] = obj;
+            return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Indented));
+        }
+        const QJsonValue v = db.query(table, key);
+        if (v.isUndefined() || v.isNull())
+            return QStringLiteral("未找到键：") + key + QStringLiteral("（") + table +
+                   QStringLiteral(" 可用键：") + QStringList(obj.keys()).join(QChar(' ')) + QStringLiteral("）");
+        return table + QChar('.') + key + QStringLiteral(" = ") + db.queryString(table, key);
     }
 
     return QStringLiteral("未知工具：") + name;

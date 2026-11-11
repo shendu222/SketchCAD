@@ -167,6 +167,7 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("wslist", "工作空间列表", "工具", "列出可用工作空间", "wslist", "", "", { "wsload" }, "");
     add("wsload", "加载工作空间", "工具", "切换到指定工作空间", "wsload <名>", "", "", { "wslist" }, "");
     add("help", "帮助", "帮助", "命令总表；help <命令> 查看用法/参数/样例", "help [<命令名>]", "", "help line", {}, "F1");
+    add("standards", "标准知识库查询", "工具", "查询内嵌的 12 类机械制图国标数据（图幅/比例/字体/线型/粗糙度/公差/形位公差/螺纹/齿轮/轴承/焊缝/CAD 图层），数据源自《机械制图手册（第四版）》", "standards [<表名> [<键名>]]", "无参数 = 列出 12 类表名；standards <表名> = 列出该表全部键值；standards <表名> <键名> = 查询单值", "standards sheet_sizes A3  /  standards scales  /  standards", { "query_standards" }, "");
         return t;
     }();
     return table;

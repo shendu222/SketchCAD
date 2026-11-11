@@ -24,6 +24,7 @@
 #include "CommandInterpreter.h" // help 总表：commandNames()（注册表+家族全集）
 #include "BomItem.h"            // P2：序号球标纯生成器 + BomItem 数据模型
 #include "AliasTable.h"        // help 总表：别名单列；help <cmd> 先解析别名
+#include "weld/WeldSymbol.h"    // 焊缝符号（GB/T 324）：WELD 命令几何生成
 #include <QRegularExpression>
 #include <QFile>              // P0-01：dxfout 文件写出
 #include <QMap>
@@ -32,6 +33,8 @@
 #include <algorithm>
 #include <cmath>              // 命令补齐：std::fabs / 数学常数
 #include "Section.h"          // HATCH/BHATCH：SectionStyle 装配关联填充
+#include "standards/StandardsDB.h" // 标准知识库：内嵌 12 类机械制图国标数据（standards 命令 / LLM 工具 / 浏览面板共用单例）
+#include "SheetSpec.h"              // 图框幅面驱动：SheetFrameOptions / applySheetFrameToModel（按 A0–A4 联动图框）
 
 namespace SketchCAD {
 
@@ -4763,6 +4766,191 @@ void CommandRegistry::registerBuiltins() {
 
     // ---- 帮助 ----
     registerExact("help", std::make_shared<HelpCommand>());
+
+    // ---- 标准知识库查询（standards）----
+    // 内嵌《机械制图手册（第四版）》12 类国标表；命令栏只读查询入口。
+    //   standards                      列出 12 类表名
+    //   standards <表名>               列出该表全部键值
+    //   standards <表名> <键名>        查询单值
+    // 与 LLM 工具 query_standards、标准知识库浏览面板共用 StandardsDB::instance() 单例。
+    registerExact("standards", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            const StandardsDB& db = StandardsDB::instance();
+            if (ctx.toks.size() == 1) {
+                const QStringList tables = db.allTables();
+                m->log(QStringLiteral("标准知识库（内嵌《机械制图手册（第四版）》%1 类国标表）：").arg(tables.size()),
+                       QStringLiteral("info"));
+                for (int i = 0; i < tables.size(); ++i)
+                    m->log(QStringLiteral("  %1. %2").arg(i + 1).arg(tables[i]));
+                m->log(QStringLiteral("用法：standards <表名> [<键名>]  例：standards sheet_sizes A3"));
+                return true;
+            }
+            const QString table = ctx.toks[1].toLower();
+            const QJsonObject obj = db.tableObject(table);
+            if (obj.isEmpty()) {
+                m->log(QStringLiteral("未知表：%1（可用表：%2）").arg(table, db.allTables().join(QChar(' '))),
+                       QStringLiteral("error"));
+                return false;
+            }
+            if (ctx.toks.size() == 2) {
+                m->log(QStringLiteral("【%1】共 %2 项：").arg(table).arg(obj.size()), QStringLiteral("info"));
+                for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+                    const QJsonValue v = it.value();
+                    QString val;
+                    if (v.isObject() || v.isArray())
+                        val = QString::fromUtf8(QJsonDocument(v.isObject() ? QJsonDocument(v.toObject()) : QJsonDocument(v.toArray())).toJson(QJsonDocument::Compact));
+                    else
+                        val = v.toVariant().toString();
+                    m->log(QStringLiteral("  %1 = %2").arg(it.key(), val));
+                }
+                return true;
+            }
+            const QString key = ctx.toks[2];
+            const QJsonValue v = db.query(table, key);
+            if (v.isUndefined() || v.isNull()) {
+                QStringList keys;
+                for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) keys << it.key();
+                m->log(QStringLiteral("未找到键：%1（%2 可用键：%3）").arg(key, table, keys.join(QChar(' '))),
+                       QStringLiteral("error"));
+                return false;
+            }
+            m->log(QStringLiteral("%1.%2 = %3").arg(table, key, db.queryString(table, key)),
+                   QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- 图框幅面驱动（sheetframe）----
+    // 依据所选图纸幅面（A0–A4）联动重新生成图框：仅替换「图框 / 标题栏」两层图元，
+    // 保留其他层用户内容；留边 c/e 由 sheet_sizes 标准表按幅面查得（GB/T 14689），符合制图规范。
+    //   sheetframe <A0|A1|A2|A3|A4> [portrait|landscape]   例：sheetframe A2 / sheetframe A3 portrait
+    // 与【图纸】>【新建图框】对话框、applySheetFrameToModel 共用同一图框生成与标准留边。
+    registerExact("sheetframe", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                m->log(QStringLiteral("用法：sheetframe <A0|A1|A2|A3|A4> [portrait|landscape]"),
+                       QStringLiteral("error"));
+                return false;
+            }
+            // 幅面解析（大小写不敏感）
+            static const QPair<SheetFormat, const char*> kFmts[] = {
+                {SheetFormat::A0, "a0"}, {SheetFormat::A1, "a1"}, {SheetFormat::A2, "a2"},
+                {SheetFormat::A3, "a3"}, {SheetFormat::A4, "a4"},
+            };
+            const QString arg = ctx.toks[1].toLower();
+            bool ok = false; SheetFormat fmt = SheetFormat::A3;
+            for (const auto& f : kFmts)
+                if (arg == QLatin1String(f.second)) { fmt = f.first; ok = true; break; }
+            if (!ok) {
+                QStringList names;
+                for (const auto& f : kFmts) names << QString::fromLatin1(f.second).toUpper();
+                m->log(QStringLiteral("未知幅面：%1（可用：%2）").arg(ctx.toks[1], names.join(QChar(' '))),
+                       QStringLiteral("error"));
+                return false;
+            }
+            // 横竖（默认横置，工程图惯例）
+            bool landscape = true;
+            if (ctx.toks.size() >= 3) {
+                const QString o = ctx.toks[2].toLower();
+                if (o == QStringLiteral("portrait") || o == QStringLiteral("p") || o == QStringLiteral("竖"))
+                    landscape = false;
+                else if (o == QStringLiteral("landscape") || o == QStringLiteral("l") || o == QStringLiteral("横"))
+                    landscape = true;
+                else {
+                    m->log(QStringLiteral("未知方向：%1（可用 portrait / landscape）").arg(ctx.toks[2]),
+                           QStringLiteral("error"));
+                    return false;
+                }
+            }
+            SheetFrameOptions opts;
+            opts.sizeMode = SheetFrameOptions::SizeMode::Basic;
+            opts.basicFormat = fmt;
+            opts.landscape = landscape;
+            opts.bindingMargin = true;                 // 默认留装订边（a=装订宽度，默认 25）
+            opts.titleBlock = TitleBlockStyle::Standard;
+            opts.projection = ProjectionMethod::FirstAngle;  // 国标默认第一角画法
+            applySheetFrameToModel(m, opts);
+            const SheetSpec spec = opts.toSheetSpec();
+            m->log(QStringLiteral("已按 %1（%2×%3 mm，%4）重新生成图框（保留其他图层内容）")
+                       .arg(spec.formatName())
+                       .arg(spec.width, 0, 'f', 0).arg(spec.height, 0, 'f', 0)
+                       .arg(landscape ? QStringLiteral("横置") : QStringLiteral("竖置")),
+                   QStringLiteral("info"));
+            return true;
+        }));
+
+    // ---- 焊缝符号（WELD，GB/T 324）----
+    // 由「既有图元组合」构成（指引线 + 基准线 + 基本符号 + 辅助/补充符号 + 尺寸文本），
+    // 不新增 ElementType；输出经 addElementsQuiet 入模，toDrawingJson 单一入口序列化。
+    //   WELD <类型> [x,y] [k=.. s=.. l=.. e=.. n=..] [aux=.. supp=.. side=.. d=.. rot=..]
+    //   类型：fillet(角焊)/v(V形)/igroove(Ⅰ形)/bevel(单边V)/ugroove(U形)/spot(点焊)/seam(缝焊)/plug(塞焊)
+    //   亦接受中文：角焊缝/V形焊缝/Ⅰ形焊缝/单边V形焊缝/U形焊缝/点焊/缝焊/塞焊
+    registerExact("weld", std::make_shared<LambdaCommand>(
+        [](const CommandContext& ctx) {
+            SketchModel* m = ctx.model;
+            if (ctx.toks.size() < 2) {
+                m->log(QStringLiteral("用法：WELD <类型> [x,y] [k=.. s=.. l=.. e=.. n=..] [aux=.. supp=.. side=.. d=.. rot=..]"),
+                       QStringLiteral("error"));
+                return false;
+            }
+            WeldSpec spec;
+            spec.type = weldTypeFromName(ctx.toks[1]);
+
+            // 解析剩余 token：坐标为「含逗号、无等号」；其余为 key=value
+            for (int i = 2; i < ctx.toks.size(); ++i) {
+                const QString t = ctx.toks[i];
+                if (!t.contains(QChar('=')) && t.contains(QChar(','))) {
+                    // 锚点 x,y
+                    const QStringList xy = t.split(QChar(','));
+                    if (xy.size() == 2) {
+                        bool okx = false, oky = false;
+                        const double px = xy[0].toDouble(&okx), py = xy[1].toDouble(&oky);
+                        if (okx && oky) spec.anchor = Vec3(px, py, 0.0);
+                    }
+                    continue;
+                }
+                const int eq = t.indexOf(QChar('='));
+                if (eq <= 0) continue;
+                const QString key = t.left(eq).trimmed().toLower();
+                const QString val = t.mid(eq + 1).trimmed();
+                bool ok = false; const double dv = val.toDouble(&ok);
+                if (key == QStringLiteral("k"))      { if (ok) spec.dims.k = dv; }
+                else if (key == QStringLiteral("s")) { if (ok) spec.dims.s = dv; }
+                else if (key == QStringLiteral("l")) { if (ok) spec.dims.l = dv; }
+                else if (key == QStringLiteral("e")) { if (ok) spec.dims.e = dv; }
+                else if (key == QStringLiteral("n")) { bool oi = false; const int iv = val.toInt(&oi); if (oi) spec.dims.n = iv; }
+                else if (key == QStringLiteral("d")) { if (ok) spec.d = dv; }
+                else if (key == QStringLiteral("rot") || key == QStringLiteral("rotation")) { if (ok) spec.rotationDeg = dv; }
+                else if (key == QStringLiteral("aux")) {
+                    if (val == QStringLiteral("flat"))        spec.aux = WeldAux::Flat;
+                    else if (val == QStringLiteral("convex")) spec.aux = WeldAux::Convex;
+                    else if (val == QStringLiteral("concave"))spec.aux = WeldAux::Concave;
+                }
+                else if (key == QStringLiteral("supp")) {
+                    if (val == QStringLiteral("around"))      spec.supp = WeldSupp::Around;
+                    else if (val == QStringLiteral("field"))   spec.supp = WeldSupp::Field;
+                    else if (val == QStringLiteral("melt"))    spec.supp = WeldSupp::MeltThrough;
+                }
+                else if (key == QStringLiteral("side")) {
+                    if (val == QStringLiteral("other"))      spec.side = WeldSide::Other;
+                    else if (val == QStringLiteral("both"))    spec.side = WeldSide::Both;
+                    else                                      spec.side = WeldSide::Arrow;
+                }
+            }
+
+            const std::vector<Element> parts = buildWeldSymbol(spec);
+            if (parts.empty()) {
+                m->log(QStringLiteral("WELD：未生成任何图元（类型可能不支持）"), QStringLiteral("error"));
+                return false;
+            }
+            const std::vector<int> ids = m->addElementsQuiet(parts);
+            m->log(QStringLiteral("已生成焊缝符号：%1（%2 个图元，于 %3,%4）")
+                       .arg(weldTypeName(spec.type))
+                       .arg(ids.size()).arg(spec.anchor.x, 0, 'f', 1).arg(spec.anchor.y, 0, 'f', 1),
+                   QStringLiteral("info"));
+            return true;
+        }));
 
     // ---- 动作宏 / SCR 脚本（macrorec/macrostop/macrosave/macroshow/macroplay/scr）----
     // 传入 *this：registerBuiltins 运行在 instance() 静态初始化器内，不可再入。

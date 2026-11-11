@@ -1,6 +1,7 @@
 #include "Gdt.h"
 #include "TextStyle.h"      // ResolvedTextStyle
 #include "TextMetrics.h"    // 标注文字宽度：真实度量（有 GUI）/ 无头确定性估算
+#include "standards/StandardsDB.h"  // 标准知识库：roughness / geo_tol 实时查表（GD&T 标注赋值）
 
 #include <algorithm>
 #include <cmath>
@@ -228,6 +229,93 @@ FcfGeom buildFcf(const Element& e, double dimScale) {
     }
     (void)ds;
     return g;
+}
+
+// ============================================================================
+// GD&T 标注赋值：标准知识库消费（roughness / geo_tol 实时查表）
+// ============================================================================
+static QStringList splitCsvStd(const QString& s) {
+    QStringList out;
+    for (const QString& part : s.split(QChar(','), Qt::SkipEmptyParts))
+        out.append(part.trimmed());
+    return out;
+}
+
+QStringList roughnessSeries(bool rz) {
+    const QString key = rz ? QStringLiteral("Rz_series") : QStringLiteral("Ra_series");
+    const QString raw = StandardsDB::instance().queryString(QStringLiteral("roughness"), key);
+    QStringList series = splitCsvStd(raw);
+    if (!series.isEmpty()) return series;
+    // 回落内置序列（库缺表时仍可用）
+    return rz
+        ? QStringList{"0.025","0.05","0.1","0.2","0.4","0.8","1.6","3.2","6.3","12.5","25","50","100"}
+        : QStringList{"0.012","0.025","0.05","0.1","0.2","0.4","0.8","1.6","3.2","6.3","12.5","25","50","100"};
+}
+
+QString nearestRoughnessValue(double v, bool rz) {
+    if (!std::isfinite(v) || v < 0.0) return QString();
+    const QStringList series = roughnessSeries(rz);
+    if (series.isEmpty()) return QString();
+    QString best; double bestD = 1e18;
+    for (const QString& tok : series) {
+        bool ok = false; const double d = tok.toDouble(&ok);
+        if (!ok) continue;
+        const double diff = std::fabs(d - v);
+        if (diff < bestD) { bestD = diff; best = tok; }
+    }
+    return best;
+}
+
+QStringList geoTolFeatures() {
+    return splitCsvStd(StandardsDB::instance().queryString(QStringLiteral("geo_tol"),
+                                                          QStringLiteral("features")));
+}
+
+QString geoTolFeatureCategory(const QString& feature) {
+    const StandardsDB& db = StandardsDB::instance();
+    const QStringList groups = { QStringLiteral("form_features"),
+                                 QStringLiteral("orientation_features"),
+                                 QStringLiteral("location_features"),
+                                 QStringLiteral("runout_features") };
+    const QStringList keys = { QStringLiteral("form"), QStringLiteral("orientation"),
+                               QStringLiteral("location"), QStringLiteral("runout") };
+    for (int i = 0; i < groups.size(); ++i) {
+        const QStringList members = splitCsvStd(db.queryString(QStringLiteral("geo_tol"), groups[i]));
+        if (members.contains(feature)) return keys[i];
+    }
+    return QString();
+}
+
+QStringList geoTolModifiers() {
+    return splitCsvStd(StandardsDB::instance().queryString(QStringLiteral("geo_tol"),
+                                                          QStringLiteral("modifiers")));
+}
+
+int geoTolSymbolForFeature(const QString& feature) {
+    // 仅映射当前 FcfSymbol 符号集（GB/T 1182 子集）；未收录特征返回 -1。
+    if (feature == QStringLiteral("直线度"))  return (int)FcfSymbol::Straightness;
+    if (feature == QStringLiteral("平面度"))  return (int)FcfSymbol::Flatness;
+    if (feature == QStringLiteral("圆度"))    return (int)FcfSymbol::Circularity;
+    if (feature == QStringLiteral("圆柱度"))  return (int)FcfSymbol::Cylindricity;
+    if (feature == QStringLiteral("平行度"))  return (int)FcfSymbol::Parallelism;
+    if (feature == QStringLiteral("垂直度"))  return (int)FcfSymbol::Perpendicularity;
+    if (feature == QStringLiteral("倾斜度"))  return (int)FcfSymbol::Angularity;
+    if (feature == QStringLiteral("位置度"))  return (int)FcfSymbol::Position;
+    if (feature == QStringLiteral("对称度"))  return (int)FcfSymbol::Symmetry;
+    if (feature == QStringLiteral("圆跳动"))  return (int)FcfSymbol::CircularRunout;
+    if (feature == QStringLiteral("全跳动"))  return (int)FcfSymbol::TotalRunout;
+    return -1;
+}
+
+QString composeGeoTolText(const QString& feature, const QString& value,
+                          const QStringList& datums, const QString& modifier) {
+    const int sym = geoTolSymbolForFeature(feature);
+    const char* symName = fcfSymbolValid(sym) ? fcfSymbolName((FcfSymbol)sym) : "?";
+    QString s = QString::fromUtf8(symName);
+    if (!value.isEmpty()) s += QChar(' ') + value;
+    for (const QString& d : datums) if (!d.isEmpty()) s += QChar(' ') + d;
+    if (!modifier.isEmpty()) s += QChar(' ') + modifier;
+    return s;
 }
 
 } // namespace SketchCAD

@@ -1,0 +1,10 @@
+{
+  "_standard": "GB/T 14691",
+  "sizes": "1.8,2.5,3.5,5,7,10,14,20",
+  "A_pen_ratio": "14",
+  "B_pen_ratio": "10",
+  "italic_angle": "75",
+  "hanzi_font": "长仿宋体",
+  "hanzi_min_height": "3.5",
+  "hanzi_width_ratio": "0.707"
+}

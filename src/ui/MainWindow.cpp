@@ -9,6 +9,7 @@
 #include "ui/TableDialog.h"         // 表格编辑器（双击 Table / 表格创建共用）
 #include "ui/GroupManagerDialog.h"  // 编组管理器（GROUP）
 #include "ui/QSelectDialog.h"       // 快速选择（QSELECT）
+#include "ui/StandardsBrowserDialog.h" // 标准知识库浏览面板（扩展工具菜单入口）
 #include "ui/CommandPalette.h"      // 命令面板（Ctrl+Shift+P）
 #include "ui/DiagnosticsDialog.h"   // 诊断包导出对话框（异常退出提示/帮助菜单共用）
 #include "core/CommandCatalog.h"    // 快捷键冲突自检（ShortcutAudit 纯函数）
@@ -57,6 +58,8 @@
 #include <QFile>
 #include <QDir>
 #include "ui/SheetFrameDialog.h"   // 【图纸】>【新建图框】对话框
+#include "ui/GdtAnnotationDialog.h" // 标注 > GD&T 标注面板（粗糙度/几何公差实时标准列表联动）
+#include "ui/WeldSymbolDialog.h"     // 绘图 > 焊缝符号（GB/T 324 可视化选择与实时预览）
 #include "ui/PaperSizeDialog.h"
 #include "ui/TitleBlockForm.h"
 #include "ui/ModifyInputDialog.h"
@@ -105,6 +108,10 @@
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
 #include "core/Diagnostics.h"           // 日志滚动落盘（供保存失败等记日志）
 #include "version.h"                    // 版本宏（由 CMake project VERSION 生成；关于对话框用）
+#include "ui/RewardConfig.h"            // 关于对话框「打赏」：内置收款码资源路径 + 可选降级配置
+#include <QClipboard>                  // 「打赏」降级通道：复制微信号到剪贴板（Qt Gui 既有模块）
+#include <QPixmap>                     // 「打赏」内置微信收款码（Qt 资源，exe 自含）
+#include <QFrame>                      // 收款码 QLabel 的原生细边框（随亮/暗主题）
 #include "core/Section.h"
 #include "core/SheetSpec.h"
 #include "core/Modify.h"
@@ -1131,6 +1138,67 @@ void MainWindow::auditShortcutConflicts() {
                     QStringLiteral("warn"));
 }
 
+namespace {
+// 「帮助 > 关于 > 打赏」：展示内置微信收款码。
+// 收款码以 Qt 资源编译进 exe（:/reward/wechat_reward_qr.png），不依赖外部图片文件、
+// 不联网、不引入任何支付 SDK / 第三方流程；仅当资源异常时才走 RewardConfig 的降级配置。
+void showRewardDialog(QWidget* parent) {
+    const QString qrPath = QString::fromLatin1(SketchCAD::RewardConfig::kQrResource);
+    const QPixmap pm(qrPath);
+    if (!pm.isNull()) {
+        QDialog dlg(parent);
+        dlg.setWindowTitle(QStringLiteral("打赏 — 微信收款码"));
+        auto* v = new QVBoxLayout(&dlg);
+        v->setContentsMargins(18, 16, 18, 14);
+        v->setSpacing(10);
+
+        auto* caption = new QLabel(QStringLiteral(
+            "<b>感谢支持 SketchCAD</b><br>请使用微信「扫一扫」扫描下方收款码"), &dlg);
+        caption->setAlignment(Qt::AlignHCenter);
+        v->addWidget(caption);
+
+        auto* qr = new QLabel(&dlg);
+        qr->setPixmap(pm.scaledToWidth(SketchCAD::RewardConfig::kQrDisplayWidth,
+                                       Qt::SmoothTransformation));
+        qr->setAlignment(Qt::AlignCenter);
+        qr->setFrameShape(QFrame::Box);   // 原生细边框，随亮/暗主题
+        qr->setLineWidth(1);
+        v->addWidget(qr, 0, Qt::AlignHCenter);
+
+        // 显式中文「关闭」：不用 QDialogButtonBox::Close，避免英文界面下
+        // Qt 标准按钮显示为 "Close" 与上方中文提示混排。
+        auto* row = new QHBoxLayout;
+        row->addStretch(1);
+        auto* closeBtn = new QPushButton(QStringLiteral("关闭"), &dlg);
+        QObject::connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
+        row->addWidget(closeBtn);
+        v->addLayout(row);
+        dlg.exec();
+        return;
+    }
+
+    // 降级通道（默认配置为空，正常发行版不会走到）：链接 → 微信号 → 明确报错。
+    const QString url = QString::fromUtf8(SketchCAD::RewardConfig::kTargetUrl).trimmed();
+    const QString wx  = QString::fromUtf8(SketchCAD::RewardConfig::kWeChatId).trimmed();
+    if (!url.isEmpty()) {
+        if (!QDesktopServices::openUrl(QUrl::fromUserInput(url)))
+            QMessageBox::warning(parent, QStringLiteral("打赏"),
+                QStringLiteral("无法打开打赏链接，请检查配置：<br>%1").arg(url.toHtmlEscaped()));
+    } else if (!wx.isEmpty()) {
+        if (QClipboard* cb = QGuiApplication::clipboard()) cb->setText(wx);
+        QMessageBox::information(parent, QStringLiteral("打赏"),
+            QStringLiteral("微信号 <b>%1</b> 已复制到剪贴板。<br>"
+                          "请打开微信，通过「添加朋友」搜索该微信号后联系赞赏。")
+                .arg(wx.toHtmlEscaped()));
+    } else {
+        QMessageBox::warning(parent, QStringLiteral("打赏"),
+            QStringLiteral("内置收款码资源加载失败：<code>%1</code><br>"
+                           "请检查 resources/reward/wechat_reward_qr.png 是否已随程序构建。")
+                .arg(qrPath.toHtmlEscaped()));
+    }
+}
+} // namespace
+
 void MainWindow::buildMenu() {
     QMenuBar* bar = menuBar();
     // 菜单栏 chrome 显式绑到应用调色板（同 applyToolBarLook 的理由）：防止
@@ -1935,6 +2003,16 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("divide"));
     mk(s, QStringLiteral("形位公差(&G)..."), QKeySequence(), [this] { interp_->execute("tol"); })
         ->setIcon(icons::make("dim"));
+    mk(s, QStringLiteral("GD&T 标注面板(&D)..."), QKeySequence(), [this] {
+            GdtAnnotationDialog dlg(model_, this);
+            dlg.exec();
+       })
+        ->setIcon(icons::make("dim"));
+    mk(s, QStringLiteral("焊缝符号(&W)..."), QKeySequence(), [this] {
+            WeldSymbolDialog dlg(model_, interp_, this);
+            dlg.exec();
+       })
+        ->setIcon(icons::make("dim"));
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
@@ -2172,6 +2250,17 @@ void MainWindow::buildMenu() {
             featureActs_.append({ e.id, a });
         }
     }
+    // ---- 标准知识库浏览面板（只读，不影响既有功能特性菜单）----
+    ex->addSeparator();
+    {
+        QAction* aStd = new QAction(tr("标准知识库(&B)..."), this);
+        aStd->setStatusTip(tr("浏览内嵌的 12 类机械制图国标数据（图幅/比例/字体/线型/粗糙度/公差/形位公差/螺纹/齿轮/轴承/焊缝/CAD 图层）"));
+        connect(aStd, &QAction::triggered, this, [this] {
+            StandardsBrowserDialog dlg(this);
+            dlg.exec();
+        });
+        ex->addAction(aStd);
+    }
     // 菜单展开时重算准入（选择集/图纸内容可能已变化）；禁用原因经 statusTip 反馈
     connect(ex, &QMenu::aboutToShow, this, [this] { updateFeatureMenuState(); });
     bar->addMenu(ex);
@@ -2187,9 +2276,16 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::lineStyleIcon(LineStyle::DashDot));
     mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); })
         ->setIcon(icons::make("properties"));
-    // ---- AI 自然语言助手：唤起对话面板（若已隐藏则显示并聚焦）----
+    // ---- AI 自然语言助手：唤起对话面板 ----
+    // aiDock_ 初始隐藏；只 show 子控件（AiAssistantPanel）不会让隐藏的 QDockWidget
+    // 变为可见，必须先显示 dock 本身，否则首次按 Ctrl+Shift+A 会「点了没反应」。
     mk(tools, QStringLiteral("AI 助手(&A)..."), QKeySequence("Ctrl+Shift+A"), [this] {
-        if (aiPanel_) aiPanel_->focusInput();
+        if (!aiDock_ || !aiPanel_) return;
+        if (!aiDock_->isVisible()) {
+            aiDock_->show();
+            aiDock_->raise();
+        }
+        aiPanel_->focusInput();
     });
     bar->addMenu(tools);
 
@@ -2210,16 +2306,31 @@ void MainWindow::buildMenu() {
         // 三者天然一致，不会出现「关于显示 1.1.0、属性却是 1.0.0」的商用事故。
         model_->log(QStringLiteral("我是慎独 草图模块 v%1 — C++17 / Qt6 实现")
                         .arg(QString::fromLatin1(SKETCHCAD_VERSION)));
-        QMessageBox::about(this, QStringLiteral("关于 SketchCAD"),
-            QStringLiteral(
+
+        // 「关于」仍是同一个原生 QMessageBox（标题 / 图标 / 富文本内容不变），
+        // 仅在底部按钮行追加一个「打赏」入口；不新增页面、不引入支付流程或依赖。
+        QMessageBox box(this);
+        box.setWindowTitle(QStringLiteral("关于 SketchCAD"));
+        box.setIcon(QMessageBox::Information);
+        box.setText(QStringLiteral(
                 "<h3>SketchCAD 草图设计系统</h3>"
                 "<p><b>版本</b>：%1（文件属性 %2）</p>"
                 "<p><b>版权所有</b>：%3</p>"
                 "<p>基于 C++17 / Qt 6 构建，核心几何与约束求解为自研实现。</p>"
-                "<p>本软件为专有商业软件，详见安装目录内 LICENSE.txt。</p>")
+                "<p>本软件为专有商业软件，详见安装目录内 LICENSE.txt。</p>"
+                "<p>如果 SketchCAD 对你有帮助，可点击下方「打赏」支持作者。</p>")
                 .arg(QString::fromLatin1(SKETCHCAD_VERSION),
                      QString::fromLatin1(SKETCHPAD_VERSION),
                      QString::fromUtf8(SKETCHCAD_COPYRIGHT)));
+        QPushButton* rewardBtn = box.addButton(QStringLiteral("打赏"), QMessageBox::ActionRole);
+        QPushButton* closeBtn = box.addButton(QMessageBox::Close);
+        box.setDefaultButton(closeBtn);
+        box.exec();
+        if (box.clickedButton() != rewardBtn) return;
+
+        // 打赏目标：内置微信收款码（Qt 资源，exe 自含）。资源缺失时才降级到
+        // src/ui/RewardConfig.h 中可选的链接 / 微信号配置（发行版默认留空）。
+        showRewardDialog(this);
     })->setIcon(icons::make("about"));
     bar->addMenu(h);
 

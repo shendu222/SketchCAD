@@ -1,0 +1,10 @@
+{
+  "_standard": "GB/T 1182",
+  "features": "直线度,平面度,圆度,圆柱度,线轮廓度,面轮廓度,平行度,垂直度,倾斜度,同轴度,对称度,位置度,圆跳动,全跳动",
+  "form_features": "直线度,平面度,圆度,圆柱度,线轮廓度,面轮廓度",
+  "orientation_features": "平行度,垂直度,倾斜度",
+  "location_features": "同轴度,对称度,位置度",
+  "runout_features": "圆跳动,全跳动",
+  "frame_order": "符号,公差值,基准",
+  "modifiers": "M,L,R,P,F"
+}

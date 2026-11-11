@@ -224,4 +224,29 @@ QStringList wrapText(const QString& text, double maxWidthMm, const QFont& font) 
     return result;
 }
 
+// ============================================================
+// GB/T 14691 长仿宋体默认样式（LongFangSong）
+// ============================================================
+TextStyle gbLongFangSongStyle() {
+    TextStyle s;
+    s.name          = QString::fromUtf8(kGBLongFangSongName);
+    s.fontFamily    = QString::fromUtf8("长仿宋体");
+    s.textHeight    = 0.0;                 // 0 = 沿用图元自身 radius 字段（AutoCAD 语义）
+    s.widthFactor   = kGBHanziWidthRatio;  // ≈ 1/√2：字宽 = 字高/√2
+    s.obliquingAngle = 0.0;
+    s.bold          = false;
+    s.italic        = false;
+    return s;
+}
+
+bool enforceHanziMinHeight(double& hMm, QString* warnOut) {
+    if (hMm >= kGBHanziMinHeightMm) return false;   // 达标，不改动、不告警
+    hMm = kGBHanziMinHeightMm;                      // 钳制到下限
+    if (warnOut)
+        *warnOut = QStringLiteral("字高 %1mm 低于 GB/T 14691 汉字下限，已钳制到 %2mm")
+                       .arg(hMm, 0, 'f', 2)
+                       .arg(kGBHanziMinHeightMm, 0, 'f', 1);
+    return true;                                    // 报告发生了钳制
+}
+
 } // namespace SketchCAD

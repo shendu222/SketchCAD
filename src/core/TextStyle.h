@@ -9,6 +9,19 @@ namespace SketchCAD {
 class SketchModel;   // 前向声明，避免与 SketchModel.h 形成包含环
 
 // ============================================================
+// GB/T 14691 长仿宋体默认样式（LongFangSong）
+// ============================================================
+// 规范（与 src/core/standards/data/fonts.json 同源）：
+//   * 汉字采用长仿宋体；字号下限 h ≥ 3.5mm；字宽 ≈ h/√2（宽度因子 ≈ 0.7071）；
+//   * A 型笔宽 = h/14（B 型 = h/10）。本工程文字笔宽不单列字段，规范值仅作常量留档。
+// 默认样式名 "LongFangSong" 作为新建文字（图框/标题栏/尺寸标注/说明文字）的默认样式；
+// 不强制改写既有文档中已保存文字（仅影响新建文字）。
+inline constexpr const char* kGBLongFangSongName = "LongFangSong";
+inline constexpr double kGBHanziMinHeightMm = 3.5;        // 汉字字号下限(mm)
+inline constexpr double kGBHanziWidthRatio  = 0.70710678; // ≈ 1/√2：字宽/字高
+inline constexpr double kGBPenRatioA       = 14.0;        // A 型笔宽 = h/14
+
+// ============================================================
 // 文字样式（STYLE）—— 统一治理字体/字高/宽度因子等属性
 // ============================================================
 // 与图层/块表同级，由 SketchModel 持有 vector<TextStyle> 作为唯一数据源。
@@ -23,6 +36,14 @@ struct TextStyle {
     bool    bold = false;
     bool    italic = false;
 };
+
+// 构造 GB/T 14691 长仿宋体默认样式（fontFamily=长仿宋体、字高=0 沿用图元 radius、
+// 宽度因子≈1/√2、无倾斜、非粗/斜体）。
+TextStyle gbLongFangSongStyle();
+
+// 应用汉字字号下限：hMm < kGBHanziMinHeightMm 时钳制到下限并写告警（warnOut 非空时）；
+// 返回 true 表示发生了钳制（即原字高小于下限）。纯函数、无头可测。
+bool enforceHanziMinHeight(double& hMm, QString* warnOut = nullptr);
 
 // ---- 字段（FIELD）占位解析 ----
 // 求值结果：ok=true 时 text 为求值文本；ok=false 时 text 恒为 "###"（占位回落）。

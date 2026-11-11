@@ -1,0 +1,12 @@
+{
+  "_standard": "GB/T 14689",
+  "A0": "841x1189",
+  "A1": "594x841",
+  "A2": "420x594",
+  "A3": "297x420",
+  "A4": "210x297",
+  "binding_edge_a": "25",
+  "margin_c": "10,10,10,5,5",
+  "margin_e": "20,20,10,10,10",
+  "long_sizes": "A0x2,A0x3,A1x3,A1x4,A2x3,A2x4,A2x5,A3x3,A3x4,A3x5,A3x6,A3x7,A4x3,A4x4,A4x5,A4x6,A4x7,A4x8,A4x9"
+}

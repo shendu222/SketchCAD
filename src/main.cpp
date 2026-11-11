@@ -1,4 +1,6 @@
 #include <QApplication>
+#include <QFont>
+#include <QFontInfo>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -174,6 +176,23 @@ int main(int argc, char** argv) {
     }
 
     QApplication app(argc, argv);
+
+    // ---- 字体替换：GB/T 14691 默认样式声明"长仿宋体"，但 Windows 一般不自带该字体 ----
+    // 若直接请求，Qt 会回退到某个真实字体（如仿宋）；而 TextMetrics 旧判定要求解析名与请求名
+    // 精确相等，误判为"不可用"并退回 ±30% 估算、刷屏告警。这里显式登记替换链，让"长仿宋体"
+    // 稳定解析到真实可用的窄体宋（仿宋/华文仿宋/宋体），从而走真实度量、消除告警。
+    {
+        const QStringList subs = {
+            QStringLiteral("仿宋"), QStringLiteral("FangSong"),
+            QStringLiteral("华文仿宋"), QStringLiteral("STFangsong"),
+            QStringLiteral("宋体"), QStringLiteral("SimSun") };
+        for (const QString& s : subs) QFont::insertSubstitution(QStringLiteral("长仿宋体"), s);
+        QFont probe; probe.setFamily(QStringLiteral("长仿宋体"));
+        const QFontInfo fi(probe);
+        if (!fi.family().isEmpty())
+            qInfo() << "[字体] '长仿宋体' 已映射到" << fi.family()
+                    << "(GB/T 14691 窄体宋，走真实度量，不再估算)";
+    }
 
     // ---- 内置亮/暗主题：在首个窗口显示前应用（默认 light）----
     // AppSettings 单例在 MainWindow 构造期才创建，故此处直接读同路径注册表单键

@@ -69,6 +69,7 @@ set(CORE_SOURCES
     src/core/ProjectionSymbol.cpp
     src/core/TitleBlockLayout.cpp  # 标题栏单元格文字自适应（度量→收缩→定位）+ 网格重建（编辑期/自测共用）
     src/core/SurfaceRoughness.cpp
+    src/core/weld/WeldSymbol.cpp       # 焊缝符号（GB/T 324）：buildWeldSymbol 组合既图元 + WELD 命令几何生成
     src/core/CenterLineGen.cpp   # P1 中心线家族生成器（10 种，纯函数 + 单文件自测接入 SketchSelfTest）
     src/core/SymbolFactory.cpp   # P3 符号标注扩展（datum/weld/taper/centerhole/elevation/rotation 6 类纯生成器）
     src/core/SectionCutSymbol.cpp
@@ -122,6 +123,8 @@ set(CORE_SOURCES
     src/ai/tooldefs.cpp        # 工具 schema（查询工具 + runSketchCommand 动作工具）
     src/ai/AppContextProvider.cpp  # 文档状态采集（选择/图层/视图）
     src/ai/NlAssistant.cpp      # 编排层：LLM ⇄ 工具 ⇄ interp_->execute 循环
+    src/ai/NlCommandMapper.cpp  # LLM 响应结构化解码（兼容非 function-calling 后端）
+    src/core/standards/StandardsDB.cpp  # 标准知识库：12 类国标表装载/查询（QResource 内嵌 JSON）
 )
 
 # ---- D1：DWG 外部转换器隔离层（独立静态库目标）----
@@ -152,6 +155,7 @@ set(UI_SOURCES
     src/ui/tools/ShapeSelectTool.cpp
     src/ui/tools/MTextTool.cpp
     src/ui/tools/TableTool.cpp
+    src/ui/tools/WeldTool.cpp
     src/ui/RulerWidget.cpp
     src/ui/BomTree.cpp
     src/ui/ElementPanel.cpp
@@ -186,6 +190,9 @@ set(UI_SOURCES
     src/ui/TableDialog.cpp
     src/ui/GroupManagerDialog.cpp
     src/ui/QSelectDialog.cpp
+    src/ui/StandardsBrowserDialog.cpp  # 标准知识库浏览面板（只读，扩展工具菜单入口）
+    src/ui/GdtAnnotationDialog.cpp     # GD&T 标注面板（粗糙度/几何公差实时标准列表联动）
+    src/ui/WeldSymbolDialog.cpp        # 焊缝符号对话框（GB/T 324 可视化选择与实时预览，确认后调用 WELD 命令）
     src/ui/FilterDialog.cpp
     src/ui/UnitsLimitsDialog.cpp
     src/ui/SnapSettingsDialog.cpp
@@ -296,6 +303,18 @@ add_dependencies(SketchCAD sketchcad_i18n)
 set_source_files_properties(${SKETCHCAD_QM} PROPERTIES QT_RESOURCE_ALIAS "sketchcad_en.qm")
 qt_add_resources(SketchCAD "sketchcad_i18n_qm" PREFIX "/i18n" FILES ${SKETCHCAD_QM})
 
+# ---- 「帮助 > 关于 > 打赏」内置微信收款码 ----
+# 编译进 exe 的 Qt 资源（:/reward/wechat_reward_qr.png），部署零附件；
+# 更换图片只需覆盖源文件后重新构建，rcc 会因文件 mtime 变化自动重跑。
+# ⚠️ 必须显式给 QT_RESOURCE_ALIAS：Qt6 会把 FILES 的相对路径原样当别名，
+#    否则实际注册成 :/reward/resources/reward/wechat_reward_qr.png，运行时取不到图。
+set(SKETCHCAD_REWARD_QR ${CMAKE_CURRENT_SOURCE_DIR}/resources/reward/wechat_reward_qr.png)
+set_source_files_properties(${SKETCHCAD_REWARD_QR}
+    PROPERTIES QT_RESOURCE_ALIAS "wechat_reward_qr.png")
+qt_add_resources(SketchCAD "sketchcad_reward_qr"
+    PREFIX "/reward"
+    FILES ${SKETCHCAD_REWARD_QR})
+
 # ---- 无界面自测（约束求解 / 捕捉 单元测试）----
 # 复用 CORE_SOURCES，不链接 UI；覆盖 21 种约束每类 ≥1 用例 + 8 类捕捉命中 + 冲突检测。
 # 附加批量出图引擎（COM 无关层）与打印三件套，供 t_comAutomation 无头直测。
@@ -317,6 +336,35 @@ target_include_directories(SketchSelfTest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchSelfTest PRIVATE -Wall -Wextra)
+
+# ---- 标准知识库（GB/T 机械制图手册数据，12 类表 JSON 内嵌）----
+# 经 qt_add_resources 内嵌为 :/standards/<name>.json，部署零附件；
+# 主程序与无头自测均需在运行时读取，故同时挂接 SketchCAD 与 SketchSelfTest。
+# ⚠️ 必须显式给 QT_RESOURCE_ALIAS：Qt6 会把 FILES 的相对路径原样当别名，
+#    否则实际注册成 :/standards/src/core/standards/data/<name>.json，运行时取不到。
+set(SKETCHCAD_STD_DATA
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/sheet_sizes.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/scales.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/fonts.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/line_types.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/roughness.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/tolerances.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/geo_tol.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/thread.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/gear.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/bearing.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/weld.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data/cad_layers.json
+)
+foreach(_std_file ${SKETCHCAD_STD_DATA})
+    get_filename_component(_std_name ${_std_file} NAME)
+    set_source_files_properties(${_std_file} PROPERTIES QT_RESOURCE_ALIAS "${_std_name}")
+endforeach()
+qt_add_resources(SketchCAD "sketchcad_standards" PREFIX "/standards" FILES ${SKETCHCAD_STD_DATA})
+qt_add_resources(SketchSelfTest "sketchselftest_standards" PREFIX "/standards" FILES ${SKETCHCAD_STD_DATA})
+# 供 t_standardsDB 字节探针：定位源 JSON 与运行时资源逐字节比对。
+target_compile_definitions(SketchSelfTest PRIVATE
+    SKETCHCAD_STANDARDS_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data")
 
 # 黄金样本（tests/golden/ 静态 DXF 锚点）拷贝到构建根目录，供 t_goldenSamples 无头读取
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden

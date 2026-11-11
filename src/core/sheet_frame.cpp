@@ -4,9 +4,14 @@
 #include "ProjectionSymbol.h"
 #include "TitleBlockLayout.h"   // fitCellText：标题栏单元格文字自适应（度量→收缩→定位）
 #include "Vec.h"
+#include "Layer.h"              // standardLayers()：applySheetFrameToModel 补建标准层
+#include "SketchModel.h"        // applySheetFrameToModel：模型落盘（替换图框/标题栏层）
+#include "TextStyle.h"           // kGBLongFangSongName：图框/标题栏文字默认长仿宋体样式
+#include "standards/StandardsDB.h"  // 标准知识库：图框留边 c/e 按幅面查表（GB/T 14689）
 #include <cmath>
 #include <algorithm>
 #include <QRectF>
+#include <QStringList>
 
 namespace SketchCAD {
 
@@ -323,6 +328,7 @@ static void appendStandardTitleBlock(std::vector<Element>& out,
         e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("标题栏"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
     auto field = [&](double x, double y, const QString& key, double h) {
@@ -334,6 +340,7 @@ static void appendStandardTitleBlock(std::vector<Element>& out,
         e.textAlign = 4;   // 中心对齐：后续任意长度的填写值都保持在格内（超宽由 refit 收缩）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
 
@@ -453,6 +460,7 @@ static void appendZones(std::vector<Element>& out,
         e.text = s; e.radius = h;
         e.layer = QStringLiteral("图框"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
     const double topLabelY = H - bandTop / 2.0;
@@ -511,6 +519,7 @@ static double appendBom(std::vector<Element>& out,
         e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（列内居中，见 TitleBlockLayout.h）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
     // 外框
@@ -559,6 +568,7 @@ static double appendGridBar(std::vector<Element>& out,
         e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（列内居中）
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
 
@@ -608,6 +618,7 @@ static void appendCodeBar(std::vector<Element>& out,
         e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("图框"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
     auto fld = [&](double x, double y, const QString& key, double h) {
@@ -619,6 +630,7 @@ static void appendCodeBar(std::vector<Element>& out,
         e.textAlign = 4;   // 中心对齐：填写后仍居中（超宽由 refit 收缩）
         e.layer = QStringLiteral("图框"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
 
@@ -646,11 +658,10 @@ std::vector<Element> buildSheetFrameWithOptions(const SheetFrameOptions& opts) {
     const double W = opts.widthMm();
     const double H = opts.heightMm();
     const SheetFormat frameFmt = opts.frameMarginFormat();
-    const bool tenClass = (frameFmt == SheetFormat::A0 ||
-                           frameFmt == SheetFormat::A1 ||
-                           frameFmt == SheetFormat::A2);
-    const double c = tenClass ? 10.0 : 5.0;            // 留装订边：非装订三边
-    const double e = tenClass ? 20.0 : 10.0;           // 不留装订边：四边
+    // 留边 c/e 由 sheet_sizes 标准表按幅面查得（GB/T 14689），不再硬编码魔数。
+    const SheetFrameMargins mg = standardSheetFrameMargins(frameFmt);
+    const double c = mg.c;                              // 留装订边：非装订三边
+    const double e = mg.e;                              // 不留装订边：四边
     const double bindW = std::clamp(opts.bindingWidth, 5.0, 100.0);
     const double leftM  = opts.bindingMargin ? bindW : e;
     const double otherM = opts.bindingMargin ? c : e;
@@ -741,6 +752,62 @@ std::vector<Element> buildSheetFrame(const SheetSpec& spec) {
     o.bomEnabled = false;
     o.projection = spec.projection;
     return buildSheetFrameWithOptions(o);
+}
+
+// ===================== 图框幅面驱动：标准留边 + 模型落盘 =====================
+// 由 sheet_sizes 标准表按幅面查得留边 c/e（GB/T 14689）。DB 缺表/键或解析失败时回落既有
+// 标准常量，保证零回归；DB 存在时以 DB 为准（A2 不留装订边 e 由旧 20mm 纠正为 10mm，符合规范）。
+SheetFrameMargins standardSheetFrameMargins(SheetFormat fmt) {
+    SheetFrameMargins m;
+    const bool ten = (fmt == SheetFormat::A0 || fmt == SheetFormat::A1 || fmt == SheetFormat::A2);
+    m.c = ten ? 10.0 : 5.0;     // 回落默认
+    m.e = ten ? 20.0 : 10.0;
+    const QJsonObject tbl = StandardsDB::instance().tableObject(QStringLiteral("sheet_sizes"));
+    if (tbl.isEmpty()) return m;
+    auto pick = [&](const char* key, double fallback) -> double {
+        const QJsonValue v = tbl.value(QLatin1String(key));
+        if (!v.isString()) return fallback;
+        const QStringList parts = v.toString().split(QChar(','), Qt::SkipEmptyParts);
+        if (parts.isEmpty()) return fallback;
+        int idx = (int)fmt;                       // A0..A5 → 0..5
+        if (idx >= parts.size()) idx = parts.size() - 1;   // A5 用 A4 档
+        if (idx < 0) idx = 0;
+        bool ok = false;
+        const double d = parts[idx].toDouble(&ok);
+        return ok ? d : fallback;
+    };
+    m.c = pick("margin_c", m.c);
+    m.e = pick("margin_e", m.e);
+    return m;
+}
+
+// 把图框方案应用到模型：仅替换「图框 / 标题栏」两层图元，保留其他层用户内容，
+// 使图框随所选幅面联动更新。两层缺失则按 standardLayers 补建（颜色/线宽一致）。
+void applySheetFrameToModel(SketchModel* model, const SheetFrameOptions& opts, double /*scaleRatio*/) {
+    if (!model) return;
+    const SheetSpec spec = opts.toSheetSpec();
+    setCurrentSheetFormat(spec.format);
+
+    model->beginEdit(QStringLiteral("图框幅面驱动"));
+
+    // 确保 图框 / 标题栏 标准层存在
+    for (const QString& name : { QStringLiteral("图框"), QStringLiteral("标题栏") }) {
+        if (!model->hasLayer(name)) {
+            for (const Layer& l : standardLayers())
+                if (l.name == name) { model->addLayer(l.name, l.color, l.lineWidth, l.lineStyle); break; }
+        }
+    }
+
+    // 收集并移除旧的 图框 / 标题栏 层图元（先收集 id 再删，避免遍历中改 vector 失效）
+    QVector<int> toRemove;
+    for (const Element& e : model->elements())
+        if (e.layer == QStringLiteral("图框") || e.layer == QStringLiteral("标题栏"))
+            toRemove.append(e.id);
+    for (int id : toRemove) model->removeElementQuiet(id);
+
+    // 生成新图框
+    model->addElementsQuiet(buildSheetFrameWithOptions(opts));
+    model->setSheetSpec(spec);
 }
 
 // ----------------------------- 插入标准标题栏（追加到当前图纸）-----------------------------
@@ -835,6 +902,7 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
         e.textAlign = 4;   // 9 点对齐之「中心」：锚点=文字块视觉中心（格内居中）
         e.layer = QStringLiteral("标题栏"); e.color = gray;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
     auto field = [&](double x, double y, const QString& key, const QString& value, double h) {
@@ -844,6 +912,7 @@ static void appendTitleBlockGrid(std::vector<Element>& out,
         e.textAlign = 4;   // 中心对齐：预填长值已收缩适配，居中渲染
         e.layer = QStringLiteral("标题栏"); e.color = ink;
         e.lineWidth = 1.0; e.lineWidthAuto = true; e.lineStyle = LineStyle::Solid;
+        e.styleName = QString::fromUtf8(kGBLongFangSongName);   // GB/T 14691 长仿宋体默认样式
         out.push_back(std::move(e));
     };
 

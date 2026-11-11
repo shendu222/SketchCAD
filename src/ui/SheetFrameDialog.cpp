@@ -734,8 +734,8 @@ void SheetFrameDialog::validateZones() {
     if (!opts_.zonesEnabled) { lblZone_->setText(QStringLiteral("分区默认关闭")); return; }
     const double W = opts_.widthMm(), H = opts_.heightMm();
     const SheetFormat ff = opts_.frameMarginFormat();
-    const bool ten = (ff==SheetFormat::A0||ff==SheetFormat::A1||ff==SheetFormat::A2);
-    const double c = ten ? 10.0 : 5.0, e = ten ? 20.0 : 10.0;
+    const SheetFrameMargins mg = standardSheetFrameMargins(ff);   // 标准留边（GB/T 14689），与落盘同源
+    const double c = mg.c, e = mg.e;
     const double leftM = opts_.bindingMargin ? std::clamp(opts_.bindingWidth, 5.0, 100.0) : e;
     const double otherM = opts_.bindingMargin ? c : e;
     const double innerW = W - leftM - otherM, innerH = H - 2 * otherM;

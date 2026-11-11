@@ -36,6 +36,8 @@
 #include "BatchTools.h"          // P9 扩展工具（机械图拆分/自动排图/批量签名，t_splitplot 直测）
 #include "TitleBlockLayout.h"    // P9 批量签名：单元格适配单一入口（fitCellText/titleBlockCellAt）
 #include "SheetSpec.h"           // P9 标题栏字段 key↔label（titleBlockFields）+ buildSheetFrame
+#include "Gdt.h"                 // GD&T 标注赋值：roughnessSeries/nearestRoughnessValue/geoTol*（t_gdtAnnotation）
+#include "core/weld/WeldSymbol.h" // 焊缝符号（GB/T 324）：buildWeldSymbol/WeldSpec/weldCommandString（t_weldSymbol）
 #include "FeatureMenu.h"         // P1~P9 功能菜单与准入（目录 + 条件评估，t_featuremenu 直测）
 #include "Snap.h"
 #include "Vec.h"
@@ -67,9 +69,12 @@
 #include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
 #include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
 #include "ai/NlAssistant.h"   // AI 自然语言助手（MockProvider → runSketchCommand 派发，t_nlAssistant 直测）
+#include "ai/NlCommandMapper.h" // LLM 响应结构化解码（t_llmIntegration 直测）
 #include "ai/MockProvider.h"
 #include "ai/AppContextProvider.h"
 #include "core/Element.h"      // 元素类型枚举（t_nlAssistant 图元计数）
+#include "core/standards/StandardsDB.h"  // 标准知识库 12 类国标表（t_standardsDB 直测）
+#include <QResource>        // t_standardsDB：运行时资源字节探针（与源文件逐字节比对）
 #include <QEventLoop>
 #include <QTimer>
 #include <QTranslator>       // t_i18n：.qm 直载与 contains 探测
@@ -2878,7 +2883,7 @@ static void t_archiveCompat() {
         CHECK(m.elementCount() == 2, "存档 V1 元素不丢失(2)");
         CHECK(m.blockCount() == 0, "存档 V1 缺 blocks 键 → 块表空");
         CHECK(m.constraints().empty(), "存档 V1 缺 constraints 键 → 约束表空");
-        CHECK(m.textStyleCount() == 1, "存档 V1 缺 textStyles 键 → 保留构造默认样式(Standard)");
+        CHECK(m.textStyleCount() == 2, "存档 V1 缺 textStyles 键 → 保留内置默认样式(Standard+LongFangSong)");
     }
     // ---- V2：+layers+blocks（缺样式/约束/参数/比例）----
     {
@@ -2890,13 +2895,13 @@ static void t_archiveCompat() {
               m.blockTable()[0].entities.size() == 1,
               "存档 V2 块表 BOLT 还原(1 块 1 实体)");
         CHECK(m.constraints().empty(), "存档 V2 缺 constraints 键 → 约束表空");
-        CHECK(m.textStyleCount() == 1, "存档 V2 缺 textStyles 键 → 保留构造默认样式(Standard)");
+        CHECK(m.textStyleCount() == 2, "存档 V2 缺 textStyles 键 → 保留内置默认样式(Standard+LongFangSong)");
     }
     // ---- V3：+textStyles+constraints+scaleRatio（缺 params）----
     {
         SketchModel m;
         CHECK(load(v3, QStringLiteral("scad_compat_v3.scad"), m, err), "存档 V3(+样式+约束+比例) 读入成功");
-        CHECK(m.textStyleCount() == 2, "存档 V3 文字样式还原(Standard+标注 共 2)");
+        CHECK(m.textStyleCount() == 3, "存档 V3 文字样式还原(Standard+LongFangSong+标注 共 3)");
         CHECK(m.constraints().size() == 1, "存档 V3 约束还原(1)");
         CHECK(std::fabs(m.scaleRatio() - 2.0) < 1e-9, "存档 V3 比例 2:1 还原");
         CHECK(m.params().empty(), "存档 V3 缺 params 键 → 空表回落");
@@ -2906,7 +2911,7 @@ static void t_archiveCompat() {
         SketchModel m;
         CHECK(load(v4, QStringLiteral("scad_compat_v4.scad"), m, err), "存档 V4(完整) 读入成功");
         CHECK(m.elementCount() == 2 && m.layerCount() == fullLayerN && m.blockCount() == 1 &&
-              m.textStyleCount() == 2 && m.constraints().size() == 1,
+              m.textStyleCount() == 3 && m.constraints().size() == 1,
               "存档 V4 全表计数一致");
         CHECK(m.params().size() == 1 &&
               std::fabs(m.params().at(QStringLiteral("plate")) - 0.5) < 1e-9,
@@ -10822,6 +10827,234 @@ static bool t_sheetFrameBars() {
     return (g_fail - failBefore) == 0;
 }
 
+// ---------- GD&T 标注赋值：标准知识库消费（roughness / geo_tol 实时查表）----------
+static bool t_gdtAnnotation() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- GD&T 标注赋值（roughness/geo_tol 标准列表联动）---\n");
+
+    // ① 粗糙度 Ra 系列 = 标准表 14 项，含 1.6
+    const QStringList ra = roughnessSeries(false);
+    CHECK(ra.size() == 14, "gdtAnno: Ra 系列 14 项（与 roughness.json Ra_series 一致）");
+    CHECK(ra.contains(QStringLiteral("1.6")), "gdtAnno: Ra 系列含 1.6");
+    // ② Rz 系列含 6.3
+    CHECK(roughnessSeries(true).contains(QStringLiteral("6.3")), "gdtAnno: Rz 系列含 6.3");
+
+    // ③ 最近标准值匹配（面板输入即时高亮依据）
+    CHECK(nearestRoughnessValue(1.6, false) == QStringLiteral("1.6"), "gdtAnno: 1.6 → 1.6");
+    CHECK(nearestRoughnessValue(0.9, false) == QStringLiteral("0.8"), "gdtAnno: 0.9 → 最近 0.8");
+    CHECK(nearestRoughnessValue(7.0, false) == QStringLiteral("6.3"), "gdtAnno: 7.0 → 最近 6.3");
+    CHECK(nearestRoughnessValue(1.6, true)  == QStringLiteral("1.6"), "gdtAnno: Rz 1.6 → 1.6");
+    CHECK(nearestRoughnessValue(-1.0, false).isEmpty(), "gdtAnno: 负值 → 空（无可用标准值）");
+
+    // ④ 几何公差特征 = 标准表 14 项
+    const QStringList feats = geoTolFeatures();
+    CHECK(feats.size() == 14, "gdtAnno: 几何公差特征 14 项（与 geo_tol.features 一致）");
+    CHECK(feats.contains(QStringLiteral("垂直度")), "gdtAnno: 特征含 垂直度");
+
+    // ⑤ 特征→类别映射（面板标准选项分类）
+    CHECK(geoTolFeatureCategory(QStringLiteral("圆度"))   == QStringLiteral("form"),        "gdtAnno: 圆度 → form");
+    CHECK(geoTolFeatureCategory(QStringLiteral("垂直度")) == QStringLiteral("orientation"), "gdtAnno: 垂直度 → orientation");
+    CHECK(geoTolFeatureCategory(QStringLiteral("位置度")) == QStringLiteral("location"),    "gdtAnno: 位置度 → location");
+    CHECK(geoTolFeatureCategory(QStringLiteral("圆跳动")) == QStringLiteral("runout"),      "gdtAnno: 圆跳动 → runout");
+
+    // ⑥ 修饰符（GB/T 1182）
+    CHECK((geoTolModifiers() == QStringList{"M", "L", "R", "P", "F"}), "gdtAnno: 修饰符 M/L/R/P/F");
+
+    // ⑦ 特征→框格符号（仅映射已收录符号集；未收录返回 -1）
+    CHECK(geoTolSymbolForFeature(QStringLiteral("垂直度")) == (int)FcfSymbol::Perpendicularity, "gdtAnno: 垂直度 → 符号 5");
+    CHECK(geoTolSymbolForFeature(QStringLiteral("同轴度"))   == -1, "gdtAnno: 同轴度 未收录 → -1");
+    CHECK(geoTolSymbolForFeature(QStringLiteral("线轮廓度")) == -1, "gdtAnno: 线轮廓度 未收录 → -1");
+
+    // ⑧ 框格文本组装（预览）
+    CHECK(composeGeoTolText(QStringLiteral("垂直度"), QStringLiteral("0.02"),
+                            QStringList{"A"}, QStringLiteral("M")) == QStringLiteral("垂直度 0.02 A M"),
+          "gdtAnno: 框格预览文本组装正确");
+
+    fprintf(stdout, "  (GD&T 标注赋值自测: 通过 %d / 失败 %d)\n", g_pass - fail0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// ===================== 焊缝符号（GB/T 324，既组合图元，ElementType 只增不改） =====================
+// 验收要点：
+//   ① buildWeldSymbol 对「角焊缝」「V形焊缝」各生成非空图元；
+//   ② 全部输出为既有图元（Line/Polyline/Circle/Text），不新增 ElementType；
+//   ③ 经 CommandInterpreter 执行 WELD 命令落盘后，toDrawingJson 单一入口可序列化，
+//      且 elementFromJson 可真实读取还原（存储 + 读取双向自洽）；
+//   ④ 符号线宽 == 2d/3（GB/T 12212 比例）；进程退出码 EXIT=0（整体自测不崩溃）。
+static bool t_weldSymbol() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- 焊缝符号（GB/T 324，组合既有图元，ElementType 只增不改）---\n");
+
+    // ① 类型名表 8 项，枚举↔名映射一致
+    CHECK(weldTypeNames().size() == 8, "weld: 类型名 8 项");
+    CHECK(weldTypeFromName(QStringLiteral("fillet")) == WeldType::Fillet, "weld: 英文别名 fillet→Fillet");
+    CHECK(weldTypeFromName(QStringLiteral("V形焊缝")) == WeldType::VGroove, "weld: 中文名 V形焊缝→VGroove");
+
+    // ② 角焊缝：非空，且含 Line（指引/基准线）+ Text（尺寸）+ Polyline（▽ 符号）
+    WeldSpec fillet; fillet.type = WeldType::Fillet; fillet.dims.k = 5.0; fillet.d = 5.0;
+    std::vector<Element> pf = buildWeldSymbol(fillet);
+    CHECK(!pf.empty(), "weld: 角焊缝图元非空");
+    bool fLine = false, fText = false, fPoly = false;
+    for (const auto& e : pf) {
+        if (e.type == ElementType::Line) fLine = true;
+        else if (e.type == ElementType::Text) fText = true;
+        else if (e.type == ElementType::Polyline) fPoly = true;
+    }
+    CHECK(fLine, "weld: 角焊缝含 Line（指引线/基准线）");
+    CHECK(fText, "weld: 角焊缝含 Text（尺寸文本）");
+    CHECK(fPoly, "weld: 角焊缝含 Polyline（▽ 基本符号）");
+
+    // ③ V 形焊缝：非空，且含 Polyline（∨ 基本符号）
+    WeldSpec vg; vg.type = WeldType::VGroove; vg.dims.s = 8.0; vg.d = 5.0;
+    std::vector<Element> pv = buildWeldSymbol(vg);
+    CHECK(!pv.empty(), "weld: V形焊缝图元非空");
+    bool vPoly = false;
+    for (const auto& e : pv) if (e.type == ElementType::Polyline) vPoly = true;
+    CHECK(vPoly, "weld: V形焊缝含 Polyline（∨ 基本符号）");
+
+    // ④ 线宽 == 2d/3（GB/T 12212 比例）：基准/指引线 Line 固定线宽、不随层派生
+    {
+        const double wExpect = (2.0 / 3.0) * fillet.d;
+        bool okWidth = false;
+        for (const auto& e : pf) {
+            if (e.type == ElementType::Line && !e.lineWidthAuto &&
+                std::fabs(e.lineWidth - wExpect) < 1e-6) { okWidth = true; break; }
+        }
+        CHECK(okWidth, "weld: 符号线宽 == 2d/3（lineWidthAuto=false）");
+    }
+
+    // ⑤ 经 CommandInterpreter 执行 WELD 命令落盘：角焊 + V 各一组，断言非空
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        const bool okF = interp.execute(QStringLiteral("WELD 角焊缝 0,0 k=5"));
+        const bool okV = interp.execute(QStringLiteral("WELD V形焊缝 0,0 s=8"));
+        CHECK(okF, "weld: WELD 角焊缝命令执行成功");
+        CHECK(okV, "weld: WELD V形焊缝命令执行成功");
+        CHECK(m.elementCount() > 0, "weld: WELD 命令后图元落盘非空");
+    }
+
+    // ⑥ 存储 + 读取双向自洽，且 ElementType 只增不改
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        interp.execute(QStringLiteral("WELD 角焊缝 0,0 k=5"));
+        interp.execute(QStringLiteral("WELD V形焊缝 0,0 s=8"));
+
+        // 经 toDrawingJson 单一入口序列化
+        const QJsonObject root = m.toDrawingJson();
+        const QJsonArray els = root.value(QStringLiteral("elements")).toArray();
+        CHECK(els.size() == m.elementCount(), "weld: JSON elements 数量 == 模型图元数");
+
+        // ElementType 只增不改：所有 type 索引 <= Fcf(19)（当前枚举末尾）
+        int maxType = -1; bool onlyKnown = true;
+        for (const auto& v : els) {
+            const int t = v.toObject().value(QStringLiteral("type")).toInt();
+            if (t > maxType) maxType = t;
+            if (t < 0 || t > 19) onlyKnown = false;
+        }
+        CHECK(maxType <= 19, "weld: 序列化类型索引不超过 Fcf(19)（ElementType 只增不改）");
+        CHECK(onlyKnown, "weld: 全部图元使用既有 ElementType（无新增枚举值）");
+
+        // 真实读取：逐元素 elementFromJson 还原，断言计数一致、类型可识别
+        int readBack = 0;
+        for (const auto& v : els) {
+            const Element e = elementFromJson(v.toObject());
+            const bool known = (e.type == ElementType::Line || e.type == ElementType::Polyline ||
+                                e.type == ElementType::Circle || e.type == ElementType::Text);
+            if (!known) break;
+            ++readBack;
+        }
+        CHECK(readBack == els.size(), "weld: 所有图元可经 elementFromJson 读取还原");
+
+        // 字节级往返：toDrawingBytes 可被 QJsonDocument 解析且元素数一致
+        const QJsonDocument doc = QJsonDocument::fromJson(m.toDrawingBytes());
+        CHECK(doc.isObject() &&
+              doc.object().value(QStringLiteral("elements")).toArray().size() == m.elementCount(),
+              "weld: toDrawingBytes 字节级往返自洽");
+    }
+
+    fprintf(stdout, "  (焊缝符号自测: 通过 %d / 失败 %d)\n", g_pass - fail0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// ===========================================================================
+// GB/T 14691 长仿宋体默认样式（t_longFangSong）
+// 验收：① 新建文字默认样式名 == "LongFangSong"（createText/createMText/标题栏）
+//       ② 字号 < 3.5mm 输出自测告警并钳制到下限 ③ 样式规范值（字宽≈h/√2、长仿宋体）
+//       ④ SketchModel 默认样式表含 LongFangSong 且可解析 ⑤ fitCellText 中心锚点兼容
+// ===========================================================================
+static bool t_longFangSong() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- 长仿宋体默认样式 LongFangSong（GB/T 14691）---\n");
+
+    // ① 样式规范值：样式名/字体族/宽度因子≈1/√2/字高=0（沿用图元 radius）
+    const TextStyle lfs = gbLongFangSongStyle();
+    CHECK(lfs.name == QStringLiteral("LongFangSong"), "lfs: 默认样式名 == LongFangSong");
+    CHECK(lfs.fontFamily == QString::fromUtf8("长仿宋体"), "lfs: 汉字字体族 == 长仿宋体");
+    CHECK(std::fabs(lfs.widthFactor - (1.0 / std::sqrt(2.0))) < 1e-6, "lfs: 字宽 ≈ h/√2（宽度因子 0.7071）");
+    CHECK(std::fabs(lfs.textHeight) < 1e-9, "lfs: 样式字高=0（沿用图元 radius，AutoCAD 语义）");
+
+    // ② 新建文字默认样式名 == LongFangSong
+    {
+        const Element t = ElementFactory::createText(Vec3(0, 0, 0), QStringLiteral("你好"), 3.5);
+        CHECK(t.styleName == QStringLiteral("LongFangSong"), "lfs: createText 默认样式名 == LongFangSong");
+        const Element mt = ElementFactory::createMText(Vec3(0, 0, 0), QStringLiteral("多行"), 3.5);
+        CHECK(mt.styleName == QStringLiteral("LongFangSong"), "lfs: createMText 空样式名回落 LongFangSong");
+        // 显式样式名不被覆盖
+        const Element custom = ElementFactory::createMText(Vec3(0, 0, 0), QStringLiteral("x"), 3.5,
+                                                           QColor(26,29,40), 1, 1.0,
+                                                           QStringLiteral("Standard"));
+        CHECK(custom.styleName == QStringLiteral("Standard"), "lfs: createMText 显式样式名不被覆盖");
+    }
+
+    // ③ 字号下限：< 3.5mm 钳制 + 告警；≥ 3.5mm 不改动不告警
+    {
+        double h = 2.0; QString warn;
+        const bool clamped = enforceHanziMinHeight(h, &warn);
+        CHECK(clamped, "lfs: 字号 2.0mm < 下限 → 触发钳制");
+        CHECK(std::fabs(h - kGBHanziMinHeightMm) < 1e-9, "lfs: 钳制后字高 == 3.5mm");
+        CHECK(!warn.isEmpty() && warn.contains(QStringLiteral("3.5")), "lfs: 钳制时输出非空告警(含 3.5)");
+
+        double h2 = 5.0; QString warn2;
+        const bool clamped2 = enforceHanziMinHeight(h2, &warn2);
+        CHECK(!clamped2, "lfs: 字号 5.0mm ≥ 下限 → 不钳制");
+        CHECK(std::fabs(h2 - 5.0) < 1e-9, "lfs: 达标字高保持原值");
+        CHECK(warn2.isEmpty(), "lfs: 达标字高不输出告警");
+    }
+
+    // ④ SketchModel 默认样式表含 LongFangSong 且可解析
+    {
+        SketchModel m;
+        const TextStyle* s = m.findTextStyle(QStringLiteral("LongFangSong"));
+        CHECK(s != nullptr, "lfs: 默认样式表含 LongFangSong");
+        CHECK(s && std::fabs(s->widthFactor - (1.0 / std::sqrt(2.0))) < 1e-6,
+              "lfs: 模型内 LongFangSong 宽度因子 ≈ 1/√2");
+
+        // resolveTextStyle：styleName=LongFangSong 的图元解析出宽因子 1/√2、字高回落 3.5
+        Element e; e.type = ElementType::Text; e.pts = {Vec3(0,0,0)};
+        e.styleName = QStringLiteral("LongFangSong"); e.radius = 5.0;
+        const ResolvedTextStyle rs = resolveTextStyle(e, &m);
+        CHECK(std::fabs(rs.widthFactor - (1.0 / std::sqrt(2.0))) < 1e-6,
+              "lfs: resolveTextStyle 解析 LongFangSong 宽度因子 ≈ 1/√2");
+        CHECK(std::fabs(rs.height - 5.0) < 1e-9, "lfs: 样式字高=0 → 沿用图元 radius(5.0)");
+        CHECK(rs.fontFamily == QString::fromUtf8("长仿宋体"), "lfs: resolveTextStyle 解析出长仿宋体字体族");
+    }
+
+    // ⑤ fitCellText 中心锚点兼容：LongFangSong 不改 textAlign=4 语义，锚点仍为格中心
+    {
+        const CellTextFit f = fitCellText(QStringLiteral("图号"), 3.5, 0.0, 40.0, 0.0, 10.0, false, 2.0);
+        CHECK(std::fabs(f.x - 20.0) < 1e-9, "lfs: fitCellText 锚点 x = 格水平中心");
+        CHECK(std::fabs(f.y - 5.0) < 1e-9, "lfs: fitCellText 锚点 y = 格垂直中心");
+    }
+
+    fprintf(stdout, "  (长仿宋体默认样式自测: 通过 %d / 失败 %d)\n", g_pass - fail0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
 // ---------- P1 中心线家族（CenterLineGen）----------
 static bool t_centerLine() {
     const int fail0 = g_fail;
@@ -12504,6 +12737,60 @@ static bool t_drawingTheme() {
     return g_fail == fail0;
 }
 
+// 标准知识库：内嵌 12 类国标表（JSON 经资源编译进 exe），验证装载、查询与
+// 运行时资源字节与源文件逐字节一致（资源探针）。
+static bool t_standardsDB() {
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- 标准知识库 StandardsDB（12 类国标表 / QResource 内嵌 / 字节探针）---\n");
+
+    StandardsDB db;
+    CHECK(db.load(), "StandardsDB::load() 成功装载 12 类标准表");
+
+    // 验收断言①：query(sheet_sizes, A3) == "297x420"
+    CHECK(db.query("sheet_sizes", "A3").toString() == QStringLiteral("297x420"),
+          "query(sheet_sizes, A3) == 297x420");
+    // 验收断言②：query(scales, 1:2) 键存在
+    CHECK(!db.query("scales", "1:2").isUndefined(),
+          "query(scales, 1:2) 键存在");
+
+    // 验收断言③：allTables() 应含 12 类表
+    const QStringList tables = db.allTables();
+    CHECK(tables.size() == 12, "allTables() 含 12 类表");
+
+    // 运行时资源探针：读 :/standards/<name>.json 与源文件逐字节一致
+    const QString srcDir = QStringLiteral(SKETCHCAD_STANDARDS_SRC_DIR);
+    for (const QString& t : tables) {
+        const QString resName = QStringLiteral(":/standards/") + t + QStringLiteral(".json");
+        QResource res(resName);
+        QByteArray msg = ("资源存在 " + resName).toUtf8();
+        CHECK(res.isValid(), msg.constData());
+        QFile src(srcDir + QStringLiteral("/") + t + QStringLiteral(".json"));
+        msg = ("源文件可读 " + src.fileName()).toUtf8();
+        CHECK(src.open(QIODevice::ReadOnly), msg.constData());
+        QByteArray rb(reinterpret_cast<const char*>(res.data()), static_cast<int>(res.size()));
+        QByteArray sb = src.readAll();
+        msg = ("资源字节与源文件一致 " + t).toUtf8();
+        CHECK(rb == sb, msg.constData());
+    }
+
+    // 验收断言④：StandardsDB::instance() 全局单例（standards 命令 / query_standards 工具 /
+    // 标准知识库浏览面板共用同一份已装载数据，避免重复装载与状态分叉）
+    CHECK(&StandardsDB::instance() == &StandardsDB::instance(),
+          "StandardsDB::instance() 返回同一单例对象");
+    CHECK(StandardsDB::instance().allTables().size() == 12,
+          "instance().allTables() 同样含 12 类表（懒装载生效）");
+
+    // 验收断言⑤：queryString 便捷查询（standards 命令与 query_standards LLM 工具共用）
+    CHECK(StandardsDB::instance().queryString("sheet_sizes", "A3") == QStringLiteral("297x420"),
+          "instance().queryString(sheet_sizes, A3) == 297x420");
+    CHECK(!StandardsDB::instance().queryString("scales", "1:2").isEmpty(),
+          "instance().queryString(scales, 1:2) 非空");
+    CHECK(StandardsDB::instance().query("not_a_table", "x").isUndefined(),
+          "instance().query(未知表, x) 返回 undefined（命令/工具据此报错提示）");
+
+    return g_fail == fail0;
+}
+
 // 自然语言助手：MockProvider（离线规则）下，用户自然语言 → runSketchCommand 工具调用
 // → interp_->execute 落到现有命令体系 → 模型出现对应图元。验证「LLM 当自然语言前端、
 // 复用既有命令」这一核心路径，无需网络 / 密钥。
@@ -12565,6 +12852,175 @@ static bool t_nlAssistant() {
     CHECK(m2.elementCount() == 0, "未知意图不应改动模型");
 
     fprintf(stdout, "  (自然语言助手自测: 通过 %d / 失败 %d)\n", g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// 可脚本化的「模型侧」替身：按回合返回 tool_calls / 文本，并记录收到的上下文。
+// 用途是证明：命令串来自模型输出、用户原文原样入模、工具结果回灌、结果文本由模型生成。
+class ScriptedLlmProvider : public LlmProvider {
+public:
+    QString firstToolLine;      // 第一回合要发出的 runSketchCommand 参数（模型产出）
+    QString firstText;          // 第一回合纯文本（可含 JSON 命令对象）
+    QString finalText = QStringLiteral("模型生成：已完成绘图。");
+
+    int turns = 0;
+    int lastToolCount = 0;
+    QString lastUserText;
+    QString lastSystemText;
+    QStringList toolResults;
+
+    void chat(const QVector<LlmMessage>& messages,
+              const QVector<LlmTool>& tools,
+              const LlmOptions&,
+              std::function<void(const QString&)> onDelta,
+              std::function<void(const QVector<LlmToolCall>&)> onToolCalls,
+              std::function<void(const QString&)> onDone) override {
+        ++turns;
+        lastToolCount = tools.size();
+        bool sawToolResult = false;
+        for (const LlmMessage& m : messages) {
+            if (m.role == LlmRole::System) lastSystemText = m.content;
+            else if (m.role == LlmRole::User) lastUserText = m.content;
+            else if (m.role == LlmRole::Tool) { sawToolResult = true; toolResults.append(m.content); }
+        }
+        if (sawToolResult) {
+            onDelta(finalText);       // 结果文本由「模型」生成
+            onToolCalls({});
+            onDone(QString());
+            return;
+        }
+        if (!firstToolLine.isEmpty()) {
+            LlmToolCall tc;
+            tc.id = QStringLiteral("call_scripted_1");
+            tc.name = QStringLiteral("runSketchCommand");
+            tc.arguments = QJsonObject{{ QStringLiteral("line"), firstToolLine }};
+            onToolCalls({ tc });
+        } else {
+            onDelta(firstText);
+            onToolCalls({});
+        }
+        onDone(QString());
+    }
+
+    bool needsKey() const override { return false; }
+    QString backendName() const override { return QStringLiteral("Scripted(model stub)"); }
+};
+
+// t_llmIntegration：验证「LLM 真正嵌入核心处理与结果生成」——
+// 命令串只由模型产出，本地不做任何自然语言解析；无模型后端则一律不执行。
+static bool t_llmIntegration() {
+    const int pass0 = g_pass, fail0 = g_fail;
+    fprintf(stdout, "--- LLM 集成链路 NlAssistant（模型驱动，非映射） ---\n");
+
+    // 1) 用户用中文文字描述参数（无任何阿拉伯数字），本地规则不可能产出
+    //    「circle 0,0 20」；只有模型能给出该命令串。
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        ScriptedLlmProvider provider;
+        provider.firstToolLine = QStringLiteral("circle 0,0 20");
+        provider.finalText = QStringLiteral("模型生成：已绘制半径 20 的圆。");
+        AppContextProvider ctx(&m);
+        NlAssistant assistant(&interp, &provider, &ctx, &m);
+
+        QStringList executed;
+        QString assistantText;
+        bool done = false, okFlag = false;
+        QString errText;
+        QObject::connect(&assistant, &NlAssistant::commandExecuted,
+                         [&](const QString& line, bool ok) { if (ok) executed.append(line); });
+        QObject::connect(&assistant, &NlAssistant::assistantMessage,
+                         [&](const QString& t) { assistantText = t; });
+        QObject::connect(&assistant, &NlAssistant::finished,
+                         [&](bool ok, const QString& e) { done = true; okFlag = ok; errText = e; });
+
+        const QString userText = QStringLiteral("请把圆心放在原点，半径取二十毫米，画个圆");
+        assistant.sendUserMessage(userText);   // 脚本化后端同步跑完整轮循环
+
+        CHECK(done, "LLM 对话应正常结束");
+        CHECK(okFlag && errText.isEmpty(), "LLM 对话不应出错");
+        CHECK(provider.turns >= 2, "工具结果应回灌模型并触发第二轮推理");
+        CHECK(provider.lastUserText == userText, "用户原文应原样送入模型（未经本地归一化）");
+        CHECK(provider.lastSystemText.contains(QStringLiteral("circle cx,cy r")),
+              "system prompt 应注入 CommandCatalog 的真实命令语法");
+        CHECK(provider.lastToolCount >= 5, "工具 schema 应传入模型");
+        CHECK(executed.contains(QStringLiteral("circle 0,0 20")),
+              "应执行【模型给出的】命令串 circle 0,0 20");
+        int circles = 0;
+        for (const Element& e : m.elements()) if (e.type == ElementType::Circle) ++circles;
+        CHECK(circles == 1, "模型给出的命令应真实落模 1 个圆");
+        CHECK(!provider.toolResults.isEmpty(), "执行结果应作为 Tool 消息回灌模型");
+        CHECK(assistantText == provider.finalText, "最终回复文本应由模型生成");
+    }
+
+    // 2) 反证：没有 LLM 后端时绝不执行任何命令（不存在映射兜底）
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        NlAssistant assistant(&interp, nullptr, nullptr, &m);
+        QStringList executed;
+        bool done = false, okFlag = true;
+        QString errText;
+        QObject::connect(&assistant, &NlAssistant::commandExecuted,
+                         [&](const QString& line, bool ok) { if (ok) executed.append(line); });
+        QObject::connect(&assistant, &NlAssistant::finished,
+                         [&](bool ok, const QString& e) { done = true; okFlag = ok; errText = e; });
+        assistant.sendUserMessage(QStringLiteral("给我绘制一个圆心在0，0、半径为20的圆"));
+        CHECK(done, "无后端时应明确结束而非挂起");
+        CHECK(!okFlag && !errText.isEmpty(), "无 LLM 后端应显式报错");
+        CHECK(executed.isEmpty(), "无 LLM 后端不得执行任何命令（证明没有映射兜底）");
+        CHECK(m.elementCount() == 0, "无 LLM 后端不得改动模型");
+    }
+
+    // 3) NlCommandMapper 现在只解码【模型输出】，不再解析用户自然语言
+    {
+        const QString modelReply = QString::fromUtf8(R"(```json
+{"command":"circle 0,0 20","explanation":"已绘制","confidence":0.95}
+```)");
+        NlParseResult r = NlCommandMapper::parse(modelReply);
+        CHECK(r.ok, "应能解码模型输出中的结构化命令对象");
+        CHECK(r.commandLine == QStringLiteral("circle 0,0 20"), "命令串应原样取自模型输出");
+        CHECK(std::fabs(r.confidence - 0.95) < 1e-9, "置信度应取自模型输出");
+        CHECK(r.explanation == QStringLiteral("已绘制"), "说明应取自模型输出");
+        CHECK(!NlCommandMapper::parse(
+                  QStringLiteral("给我绘制一个圆心在0，0、半径为20的圆")).ok,
+              "用户自然语言不再被本地解析为命令（语义交给模型）");
+        CHECK(!NlCommandMapper::parse(QStringLiteral("今天天气怎么样")).ok,
+              "无命令对象的模型文本应保持 ok=false");
+    }
+
+    // 4) 兼容路径：模型不发 tool_calls、改以 JSON 文本返回命令对象
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        ScriptedLlmProvider provider;
+        provider.firstText = QString::fromUtf8(R"({"command":"rect 0,0 30,20","explanation":"矩形"})");
+        provider.finalText = QStringLiteral("模型生成：矩形已绘制。");
+        NlAssistant assistant(&interp, &provider, nullptr, &m);
+        QStringList executed;
+        QObject::connect(&assistant, &NlAssistant::commandExecuted,
+                         [&](const QString& line, bool ok) { if (ok) executed.append(line); });
+        assistant.sendUserMessage(QStringLiteral("随便画个矩形吧"));
+        CHECK(executed.contains(QStringLiteral("rect 0,0 30,20")),
+              "模型文本命令对象应被解码为等价工具调用并执行");
+        CHECK(provider.turns >= 2, "兼容路径也应把结果回灌模型再收尾");
+    }
+
+    // 5) 回归：破坏性命令仍由模型决定并走审批（其余功能不变）
+    {
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        ScriptedLlmProvider provider;
+        provider.firstToolLine = QStringLiteral("delete 7");
+        NlAssistant assistant(&interp, &provider, nullptr, &m);
+        QString approval;
+        QObject::connect(&assistant, &NlAssistant::approvalRequested,
+                         [&](const QString& line) { approval = line; });
+        assistant.sendUserMessage(QStringLiteral("删掉第七号图元"));
+        CHECK(approval == QStringLiteral("delete 7"), "破坏性命令仍走审批挂起");
+    }
+
+    fprintf(stdout, "  (LLM 集成链路自测: 通过 %d / 失败 %d)\n", g_pass - pass0, g_fail - fail0);
     return g_fail == fail0;
 }
 
@@ -12704,6 +13160,11 @@ int main(int argc, char** argv) {
     CHECK(t_sheetFrameBars(), "新建图框扩展(附加栏/代号栏同名关联/参数栏/左分区开关/装订宽度/预设注册表/模板JSON往返)");
     CHECK(t_dimDriven(), "尺寸驱动编辑(直线/圆/角度驱动+相邻联动+标注文本同步+域刷新+单步撤销+dimedit入口)");
     CHECK(t_nlAssistant(), "自然语言助手 NlAssistant(MockProvider→runSketchCommand 派发→interp_->execute→图元落模)");
+    CHECK(t_llmIntegration(), "LLM 集成链路(用户原文入模/命令由模型产出/工具结果回灌/无后端零执行/响应解码/审批回归)");
+    CHECK(t_standardsDB(), "标准知识库 StandardsDB(12类表/资源打包/字节一致)");
+    CHECK(t_gdtAnnotation(), "GD&T 标注赋值(粗糙度最近标准值/几何公差类别与符号/修饰符/预览组装)");
+    CHECK(t_weldSymbol(), "焊缝符号(GB/T 324:角焊/V形各一组图元非空/组合既图元/线宽2d3/经WELD落盘与toDrawingJson往返)");
+    CHECK(t_longFangSong(), "长仿宋体默认样式 LongFangSong(GB/T 14691:新建文字默认样式/字号下限3.5告警/字宽≈h/√2/模型默认表/fitCellText中心锚点兼容)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");

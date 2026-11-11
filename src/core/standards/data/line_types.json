@@ -1,0 +1,17 @@
+{
+  "_standard": "GB/T 17450/GB/T 4457.4",
+  "types": "粗实线,细实线,细虚线,粗虚线,细点画线,粗点画线,细双点画线,波浪线,双折线",
+  "width_series": "0.13,0.18,0.25,0.35,0.5,0.7,1.0,1.4,2.0",
+  "width_series_ratio": "1.414",
+  "thick_thin_ratio": "2:1",
+  "min_gap_mm": "0.7",
+  "粗实线": "continuous",
+  "细实线": "continuous_thin",
+  "细虚线": "dashed_thin",
+  "粗虚线": "dashed_thick",
+  "细点画线": "dashdot_thin",
+  "粗点画线": "dashdot_thick",
+  "细双点画线": "dashdotdot_thin",
+  "波浪线": "wave",
+  "双折线": "double_break"
+}

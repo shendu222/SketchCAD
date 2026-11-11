@@ -12,6 +12,7 @@
 #include <QGuiApplication>
 #include <QFont>
 #include <QFontInfo>
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QHash>
 #include <cmath>
@@ -98,8 +99,11 @@ static bool g_familyOk(const QString& family) {
     if (it != cache.end()) return *it;
     QFont f; f.setFamily(family); f.setPixelSize(1000);
     QFontInfo fi(f);
-    // 字体缺失时 Qt 会回退到 substitute，fi.family() 与请求不一致 → 视为缺失。
-    bool ok = (fi.family().compare(family, Qt::CaseInsensitive) == 0);
+    // 字体"可用" = 最终解析到的真实 family 确实存在于系统字体库。
+    // 旧逻辑要求 fi.family() 与请求名精确相等，会误判"长仿宋体"等已回退到真实字体
+    // （如仿宋/FangSong）的情况为"不可用"，进而退回 ±30% 估算并刷屏告警。
+    // 改为：只要解析结果是真实可用字体即视为可用，从而走真实度量。
+    const bool ok = !fi.family().isEmpty() && QFontDatabase::hasFamily(fi.family());
     cache.insert(family, ok);
     return ok;
 }

@@ -448,18 +448,30 @@ QWidget* OptionsDialog::buildAiPage() {
     form->addRow(tr("后端类型："), aiProviderBox_);
 
     aiBaseUrlEdit_ = new QLineEdit(this);
-    aiBaseUrlEdit_->setPlaceholderText(QStringLiteral("OpenAI 兼容 base，含 /v1，如 https://api.openai.com/v1 或 http://localhost:11434/v1"));
+    aiBaseUrlEdit_->setPlaceholderText(QStringLiteral("如 https://api.deepseek.com/v1（会自动追加 /chat/completions）"));
+    aiBaseUrlEdit_->setToolTip(QStringLiteral(
+        "必须与「API 密钥」所属厂商一致，否则会返回 HTTP 401。\n"
+        "DeepSeek：https://api.deepseek.com 或 https://api.deepseek.com/v1\n"
+        "OpenAI：https://api.openai.com/v1\n"
+        "本地 Ollama：http://localhost:11434/v1\n"
+        "本程序会在此地址后自动追加 /chat/completions，请勿重复填写该路径。"));
     auto* urlRow = new QHBoxLayout();
     urlRow->addWidget(aiBaseUrlEdit_, 1);
     form->addRow(tr("服务地址："), urlRow);
 
     aiApiKeyEdit_ = new QLineEdit(this);
     aiApiKeyEdit_->setPlaceholderText(QStringLiteral("云端后端需要；本地/离线可为空"));
+    aiApiKeyEdit_->setToolTip(QStringLiteral(
+        "只填密钥本身，不要把接口 URL 填到这里。云端后端留空会返回 HTTP 401。\n"
+        "DeepSeek 密钥在 https://platform.deepseek.com/api_keys 创建。"));
     aiApiKeyEdit_->setEchoMode(QLineEdit::Password);
     form->addRow(tr("API 密钥："), aiApiKeyEdit_);
 
     aiModelEdit_ = new QLineEdit(this);
-    aiModelEdit_->setPlaceholderText(QStringLiteral("模型名，如 gpt-4o-mini / deepseek-chat / qwen-plus"));
+    aiModelEdit_->setPlaceholderText(QStringLiteral("模型名，如 deepseek-chat / gpt-4o-mini / qwen-plus"));
+    aiModelEdit_->setToolTip(QStringLiteral(
+        "填该服务实际提供的模型 id。DeepSeek 常用 deepseek-chat（非思考）/ deepseek-reasoner（思考），"
+        "具体以厂商控制台当前可用模型为准。"));
     form->addRow(tr("模型："), aiModelEdit_);
 
     aiMaxTokensSpin_ = new QSpinBox(this);

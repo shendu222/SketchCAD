@@ -1,0 +1,8 @@
+{
+  "_standard": "GB/T 324/GB/T 12212",
+  "basic_symbols": "角焊缝,V形坡口,I形坡口,单边V形,带钝边V形,U形坡口,单边U形,点焊,缝焊,塞焊,槽焊,凸焊,喇叭形焊缝",
+  "auxiliary_symbols": "平面,凹面,凸面,锁边,三面,周围,现场",
+  "supplementary_symbols": "坡口周边,底部,垫板",
+  "symbol_line_ratio": "2/3 d",
+  "leader_rule": "指引线+基准线组合"
+}

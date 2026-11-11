@@ -69,4 +69,33 @@ struct FcfGeom {
 // 由 Element 生成形位公差框格几何（各格宽度按内容估算，锚点 pts[0]=框格左下角）。
 FcfGeom buildFcf(const Element& e, double dimScale = 1.0);
 
+// ===================== GD&T 标注赋值（标准知识库消费）=====================
+// 标注面板（GdtAnnotationDialog）背后的纯逻辑：给定用户输入的数值/特征，从标准表
+// （roughness / geo_tol）查得「对应的可选标准列表」，供面板实时刷新、供用户直接选择。
+// 全部为无头可测的纯函数，不依赖 GUI。
+
+// 粗糙度标准系列（GB/T 131）：rz=true 取 Rz_series，否则 Ra_series；空表时回落内置序列。
+QStringList roughnessSeries(bool rz = false);
+
+// 在粗糙度标准系列中，找与输入数值 v 最接近的标准值（原样保留标准记法，如 "1.6"）。
+// v 非法（NaN/负）或无系列 → 返回空 QString。
+QString nearestRoughnessValue(double v, bool rz = false);
+
+// 几何公差全部特征（GB/T 1182，geo_tol.features），供面板下拉填充。
+QStringList geoTolFeatures();
+
+// 几何公差特征所属类别（形状/方向/位置/跳动），未知特征返回空串。
+// 类别键：form / orientation / location / runout（与 geo_tol.json 的 *_features 键对应）。
+QString geoTolFeatureCategory(const QString& feature);
+
+// 几何公差可用修饰符（GB/T 1182，geo_tol.modifiers，如 M/L/R/P/F）。
+QStringList geoTolModifiers();
+
+// 特征→形位公差框格符号（FcfSymbol 整数）；当前符号集未收录（如 同轴度/线轮廓度/面轮廓度）返回 -1。
+int geoTolSymbolForFeature(const QString& feature);
+
+// 组装形位公差框格文本（供预览/日志）：符号名 + 公差值 + 基准 + 修饰符。
+QString composeGeoTolText(const QString& feature, const QString& value,
+                          const QStringList& datums, const QString& modifier);
+
 } // namespace SketchCAD
