@@ -4,6 +4,17 @@
 #include <QCoreApplication>
 #include <QApplication>   // t_interaction：无头构造 CommandLine（QLineEdit）需要 QApplication
 #include <QKeyEvent>      // t_interaction：键盘事件直注（QApplication::sendEvent）
+#include <QAction>        // t_deleteKeyWindowDispatch：模拟 ApplicationShortcut(Delete) 抢键
+#include <QShortcut>      // t_deleteKeyWindowDispatch：其它快捷键不受影响
+#include <QGraphicsView>  // t_deleteKeyFilterPolicy：画布族策略判定
+#include <QLineEdit>
+#include <QSpinBox>
+#include <QComboBox>
+#include <QTextEdit>
+#include <QPlainTextEdit>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <QWindow>        // 窗口级真实按键派发（QWidgetWindow → QShortcutMap → 焦点控件）
 #include <QFileInfo>
 #include <QFile>
 #include <QSet>          // t_sheetFrameBars：预设 key 唯一性检查
@@ -38,6 +49,8 @@
 #include "SheetSpec.h"           // P9 标题栏字段 key↔label（titleBlockFields）+ buildSheetFrame
 #include "Gdt.h"                 // GD&T 标注赋值：roughnessSeries/nearestRoughnessValue/geoTol*（t_gdtAnnotation）
 #include "core/weld/WeldSymbol.h" // 焊缝符号（GB/T 324）：buildWeldSymbol/WeldSpec/weldCommandString（t_weldSymbol）
+#include "standards/ComplianceChecker.h"  // 工程制图合规检查器（t_compliance / t_layerGB）
+#include "SurfaceRoughness.h"             // 粗糙度符号生成器（t_compliance R4）
 #include "FeatureMenu.h"         // P1~P9 功能菜单与准入（目录 + 条件评估，t_featuremenu 直测）
 #include "Snap.h"
 #include "Vec.h"
@@ -66,14 +79,20 @@
 #include "AppSettings.h"     // 应用级配置持久化（t_appsettings / t_recent / t_interaction）
 #include "ui/DrawingTheme.h"  // 绘图区域主题配色（t_drawingTheme：亮/暗两套 + current() 契约）
 #include "ui/ThemeManager.h"  // 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源
+#include "ui/GraphicsView.h" // DEL 键端到端交互：真实 GraphicsView + QApplication::sendEvent(QKeyEvent)
+#include "ui/DeleteKeyFilter.h" // DEL 键应用级兜底：策略纯函数 + 窗口级真实派发
 #include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
 #include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
 #include "ai/NlAssistant.h"   // AI 自然语言助手（MockProvider → runSketchCommand 派发，t_nlAssistant 直测）
 #include "ai/NlCommandMapper.h" // LLM 响应结构化解码（t_llmIntegration 直测）
 #include "ai/MockProvider.h"
 #include "ai/AppContextProvider.h"
+#include "ai/tooldefs.h"     // t_aiStandards：LlmProvider 工具 schema 集合（含新增两个国标工具）
 #include "core/Element.h"      // 元素类型枚举（t_nlAssistant 图元计数）
 #include "core/standards/StandardsDB.h"  // 标准知识库 12 类国标表（t_standardsDB 直测）
+#include "core/standards/ToleranceDB.h"   // ISO 公差数据库（IT01~IT18 / 轴孔基本偏差，t_toleranceDB 直测）
+#include "core/Layer.h"                    // GB/T 18617 图层命名建议（t_layerGB 直测）
+#include "core/standards/ComplianceChecker.h" // 图层命名合规检查（t_layerGB 直测）
 #include <QResource>        // t_standardsDB：运行时资源字节探针（与源文件逐字节比对）
 #include <QEventLoop>
 #include <QTimer>
@@ -1781,6 +1800,142 @@ static bool t_dxfImport() {
         std::vector<Element> v5; DxfImportStats st3d; QString e7;
         CHECK(fromDxf(bad, v5, &e7, &st3d) && v5.size() == 1, "③d 坏组码行被跳过且 LINE 可解析");
     }
+    return g_fail == 0;
+}
+
+// ============================================================================
+// DWG/DXF 文字样式字体归一（长仿宋体对齐中望CAD）：
+//   施工图纸库这批 DWG 在中望CAD 显示为长仿宋体（GB/T 14691 工程汉字标准字体），
+//   但其 STYLE 记录携带的是中文宋/仿宋系字体名（SimSun/FangSong 等）或 SHX 形字体
+//   （hztxt 等）。验证 textStyleFontFamily 把它们归一为「长仿宋体」，而西文/黑体保持不变。
+// ============================================================================
+static bool t_dwgStyleFontLongFangSong() {
+    using namespace cadfmt;
+    const QString LFS = QStringLiteral("长仿宋体");
+    QStringList L;
+    auto add = [&L](const QString& a, const QString& b) { L << a << b; };
+    add("0","SECTION"); add("2","HEADER");
+    add("9","$INSUNITS"); add("70","4");
+    add("0","ENDSEC");
+    add("0","SECTION"); add("2","TABLES");
+    add("0","TABLE"); add("2","STYLE"); add("70","6");
+    // SimSun（宋体）→ 长仿宋体
+    add("0","STYLE"); add("2","ST_SIMSUN"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("4","SimSun");
+    // FangSong_GB2312（仿宋）→ 长仿宋体
+    add("0","STYLE"); add("2","ST_FANG"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("4","FangSong_GB2312");
+    // Arial（西文）→ 保持不变
+    add("0","STYLE"); add("2","ST_ARIAL"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("4","Arial");
+    // SimHei（黑体）→ 保持不变
+    add("0","STYLE"); add("2","ST_HEI"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("4","SimHei");
+    // hztxt.shx（CJK SHX 形字体）→ 长仿宋体
+    add("0","STYLE"); add("2","ST_SHX"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("4","hztxt.shx");
+    // 真实施工图纸库路径（dwg2dxf 转 r2004 DXF 的实测形态）：
+    //   组 4(主字体)/组 3(大字体) 均空，真实字体名只在 XDATA(1001 ACAD / 1000 SimSun) 携带。
+    //   这正是 C0层.dwg/空表格.dwg/采集组合.dwg 等大批图纸的 STYLE 记录形态，
+    //   必须经由「g4 空 → g3 空 → 扫描 XDATA 1000」分支解析为长仿宋体。
+    add("0","STYLE"); add("2","ST_XSIMSUN"); add("70","0");
+    add("40","0.0"); add("41","1.0"); add("50","0.0"); add("71","0"); add("42","0.0");
+    add("1001","ACAD"); add("1000","SimSun");
+    // 空字体（无 4/3/1000）→ 长仿宋体（GB/T 14691 默认）
+    add("0","STYLE"); add("2","ST_EMPTY"); add("70","0");
+    add("40","0.0"); add("41","1.0");
+    add("0","ENDTAB"); add("0","ENDSEC");
+    add("0","SECTION"); add("2","ENTITIES");
+    add("0","LINE"); add("8","0");
+    add("10","0.0"); add("20","0.0"); add("30","0.0");
+    add("11","1.0"); add("21","1.0"); add("31","0.0");
+    add("0","ENDSEC");
+    add("0","EOF");
+
+    std::vector<Element> v;
+    DxfImportStats st;
+    QString err;
+    CHECK(fromDxf(L.join(QStringLiteral("\r\n")).toUtf8(), v, &err, &st),
+          "DWG/DXF 样式字体归一：解析成功");
+    CHECK(err.isEmpty(), "DWG/DXF 样式字体归一：无错误");
+
+    auto famOf = [&st](const QString& name) -> QString {
+        for (const auto& s : st.styles)
+            if (s.name == name) return s.fontFamily;
+        return QStringLiteral("__NOT_FOUND__");
+    };
+    CHECK(st.styles.size() == 7, "DWG/DXF 样式字体归一：解析出 7 个样式");
+    CHECK(famOf(QStringLiteral("ST_SIMSUN")) == LFS, "SimSun(宋体) → 长仿宋体");
+    CHECK(famOf(QStringLiteral("ST_FANG"))   == LFS, "FangSong_GB2312(仿宋) → 长仿宋体");
+    CHECK(famOf(QStringLiteral("ST_ARIAL"))  == QStringLiteral("Arial"), "Arial(西文) 保持不变");
+    CHECK(famOf(QStringLiteral("ST_HEI"))    == QStringLiteral("SimHei"), "SimHei(黑体) 保持不变");
+    CHECK(famOf(QStringLiteral("ST_SHX"))    == LFS, "hztxt.shx(SHX形字体) → 长仿宋体");
+    CHECK(famOf(QStringLiteral("ST_XSIMSUN")) == LFS, "XDATA-only SimSun(真实施工图纸形态) → 长仿宋体");
+    CHECK(famOf(QStringLiteral("ST_EMPTY"))  == LFS, "空字体 → 长仿宋体(GB/T 14691默认)");
+    return g_fail == 0;
+}
+
+// 真实施工图纸库端到端校验：把真实 DWG 经 dwg2dxf --as r2004 转出的 DXF 直接喂给
+// cadfmt::fromDxf，确认解析出的 "Standard" 样式字体族 == 长仿宋体（对齐中望CAD 显示）。
+// 该用例依赖本地已转换的样本（build/scan_*.dxf）；样本缺失则跳过（不视为失败），
+// 由上面的确定性合成用例 t_dwgStyleFontLongFangSong 兜底回归。
+static bool t_dwgRealStyleLongFangSong() {
+    using namespace cadfmt;
+    const QString LFS = QStringLiteral("长仿宋体");
+    QStringList candidates;
+    candidates << QStringLiteral("scan_C0层.dxf")
+               << QStringLiteral("build/scan_C0层.dxf")
+               << QStringLiteral("../build/scan_C0层.dxf")
+               << QStringLiteral("D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build/scan_C0层.dxf");
+    QString path;
+    for (const QString& c : candidates) if (QFile::exists(c)) { path = c; break; }
+    if (path.isEmpty()) {
+        qWarning() << "[t_dwgRealStyleLongFangSong] skip: 未找到本地 sample DXF (build/scan_C0层.dxf)";
+        return true;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) { qWarning() << "[t_dwgRealStyleLongFangSong] skip: 无法打开" << path; return true; }
+    const QByteArray data = f.readAll();
+    f.close();
+    std::vector<Element> v;
+    DxfImportStats st;
+    QString err;
+    CHECK(fromDxf(data, v, &err, &st), "真实DWG样本 fromDxf 解析成功");
+    if (!err.isEmpty()) {
+        QByteArray m = QStringLiteral("真实DWG样本 fromDxf 无错误 (err=%1)").arg(err).toUtf8();
+        CHECK(false, m.constData());
+    }
+    bool found = false, ok = false;
+    for (const auto& s : st.styles) {
+        if (s.name.compare(QStringLiteral("Standard"), Qt::CaseInsensitive) == 0) {
+            found = true;
+            ok = (s.fontFamily == LFS);
+            QByteArray m = QStringLiteral("真实DWG样本 Standard 样式字体解析为长仿宋体 (实际=%1, 共%2个样式)")
+                              .arg(s.fontFamily).arg((int)st.styles.size()).toUtf8();
+            CHECK(ok, m.constData());
+            break;
+        }
+    }
+    if (!found) {
+        QByteArray m = QStringLiteral("真实DWG样本含 Standard 样式 (实际样式数=%1)").arg((int)st.styles.size()).toUtf8();
+        CHECK(false, m.constData());
+    }
+    // 反向校验：文本实体确实引用 Standard 样式（否则渲染会回落系统默认而非长仿宋体）
+    int stdText = 0, otherText = 0;
+    for (const auto& e : v) {
+        if (e.type == ElementType::Text || e.type == ElementType::MText) {
+            if (e.styleName.compare(QStringLiteral("Standard"), Qt::CaseInsensitive) == 0) ++stdText;
+            else if (!e.styleName.isEmpty()) ++otherText;
+        }
+    }
+    QByteArray m2 = QStringLiteral("真实DWG样本 文本引用 Standard 样式 (Standard文本=%1, 其他命名样式文本=%2)")
+                        .arg(stdText).arg(otherText).toUtf8();
+    CHECK(stdText > 0, m2.constData());
     return g_fail == 0;
 }
 
@@ -7490,8 +7645,9 @@ static bool t_help() {
             if (s.contains(QStringLiteral("hatch"))) alias = true;
         CHECK(alias, "H2 help h 输出解析到目标命令 hatch");
         logged.clear();
-        // poly_regular 未收录进目录表，但经 "poly_" 前缀命中注册表 → 走回落分支
-        CHECK(ci.execute(QStringLiteral("help poly_regular")), "H2 未收录家族命令走回落分支");
+        // rect_chamfer 经前缀命中注册表但未收录进目录表 → 走回落分支
+        // （注：poly_regular 等已被收录进 CommandCatalog，不再触发回落）
+        CHECK(ci.execute(QStringLiteral("help rect_chamfer")), "H2 未收录家族命令走回落分支");
         bool fallback = false;
         for (const QString& s : logged)
             if (s.contains(QStringLiteral("暂无详细帮助"))) fallback = true;
@@ -8446,6 +8602,479 @@ static bool t_cmdParity() {
         CHECK(countType(m, ElementType::Hatch) == 1, "别名 h 触发填充");
         // 输错命令名应给出建议（不崩溃）
         CHECK(!interp.execute(QStringLiteral("hatchh")), "typo hatchh→未知命令(false)");
+    }
+    return true;
+}
+
+// ============================================================
+// DEL 快捷键 / 选中删除：多选批量删除 + 单步撤销恢复
+// ------------------------------------------------------------
+// 覆盖三种路径：① 多选集合（selectedIds_）整批删除并 Ctrl+Z 单步全恢复；
+// ② 单点选回退主选择（selectedId_）删除且可撤销；③ 无选中安全空操作不压栈。
+// 对应需求：无论选中多少图元，DEL 全删且可撤销（Ctrl+Z 恢复）。
+// ============================================================
+static bool t_deleteSelected() {
+    using namespace SketchCAD;
+    // ---------- ① 多选 + 单步撤销：一次 Ctrl+Z 恢复全部 ----------
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        const int c = addLine(m, 0, 10, 10, 10);
+        CHECK(m.elementCount() == 3, "① 预置 3 个图元");
+        m.setSelection({ a, b, c });                                   // 框选/多选集合
+        CHECK(m.selection().size() == 3, "① 多选集合含 3 个 id");
+        m.deleteSelected();
+        CHECK(m.elementCount() == 0, "① 多选删除后图元清零");
+        CHECK(m.selection().empty(), "① 删除后选择集清空");
+        CHECK(m.canUndo(), "① 删除动作可撤销");
+        m.undo();                                                      // 单步撤销
+        CHECK(m.elementCount() == 3, "① Ctrl+Z 单步恢复全部 3 个图元");
+        CHECK(m.element(a) && m.element(b) && m.element(c), "① 恢复后原 id 仍可取");
+    }
+    // ---------- ② 单选回退路径：selectedId_ 亦能删除且可撤销 ----------
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        m.setSelected(a);                                              // 单点选：仅写 selectedId_
+        CHECK(m.selectedId() == a, "② 单点选主选择=a");
+        m.deleteSelected();
+        CHECK(m.elementCount() == 1, "② 单选删除仅移除 1 个");
+        CHECK(m.element(b) && !m.element(a), "② 剩余 b、a 已删");
+        m.undo();
+        CHECK(m.elementCount() == 2 && m.element(a), "② 撤销恢复 a（含 b 共 2）");
+    }
+    // ---------- ③ 无选中：安全空操作，不压撤销 ----------
+    {
+        SketchModel m;
+        addLine(m, 0, 0, 10, 0);
+        const int before = m.elementCount();
+        m.clearSelection();
+        const int stackBefore = m.undoStackSize();
+        m.deleteSelected();
+        CHECK(m.elementCount() == before, "③ 无选中删除不改变图元数");
+        CHECK(m.undoStackSize() == stackBefore, "③ 无选中删除不新增撤销步");
+    }
+    // ---------- ④ 连续删除：每次只删当前选中，未选中保留 ----------
+    {
+        SketchModel m;
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        const int c = addLine(m, 0, 10, 10, 10);
+        m.setSelected(a);
+        m.deleteSelected();
+        CHECK(!m.element(a) && m.element(b) && m.element(c), "④ 第一次只删当前选中 a");
+        CHECK(m.selection().empty() && m.selectedId() < 0, "④ 删除后选择集清空");
+        m.setSelected(b);
+        m.deleteSelected();
+        CHECK(!m.element(a) && !m.element(b) && m.element(c), "④ 第二次只删当前选中 b");
+        m.clearSelection();
+        m.deleteSelected();
+        CHECK(m.element(c), "④ 无选中时连续 Del 不误删剩余图元");
+    }
+    return true;
+}
+
+// ============================================================
+// DEL 键端到端交互（真实 GraphicsView + 真实 QKeyEvent 派发）
+// ------------------------------------------------------------
+// 完整交互路径：构造视图 → 创建并选中图元 → QApplication::sendEvent 发
+// QKeyEvent(Key_Delete) → 断言图元被删 + 选择集清空 + 单步撤销可恢复。
+// 严格不调用 deleteSelected()/handleDeleteKey()，删除必须经 Qt 事件系统触发；
+// 两条真实派发路径分别覆盖：
+//   ① 视图本体获焦：sendEvent(&view)       → GraphicsView::keyPressEvent
+//   ② 画布视口获焦：sendEvent(viewport())  → GraphicsView::eventFilter
+// 负例：非 Delete 键 / KeyRelease / 无选中均不删除、不新增撤销步。
+// ============================================================
+static bool t_deleteKeyInteraction() {
+    using namespace SketchCAD;
+    // 返回事件是否被处理器 accept()：未处理时 Qt 默认 keyPressEvent 会 ignore，
+    // 因此该返回值可作为"事件确实经 GraphicsView 处理器消费"的额外证据。
+    auto sendKey = [](QObject* target, QEvent::Type type, int key) -> bool {
+        QKeyEvent ev(type, key, Qt::NoModifier);
+        QApplication::sendEvent(target, &ev);   // 真实 Qt 事件派发，不直接调删除逻辑
+        return ev.isAccepted();
+    };
+
+    // ---- ① 视图本体路径：keyPressEvent 收到 Key_Delete ----
+    {
+        SketchModel m;
+        GraphicsView view(&m);                       // 构造真实视图（同 SketchBenchmark 的无头路径）
+        const int a = addLine(m, 0, 0, 10, 0);       // 创建图元
+        const int b = addLine(m, 0, 5, 10, 5);
+        m.setSelected(a);                            // 选中图元
+        CHECK(m.elementCount() == 2 && m.selectedId() == a,
+              "D1 前置：视图已构造、2 图元、选中 a");
+        const int stackBefore = m.undoStackSize();
+        const bool consumed = sendKey(&view, QEvent::KeyPress, Qt::Key_Delete);  // 发真实 Key_Delete
+        CHECK(consumed, "D1 Key_Delete 事件被 GraphicsView::keyPressEvent 消费(accept)");
+        CHECK(m.elementCount() == 1, "D1 真实 Key_Delete 事件删除了选中图元");
+        CHECK(!m.element(a) && m.element(b), "D1 仅 a 被删、未选中的 b 保留");
+        CHECK(m.selection().empty(), "D1 删除后选择集清空");
+        CHECK(m.undoStackSize() == stackBefore + 1, "D1 删除只压入 1 步撤销");
+        m.undo();
+        CHECK(m.elementCount() == 2 && m.element(a), "D1 Ctrl+Z 单步恢复被删图元");
+    }
+
+    // ---- ② 画布视口路径：点击画布后焦点在 viewport，走 eventFilter ----
+    {
+        SketchModel m;
+        GraphicsView view(&m);
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        const int c = addLine(m, 0, 10, 10, 10);
+        m.setSelection({ a, b });                    // 多选批量
+        CHECK(m.elementCount() == 3 && m.selection().size() == 2,
+              "D2 前置：3 图元、多选集合含 a/b");
+        const int stackBefore = m.undoStackSize();
+        const bool consumed = sendKey(view.viewport(), QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(consumed, "D2 Key_Delete 事件被 viewport 事件过滤器消费(accept)");
+        CHECK(m.elementCount() == 1, "D2 viewport 路径的 Key_Delete 整批删除 2 个选中图元");
+        CHECK(!m.element(a) && !m.element(b) && m.element(c),
+              "D2 仅 a/b 被删、c 保留");
+        CHECK(m.undoStackSize() == stackBefore + 1, "D2 批量删除同属 1 步撤销");
+        m.undo();
+        CHECK(m.elementCount() == 3 && m.element(a) && m.element(b),
+              "D2 Ctrl+Z 一次恢复全部选中图元");
+    }
+
+    // ---- ③ 负例：非 Delete 键 / KeyRelease / 无选中均不触发删除 ----
+    {
+        SketchModel m;
+        GraphicsView view(&m);
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelected(a);
+        sendKey(&view, QEvent::KeyPress, Qt::Key_Z);   // 中性键：不与捕捉切换快捷键(E/T/M/C/X/A…)冲突
+        sendKey(view.viewport(), QEvent::KeyPress, Qt::Key_Z);
+        CHECK(m.elementCount() == 1 && m.element(a), "D3 其它按键不删除图元");
+        sendKey(&view, QEvent::KeyRelease, Qt::Key_Delete);
+        sendKey(view.viewport(), QEvent::KeyRelease, Qt::Key_Delete);
+        CHECK(m.elementCount() == 1 && m.element(a), "D3 KeyRelease 不删除图元");
+        m.clearSelection();
+        const int stackBefore = m.undoStackSize();
+        sendKey(&view, QEvent::KeyPress, Qt::Key_Delete);
+        sendKey(view.viewport(), QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(m.elementCount() == 1 && m.element(a), "D3 无选中时 Key_Delete 不改变图元");
+        CHECK(m.undoStackSize() == stackBefore, "D3 无选中时不新增撤销步");
+    }
+
+    // ---- ④ 两条路径一致：新视图再各发一次，结果等价 ----
+    {
+        auto runOnce = [&](bool viaViewport) {
+            SketchModel m;
+            GraphicsView view(&m);
+            const int a = addLine(m, 0, 0, 10, 0);
+            m.setSelected(a);
+            sendKey(viaViewport ? static_cast<QObject*>(view.viewport())
+                                : static_cast<QObject*>(&view),
+                    QEvent::KeyPress, Qt::Key_Delete);
+            return m.elementCount() == 0 && !m.element(a);
+        };
+        CHECK(runOnce(false) && runOnce(true),
+              "D4 视图本体与视口两条真实派发路径均完成删除且结果一致");
+    }
+
+    // ---- ⑤ 连续删除：选 a → Del → 选 b → Del，未选中 c 始终保留 ----
+    {
+        SketchModel m;
+        GraphicsView view(&m);
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        const int c = addLine(m, 0, 10, 10, 10);
+        m.setSelected(a);
+        sendKey(&view, QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(!m.element(a) && m.element(b) && m.element(c) && m.selection().empty(),
+              "D5 第一次 Key_Delete 只删 a 并清空选择");
+        m.setSelected(b);
+        sendKey(view.viewport(), QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(!m.element(a) && !m.element(b) && m.element(c) && m.selection().empty(),
+              "D5 第二次 Key_Delete 只删 b，c 保留且选择清空");
+    }
+
+    // ---- ⑥ ShortcutOverride：画布获焦时 accept，避免菜单歧义快捷键吞掉 Del ----
+    // Qt 6.10 的 QEvent::m_accept 默认为 true：必须先 ignore() 再 sendEvent，
+    // 否则 CHECK(isAccepted()) 是恒真的假阳性，根本证明不了过滤器处理了 Override。
+    {
+        SketchModel m;
+        GraphicsView view(&m);
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelected(a);
+        QKeyEvent ov(QEvent::ShortcutOverride, Qt::Key_Delete, Qt::NoModifier);
+        ov.ignore();
+        QApplication::sendEvent(view.viewport(), &ov);
+        CHECK(ov.isAccepted(), "D6 viewport ShortcutOverride(Key_Delete) 被画布过滤器 accept（先 ignore 排除默认 accepted 假阳性）");
+        QKeyEvent ov2(QEvent::ShortcutOverride, Qt::Key_Delete, Qt::NoModifier);
+        ov2.ignore();
+        QApplication::sendEvent(&view, &ov2);
+        CHECK(ov2.isAccepted(), "D6 视图本体 ShortcutOverride(Key_Delete) 被 accept（先 ignore）");
+        QKeyEvent ovZ(QEvent::ShortcutOverride, Qt::Key_Z, Qt::NoModifier);
+        ovZ.ignore();
+        QApplication::sendEvent(view.viewport(), &ovZ);
+        CHECK(!ovZ.isAccepted(), "D6 非 Delete 键的 ShortcutOverride 不被接受（其它快捷键不受影响）");
+        CHECK(m.elementCount() == 1 && m.element(a), "D6 Override 本身不删除图元");
+        sendKey(view.viewport(), QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(!m.element(a), "D6 Override 之后 KeyPress 仍能删除选中图元");
+    }
+
+    // ---- ⑦ 命令行空内容获焦：Del 删除选中图元；有输入时不删图元 ----
+    {
+        SketchModel m;
+        CommandInterpreter ci(&m);
+        CommandLine cmd(&m, &ci);
+        const int a = addLine(m, 0, 0, 10, 0);
+        const int b = addLine(m, 0, 5, 10, 5);
+        m.setSelected(a);
+        cmd.clear();
+        sendKey(&cmd, QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(!m.element(a) && m.element(b), "D7 命令行为空时 Del 删除选中图元");
+        m.setSelected(b);
+        cmd.setText(QStringLiteral("line"));
+        sendKey(&cmd, QEvent::KeyPress, Qt::Key_Delete);
+        CHECK(m.element(b), "D7 命令行有输入时 Del 不删除图元");
+    }
+    return true;
+}
+
+// ============================================================
+// Del 键兜底策略单测：逐控件验证「谁该接管 Delete」。
+// 画布族 / 文本编辑器 / 模态对话框 / 非主窗口必须放行，
+// 否则会破坏 idleForDelete 保护、字符删除默认行为或误删别的窗口的图元。
+// ============================================================
+static bool t_deleteKeyFilterPolicy() {
+    using namespace SketchCAD;
+    QWidget host;
+    auto* plain = new QWidget(&host);
+    auto* line  = new QLineEdit(&host);
+    auto* spin  = new QSpinBox(&host);
+    auto* combo = new QComboBox(&host);
+    auto* text  = new QTextEdit(&host);
+    auto* ptext = new QPlainTextEdit(&host);
+    auto* gv    = new QGraphicsView(&host);
+    QWidget* vp = gv->viewport();
+
+    CHECK(DeleteKeyFilter::shouldHandleDelete(plain, &host, false),
+          "P1 普通面板/树控件由应用级过滤器接管 Del");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(line, &host, false),
+          "P2 QLineEdit 放行（保留 Qt 字符删除默认行为）");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(spin, &host, false),
+          "P3 QSpinBox 放行");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(combo, &host, false),
+          "P4 QComboBox 放行");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(text, &host, false),
+          "P5 QTextEdit 放行");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(ptext, &host, false),
+          "P6 QPlainTextEdit 放行");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(gv, &host, false),
+          "P7 画布本体放行（保留 idleForDelete 交互保护）");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(vp, &host, false),
+          "P8 画布 viewport 放行（由 GraphicsView 自身处理）");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(plain, &host, true),
+          "P9 模态对话框内放行（不删画布图元）");
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(nullptr, &host, false),
+          "P10 无焦点控件放行");
+
+    QWidget outsider;
+    auto* foreign = new QWidget(&outsider);
+    CHECK(!DeleteKeyFilter::shouldHandleDelete(foreign, &host, false),
+          "P11 非主窗口控件放行");
+    return true;
+}
+
+// ============================================================
+// Del 键窗口级真实派发：把 QKeyEvent 发给 QWidget::windowHandle()，
+// 走平台路径 QWidgetWindow → QShortcutMap → 焦点控件，而不是
+// sendEvent(widget,...) 那种绕过 shortcut map 的路径（D1~D7 走的是后者，
+// 因此"自测全绿但真实按键被 Qt 吞掉"）。
+// Qt 6.10.1 实测事实（qtkeyprobe）：
+//   ① ApplicationShortcut(Delete) → shortcut 触发、焦点控件 keyPressSeen=0（吞键）；
+//   ② 画布 accept ShortcutOverride → shortcut 不触发、KeyPress 抵达画布；
+//   ③ 不注册 Delete shortcut   → KeyPress 稳定抵达焦点控件；
+//   ④ 应用级过滤器 return true → shortcut 完全不参与，且只删除一次。
+// ============================================================
+static bool t_deleteKeyWindowDispatch() {
+    using namespace SketchCAD;
+    struct FilterGuard {
+        QObject* f;
+        explicit FilterGuard(QObject* x) : f(x) { qApp->installEventFilter(f); }
+        ~FilterGuard() { qApp->removeEventFilter(f); }
+    };
+
+    SketchModel m;
+    QWidget window;
+    auto* lay   = new QVBoxLayout(&window);
+    auto* view  = new GraphicsView(&m);
+    auto* panel = new QWidget();          // 模拟属性面板 / 树等「非文本、非画布」焦点
+    panel->setFocusPolicy(Qt::StrongFocus);
+    auto* cli   = new QLineEdit();
+    lay->addWidget(view);
+    lay->addWidget(panel);
+    lay->addWidget(cli);
+    window.resize(320, 240);
+    window.show();
+    QApplication::processEvents();
+    CHECK(window.windowHandle() != nullptr,
+          "W0 离屏窗口已创建 QWindow（可走平台级按键派发）");
+
+    // 故意保留一个 ApplicationShortcut(Delete) 竞争绑定，模拟旧菜单绑定 / 插件抢键。
+    // 修复后 Del 必须仍能删除，且 shortcut 不得重复触发（否则会重复删/撤销步异常）。
+    auto* rival = new QAction(QStringLiteral("rival"), &window);
+    rival->setShortcut(QKeySequence::Delete);
+    rival->setShortcutContext(Qt::ApplicationShortcut);
+    window.addAction(rival);
+    int rivalFired = 0;
+    QObject::connect(rival, &QAction::triggered, [&] { ++rivalFired; });
+
+    // 其它快捷键回归通道（证明过滤器只管 Key_Delete）
+    auto* other = new QShortcut(QKeySequence(Qt::Key_F12), &window);
+    other->setContext(Qt::ApplicationShortcut);
+    int otherFired = 0;
+    QObject::connect(other, &QShortcut::activated, [&] { ++otherFired; });
+
+    DeleteKeyFilter filter(&window, [&] { return &m; });
+    FilterGuard guard(&filter);
+
+    auto windowKey = [&](int key) {
+        QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(window.windowHandle(), &ev);   // 真实窗口级派发
+    };
+    auto focusOn = [](QWidget* w) {
+        w->setFocus();
+        QApplication::processEvents();
+    };
+
+    // ---- W1 画布焦点：Override 保住 KeyPress，画布自身删除 ----
+    {
+        const int a = addLine(m, 0, 0, 10, 0);
+        m.setSelected(a);
+        focusOn(view->viewport());
+        const int stackBefore = m.undoStackSize();
+        windowKey(Qt::Key_Delete);
+        CHECK(!m.element(a), "W1 窗口级真实派发：画布焦点 Del 删除选中图元");
+        CHECK(rivalFired == 0, "W1 画布 ShortcutOverride 阻止全局 shortcut 抢键");
+        CHECK(m.undoStackSize() == stackBefore + 1, "W1 只压 1 步撤销（无重复删除）");
+    }
+
+    // ---- W2 面板焦点（旧实现下 Del 被 Qt 吞掉的真空区）----
+    {
+        const int b = addLine(m, 0, 5, 10, 5);
+        m.setSelected(b);
+        focusOn(panel);
+        const int stackBefore = m.undoStackSize();
+        windowKey(Qt::Key_Delete);
+        CHECK(!m.element(b), "W2 非画布控件焦点 Del 仍删除选中图元（应用级兜底）");
+        CHECK(rivalFired == 0, "W2 过滤器吞掉 KeyPress，QShortcutMap 未抢键");
+        CHECK(m.undoStackSize() == stackBefore + 1, "W2 删除只压 1 步撤销");
+    }
+
+    // ---- W3 文本编辑器焦点：保留 QLineEdit 默认字符删除 ----
+    {
+        const int c = addLine(m, 0, 10, 10, 10);
+        m.setSelected(c);
+        cli->setText(QStringLiteral("abc"));
+        cli->setCursorPosition(1);
+        focusOn(cli);
+        windowKey(Qt::Key_Delete);
+        CHECK(cli->text() == QStringLiteral("ac"),
+              "W3 QLineEdit 中 Del 只删字符（Qt 默认行为未被破坏）");
+        CHECK(m.element(c), "W3 文本编辑时 Del 不删图元");
+    }
+
+    // ---- W4 其它键 / 其它快捷键完全不受影响 ----
+    {
+        const int d = addLine(m, 0, 15, 10, 15);
+        m.setSelected(d);
+        focusOn(panel);
+        windowKey(Qt::Key_Z);
+        CHECK(m.element(d), "W4 中性键 Key_Z 不删除图元");
+        windowKey(Qt::Key_F12);
+        CHECK(otherFired == 1, "W4 其它快捷键 F12 照常触发");
+        CHECK(m.element(d), "W4 F12 不删除图元");
+    }
+
+    // ---- W5 无选中：不新增撤销步 ----
+    {
+        m.clearSelection();
+        const int countBefore = m.elementCount();
+        const int stackBefore = m.undoStackSize();
+        focusOn(panel);
+        windowKey(Qt::Key_Delete);
+        CHECK(m.elementCount() == countBefore, "W5 无选中时图元数不变");
+        CHECK(m.undoStackSize() == stackBefore, "W5 无选中时不压撤销栈");
+    }
+
+    window.close();
+    QApplication::processEvents();
+    return true;
+}
+
+// ---------- 正多边形脚本化命令（中心 + 边长/半径，C++ 确定性生成，LLM 不必手算坐标） ----------
+static bool t_polyRegular() {
+    using namespace SketchCAD;
+    { // ① side: 形式 —— 中心原点、边长 50 的正六边形
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        CHECK(interp.execute(QStringLiteral("poly_regular 0,0 side:50 6")),
+              "① poly_regular 0,0 side:50 6 执行成功");
+        CHECK(m.elementCount() == 1, "① 生成 1 个图元");
+        const Element* e = nullptr;
+        for (const Element& el : m.elements()) if (el.type == ElementType::Polygon) e = &el;
+        CHECK(e != nullptr, "① 类型为正多边形");
+        CHECK(e && e->pts.size() == 6, "① 顶点数=6");
+        if (e) {
+            double maxErr = 0;
+            for (int i = 0; i < 6; ++i) {
+                const double d = std::fabs(e->pts[i].distTo(e->pts[(i + 1) % 6]) - 50.0);
+                if (d > maxErr) maxErr = d;
+            }
+            CHECK(maxErr < 1e-6, "① 相邻边长均≈50mm");
+            double cx = 0, cy = 0;
+            for (const Vec3& p : e->pts) { cx += p.x; cy += p.y; }
+            cx /= 6; cy /= 6;
+            CHECK(std::hypot(cx, cy) < 1e-6, "① 质心≈原点");
+        }
+    }
+    { // ② radius 形式：poly_regular 0,0 50 6 与 side:50 6 等价（六边形 R=a）
+        SketchModel m1, m2;
+        CommandInterpreter i1(&m1), i2(&m2);
+        i1.execute(QStringLiteral("poly_regular 0,0 50 6"));
+        i2.execute(QStringLiteral("poly_regular 0,0 side:50 6"));
+        const Element* e1 = nullptr; for (const Element& el : m1.elements()) if (el.type == ElementType::Polygon) e1 = &el;
+        const Element* e2 = nullptr; for (const Element& el : m2.elements()) if (el.type == ElementType::Polygon) e2 = &el;
+        CHECK(e1 && e2 && e1->pts.size() == e2->pts.size(), "② 两者顶点数一致");
+        if (e1 && e2) {
+            double maxErr = 0;
+            for (int i = 0; i < 6; ++i) {
+                const double d = e1->pts[i].distTo(e2->pts[i]);
+                if (d > maxErr) maxErr = d;
+            }
+            CHECK(maxErr < 1e-6, "② 半径形式与边长形式重合");
+        }
+    }
+    { // ③ 与手算坐标一致（flat-top：顶点落在 X 轴，起点角 0）
+        SketchModel m;
+        CommandInterpreter interp(&m);
+        interp.execute(QStringLiteral("poly_regular 0,0 50 6"));
+        const Element* e = nullptr; for (const Element& el : m.elements()) if (el.type == ElementType::Polygon) e = &el;
+        CHECK(e != nullptr, "③ 生成正多边形");
+        const double k = 50.0 * std::cos(std::acos(-1.0) / 6.0);   // 43.30127 = 50·cos30°
+        const std::vector<Vec3> expect = {
+            Vec3(50, 0, 0), Vec3(25, k, 0), Vec3(-25, k, 0),
+            Vec3(-50, 0, 0), Vec3(-25, -k, 0), Vec3(25, -k, 0)
+        };
+        if (e) {
+            double maxErr = 0;
+            for (int i = 0; i < 6; ++i) {
+                const double d = e->pts[i].distTo(expect[i]);
+                if (d > maxErr) maxErr = d;
+            }
+            CHECK(maxErr < 1e-3, "③ 与手算坐标一致(误差<1e-3)");
+        }
+    }
+    { // ④ CommandCatalog 收录 poly_regular（NlAssistant 据此把用法注入 system prompt）
+        const CommandInfo* ci = CommandCatalog::find(QStringLiteral("poly_regular"));
+        CHECK(ci != nullptr, "④ CommandCatalog 收录 poly_regular");
+        CHECK(ci && !ci->usage.isEmpty(), "④ poly_regular 含 usage 文本");
     }
     return true;
 }
@@ -11011,6 +11640,29 @@ static bool t_longFangSong() {
         CHECK(custom.styleName == QStringLiteral("Standard"), "lfs: createMText 显式样式名不被覆盖");
     }
 
+    // ②b 其它文字承载图元默认样式名 == LongFangSong（需求 C：所有新建文字默认长仿宋体）
+    {
+        const Element dim = ElementFactory::createDimension(DimensionType::Distance, nullptr);
+        CHECK(dim.styleName == QStringLiteral("LongFangSong"), "lfs: createDimension 默认样式名 == LongFangSong");
+        const Element ml = ElementFactory::createMLeader(Vec3(0,0,0), Vec3(1,1,0), Vec3(2,1,0),
+                                                        QStringLiteral("引线"), 3.5, 3.0, 3.0, nullptr);
+        CHECK(ml.styleName == QStringLiteral("LongFangSong"), "lfs: createMLeader 默认样式名 == LongFangSong");
+        const Element fc = ElementFactory::createFcf(Vec3(0,0,0), (int)FcfSymbol::Position,
+                                                    QStringLiteral("0.02"), {QStringLiteral("A")}, 7.0,
+                                                    QString(), nullptr);
+        CHECK(fc.styleName == QStringLiteral("LongFangSong"), "lfs: createFcf 默认样式名 == LongFangSong");
+        const Element tb = ElementFactory::createTable(Vec3(0,0,0), 3, 4, nullptr);
+        CHECK(tb.styleName == QStringLiteral("LongFangSong"), "lfs: createTable 默认样式名 == LongFangSong");
+
+        // 标注解析：styleName=LongFangSong 的 Dimension 解析出长仿宋体字体族
+        // （渲染层 paintDimension/PlotRenderer::paintDimension 据此落字，兑现默认长仿宋体）
+        SketchModel m;
+        Element de; de.type = ElementType::Dimension; de.styleName = QStringLiteral("LongFangSong");
+        const ResolvedTextStyle drs = resolveTextStyle(de, &m);
+        CHECK(drs.fontFamily == QString::fromUtf8("长仿宋体"),
+              "lfs: 标注 resolveTextStyle 解析出长仿宋体字体族");
+    }
+
     // ③ 字号下限：< 3.5mm 钳制 + 告警；≥ 3.5mm 不改动不告警
     {
         double h = 2.0; QString warn;
@@ -11052,6 +11704,123 @@ static bool t_longFangSong() {
     }
 
     fprintf(stdout, "  (长仿宋体默认样式自测: 通过 %d / 失败 %d)\n", g_pass - fail0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// ===========================================================================
+// ISO 公差数据库（t_toleranceDB）
+// 验收：① standardTolerance(30, IT7) == 0.021mm（手册 GB/T 1800.1 / ISO 286-1）
+//       ② deviation("H", 30, IT7, Hole).lower == 0；H 孔 EI=0、ES=+IT
+//       ③ 不替换 DiagBundle（本测试纯查询，零副作用）
+// 另覆盖：标准公差随等级单调、h 轴上偏差=0、JS 对称 ±IT/2、a~g 间隙配合符号、
+//        孔=轴反号镜像、大小写等价、极限尺寸辅助函数。
+// ===========================================================================
+static bool t_toleranceDB() {
+    using namespace SketchCAD;
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- ISO 公差数据库 ToleranceDB（IT01~IT18 / 轴孔基本偏差）---\n");
+
+    const double mm = 1.0;   // 单位 mm
+
+    // ① 标准公差验收点（与 ISO 286-1 数表一致）
+    CHECK(std::fabs(ToleranceDB::standardTolerance(30.0, ITGrade::IT7) - 0.021 * mm) < 1e-9,
+          "stdTol: standardTolerance(30, IT7) == 0.021mm（手册值）");
+    CHECK(std::fabs(ToleranceDB::standardTolerance(30.0, ITGrade::IT6) - 0.013 * mm) < 1e-9,
+          "stdTol: standardTolerance(30, IT6) == 0.013mm");
+    CHECK(std::fabs(ToleranceDB::standardTolerance(30.0, ITGrade::IT8) - 0.033 * mm) < 1e-9,
+          "stdTol: standardTolerance(30, IT8) == 0.033mm");
+    CHECK(std::fabs(ToleranceDB::standardTolerance(50.0, ITGrade::IT7) - 0.025 * mm) < 1e-9,
+          "stdTol: standardTolerance(50, IT7) == 0.025mm（>30~50 段）");
+
+    // ② 标准公差随等级单调递增（同一基本尺寸）
+    {
+        double prev = 0.0;
+        bool mono = true;
+        for (int g = static_cast<int>(ITGrade::IT5); g <= static_cast<int>(ITGrade::IT18); ++g) {
+            const double t = ToleranceDB::standardTolerance(30.0, static_cast<ITGrade>(g));
+            if (t <= prev) mono = false;
+            prev = t;
+        }
+        CHECK(mono, "stdTol: 30mm 处 IT5..IT18 标准公差严格单调递增");
+    }
+
+    // ③ H 孔：下偏差 EI = 0，上偏差 ES = +IT
+    {
+        const Deviation d = ToleranceDB::deviation(QStringLiteral("H"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(std::fabs(d.lower) < 1e-9, "dev(H,30,IT7,Hole): 下偏差 EI == 0（验收点）");
+        CHECK(std::fabs(d.upper - 0.021 * mm) < 1e-9, "dev(H,30,IT7,Hole): 上偏差 ES == +0.021mm");
+        CHECK(d.upper > d.lower, "dev(H,30,IT7,Hole): 上偏差 > 下偏差");
+    }
+    // h 轴：上偏差 es = 0，下偏差 ei = −IT
+    {
+        const Deviation d = ToleranceDB::deviation(QStringLiteral("h"), 30.0, ITGrade::IT7, FitMember::Shaft);
+        CHECK(std::fabs(d.upper) < 1e-9, "dev(h,30,IT7,Shaft): 上偏差 es == 0");
+        CHECK(std::fabs(d.lower + 0.021 * mm) < 1e-9, "dev(h,30,IT7,Shaft): 下偏差 ei == −0.021mm");
+    }
+
+    // ④ JS 对称配合：±IT/2
+    {
+        const double IT = ToleranceDB::standardTolerance(30.0, ITGrade::IT7);  // 0.021mm
+        const Deviation d = ToleranceDB::deviation(QStringLiteral("JS"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(std::fabs(d.upper - IT / 2.0) < 1e-9 && std::fabs(d.lower + IT / 2.0) < 1e-9,
+              "dev(JS,30,IT7): 对称 ±IT/2");
+    }
+
+    // ⑤ 间隙配合 a~g：轴为负（es<ei<0），孔为正（EI<ES）
+    {
+        const Deviation shaftA = ToleranceDB::deviation(QStringLiteral("a"), 30.0, ITGrade::IT7, FitMember::Shaft);
+        CHECK(shaftA.upper < 0.0 && shaftA.lower < shaftA.upper,
+              "dev(a,30,IT7,Shaft): 间隙轴 es<ei<0");
+        // a 轴 es = -(265+1.3·D̄)，D̄=√(18·30)≈23.238 → es≈-295.2μm
+        CHECK(std::fabs(shaftA.upper - (-0.29521 * mm)) < 0.002 * mm,
+              "dev(a,30,IT7,Shaft): es ≈ -0.295mm（公式值）");
+        CHECK(std::fabs(shaftA.lower - (-0.31621 * mm)) < 0.002 * mm,
+              "dev(a,30,IT7,Shaft): ei = es − IT ≈ -0.316mm");
+
+        const Deviation holeA = ToleranceDB::deviation(QStringLiteral("A"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(holeA.lower > 0.0 && holeA.upper > holeA.lower,
+              "dev(A,30,IT7,Hole): 间隙孔 0<EI<ES（轴反号镜像）");
+        CHECK(std::fabs(holeA.lower - 0.29521 * mm) < 0.002 * mm,
+              "dev(A,30,IT7,Hole): EI = -es(轴) ≈ +0.295mm");
+        CHECK(std::fabs(holeA.upper - 0.31621 * mm) < 0.002 * mm,
+              "dev(A,30,IT7,Hole): ES = EI + IT ≈ +0.316mm");
+    }
+
+    // ⑥ 过渡/过盈配合 k~zc：轴 ei>0，es=ei+IT；孔反号
+    {
+        const Deviation shaftK = ToleranceDB::deviation(QStringLiteral("k"), 30.0, ITGrade::IT7, FitMember::Shaft);
+        CHECK(shaftK.lower > 0.0 && shaftK.upper > shaftK.lower,
+              "dev(k,30,IT7,Shaft): 过渡轴 0<ei<es");
+        const Deviation holeK = ToleranceDB::deviation(QStringLiteral("K"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(holeK.upper < 0.0 && holeK.lower < holeK.upper,
+              "dev(K,30,IT7,Hole): 过渡孔 ES<EI<0（轴反号镜像）");
+    }
+
+    // ⑦ 大小写等价
+    {
+        const Deviation up = ToleranceDB::deviation(QStringLiteral("H"), 30.0, ITGrade::IT7, FitMember::Hole);
+        const Deviation lo = ToleranceDB::deviation(QStringLiteral("h"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(std::fabs(up.upper - lo.upper) < 1e-9 && std::fabs(up.lower - lo.lower) < 1e-9,
+              "dev: 字母大小写等价（H == h）");
+    }
+
+    // ⑧ 极限尺寸辅助函数
+    {
+        const Deviation d = ToleranceDB::deviation(QStringLiteral("H"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(std::fabs(ToleranceDB::upperLimit(30.0, d) - 30.021 * mm) < 1e-9,
+              "upperLimit(30, H7孔) == 30.021mm");
+        CHECK(std::fabs(ToleranceDB::lowerLimit(30.0, d) - 30.0 * mm) < 1e-9,
+              "lowerLimit(30, H7孔) == 30.0mm");
+    }
+
+    // ⑨ 未知字母 → 零偏差（不崩溃）
+    {
+        const Deviation d = ToleranceDB::deviation(QStringLiteral("ZZ"), 30.0, ITGrade::IT7, FitMember::Hole);
+        CHECK(std::fabs(d.upper) < 1e-9 && std::fabs(d.lower) < 1e-9,
+              "dev(未知字母): 零偏差，不崩溃");
+    }
+
+    fprintf(stdout, "  (ISO 公差数据库自测: 通过 %d / 失败 %d)\n", g_pass - fail0, g_fail - fail0);
     return g_fail == fail0;
 }
 
@@ -12863,6 +13632,12 @@ public:
     QString firstText;          // 第一回合纯文本（可含 JSON 命令对象）
     QString finalText = QStringLiteral("模型生成：已完成绘图。");
 
+    // 通用工具调用脚本：非空时第一回合发出「指定名字 + 指定参数」的工具调用，
+    // 用于验证 queryStandard / checkCompliance 两个只读工具（不影响既有 firstToolLine 用例）。
+    QString firstToolName;
+    QJsonObject firstToolArgs;
+    QStringList toolSchemaNames;   // 本轮传给模型的工具名集合
+
     int turns = 0;
     int lastToolCount = 0;
     QString lastUserText;
@@ -12877,6 +13652,8 @@ public:
               std::function<void(const QString&)> onDone) override {
         ++turns;
         lastToolCount = tools.size();
+        toolSchemaNames.clear();
+        for (const LlmTool& t : tools) toolSchemaNames.append(t.name);
         bool sawToolResult = false;
         for (const LlmMessage& m : messages) {
             if (m.role == LlmRole::System) lastSystemText = m.content;
@@ -12889,7 +13666,13 @@ public:
             onDone(QString());
             return;
         }
-        if (!firstToolLine.isEmpty()) {
+        if (!firstToolName.isEmpty()) {
+            LlmToolCall tc;
+            tc.id = QStringLiteral("call_scripted_1");
+            tc.name = firstToolName;
+            tc.arguments = firstToolArgs;
+            onToolCalls({ tc });
+        } else if (!firstToolLine.isEmpty()) {
             LlmToolCall tc;
             tc.id = QStringLiteral("call_scripted_1");
             tc.name = QStringLiteral("runSketchCommand");
@@ -13024,6 +13807,368 @@ static bool t_llmIntegration() {
     return g_fail == fail0;
 }
 
+// ============================================================
+// AI 国标知识注入：system prompt 摘要 / queryStandard / checkCompliance /
+// 命令执行单一出口回归。三条验收自然语言均经工具调用返回准确值。
+// ============================================================
+struct AiToolRun {
+    QString toolResult;      // 回灌给模型的 Tool 消息文本（工具的确定答案）
+    QString systemText;      // 本轮 system prompt
+    QStringList executed;    // 经 CommandInterpreter::execute 实际执行的命令
+    QStringList toolSchema;  // 传给模型的工具名集合
+    bool done = false;
+    bool ok = false;
+    int turns = 0;
+};
+
+// 用脚本化「模型」把一条自然语言转成一次指定工具调用，走完整
+// AiAssistantPanel(userMessage) → NlAssistant → LlmProvider → 工具 → 回灌链路。
+// 面板层只发信号、不执行命令，故此处由 sendUserMessage 注入同一入口即可等价验证编排层。
+static AiToolRun runAiTool(SketchModel& m, const QString& user,
+                           const QString& toolName, const QJsonObject& args) {
+    AiToolRun out;
+    CommandInterpreter interp(&m);
+    ScriptedLlmProvider provider;
+    provider.firstToolName = toolName;
+    provider.firstToolArgs = args;
+    provider.finalText = QStringLiteral("模型生成：已给出结论。");
+    AppContextProvider ctx(&m);
+    NlAssistant assistant(&interp, &provider, &ctx, &m);
+    QObject::connect(&assistant, &NlAssistant::commandExecuted,
+                     [&](const QString& line, bool ok) { if (ok) out.executed.append(line); });
+    QObject::connect(&assistant, &NlAssistant::finished,
+                     [&](bool ok, const QString&) { out.done = true; out.ok = ok; });
+    assistant.sendUserMessage(user);   // 脚本后端同步跑完两回合循环
+    out.toolResult = provider.toolResults.isEmpty() ? QString() : provider.toolResults.first();
+    out.systemText = provider.lastSystemText;
+    out.toolSchema = provider.toolSchemaNames;
+    out.turns = provider.turns;
+    return out;
+}
+
+static bool t_aiStandards() {
+    const int pass0 = g_pass, fail0 = g_fail;
+    fprintf(stdout, "--- AI 国标知识注入（system prompt / queryStandard / checkCompliance / 单一出口）---\n");
+
+    const StandardsDB& db = StandardsDB::instance();
+
+    // ① StandardsDB::summary()：数据派生、体积受控、明确「用 queryStandard 精确查询」
+    const QString sum = db.summary();
+    CHECK(!sum.isEmpty(), "StandardsDB::summary() 非空");
+    CHECK(sum.contains(QStringLiteral("queryStandard")), "摘要含「用 queryStandard 精确查询」指引");
+    CHECK(sum.contains(QStringLiteral("checkCompliance")), "摘要含「调用 checkCompliance」指引");
+    CHECK(sum.contains(QStringLiteral("2:1")), "摘要含高频规则：线宽粗细比 2:1");
+    CHECK(sum.contains(QStringLiteral("0.7")), "摘要含高频规则：最小间隙 0.7mm");
+    CHECK(sum.contains(QStringLiteral("3.5")), "摘要含高频规则：最小字高 3.5mm");
+    CHECK(sum.contains(QStringLiteral("GB/T 1800")), "摘要含标准号（数据经 query 派生）");
+    CHECK(sum.size() < 1800, "摘要体积受控（未塞入 12 张全量表）");
+    CHECK(!sum.contains(QStringLiteral("coarse_pitch_M")), "摘要不含粗牙螺距整表 JSON");
+
+    // ② 新增数据源契约（只增键，不改 12 表数量）
+    const QJsonObject pitch = db.query(QStringLiteral("thread"),
+                                       QStringLiteral("coarse_pitch_M")).toObject();
+    CHECK(std::fabs(pitch.value(QStringLiteral("M20")).toDouble() - 2.5) < 1e-9,
+          "thread.coarse_pitch_M['M20'] = 2.5（GB/T 193 粗牙系列）");
+    CHECK(db.allTables().size() == 12, "新增数据不改变 12 类标准表数量");
+    CHECK(!db.query(QStringLiteral("tolerances"),
+                    QStringLiteral("standard_tolerance_mm")).toString().isEmpty(),
+          "tolerances.standard_tolerance_mm 标注数值计算口径（不复制常数）");
+
+    // ③ 工具集：新增两个只读工具，runSketchCommand 动作入口保持不变
+    QStringList names;
+    for (const LlmTool& t : NlTools::schemas()) names.append(t.name);
+    CHECK(names.contains(QStringLiteral("queryStandard")), "LlmProvider 工具集注册 queryStandard(rule)");
+    CHECK(names.contains(QStringLiteral("checkCompliance")), "LlmProvider 工具集注册 checkCompliance()");
+    CHECK(names.contains(QStringLiteral("runSketchCommand")), "runSketchCommand 动作工具仍在");
+    CHECK(names.size() == 8, "工具集共 8 个（原 6 + 2 个国标只读工具）");
+
+    // ④ 验收问句一：「M20 的螺距是多少」→ 2.5mm
+    {
+        SketchModel m;
+        const AiToolRun run = runAiTool(m, QStringLiteral("M20 的螺距是多少"),
+            QStringLiteral("queryStandard"),
+            {{ QStringLiteral("rule"), QStringLiteral("M20 粗牙螺距") }});
+        CHECK(run.done && run.ok, "M20 螺距对话应正常结束");
+        CHECK(run.toolResult.contains(QStringLiteral("2.5")), "工具返回 M20 粗牙螺距 2.5mm");
+        CHECK(run.toolResult.contains(QStringLiteral("M20")), "工具返回含公称直径 M20");
+        CHECK(run.toolResult.contains(QStringLiteral("GB/T 193")), "工具返回含 GB/T 193 标准号");
+        CHECK(run.toolResult.contains(QStringLiteral("StandardsDB.query")), "工具结果标明数据来自 StandardsDB.query");
+        CHECK(run.executed.isEmpty(), "queryStandard 不触发任何命令执行（单一出口未破坏）");
+        CHECK(m.elementCount() == 0, "queryStandard 零副作用，不改模型");
+        CHECK(run.toolSchema.contains(QStringLiteral("queryStandard")), "工具 schema 已传入模型");
+        CHECK(run.systemText.contains(QStringLiteral("queryStandard")), "system prompt 注入 queryStandard 指引");
+        CHECK(run.systemText.contains(QStringLiteral("2:1")), "system prompt 注入国标高频规则摘要");
+        CHECK(run.systemText.contains(QStringLiteral("机械制图国标高频规则速查")), "构造期读到 StandardsDB 摘要");
+        CHECK(run.turns >= 2, "工具结果回灌模型并触发第二轮推理");
+    }
+
+    // ⑤ 验收问句二：「Φ30 IT7 公差多少」→ 0.021mm（ToleranceDB 公式实时计算）
+    {
+        SketchModel m;
+        const AiToolRun run = runAiTool(m, QStringLiteral("Φ30 IT7 公差多少"),
+            QStringLiteral("queryStandard"),
+            {{ QStringLiteral("rule"), QStringLiteral("Φ30 IT7 标准公差") }});
+        CHECK(run.done && run.ok, "Φ30 IT7 公差对话应正常结束");
+        CHECK(run.toolResult.contains(QStringLiteral("0.021")), "工具返回 Φ30 IT7 = 0.021mm");
+        CHECK(run.toolResult.contains(QStringLiteral("21")), "工具同步给出 21μm");
+        CHECK(run.toolResult.contains(QStringLiteral("GB/T 1800")), "工具返回含 GB/T 1800 标准号");
+        CHECK(run.toolResult.contains(QStringLiteral("ToleranceDB::standardTolerance")),
+              "工具结果标明数值由 ToleranceDB 公式计算");
+        CHECK(run.executed.isEmpty(), "公差查询不触发命令执行");
+        CHECK(m.elementCount() == 0, "公差查询零副作用");
+    }
+
+    // ⑥ 高频规则精确查询（线宽比）+ 未识别规则兜底
+    {
+        SketchModel m;
+        const AiToolRun run = runAiTool(m, QStringLiteral("线宽粗细比是多少"),
+            QStringLiteral("queryStandard"),
+            {{ QStringLiteral("rule"), QStringLiteral("线宽粗细比") }});
+        CHECK(run.toolResult.contains(QStringLiteral("2:1")), "通用规则查询返回线宽比 2:1");
+        CHECK(run.toolResult.contains(QStringLiteral("GB/T 17450")), "通用规则查询带标准号");
+    }
+    {
+        SketchModel m;
+        const AiToolRun run = runAiTool(m, QStringLiteral("随便问点别的"),
+            QStringLiteral("queryStandard"),
+            {{ QStringLiteral("rule"), QStringLiteral("量子纠缠") }});
+        CHECK(run.toolResult.contains(QStringLiteral("未识别的规则")), "未知规则明确兜底、不编造数值");
+    }
+
+    // ⑦ 验收问句三：「这张图线宽合规吗」→ ComplianceChecker::run 的真实结论
+    auto mkLine = [](double y, double w) {
+        Element e;
+        e.type = ElementType::Line;
+        e.layer = QStringLiteral("0");
+        e.lineWidthAuto = false;
+        e.lineWidth = w;
+        e.pts = { Vec3(0, y, 0), Vec3(100, y, 0) };
+        return e;
+    };
+    {
+        // 1.0 / 0.7 → 1.43:1，R1 必报；两线相距 20mm 不触发 R2；无图框 R6 跳过
+        SketchModel m;
+        m.addElementsQuiet({ mkLine(0, 1.0), mkLine(20, 0.7) });
+        const AiToolRun run = runAiTool(m, QStringLiteral("这张图线宽合规吗"),
+            QStringLiteral("checkCompliance"),
+            {{ QStringLiteral("rule"), QStringLiteral("线宽") }});
+        CHECK(run.done && run.ok, "线宽合规对话应正常结束");
+        CHECK(run.toolResult.contains(QStringLiteral("R1_line_width_ratio")), "工具结果含 R1 规则编号");
+        CHECK(run.toolResult.contains(QStringLiteral("线宽不合规")), "不合规图纸经工具返回「线宽不合规」");
+        CHECK(run.toolResult.contains(QStringLiteral("1.43")), "明细含实测线宽比 1.43:1");
+        const QVector<ComplianceIssue> direct = ComplianceChecker::run(&m);
+        bool hasR1 = false;
+        for (const ComplianceIssue& iss : direct)
+            if (iss.ruleId == QStringLiteral("R1_line_width_ratio")) hasR1 = true;
+        CHECK(hasR1, "直接调用检查器对本用例也应报 R1");
+        CHECK(run.toolResult.contains(QStringLiteral("ComplianceChecker::run")), "结果标明检查器来源");
+        CHECK(run.executed.isEmpty(), "checkCompliance 不执行任何命令");
+        CHECK(m.elementCount() == 2, "合规检查纯读，图元数不变");
+    }
+    {
+        // 1.0 / 0.5 → 2.0:1，R1 放行；省略 rule 时应返回全部 7 条规则
+        SketchModel m;
+        m.addElementsQuiet({ mkLine(0, 1.0), mkLine(20, 0.5) });
+        const AiToolRun run = runAiTool(m, QStringLiteral("这张图线宽合规吗"),
+            QStringLiteral("checkCompliance"), QJsonObject());
+        CHECK(run.toolResult.contains(QStringLiteral("线宽合规")), "合规图纸经工具返回「线宽合规」");
+        CHECK(run.toolResult.contains(QStringLiteral("R7_layer_naming")), "无 focus 时返回全部 7 条规则");
+        CHECK(run.executed.isEmpty(), "无参 checkCompliance 同样不执行命令");
+    }
+
+    // ⑧ 单一出口回归：只有 runSketchCommand 会经 CommandInterpreter::execute 落模
+    {
+        SketchModel m;
+        const AiToolRun run = runAiTool(m, QStringLiteral("画一个圆心在原点半径20的圆"),
+            QStringLiteral("runSketchCommand"),
+            {{ QStringLiteral("line"), QStringLiteral("circle 0,0 20") }});
+        CHECK(run.executed.contains(QStringLiteral("circle 0,0 20")),
+              "runSketchCommand 仍是唯一命令执行出口");
+        CHECK(m.elementCount() == 1, "命令经 CommandInterpreter::execute 真实落模");
+    }
+
+    fprintf(stdout, "  (AI 国标知识注入自测: 通过 %d / 失败 %d)\n", g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// ============================================================
+// GB/T 18617 / ISO 13567 图层命名建议与合规检查（t_layerGB）
+// 覆盖：标准条目装载 / 候选列表 / 合规判定（多分隔符+裸名+保留层）/
+//       ComplianceChecker 批量检查 / stdcheck 命令经 CommandInterpreter 路径。
+// ============================================================
+static bool t_layerGB() {
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- GB/T 18617 / ISO 13567 图层命名建议与合规检查 ---\n");
+
+    // ① 标准条目装载（来自 cad_layers.json 的 layer_01..layer_09）
+    const auto entries = LayerNaming::standardLayerEntries();
+    CHECK(!entries.empty(), "standardLayerEntries() 从 cad_layers.json 装载到标准条目");
+    bool hasContour = false, hasDim = false;
+    for (const auto& e : entries) {
+        if (e.code == QStringLiteral("01") && e.name == QStringLiteral("轮廓线")) hasContour = true;
+        if (e.code == QStringLiteral("08") && e.name == QStringLiteral("尺寸标注")) hasDim = true;
+    }
+    CHECK(hasContour, "layer_01 = 轮廓线（编号 01）");
+    CHECK(hasDim, "layer_08 = 尺寸标注（编号 08）");
+
+    // ② 候选名称列表（"<编号>_<名称>"）
+    const QStringList sug = LayerNaming::suggestLayerNames();
+    CHECK(sug.contains(QStringLiteral("01_轮廓线")), "suggestLayerNames() 含 01_轮廓线");
+    CHECK(sug.size() == (int)entries.size(), "候选数量与标准条目一致");
+
+    // ③ 合规判定（保留层 / 多分隔符 / 裸名 / 不合规）
+    CHECK(LayerNaming::isLayerNameCompliant(QStringLiteral("0")), "保留默认层 0 合规");
+    CHECK(LayerNaming::isLayerNameCompliant(QStringLiteral("01_轮廓线")), "01_轮廓线 合规");
+    CHECK(LayerNaming::isLayerNameCompliant(QStringLiteral("01 轮廓线")), "01 轮廓线 合规（空格分隔）");
+    CHECK(LayerNaming::isLayerNameCompliant(QStringLiteral("08-尺寸标注")), "08-尺寸标注 合规（连字符分隔）");
+    CHECK(LayerNaming::isLayerNameCompliant(QStringLiteral("轮廓线")), "裸标准名 轮廓线 合规");
+    QString reason;
+    CHECK(!LayerNaming::isLayerNameCompliant(QStringLiteral("我的图层"), &reason), "非标准名 我的图层 不合规");
+    CHECK(!reason.isEmpty(), "不合规时给出原因/建议");
+
+    // ④ ComplianceChecker 批量检查（新 ComplianceIssue 字段：ruleId / message）
+    const QStringList names = { QStringLiteral("0"), QStringLiteral("01_轮廓线"),
+                                QStringLiteral("我的图层"), QStringLiteral("zzz") };
+    const QVector<ComplianceIssue> issues = ComplianceChecker::checkLayerNaming(names);
+    CHECK(issues.size() == 2, "checkLayerNaming 识别出 2 个不合规项");
+    bool flagged = false;
+    for (const auto& i : issues)
+        if (i.ruleId == QStringLiteral("R7_layer_naming") &&
+            i.message.contains(QStringLiteral("我的图层"))) flagged = true;
+    CHECK(flagged, "不合规项含 我的图层（ruleId=R7_layer_naming）");
+
+    // ⑤ 命令路径：stdcheck 经 CommandInterpreter 调用 ComplianceChecker::checkModel
+    SketchModel m;
+    CommandInterpreter interp(&m);
+    QStringList logs;
+    QObject::connect(&m, &SketchModel::logAppended, [&](const QString& msg, const QString&) {
+        logs.append(msg);
+    });
+    m.addLayer(QStringLiteral("01_中心线"));   // 非合规（01 的标准名是 轮廓线，不是 中心线）
+    m.addLayer(QStringLiteral("04_中心线"));   // 合规（04 = 中心线）
+    const int before = g_fail;
+    interp.execute(QStringLiteral("stdcheck"));
+    CHECK(g_fail == before, "stdcheck 命令执行无异常");
+    bool reported = false, flaggedNonStd = false;
+    for (const QString& l : logs) {
+        if (l.contains(QStringLiteral("STDCHECK"))) reported = true;
+        if (l.contains(QStringLiteral("01_中心线"))) flaggedNonStd = true;
+    }
+    CHECK(reported, "stdcheck 输出 STDCHECK 报告");
+    CHECK(flaggedNonStd, "stdcheck 报告不合规图层 01_中心线");
+
+    return g_fail == fail0;
+}
+
+// ============================================================
+// 工程制图合规性检查器（ComplianceChecker::run / STDCHECK / CHECKCOMPLIANCE）
+// 覆盖 7 类规则：线宽粗细比(R1) / 两线最小间隙(R2) / 字号下限(R3) /
+// 粗糙度符号(R4) / 焊缝符号完整性(R5) / 幅面留边(R6) / 图层命名(R7, GB/T 18617)。
+// 经 CommandInterpreter 走 stdcheck 命令路径，逐条经 logAppended 上报。
+// ============================================================
+static bool t_compliance() {
+    const int fail0 = g_fail;
+    fprintf(stdout, "--- 工程制图合规性检查器（ComplianceChecker::run / STDCHECK）---\n");
+
+    SketchModel m;
+    CommandInterpreter interp(&m);
+    QStringList logs;
+    QObject::connect(&m, &SketchModel::logAppended, [&](const QString& msg, const QString&) {
+        logs.append(msg);
+    });
+
+    // 预置图层：一个合规、一个不合规（R7）
+    m.addLayer(QStringLiteral("01_轮廓线"));   // 合规
+    m.addLayer(QStringLiteral("我的图层"));     // 不合规（R7）
+
+    // 图框层矩形（R6 的图纸外边界判定来源），尺寸 420×297（A3 横）
+    {
+        Element frame;
+        frame.type = ElementType::Polyline;
+        frame.layer = QStringLiteral("图框");
+        frame.closed = true;
+        frame.lineWidthAuto = false; frame.lineWidth = 0.7;
+        frame.pts = { Vec3(0,0,0), Vec3(420,0,0), Vec3(420,297,0), Vec3(0,297,0), Vec3(0,0,0) };
+        m.addElementsQuiet({frame});
+    }
+
+    // 辅助：造一条线段
+    auto mkLine = [&](double x1,double y1,double x2,double y2,double w,const QString& layer){
+        Element e; e.type = ElementType::Line; e.layer = layer;
+        e.lineWidthAuto = false; e.lineWidth = w;
+        e.pts = { Vec3(x1,y1,0), Vec3(x2,y2,0) };
+        return e;
+    };
+
+    // R1：线宽粗细比非 2:1（粗 1.0 / 细 0.7 → 1.43:1）
+    m.addElementsQuiet({ mkLine(20,200,120,200, 1.0, QStringLiteral("0")),
+                         mkLine(20,205,120,205, 0.7, QStringLiteral("0")) });
+
+    // R2：两平行线间距 0.3mm < 0.7mm
+    m.addElementsQuiet({ mkLine(20,100,120,100, 0.5, QStringLiteral("0")),
+                         mkLine(20,100.3,120,100.3, 0.5, QStringLiteral("0")) });
+
+    // R3：字号 1.0mm < 3.5mm 下限
+    {
+        Element t; t.type = ElementType::Text; t.layer = QStringLiteral("0");
+        t.pts = { Vec3(200,150,0) }; t.radius = 1.0; t.text = QStringLiteral("说明");
+        m.addElementsQuiet({t});
+    }
+
+    // R4：粗糙度符号缺 Ra 数值（value="" → 仅几何、无数值文本）
+    {
+        RoughnessSpec rs;
+        rs.anchor = Vec3(50,50,0); rs.value = QString(); rs.textHeight = 3.5;
+        rs.layer = QStringLiteral("标注");
+        const auto sym = buildRoughnessSymbol(rs);
+        m.addElementsQuiet(sym);   // 含 name=="表面粗糙度"，但无数值文本 → R4
+    }
+
+    // R5：焊缝符号不完整（仅一个命名文本，无基准线/基本符号）
+    {
+        Element w; w.type = ElementType::Text; w.layer = QStringLiteral("标注");
+        w.name = QStringLiteral("焊缝符号"); w.pts = { Vec3(60,60,0) };
+        w.text = QStringLiteral("k5"); w.radius = 3.5;
+        m.addElementsQuiet({w});   // 缺基准线+基本符号 → R5
+    }
+
+    // R6：内容超出图框留边区（x=500 远在 A3 图框 0..420 之外）
+    m.addElementsQuiet({ mkLine(500,150,600,150, 0.5, QStringLiteral("0")) });
+
+    // 执行检查（stdcheck 命令路径）
+    const int before = g_fail;
+    interp.execute(QStringLiteral("stdcheck"));
+    CHECK(g_fail == before, "stdcheck 命令执行无异常");
+
+    const QString all = logs.join(QChar('\n'));
+    CHECK(all.contains(QStringLiteral("STDCHECK")),                "stdcheck 输出 STDCHECK 报告头");
+    CHECK(all.contains(QStringLiteral("R1_line_width_ratio")),      "R1 线宽粗细比 被检出");
+    CHECK(all.contains(QStringLiteral("R2_min_line_gap")),          "R2 两线最小间隙 被检出");
+    CHECK(all.contains(QStringLiteral("R3_text_height")),           "R3 字号下限 被检出");
+    CHECK(all.contains(QStringLiteral("R4_roughness_notation")),    "R4 粗糙度符号 被检出");
+    CHECK(all.contains(QStringLiteral("R5_weld_symbol")),           "R5 焊缝符号完整性 被检出");
+    CHECK(all.contains(QStringLiteral("R6_sheet_margin")),          "R6 幅面留边 被检出");
+    CHECK(all.contains(QStringLiteral("R7_layer_naming")),          "R7 图层命名 被检出");
+    CHECK(all.contains(QStringLiteral("我的图层")),                  "R7 报告不合规图层 我的图层");
+
+    // 反向：标准 2:1 粗细比(1.0/0.5) 不应误报 R1
+    {
+        SketchModel m2;
+        m2.addElementsQuiet({ mkLine(20,200,120,200, 1.0, QStringLiteral("0")),
+                              mkLine(20,205,120,205, 0.5, QStringLiteral("0")) });
+        Element t; t.type = ElementType::Text; t.layer = QStringLiteral("0");
+        t.pts = { Vec3(200,150,0) }; t.radius = 3.5; t.text = QStringLiteral("说明");
+        m2.addElementsQuiet({t});
+        const QVector<ComplianceIssue> ok = ComplianceChecker::run(&m2);
+        bool noFalseR1 = true;
+        for (const auto& i : ok)
+            if (i.ruleId == QStringLiteral("R1_line_width_ratio")) noFalseR1 = false;
+        CHECK(noFalseR1, "标准 2:1 粗细比(1.0/0.5) 不误报 R1");
+    }
+
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -13105,6 +14250,8 @@ int main(int argc, char** argv) {
     CHECK(t_gripops(),              "GripOps 夹点热操作(移动/旋转/缩放/镜像/拉伸+边界拒绝+模式循环)");
     CHECK(t_qselect(),              "QSelect 快速选择命令接线(四维过滤/组合/全空/别名q/选中计数)");
     CHECK(t_dxfImport(),            "DXF 导入扩展(15+类实体/round-trip差分/块表/标注/填充/容错计数)");
+    CHECK(t_dwgStyleFontLongFangSong(), "DWG/DXF 文字样式字体归一(中文宋/仿/楷+SHX→长仿宋体；西文/黑体不变；对齐中望CAD显示)");
+    CHECK(t_dwgRealStyleLongFangSong(), "真实施工图纸库DWG→r2004 DXF 端到端：Standard 样式解析为长仿宋体(对齐中望CAD)");
     CHECK(t_dxfExport(),            "DXF 原生导出(块/标注/填充/点 token计数/round-trip≤1e-6/legacy兼容)");
     CHECK(t_formatsVersions(),      "P0-01 格式版本 R12+R2000(双版本读写/版本协商/二进制DXF/鲁棒性)");
     CHECK(t_formatsGolden(),        "P0-01 黄金样本 R12/R2000 DXF+DWG round-trip 一致性");
@@ -13142,6 +14289,11 @@ int main(int argc, char** argv) {
     CHECK(t_interaction(), "AutoCAD 交互对齐(空格/回车重复命令/↑↓历史/Tab补齐/坐标注入/未知命令3候选/历史持久化/右键行为配置)");
     CHECK(t_recent(),      "最近文件 MRU(增删/去重/上限裁剪/pin保护/缺失文件/持久化重载/旧键迁移/损坏容错)");
     CHECK(t_cmdParity(),   "命令补齐 CommandParity(三态/别名/typo建议/单步撤销)");
+    CHECK(t_deleteSelected(), "DEL/选中删除(多选批量删+单步撤销恢复/单选回退/无选中空操作/连续删除)");
+    CHECK(t_deleteKeyInteraction(), "DEL 键端到端交互(视图/视口/连续删/ShortcutOverride/命令行空内容/负例)");
+    CHECK(t_deleteKeyFilterPolicy(), "DEL 键兜底策略(普通面板接管/文本编辑器放行/画布放行/模态与非主窗口放行)");
+    CHECK(t_deleteKeyWindowDispatch(), "DEL 键窗口级真实派发(QWidgetWindow→QShortcutMap→焦点控件/画布与面板删除/文本编辑保留/其它快捷键不受影响)");
+    CHECK(t_polyRegular(), "正多边形脚本化命令(poly_regular 中心+边长/半径生成正六边形/等价/与手算坐标一致/目录收录)");
     CHECK(t_help(),        "命令发现与容错帮助(面板过滤/help详情/总数一致/未知候选/冲突自检)");
     CHECK(t_diag(),        "崩溃诊断包(ZIP结构/自解析CRC/包内容齐全/会话标记/遥测零外发)");
     CHECK(t_dwg(),         "DWG R2000+ 桥接(版本探测/路由白名单/错误报文含版本串/R12回归/round-trip差分)");
@@ -13162,9 +14314,13 @@ int main(int argc, char** argv) {
     CHECK(t_nlAssistant(), "自然语言助手 NlAssistant(MockProvider→runSketchCommand 派发→interp_->execute→图元落模)");
     CHECK(t_llmIntegration(), "LLM 集成链路(用户原文入模/命令由模型产出/工具结果回灌/无后端零执行/响应解码/审批回归)");
     CHECK(t_standardsDB(), "标准知识库 StandardsDB(12类表/资源打包/字节一致)");
+    CHECK(t_aiStandards(), "AI国标知识注入(system prompt摘要/queryStandard精确查询/checkCompliance真实结论/三问经工具返回准确值/单一出口零回归)");
     CHECK(t_gdtAnnotation(), "GD&T 标注赋值(粗糙度最近标准值/几何公差类别与符号/修饰符/预览组装)");
     CHECK(t_weldSymbol(), "焊缝符号(GB/T 324:角焊/V形各一组图元非空/组合既图元/线宽2d3/经WELD落盘与toDrawingJson往返)");
     CHECK(t_longFangSong(), "长仿宋体默认样式 LongFangSong(GB/T 14691:新建文字默认样式/字号下限3.5告警/字宽≈h/√2/模型默认表/fitCellText中心锚点兼容)");
+    CHECK(t_toleranceDB(), "ISO 公差数据库(IT01~IT18 标准公差+轴孔基本偏差:30/IT7=0.021/H7孔EI=0/h7轴es=0/JS对称/a~g间隙/孔轴镜像/大小写等价)");
+    CHECK(t_layerGB(), "GB/T 18617/ISO 13567 图层命名建议与合规检查(标准条目装载/候选列表/多分隔符合规判定/ComplianceChecker批量/STDCHECK命令路径)");
+    CHECK(t_compliance(), "工程制图合规检查器(7类GB/T规则:R1线宽比/R2最小间隙/R3字号下限/R4粗糙度/R5焊缝/R6幅面留边/R7图层命名,经STDCHECK命令路径+反向不误报)");
 
     // ---- 分层测试网：既有模块补充直测 ----
     fprintf(stdout, "--- 分层测试网：模块补充直测 ---\n");

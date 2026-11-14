@@ -41,6 +41,10 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("arc", "圆弧", "绘图", "圆心 + 半径 + 起止角绘制圆弧", "arc cx,cy r a0 [a1]", "a0 起始角；a1 终止角（度，省略 = a0+360 即整圆弧）", "arc 0,0 30 0 90", { "circle", "circle3p" }, "");
     add("rect", "矩形", "绘图", "两角点绘制矩形", "rect x0,y0 x1,y1", "", "rect 0,0 80,50", { "rect_chamfer", "rect_fillet", "poly" }, "");
     add("poly", "多边形", "绘图", "依次输入顶点绘制多边形（首末自动闭合）", "poly x1,y1 x2,y2 ...", "", "poly 0,0 40,0 20,35", { "poly_regular", "poly_edge" }, "");
+    add("poly_regular", "正多边形(内接)", "绘图", "中心 + 外接圆半径（或边长）生成正多边形", "poly_regular cx,cy R sides | poly_regular cx,cy side:L sides", "R 外接圆半径；side:L 用边长（推荐，LLM 原样转发提示词尺寸）；sides 边数(≥3)", "poly_regular 0,0 50 6", { "poly", "poly_edge", "poly_circumscribed", "poly_star" }, "");
+    add("poly_circumscribed", "正多边形(外切)", "绘图", "中心 + 边心距生成正多边形", "poly_circumscribed cx,cy apothem sides", "apothem 边心距（圆心到边中点距离）；sides 边数(≥3)", "poly_circumscribed 0,0 43.3 6", { "poly", "poly_regular" }, "");
+    add("poly_edge", "正多边形(边长)", "绘图", "给定一条边生成正多边形（边起终点 + 边数）", "poly_edge x1,y1 x2,y2 sides", "x1,y1 x2,y2 一条边的两端点；sides 边数(≥3)", "poly_edge 0,0 50,0 6", { "poly", "poly_regular" }, "");
+    add("poly_star", "星形", "绘图", "中心 + 外半径生成星形", "poly_star cx,cy outerR points [innerRatio]", "outerR 外半径；points 角数(≥3)；innerRatio 内半径比(默认0.382)", "poly_star 0,0 50 5", { "poly" }, "");
     add("spline", "样条曲线", "绘图", "依次输入顶点绘制样条曲线", "spline p1 p2 ...", "", "spline 0,0 30,20 60,5", { "spline_parabola_4p", "spline_through_points" }, "");
     add("point", "点", "绘图", "绘制单个或多个点", "point <x,y> [x,y ...]", "", "point 10,10 30,40", {}, "");
     add("xh", "序号球标", "绘图", "为选中对象生成序号球标并写入明细表（BOM）", "xh [id ...]", "先选中零部件几何或给定图元 id；自动按质心放置圆+编号球标并追加明细行", "xh 12 13", { "bom", "balloon" }, "");
@@ -168,6 +172,8 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("wsload", "加载工作空间", "工具", "切换到指定工作空间", "wsload <名>", "", "", { "wslist" }, "");
     add("help", "帮助", "帮助", "命令总表；help <命令> 查看用法/参数/样例", "help [<命令名>]", "", "help line", {}, "F1");
     add("standards", "标准知识库查询", "工具", "查询内嵌的 12 类机械制图国标数据（图幅/比例/字体/线型/粗糙度/公差/形位公差/螺纹/齿轮/轴承/焊缝/CAD 图层），数据源自《机械制图手册（第四版）》", "standards [<表名> [<键名>]]", "无参数 = 列出 12 类表名；standards <表名> = 列出该表全部键值；standards <表名> <键名> = 查询单值", "standards sheet_sizes A3  /  standards scales  /  standards", { "query_standards" }, "");
+    add("stdcheck", "工程制图合规检查", "工具", "依据 7 类 GB/T 规范（线宽粗细比/两线最小间隙/字号下限/粗糙度符号/焊缝符号完整性/幅面留边/图层命名）检查当前图纸，只读诊断，不改图", "stdcheck", "覆盖 GB/T 14665/14689/131/324 与 GB/T 18617/ISO 13567；仅报告不合规项、建议与跳转，不强制修改", "stdcheck", { "standards" }, "");
+    add("checkcompliance", "合规检查(AI)", "工具", "与 stdcheck 相同的工程制图合规检查，供 AI 助手 checkCompliance 经 runSketchCommand 调用", "checkcompliance", "AI 工具派发 runSketchCommand(\"checkcompliance\") 经 CommandInterpreter 触发同一检查逻辑", "checkcompliance", { "stdcheck" }, "");
         return t;
     }();
     return table;

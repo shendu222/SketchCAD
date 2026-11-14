@@ -84,6 +84,8 @@ Element ElementFactory::createPolyline(const std::vector<Vec3>& pts, const std::
 Element ElementFactory::createDimension(DimensionType dt, const SketchModel* model) {
     Element e = create(ElementType::Dimension, QString::fromUtf8(dimensionTypeName(dt)), model);
     e.dtype = dt;
+    // GB/T 14691 长仿宋体默认样式：新建标注默认采用 LongFangSong（尺寸数字亦走长仿宋体）
+    e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 
@@ -141,6 +143,8 @@ Element ElementFactory::createTable(const Vec3& topLeft, int rows, int cols, con
     e.textAlign = 1;                                 // 单元格文字水平居中
     e.colWidths.assign(e.tableCols, 30.0);
     e.tableCells.assign(size_t(e.tableRows) * size_t(e.tableCols), QString());
+    // GB/T 14691 长仿宋体默认样式：新建表格默认 LongFangSong（单元格文字走长仿宋体）
+    e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 
@@ -217,6 +221,8 @@ Element ElementFactory::createMLeader(const Vec3& tip, const Vec3& elbow, const 
     e.mleaderLanding  = landingMm;
     e.mleaderArrowLen = (arrowLenMm > 1e-6) ? arrowLenMm : 3.5;
     e.lineStyle = LineStyle::Solid;
+    // GB/T 14691 长仿宋体默认样式：新建多重引线默认 LongFangSong
+    e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 
@@ -232,6 +238,8 @@ Element ElementFactory::createFcf(const Vec3& anchor, int symbol, const QString&
     e.fcfModifier  = modifier;
     e.fcfDatums    = datums;
     e.lineStyle = LineStyle::Solid;
+    // GB/T 14691 长仿宋体默认样式：新建形位公差框格默认 LongFangSong
+    e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 

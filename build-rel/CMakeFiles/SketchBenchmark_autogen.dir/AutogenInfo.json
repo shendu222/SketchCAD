@@ -8,62 +8,9 @@
 	"CMAKE_LIST_FILES" : 
 	[
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/CMakeLists.txt",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineSystem.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeSystem.cmake.in",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/CMakeFiles/3.31.3/CMakeSystem.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeNinjaFindMake.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeSystemSpecificInitialize.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-Initialize.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCXXCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-Determine-CXX.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCompilerIdDetection.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/ADSP-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/ARMCC-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/ARMClang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/AppleClang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompilerInternal.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Borland-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Clang-DetermineCompilerInternal.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Compaq-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Cray-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/CrayClang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Embarcadero-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Fujitsu-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/FujitsuClang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/GHS-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/GNU-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/HP-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IAR-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IBMClang-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Intel-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IntelLLVM-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/LCC-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/MSVC-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/NVHPC-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/NVIDIA-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/OpenWatcom-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/OrangeC-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/PGI-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/PathScale-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/SCO-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/SunPro-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/TI-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/TIClang-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Tasking-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/VisualAge-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IBMCPP-CXX-DetermineVersionInternal.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/Watcom-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/XL-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IBMCPP-CXX-DetermineVersionInternal.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/XLClang-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/zOS-CXX-DetermineCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/IBMCPP-CXX-DetermineVersionInternal.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindBinUtils.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/GNU-FindBinUtils.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCXXCompiler.cmake.in",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/CMakeFiles/3.31.3/CMakeCXXCompiler.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeSystemSpecificInformation.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeGenericSystem.cmake",
@@ -77,27 +24,11 @@
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Compiler/CMakeCommonCompilerMacros.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-GNU-CXX.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-GNU.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineRCCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeRCCompiler.cmake.in",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/CMakeFiles/3.31.3/CMakeRCCompiler.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeRCInformation.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-windres.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestRCCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCXXCompiler.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCompilerCommon.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeDetermineLinkerId.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeParseImplicitIncludeInfo.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeParseImplicitLinkInfo.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeParseLibraryArchitecture.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeTestCompilerCommon.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCXXCompilerABI.cpp",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeDetermineCompilerSupport.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/FeatureTesting.cmake",
-		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCXXCompiler.cmake.in",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/CMakeFiles/3.31.3/CMakeCXXCompiler.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Windows-GNU-CXX-ABI.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeCommonLanguageInclude.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeCXXLinkerInformation.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Internal/CMakeCommonLinkerInformation.cmake",
 		"C:/Program Files/CMake/share/cmake-3.31/Modules/Platform/Linker/Windows-CXX.cmake",
@@ -850,7 +781,64 @@
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml/Qt6QTcpServerConnectionFactoryPluginTargets.cmake",
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml/Qt6QTcpServerConnectionFactoryPluginTargets-relwithdebinfo.cmake",
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml/Qt6QTcpServerConnectionFactoryPluginAdditionalTargetInfo.cmake",
-		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml/Qt6QmlVersionlessAliasTargets.cmake"
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml/Qt6QmlVersionlessAliasTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsConfigVersion.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsConfigVersionImpl.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsDependencies.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsVersionlessTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools/Qt6LinguistToolsMacros.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeParseArguments.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlConfigVersion.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlConfigVersionImpl.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlDependencies.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlPlugins.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QIBaseDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QIBaseDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QIBaseDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QIBaseDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QMimerSQLDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QMimerSQLDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QMimerSQLDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QMimerSQLDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QOCIDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QOCIDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QOCIDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QOCIDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QODBCDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QODBCDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QODBCDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QODBCDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QPSQLDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QPSQLDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QPSQLDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QPSQLDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginConfig.cmake",
+		"C:/Program Files/CMake/share/cmake-3.31/Modules/CMakeFindDependencyMacro.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginTargets.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginTargets-relwithdebinfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginAdditionalTargetInfo.cmake",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlVersionlessAliasTargets.cmake",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/version.h.in",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/app.rc.in",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Core/Qt6CoreConfigureFileTemplate.in",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Core/Qt6CoreConfigureFileTemplate.in",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Core/Qt6CoreConfigureFileTemplate.in",
+		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Core/Qt6CoreConfigureFileTemplate.in"
 	],
 	"CMAKE_SOURCE_DIR" : "D:/01-CAD/02-avticationCAD/sketch-cad-cpp",
 	"CROSS_CONFIG" : false,
@@ -858,6 +846,48 @@
 	"DEP_FILE_RULE_NAME" : "SketchBenchmark_autogen/timestamp",
 	"HEADERS" : 
 	[
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/AppContextProvider.h",
+			"MU",
+			"LUT2VLOM2C/moc_AppContextProvider.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.h",
+			"MU",
+			"LUT2VLOM2C/moc_LlmProvider.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/MockProvider.h",
+			"MU",
+			"LUT2VLOM2C/moc_MockProvider.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlAssistant.h",
+			"MU",
+			"LUT2VLOM2C/moc_NlAssistant.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlCommandMapper.h",
+			"MU",
+			"LUT2VLOM2C/moc_NlCommandMapper.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/OpenAiProvider.h",
+			"MU",
+			"LUT2VLOM2C/moc_OpenAiProvider.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/tooldefs.h",
+			"MU",
+			"LUT2VLOM2C/moc_tooldefs.cpp",
+			null
+		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.h",
 			"MU",
@@ -871,9 +901,33 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AppSettings.h",
+			"MU",
+			"PRMOGMWJPH/moc_AppSettings.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ArcModes.h",
 			"MU",
 			"PRMOGMWJPH/moc_ArcModes.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AutoSave.h",
+			"MU",
+			"PRMOGMWJPH/moc_AutoSave.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchBom.h",
+			"MU",
+			"PRMOGMWJPH/moc_BatchBom.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.h",
+			"MU",
+			"PRMOGMWJPH/moc_BatchTools.cpp",
 			null
 		],
 		[
@@ -889,9 +943,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BomItem.h",
+			"MU",
+			"PRMOGMWJPH/moc_BomItem.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CadFormats.h",
 			"MU",
 			"PRMOGMWJPH/moc_CadFormats.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CenterLineGen.h",
+			"MU",
+			"PRMOGMWJPH/moc_CenterLineGen.cpp",
 			null
 		],
 		[
@@ -913,6 +979,18 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Clipboard.h",
+			"MU",
+			"PRMOGMWJPH/moc_Clipboard.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.h",
+			"MU",
+			"PRMOGMWJPH/moc_CommandCatalog.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandInterpreter.h",
 			"MU",
 			"PRMOGMWJPH/moc_CommandInterpreter.cpp",
@@ -931,15 +1009,45 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ConstraintSolverFacade.h",
+			"MU",
+			"PRMOGMWJPH/moc_ConstraintSolverFacade.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CuiManager.h",
 			"MU",
 			"PRMOGMWJPH/moc_CuiManager.cpp",
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DensityTable.h",
+			"MU",
+			"PRMOGMWJPH/moc_DensityTable.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DiagBundle.h",
+			"MU",
+			"PRMOGMWJPH/moc_DiagBundle.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Diagnostics.h",
+			"MU",
+			"PRMOGMWJPH/moc_Diagnostics.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DimStyle.h",
 			"MU",
 			"PRMOGMWJPH/moc_DimStyle.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DrawingDb.h",
+			"MU",
+			"PRMOGMWJPH/moc_DrawingDb.cpp",
 			null
 		],
 		[
@@ -955,9 +1063,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ElementValidate.h",
+			"MU",
+			"PRMOGMWJPH/moc_ElementValidate.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/EllipseModes.h",
 			"MU",
 			"PRMOGMWJPH/moc_EllipseModes.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FeatureMenu.h",
+			"MU",
+			"PRMOGMWJPH/moc_FeatureMenu.cpp",
 			null
 		],
 		[
@@ -976,6 +1096,18 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.h",
 			"MU",
 			"PRMOGMWJPH/moc_FloorPlanViews.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.h",
+			"MU",
+			"PRMOGMWJPH/moc_GbFastenerTable.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Gdt.h",
+			"MU",
+			"PRMOGMWJPH/moc_Gdt.cpp",
 			null
 		],
 		[
@@ -1003,9 +1135,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/I18n.h",
+			"MU",
+			"PRMOGMWJPH/moc_I18n.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Inquiry.h",
 			"MU",
 			"PRMOGMWJPH/moc_Inquiry.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/InvoluteGear.h",
+			"MU",
+			"PRMOGMWJPH/moc_InvoluteGear.cpp",
 			null
 		],
 		[
@@ -1015,9 +1159,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layer.h",
+			"MU",
+			"PRMOGMWJPH/moc_Layer.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layout.h",
 			"MU",
 			"PRMOGMWJPH/moc_Layout.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/LegacyConstraintSolver.h",
+			"MU",
+			"PRMOGMWJPH/moc_LegacyConstraintSolver.cpp",
 			null
 		],
 		[
@@ -1057,6 +1213,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PartLibrary.h",
+			"MU",
+			"PRMOGMWJPH/moc_PartLibrary.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PlotStyle.h",
 			"MU",
 			"PRMOGMWJPH/moc_PlotStyle.cpp",
@@ -1087,9 +1249,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ProxyGraphics.h",
+			"MU",
+			"PRMOGMWJPH/moc_ProxyGraphics.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/QSelect.h",
 			"MU",
 			"PRMOGMWJPH/moc_QSelect.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/RecentFiles.h",
+			"MU",
+			"PRMOGMWJPH/moc_RecentFiles.cpp",
 			null
 		],
 		[
@@ -1129,9 +1303,21 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.h",
+			"MU",
+			"PRMOGMWJPH/moc_SectionProps.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ShapeSelect.h",
 			"MU",
 			"PRMOGMWJPH/moc_ShapeSelect.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SheetFrameTemplate.h",
+			"MU",
+			"PRMOGMWJPH/moc_SheetFrameTemplate.cpp",
 			null
 		],
 		[
@@ -1165,9 +1351,33 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SymbolFactory.h",
+			"MU",
+			"PRMOGMWJPH/moc_SymbolFactory.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Telemetry.h",
+			"MU",
+			"PRMOGMWJPH/moc_Telemetry.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextMetrics.h",
+			"MU",
+			"PRMOGMWJPH/moc_TextMetrics.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextStyle.h",
 			"MU",
 			"PRMOGMWJPH/moc_TextStyle.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TitleBlockLayout.h",
+			"MU",
+			"PRMOGMWJPH/moc_TitleBlockLayout.cpp",
 			null
 		],
 		[
@@ -1183,15 +1393,69 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/UndoDelta.h",
+			"MU",
+			"PRMOGMWJPH/moc_UndoDelta.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Units.h",
 			"MU",
 			"PRMOGMWJPH/moc_Units.cpp",
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/VarParam.h",
+			"MU",
+			"PRMOGMWJPH/moc_VarParam.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ViewTools.h",
+			"MU",
+			"PRMOGMWJPH/moc_ViewTools.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Xref.h",
 			"MU",
 			"PRMOGMWJPH/moc_Xref.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ZwcadTextLayout.h",
+			"MU",
+			"PRMOGMWJPH/moc_ZwcadTextLayout.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ComplianceChecker.h",
+			"MU",
+			"NCIRK2WADF/moc_ComplianceChecker.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/StandardsDB.h",
+			"MU",
+			"NCIRK2WADF/moc_StandardsDB.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ToleranceDB.h",
+			"MU",
+			"NCIRK2WADF/moc_ToleranceDB.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/weld/WeldSymbol.h",
+			"MU",
+			"YOAZBLT57E/moc_WeldSymbol.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.h",
+			"MU",
+			"YPKJ5OE7LN/moc_AiAssistantPanel.cpp",
 			null
 		],
 		[
@@ -1207,6 +1471,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_AutoSaveOptionsDialog.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_BearingViewsDialog.cpp",
@@ -1216,6 +1486,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockDialogs.h",
 			"MU",
 			"YPKJ5OE7LN/moc_BlockDialogs.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockEditorDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_BlockEditorDialog.cpp",
 			null
 		],
 		[
@@ -1237,9 +1513,57 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandPalette.h",
+			"MU",
+			"YPKJ5OE7LN/moc_CommandPalette.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ConstraintBar.h",
 			"MU",
 			"YPKJ5OE7LN/moc_ConstraintBar.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CrashRecoveryDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_CrashRecoveryDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DbConfigDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DbConfigDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DbDrawingsDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DbDrawingsDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DesignCenterPanel.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DesignCenterPanel.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DiagnosticsDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DiagnosticsDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DocTab.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DocTab.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DrawingTheme.h",
+			"MU",
+			"YPKJ5OE7LN/moc_DrawingTheme.cpp",
 			null
 		],
 		[
@@ -1276,6 +1600,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_FloorPlanViewsDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_GdtAnnotationDialog.cpp",
 			null
 		],
 		[
@@ -1339,6 +1669,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/OptionsDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_OptionsDialog.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_PaperSizeDialog.cpp",
@@ -1375,6 +1711,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PublishDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_PublishDialog.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/QSelectDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_QSelectDialog.cpp",
@@ -1399,9 +1741,27 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/SheetFrameDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_SheetFrameDialog.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/SnapSettingsDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_SnapSettingsDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StandardsBrowserDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_StandardsBrowserDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StandardsPanel.h",
+			"MU",
+			"YPKJ5OE7LN/moc_StandardsPanel.cpp",
 			null
 		],
 		[
@@ -1423,6 +1783,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ThemeManager.h",
+			"MU",
+			"YPKJ5OE7LN/moc_ThemeManager.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.h",
 			"MU",
 			"YPKJ5OE7LN/moc_TitleBlockForm.cpp",
@@ -1432,6 +1798,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UnitsLimitsDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_UnitsLimitsDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/WeldSymbolDialog.h",
+			"MU",
+			"YPKJ5OE7LN/moc_WeldSymbolDialog.cpp",
 			null
 		],
 		[
@@ -1493,6 +1865,12 @@
 			"MU",
 			"BWQWZ34JRJ/moc_Tools.cpp",
 			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/tools/WeldTool.h",
+			"MU",
+			"BWQWZ34JRJ/moc_WeldTool.cpp",
+			null
 		]
 	],
 	"HEADER_EXTENSIONS" : [ "h", "hh", "h++", "hm", "hpp", "hxx", "in", "txx" ],
@@ -1501,6 +1879,7 @@
 	"MOC_DEFINITIONS" : 
 	[
 		"MINGW_HAS_SECURE_API=1",
+		"QT_CONCURRENT_LIB",
 		"QT_CORE_LIB",
 		"QT_GUI_LIB",
 		"QT_NETWORK_LIB",
@@ -1508,6 +1887,7 @@
 		"QT_PRINTSUPPORT_LIB",
 		"QT_QMLINTEGRATION_LIB",
 		"QT_QML_LIB",
+		"QT_SQL_LIB",
 		"QT_WIDGETS_LIB",
 		"UNICODE",
 		"WIN32",
@@ -1538,6 +1918,8 @@
 		"C:/Qt/6.10.1/mingw_64/include/QtQml",
 		"C:/Qt/6.10.1/mingw_64/include/QtQmlIntegration",
 		"C:/Qt/6.10.1/mingw_64/include/QtNetwork",
+		"C:/Qt/6.10.1/mingw_64/include/QtConcurrent",
+		"C:/Qt/6.10.1/mingw_64/include/QtSql",
 		"C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++",
 		"C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/x86_64-w64-mingw32",
 		"C:/Qt/Tools/mingw1310_64/lib/gcc/x86_64-w64-mingw32/13.1.0/include/c++/backward",
@@ -1569,7 +1951,12 @@
 	"MOC_RELAXED_MODE" : false,
 	"MOC_SKIP" : 
 	[
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_i18n_qm.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_reward_qr.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_standards.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchselftest_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCAD_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchDwgBridge_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp"
 	],
 	"MULTI_CONFIG" : false,
@@ -1588,6 +1975,41 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/AppContextProvider.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/MockProvider.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlAssistant.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlCommandMapper.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/OpenAiProvider.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/tooldefs.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.cpp",
 			"MU",
 			null
@@ -1598,7 +2020,27 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AppSettings.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ArcModes.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AutoSave.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchBom.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.cpp",
 			"MU",
 			null
 		],
@@ -1613,7 +2055,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BomItem.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CadFormats.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CenterLineGen.cpp",
 			"MU",
 			null
 		],
@@ -1633,6 +2085,16 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Clipboard.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandInterpreter.cpp",
 			"MU",
 			null
@@ -1648,6 +2110,11 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ConstraintSolverFacade.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CuiAliasCommands.cpp",
 			"MU",
 			null
@@ -1658,7 +2125,27 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DensityTable.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DiagBundle.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Diagnostics.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DimStyle.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DrawingDb.cpp",
 			"MU",
 			null
 		],
@@ -1673,7 +2160,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ElementValidate.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/EllipseModes.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FeatureMenu.cpp",
 			"MU",
 			null
 		],
@@ -1689,6 +2186,16 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Gdt.cpp",
 			"MU",
 			null
 		],
@@ -1713,7 +2220,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/I18n.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Inquiry.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/InvoluteGear.cpp",
 			"MU",
 			null
 		],
@@ -1723,7 +2240,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layer.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layout.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/LegacyConstraintSolver.cpp",
 			"MU",
 			null
 		],
@@ -1758,6 +2285,11 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PartLibrary.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PlotStyle.cpp",
 			"MU",
 			null
@@ -1783,7 +2315,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ProxyGraphics.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/QSelect.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/RecentFiles.cpp",
 			"MU",
 			null
 		],
@@ -1818,7 +2360,17 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ShapeSelect.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SheetFrameTemplate.cpp",
 			"MU",
 			null
 		],
@@ -1848,7 +2400,27 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SymbolFactory.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Telemetry.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextMetrics.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextStyle.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TitleBlockLayout.cpp",
 			"MU",
 			null
 		],
@@ -1863,7 +2435,22 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/UndoDelta.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Units.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/VarParam.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ViewTools.cpp",
 			"MU",
 			null
 		],
@@ -1873,7 +2460,37 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ZwcadTextLayout.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/sheet_frame.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ComplianceChecker.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/StandardsDB.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ToleranceDB.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/weld/WeldSymbol.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.cpp",
 			"MU",
 			null
 		],
@@ -1888,12 +2505,22 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.cpp",
 			"MU",
 			null
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockDialogs.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockEditorDialog.cpp",
 			"MU",
 			null
 		],
@@ -1913,7 +2540,47 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandPalette.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ConstraintBar.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CrashRecoveryDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DbConfigDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DbDrawingsDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DesignCenterPanel.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DiagnosticsDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DocTab.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/DrawingTheme.cpp",
 			"MU",
 			null
 		],
@@ -1944,6 +2611,11 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.cpp",
 			"MU",
 			null
 		],
@@ -1998,6 +2670,11 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/OptionsDialog.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.cpp",
 			"MU",
 			null
@@ -2028,6 +2705,11 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PublishDialog.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/QSelectDialog.cpp",
 			"MU",
 			null
@@ -2048,7 +2730,22 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/SheetFrameDialog.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/SnapSettingsDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StandardsBrowserDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StandardsPanel.cpp",
 			"MU",
 			null
 		],
@@ -2068,12 +2765,22 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ThemeManager.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.cpp",
 			"MU",
 			null
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UnitsLimitsDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/WeldSymbolDialog.cpp",
 			"MU",
 			null
 		],
@@ -2131,13 +2838,23 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/tools/Tools.cpp",
 			"MU",
 			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/tools/WeldTool.cpp",
+			"MU",
+			null
 		]
 	],
 	"UIC_OPTIONS" : [],
 	"UIC_SEARCH_PATHS" : [],
 	"UIC_SKIP" : 
 	[
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_i18n_qm.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_reward_qr.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchcad_standards.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/.qt/rcc/qrc_sketchselftest_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCAD_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchDwgBridge_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp"
 	],
 	"UIC_UI_FILES" : [],

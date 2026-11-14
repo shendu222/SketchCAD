@@ -14,6 +14,9 @@
 #include <QInputDialog>
 #include <QFrame>
 #include <QSignalBlocker>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLineEdit>
 
 namespace SketchCAD {
 
@@ -274,10 +277,62 @@ void LayerPanel::onApplyStyle() {
 }
 
 void LayerPanel::onNewLayer() {
-    bool ok = false;
-    const QString name = QInputDialog::getText(this, QStringLiteral("新建图层"),
-                              QStringLiteral("图层名称："), QLineEdit::Normal, QString(), &ok);
-    if (ok && !name.trimmed().isEmpty()) model_->addLayer(name.trimmed());
+    // 自定义对话框：候选标准名（GB/T 18617）+ 实时合规提示；仅建议，不强制改名。
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("新建图层"));
+    auto* v = new QVBoxLayout(&dlg);
+    v->setContentsMargins(10, 10, 10, 10);
+    v->setSpacing(8);
+
+    auto* hint = new QLabel(QStringLiteral("图层命名建议（GB/T 18617 / ISO 13567）："));
+    v->addWidget(hint);
+
+    auto* combo = new QComboBox(&dlg);
+    combo->setEditable(true);
+    combo->setInsertPolicy(QComboBox::NoInsert);
+    // 候选：标准图层名（编号_名称）+ 既有图层名（便于沿用）
+    QStringList items = LayerNaming::suggestLayerNames();
+    for (int i = 0; i < model_->layerCount(); ++i) {
+        const QString nm = model_->layerAt(i).name;
+        if (!items.contains(nm)) items.append(nm);
+    }
+    combo->addItems(items);
+    combo->setCurrentText(QString());
+    combo->lineEdit()->setPlaceholderText(QStringLiteral("输入图层名，如 01_轮廓线"));
+    v->addWidget(combo);
+
+    auto* tip = new QLabel(&dlg);
+    tip->setWordWrap(true);
+    v->addWidget(tip);
+
+    auto* bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    v->addWidget(bb);
+
+    // 实时合规提示（绿=合规 / 黄=不合规，仅提示不强制）
+    auto updateTip = [&]() {
+        const QString nm = combo->currentText().trimmed();
+        if (nm.isEmpty()) {
+            tip->setText(QStringLiteral("提示：标准命名形如 编号_名称（如 01_轮廓线）。可自由命名，仅作建议。"));
+            tip->setStyleSheet(QStringLiteral("color:#888888;"));
+            return;
+        }
+        QString reason;
+        if (LayerNaming::isLayerNameCompliant(nm, &reason)) {
+            tip->setText(QStringLiteral("✓ 符合 GB/T 18617/ISO 13567 规范"));
+            tip->setStyleSheet(QStringLiteral("color:#2e7d32;"));
+        } else {
+            tip->setText(QStringLiteral("⚠ 不合规：") + reason);
+            tip->setStyleSheet(QStringLiteral("color:#b8860b;"));
+        }
+    };
+    QObject::connect(combo->lineEdit(), &QLineEdit::textChanged, &dlg, [&](const QString&) { updateTip(); });
+    QObject::connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    updateTip();
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    const QString name = combo->currentText().trimmed();
+    if (!name.isEmpty()) model_->addLayer(name);
 }
 
 void LayerPanel::onDeleteLayer() {

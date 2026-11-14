@@ -3,6 +3,9 @@
 #include <QColor>
 #include "Element.h"   // 复用 LineStyle 枚举
 #include "LineWidthGroup.h"   // standardLayers() 按当前线组派生粗/细线宽(mm)
+#include <vector>
+#include <QStringList>
+#include <QVector>
 
 namespace SketchCAD {
 
@@ -89,5 +92,52 @@ inline std::vector<Layer> standardLayers() {
     }
     return out;
 }
+
+// ============================================================
+// GB/T 18617 / ISO 13567 图层命名建议（仅建议，不强制改既有图层名）
+// ============================================================
+// 数据来源：StandardsDB 内嵌 cad_layers.json（"_standard": "GB/T 18617/ISO 13567"），
+// 提供 layer_01..layer_09 的编号与中文名映射：
+//   01 轮廓线 / 02 隐藏线 / 03 剖切线 / 04 中心线 / 05 剖面线 /
+//   06 标注     / 07 文字   / 08 尺寸标注 / 09 符号。
+// 命名合规判定：图层名符合下列之一即视为合规（仅作诊断，不改名）：
+//   * 保留默认层 "0"；
+//   * "<编号>_<名称>"  例：01_轮廓线；
+//   * "<编号> <名称>"  例：01 轮廓线；
+//   * "<编号>-<名称>"  例：01-轮廓线；
+//   * "<编号><名称>"   例：01轮廓线；
+//   * "<名称>"         例：轮廓线（裸标准名亦接受）。
+// 命名建议对话框仅提供候选标准名，最终是否采用由用户决定（满足"仅建议不强制"）。
+
+// 标准图层条目（编号 + 标准名）
+struct StandardLayerEntry {
+    QString code;   // 编号，如 "01"
+    QString name;   // 标准名，如 "轮廓线"
+};
+
+// 不合规图层命名问题（供 ComplianceChecker 结构化汇总）
+struct LayerNamingIssue {
+    QString layerName;  // 不合规的图层名
+    QString reason;     // 不合规原因 + 建议
+};
+
+namespace LayerNaming {
+
+// 从 StandardsDB::instance() 读取 cad_layers 表的 layer_01..layer_09，
+// 返回编号 + 标准名列表；标准表不可用时返回空列表（调用方需容忍）。
+std::vector<StandardLayerEntry> standardLayerEntries();
+
+// 候选图层名：为每个标准条目生成 "<编号>_<名称>" 形式（如 "01_轮廓线"），
+// 供新建图层对话框作为下拉候选。
+QStringList suggestLayerNames();
+
+// 判定图层名是否符合 GB/T 18617 规范。合规返回 true；
+// 若不合规且 reason 非空，写入原因与建议（如 "建议形如 01_轮廓线"）。
+bool isLayerNameCompliant(const QString& name, QString* reason = nullptr);
+
+// 批量检查一组图层名，返回所有不合规项（结构化 Issue 列表）。
+QVector<LayerNamingIssue> checkLayerNaming(const QStringList& names);
+
+} // namespace LayerNaming
 
 } // namespace SketchCAD

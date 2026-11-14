@@ -42,6 +42,25 @@ Result regularInscribed(const Vec3& center, const Vec3& vertex, int sides) {
     return r;
 }
 
+// 正多边形(内接)：圆心 center，外接圆半径 radius（直接给定，无需先合成顶点点）。
+Result regularInscribedR(const Vec3& center, double radius, int sides, double startAng) {
+    Result r;
+    sides = clampSides(sides);
+    if (radius < 1e-6) { r.msg = QStringLiteral("半径为 0"); return r; }
+
+    const double step = 2.0 * M_PI / sides;
+
+    r.valid = true;
+    r.type = ElementType::Polygon;
+    r.pts.reserve(sides);
+    for (int i = 0; i < sides; ++i) {
+        const double ang = startAng + i * step;
+        r.pts.emplace_back(center.x + radius * std::cos(ang),
+                           center.y + radius * std::sin(ang), 0);
+    }
+    return r;
+}
+
 // ============================ 2. 正多边形(外切) ============================
 
 Result regularCircumscribed(const Vec3& center, const Vec3& edgeMid, int sides) {
@@ -240,6 +259,12 @@ Result star(const Vec3& center, const Vec3& outerVertex, int points, double inne
                            center.y + rad * std::sin(ang), 0);
     }
     return r;
+}
+
+// 星形：圆心 + 外半径形式（命令行用）。外顶点取圆心沿 X 轴 +outerR 处，
+// 角度步进与 star() 完全一致，仅入口更便于「中心 + 半径」直接调用。
+Result starR(const Vec3& center, double outerR, int points, double innerRatio) {
+    return star(center, center + Vec3(outerR, 0, 0), points, innerRatio);
 }
 
 // ============================ 主入口 ============================

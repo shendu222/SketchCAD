@@ -41,6 +41,11 @@ private:
     QDoubleSpinBox *sX, *sY, *sX2, *sY2, *sLen, *sAng, *sR;
     QLabel *labX, *labY;               // 「起点 X/Y」在非直线图元上要改叫「基点 X/Y」
     QDoubleSpinBox *sDimValue;          // 标注尺寸值（可编辑，驱动源图元几何）
+    // ---- 文字图元通用属性（字体/字号/宽度因子/对齐，需求 C：属性面板可编辑文字样式）----
+    QComboBox *cTextStyle;              // 文字样式（字体）：取自模型 STYLE 表（含 LongFangSong）
+    QDoubleSpinBox *sTextHeight;        // 字号（字高 mm）：Text/MText/Fcf/MLeader/Table→radius；Dimension→dimTextHeight(0=派生)
+    QDoubleSpinBox *sWidthFactor;       // 宽度因子（仅 Text/MText 语义明确）：1.0=不变形
+    QComboBox *cTextAlign;              // 9 点对齐（仅 Text/MText）
     // 公差字段与单标注标准覆盖（满足"用户可在界面设置公差表达规则"）
     QDoubleSpinBox *sTolUp, *sTolLo;    // 上偏差(+)/下偏差(-)
     QLineEdit *eFit;                    // 配合代号（如 H7 / g6）

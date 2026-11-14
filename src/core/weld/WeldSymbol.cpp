@@ -206,7 +206,9 @@ std::vector<Element> buildWeldSymbol(const WeldSpec& spec) {
     else if (spec.side == WeldSide::Other) sy = +1.0;   // 上方
     // 基本符号几何（attach 在 y=0 处，沿 sy 方向伸展 d）
     auto sym = [&](double x, double y) -> Vec3 { return W(cx + x, sy * y); };
-    auto symA = [&](double x, double y) -> Vec3 { return W(cx + x, -sy * y); }; // 反方向（非箭头侧）
+    // 预留：非箭头侧（双面/对称焊缝）的反向映射，当前各基本符号分支仅用 sym()。
+    // 保留设计意图但显式标注未使用，避免 -Wall -Wextra 的 -Wunused-but-set-variable。
+    [[maybe_unused]] auto symA = [&](double x, double y) -> Vec3 { return W(cx + x, -sy * y); };
 
     switch (spec.type) {
         case WeldType::Fillet: {  // ▽ 直角三角形（直角在左下，斜边右上）
@@ -294,6 +296,11 @@ std::vector<Element> buildWeldSymbol(const WeldSpec& spec) {
         const double ty = (sy == 0) ? -0.5 : sy * 0.5;   // 文本贴近符号侧
         out.push_back(makeText(W(cx - 3.2 * d, ty * d), dim, d * 0.5, layer));
     }
+
+    // 标识：令整组焊缝符号图元携带 name="焊缝符号"，与粗糙度符号(name="表面粗糙度")
+    // 同范式，使合规检查(ComplianceChecker R5)可按 name 聚合识别焊缝符号组。
+    const QString tag = QStringLiteral("焊缝符号");
+    for (auto& el : out) el.name = tag;
 
     return out;
 }

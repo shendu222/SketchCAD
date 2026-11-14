@@ -581,6 +581,14 @@ void ElementItem::paintDimension(QPainter* p, const Element& e) const {
     p->rotate(-g.textRotDeg);
     QFont f = p->font();
     f.setPixelSize(std::max(8, (int)std::lround(st.textHeight * z)));
+    // 文字样式驱动（STYLE 表 + 图元字段合并）：让标注默认长仿宋体（与 Text/MText 同源）
+    {
+        const ResolvedTextStyle rs = resolveTextStyle(e, model);
+        if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+        f.setBold(rs.bold);
+        f.setItalic(rs.italic);
+        f.setStretch((int)std::lround(rs.widthFactor * 100));
+    }
     p->setFont(f);
     const QFontMetricsF fm(f);
     const double tw = fm.horizontalAdvance(fullText), th = fm.height();
@@ -635,6 +643,8 @@ void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
     if (!g.texts.empty()) {
         p->save();
         p->setPen(DrawingTheme::resolveInk(e.color));
+        // 文字样式驱动（STYLE 表 + 图元字段合并）；多重引线默认长仿宋体
+        const ResolvedTextStyle rs = resolveTextStyle(e, model);
         for (const auto& t : g.texts) {
             if (t.text.isEmpty()) continue;
             p->save();
@@ -642,6 +652,10 @@ void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
             p->scale(1.0 / z, -1.0 / z);
             QFont f = p->font();
             f.setPixelSize(std::max(8, (int)std::lround(t.height * z)));
+            if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+            f.setBold(rs.bold);
+            f.setItalic(rs.italic);
+            f.setStretch((int)std::lround(rs.widthFactor * 100));
             p->setFont(f);
             p->drawText(QPointF(0, 0), t.text);
             p->restore();
@@ -668,6 +682,8 @@ void ElementItem::paintFcf(QPainter* p, const Element& e) const {
     if (!g.texts.empty()) {
         p->save();
         p->setPen(DrawingTheme::resolveInk(e.color));
+        // 文字样式驱动（STYLE 表 + 图元字段合并）；形位公差框格默认长仿宋体
+        const ResolvedTextStyle rs = resolveTextStyle(e, model);
         for (const auto& t : g.texts) {
             if (t.text.isEmpty()) continue;
             p->save();
@@ -675,6 +691,10 @@ void ElementItem::paintFcf(QPainter* p, const Element& e) const {
             p->scale(1.0 / z, -1.0 / z);
             QFont f = p->font();
             f.setPixelSize(std::max(8, (int)std::lround(t.height * z)));
+            if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+            f.setBold(rs.bold);
+            f.setItalic(rs.italic);
+            f.setStretch((int)std::lround(rs.widthFactor * 100));
             p->setFont(f);
             // 锚点为格内居中：向左对齐到锚点（几何里已按格宽居中算好锚点）
             p->drawText(QPointF(0, 0), t.text);
@@ -906,6 +926,12 @@ GraphicsView::GraphicsView(SketchModel* m, QWidget* parent)
     }
 
     setFocusPolicy(Qt::StrongFocus);
+    // 关键修复：点击画布后键盘焦点落在 viewport 子控件（而非 QGraphicsView 本身），
+    // 故 QGraphicsView::keyPressEvent 不会被调用。在 viewport 上安装事件过滤器，
+    // 使 Delete / Backspace 在常规「点选图元→按键」工作流中可靠生效（见 eventFilter）。
+    viewport()->setFocusPolicy(Qt::StrongFocus);
+    viewport()->installEventFilter(this);
+    installEventFilter(this);   // 视图本体 ShortcutOverride：拦截菜单 Delete 抢键
 
     // ---- Strategy Pattern：初始化工具管理器 ----
     // ToolContext 持有 model 和 view 指针，使 ITool 实例能通过 context 读写视图状态
@@ -3650,8 +3676,64 @@ void GraphicsView::ensureDynBox() {
     dynBox_->hide();
 }
 
+// Delete 键空闲态判定：绘制/拾取/框选等交互进行中不触发删除，让位给各自逻辑。
+// 夹点热态允许删除：点选端点常会进入夹点，此时选中集仍有效，Del 应删除选中图元。
+bool GraphicsView::idleForDelete() const {
+    return !drawing_ && pendingPts_.empty() && pickedIds_.empty() &&
+           !marqueeActive_ && !regionPickMode_ && !zoomBoxMode_ && !zoomBoxActive_ &&
+           !dimPending_ && !pointPickMode_ && trimBounds_.empty();
+}
+
+// Key_Delete 唯一处理点：删除当前选中图元（多选批量 + 单步撤销，由 SketchModel 保证）。
+// keyPressEvent（视图本体获焦）与 eventFilter（viewport 获焦）两条真实事件路径都调这里，
+// 保证行为完全一致，且不因焦点落点不同而出现"按 Del 无反应"。
+bool GraphicsView::handleDeleteKey() {
+    if (!idleForDelete()) return false;
+    if (gripHot_) cancelGrip();
+    model_->deleteSelected();
+    return true;
+}
+
+// Key_Backspace 唯一处理点：绘制过程回退最后一个拾取点/参考图元。
+bool GraphicsView::handleBackspaceKey() {
+    if (pendingPts_.empty() && pickedIds_.empty()) return false;
+    if (!pendingPts_.empty()) {
+        pendingPts_.pop_back();
+        model_->log(QStringLiteral("已回退一个拾取点"), "warn");
+    } else {
+        pickedIds_.pop_back();
+        model_->log(QStringLiteral("已回退一个参考图元"), "warn");
+    }
+    if (pendingPts_.empty() && pickedIds_.empty()) resetPending();
+    else                                             clearPreview();
+    return true;
+}
+
 // DYN 输入框事件过滤：Tab/Backtab 在 dynLen_/dynAng_ 间切换焦点并吃掉事件。
 bool GraphicsView::eventFilter(QObject* obj, QEvent* ev) {
+    // 画布空闲且可删除时，对 ShortcutOverride 明确 accept：告诉 Qt 这个 Del
+    // 由画布自己处理，任何 ApplicationShortcut(Delete) 都不要抢键。菜单已不再
+    // 注册 Del，但插件/未来若新增同名全局快捷键，KeyPress 仍能稳定落到画布。
+    // DYN 输入框等文本控件获焦时 obj 不是 viewport/this，不拦截，保留文字编辑。
+    if (ev->type() == QEvent::ShortcutOverride && (obj == viewport() || obj == this)) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Delete && idleForDelete()) {
+            ke->accept();
+            return true;
+        }
+    }
+    // 视口获焦时（点击画布后焦点在 viewport，QGraphicsView::keyPressEvent 不会被调用），
+    // 这里兜底拦截 Delete / Backspace，使「点选图元→按 Del 删除」可靠生效。
+    if (ev->type() == QEvent::KeyPress && obj == viewport()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        bool handled = false;
+        if (ke->key() == Qt::Key_Delete)        handled = handleDeleteKey();
+        else if (ke->key() == Qt::Key_Backspace) handled = handleBackspaceKey();
+        if (handled) {
+            ke->accept();
+            return true;
+        }
+    }
     if (ev->type() == QEvent::KeyPress && dynBox_ && dynBox_->isVisible()) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (obj == dynLen_ && ke->key() == Qt::Key_Tab) {
@@ -4553,7 +4635,11 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
     }
     if (e->button() != Qt::LeftButton)  { QGraphicsView::mousePressEvent(e); return; }
     // 夹点热态：左键按下被热态状态机消费（确认单击 / 拖拽起点），不派发给工具
-    if (gripHot_) { e->accept(); return; }
+    if (gripHot_) {
+        e->accept();
+        viewport()->setFocus(Qt::MouseFocusReason);
+        return;
+    }
     // 中心点拾取模式（环形阵列等）：左键直接取点回抛，不进入绘制/选择逻辑。
     if (pointPickMode_) {
         const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
@@ -4582,6 +4668,8 @@ void GraphicsView::mousePressEvent(QMouseEvent* e) {
     }
     handlePress(toVec3(mapToScene(e->position().toPoint())), e);
     e->accept();
+    // 选中会联动弹出属性面板；在处理完点击后再抢回键盘焦点，保证随后 Del 作用在选中集。
+    viewport()->setFocus(Qt::MouseFocusReason);
 }
 
 void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
@@ -4931,6 +5019,15 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
             return;
         }
     }
+    // Key_Delete / Key_Backspace：视图本体获焦时的正规派发路径。
+    // viewport 获焦路径由 eventFilter 兜底（QGraphicsView 的键盘焦点常落在 viewport 子控件）。
+    // 两条路径共用 handleDeleteKey/handleBackspaceKey，行为一致且不会重复删除。
+    if (e->key() == Qt::Key_Delete) {
+        if (handleDeleteKey()) { e->accept(); return; }
+    }
+    if (e->key() == Qt::Key_Backspace) {
+        if (handleBackspaceKey()) { e->accept(); return; }
+    }
     if (e->key() == Qt::Key_Escape) {
         if (regionPickMode_) {         // 区域拾取模式（剖面填充）：Esc 退出并通知上层
             setRegionPickMode(false);
@@ -4972,19 +5069,6 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::SnakeX) { finalizeSnake(); e->accept(); return; }
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::SnakeY) { finalizeSnake(); e->accept(); return; }
         if (t == "line") { resetPending(); model_->log(QStringLiteral("已结束连续直线绘制")); e->accept(); return; }
-    }
-    if (e->key() == Qt::Key_Backspace && (!pendingPts_.empty() || !pickedIds_.empty())) {
-        if (!pendingPts_.empty()) {
-            pendingPts_.pop_back();
-            model_->log(QStringLiteral("已回退一个拾取点"), "warn");
-        } else {
-            pickedIds_.pop_back();
-            model_->log(QStringLiteral("已回退一个参考图元"), "warn");
-        }
-        if (pendingPts_.empty() && pickedIds_.empty()) resetPending();
-        else                                             clearPreview();
-        e->accept();
-        return;
     }
     QGraphicsView::keyPressEvent(e);
 }

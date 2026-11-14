@@ -32,7 +32,10 @@
 #include "core/Vec.h"
 #include "core/ToolRegistry.h"
 #include "ui/GraphicsView.h"
+#include "ui/DeleteKeyFilter.h"   // Del 键统一应用级兜底（避免 QShortcutMap 吞掉 KeyPress）
 #include "ui/ModelMediator.h"
+#include "ui/StandardsPanel.h"          // 工程制图合规检查面板（STDCHECK 结果展示）
+#include "core/standards/ComplianceChecker.h"  // 命令→面板刷新回调桥
 #include "ui/ThemeManager.h"    // 内置亮/暗主题：选项改动 → applySettingLive 即时重绘
 #include "ui/RulerWidget.h"
 #include <QTabBar>
@@ -145,6 +148,7 @@
 #include <QInputDialog>
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>      // qApp->installEventFilter（Del 键应用级兜底）
 #include <QSet>
 #include <QKeySequence>
 #include <QDockWidget>
@@ -322,6 +326,19 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
 
     // 快捷键冲突自检：全部快捷键注册完毕后扫描重复绑定，warn 日志提示。
     auditShortcutConflicts();
+
+    // Del 键统一兜底：装在 qApp 上，在 QShortcutMap 之前接管 Key_Delete。
+    // 用回调动态取 model_（多文档切换会重绑活动文档），host 限定为主窗口，
+    // 浮动 dock / 属性面板 / 树控件等焦点位置都能稳定删除选中图元。
+    // parent 取 qApp 而非 this，并在主窗口销毁时先 detach 再卸载过滤器，
+    // 避免 destroyed 之后仍有按键派发时回调访问悬空的 MainWindow。
+    auto* delFilter = new DeleteKeyFilter(this, [this] { return model_; }, qApp);
+    qApp->installEventFilter(delFilter);
+    connect(this, &QObject::destroyed, delFilter, [delFilter] {
+        delFilter->detach();
+        qApp->removeEventFilter(delFilter);
+        delFilter->deleteLater();
+    });
 
     // 遥测开关同步（默认关闭；「选项 → 隐私」可改，改动经 applySettingLive 即时生效）。
     // 自测（s_recentPersistEnabled=false）不读注册表，保持默认关闭。
@@ -1411,7 +1428,12 @@ void MainWindow::buildMenu() {
         ->setIcon(icons::make("copy"));
     mk(e, QStringLiteral("粘贴"), QKeySequence::Paste, [this] { model_->paste(); })
         ->setIcon(icons::make("paste"));
-    mk(e, QStringLiteral("删除"), QKeySequence::Delete,[this] { model_->deleteSelected(); })
+    // 删除不注册 QKeySequence::Delete：Qt 的 ApplicationShortcut 会在 QWidgetWindow /
+    // QShortcutMap 层直接消费 KeyPress，焦点控件（GraphicsView、CommandLine）根本收不到
+    // Del；而 QLineEdit 又会 accept ShortcutOverride 反向屏蔽菜单快捷键，于是 Del 随
+    // 焦点落点漂移失效。删除统一由应用级 DeleteKeyFilter + 画布/命令行自身处理完成。
+    // "\tDel" 仅是菜单显示文本，不是 shortcut（auditShortcutConflicts 也不会收集）。
+    mk(e, QStringLiteral("删除\tDel"), QKeySequence(), [this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
     e->addSeparator();
     // ---- 剪贴板族：copyclip / copybase / pasteclip / pasteblock ----
@@ -1878,7 +1900,9 @@ void MainWindow::buildMenu() {
         model_->log(QStringLiteral("已分解 %1 个图元 → %2 段：%3")
                         .arg(src.size()).arg(added.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("explode"));
-    mk(mod, QStringLiteral("删除"), QKeySequence::Delete, [this] { model_->deleteSelected(); })
+    // 同样不绑定 Delete：删除键统一走应用级 DeleteKeyFilter + 画布处理，
+    // 避免任何一处 ApplicationShortcut(Delete) 让 QShortcutMap 重新吞掉 KeyPress。
+    mk(mod, QStringLiteral("删除"), QKeySequence(), [this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
 
     // 块（Block）：把命令行块操作封装为可视化子菜单（与【绘图>块】共用 buildBlockMenu）
@@ -2064,12 +2088,13 @@ void MainWindow::buildMenu() {
     panels->addAction(cmdDock_->toggleViewAction());
     panels->addAction(designDock_->toggleViewAction());
     panels->addAction(aiDock_->toggleViewAction());
+    panels->addAction(standardsDock_->toggleViewAction());
     panels->addSeparator();
     if (toolbar_)  panels->addAction(toolbar_->toggleViewAction());
     if (toolbar2_) panels->addAction(toolbar2_->toggleViewAction());
     panels->addSeparator();
     panels->addAction(QStringLiteral("全部显示"), this, [this] {
-        for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_}) d->show();
+        for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, standardsDock_}) d->show();
         if (toolbar_)  toolbar_->show();
         if (toolbar2_) toolbar2_->show();
         model_->log(QStringLiteral("已恢复全部面板"));
@@ -4082,6 +4107,8 @@ void MainWindow::buildDocks() {
     propDock_ = new QDockWidget(QStringLiteral("属性面板"), this);
     propDock_->setObjectName("dockProperty");
     propDock_->setWidget(propPanel_);
+    // 点选图元会 show/raise 本面板；禁止激活以免抢走画布焦点，导致 Del 变成改属性文本。
+    propDock_->setAttribute(Qt::WA_ShowWithoutActivating);
 
     logDock_ = new QDockWidget(QStringLiteral("执行信息"), this);
     logDock_->setObjectName("dockLog");
@@ -4102,6 +4129,17 @@ void MainWindow::buildDocks() {
     layerDock_ = new QDockWidget(QStringLiteral("图层"), this);
     layerDock_->setObjectName("dockLayer");
     layerDock_->setWidget(layerPanel_);
+
+    // 工程制图合规检查面板（STDCHECK / CHECKCOMPLIANCE 结果展示，双击跳转图元）
+    standardsPanel_ = new StandardsPanel(model_, this);
+    standardsDock_ = new QDockWidget(QStringLiteral("合规检查"), this);
+    standardsDock_->setObjectName("dockStandards");
+    standardsDock_->setWidget(standardsPanel_);
+    // 命令经 notifyComplianceReport 把检查结果推回本面板刷新（全局回调桥，一次性注册）
+    ComplianceChecker::setComplianceReportSink(
+        [this](const QVector<ComplianceIssue>& issues) {
+            if (standardsPanel_) standardsPanel_->setIssues(issues);
+        });
 
     // 约束栏面板（需求③④：展示选中图元的约束与状态；删除/定位约束）
     constraintBar_ = new ConstraintBar(model_, this);
@@ -4132,6 +4170,9 @@ void MainWindow::buildDocks() {
     addDockWidget(Qt::RightDockWidgetArea, propDock_);
     splitDockWidget(propDock_, constraintDock_, Qt::Vertical);
     splitDockWidget(constraintDock_, logDock_, Qt::Vertical);
+    // 右栏再下：合规检查面板（STDCHECK 结果）
+    addDockWidget(Qt::RightDockWidgetArea, standardsDock_);
+    splitDockWidget(logDock_, standardsDock_, Qt::Vertical);
     // 设计中心：右侧独立停靠（初始隐藏，可从「视图 > 面板」勾出）
     addDockWidget(Qt::RightDockWidgetArea, designDock_);
     // AI 助手：右侧独立停靠（初始隐藏，同上）
@@ -4140,7 +4181,7 @@ void MainWindow::buildDocks() {
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, aiDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, aiDock_, standardsDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
     designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
@@ -4276,6 +4317,8 @@ void MainWindow::hookActiveDoc() {
         if (id < 0 || model_->activeTool() != "select") return;
         propDock_->show();
         propDock_->raise();
+        // 面板弹出不得抢走键盘焦点：点选后按 Del 必须继续作用在画布选中集上。
+        if (view_) view_->setFocus(Qt::OtherFocusReason);
     });
 
     // ---- 扩展工具菜单准入态随选择集刷新（aboutToShow 亦会重算；此处保证菜单
@@ -4356,6 +4399,8 @@ void MainWindow::hookActiveDoc() {
     bom_->setModel(model_);
     propPanel_->setModel(model_);
     layerPanel_->setModel(model_);
+    standardsPanel_->setModel(model_);
+    standardsPanel_->setView(view_);
     constraintBar_->setModel(model_);
     scriptHost_->setModel(model_);
     pluginManager_->setModel(model_);

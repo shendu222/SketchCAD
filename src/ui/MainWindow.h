@@ -9,6 +9,7 @@
 #include <QString>
 #include <QColor>
 #include "ui/LayerPanel.h"   // LayerPanel 定义（位于 namespace SketchCAD），供 layerPanel_ 成员使用
+#include "ui/StandardsPanel.h"  // StandardsPanel 定义（位于 namespace SketchCAD），供 standardsPanel_ 成员使用
 #include "ui/ConstraintBar.h" // ConstraintBar 定义（约束栏面板，需求③④）
 #include "ui/DesignCenterPanel.h" // DesignCenterPanel 定义（设计中心侧栏，供 designPanel_ 成员使用）
 #include "core/Vec.h"        // Vec3（onCanvasPointPicked 槽签名需要）
@@ -89,6 +90,8 @@ private:
     QDockWidget *bomDock_, *elemDock_, *propDock_, *logDock_, *cmdDock_, *layerDock_, *constraintDock_;
     QDockWidget* designDock_;                 // 设计中心（符号库浏览/插入）侧栏
     LayerPanel* layerPanel_;
+    StandardsPanel* standardsPanel_ = nullptr;   // 工程制图合规检查面板（STDCHECK 结果）
+    QDockWidget*   standardsDock_ = nullptr;
     DesignCenterPanel* designPanel_;          // 设计中心面板（块表树 + 外部块库）
     ConstraintBar* constraintBar_;   // 约束栏面板（展示选中图元的约束与状态）
     // 工具条拆成两行，避免单行过长导致按钮被截断/挤压缩水/溢出窗口：

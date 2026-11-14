@@ -60,6 +60,10 @@ std::vector<ElementType> allowedTypes(Mode m);
 // 正多边形(内接)：圆心 center，外接圆上一点 vertex，边数 sides
 Result regularInscribed(const Vec3& center, const Vec3& vertex, int sides);
 
+// 正多边形(内接)：圆心 center，外接圆半径 radius，边数 sides，起始角 startAng(弧度，默认 0)。
+// 与 regularInscribed 等价，但直接接收半径，便于命令行「中心 + 半径」调用，无需先合成顶点点。
+Result regularInscribedR(const Vec3& center, double radius, int sides, double startAng = 0.0);
+
 // 正多边形(外切)：圆心 center，边中点 edgeMid，边数 sides
 Result regularCircumscribed(const Vec3& center, const Vec3& edgeMid, int sides);
 
@@ -77,6 +81,9 @@ Result rectFillet(const Vec3& p1, const Vec3& p2, double filletRadius);
 
 // 星形：圆心 center，外顶点 outerVertex，角数 points，内截比 innerRatio
 Result star(const Vec3& center, const Vec3& outerVertex, int points, double innerRatio = 0.5);
+
+// 星形：圆心 center，外半径 outerR，角数 points，内截比 innerRatio（中心 + 外半径形式，命令行用）
+Result starR(const Vec3& center, double outerR, int points, double innerRatio = 0.382);
 
 } // namespace polygon
 } // namespace SketchCAD

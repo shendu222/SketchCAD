@@ -210,6 +210,13 @@ protected:
     // DYN 动态输入框字段切换：Tab/Shift+Tab 在「距离/角度」两输入框间循环，
     // 并阻止焦点逃出 dynBox（QLineEdit 默认 Tab 会把焦点交还主窗口）。
     bool eventFilter(QObject* obj, QEvent* ev) override;
+    // Delete 键空闲态判定：绘制/拾取/框选/缩放/标注/区域拾取等交互进行中不触发。
+    // 夹点热态允许删除（点选端点常进入夹点，选中集仍有效）。
+    bool idleForDelete() const;
+    // 两条真实按键派发路径（视图本体 keyPressEvent / viewport 事件过滤器）共用的处理器。
+    // 返回 true 表示按键已被消费，调用方负责 accept() 并阻止继续派发（杜绝重复删除）。
+    bool handleDeleteKey();
+    bool handleBackspaceKey();
     void dragEnterEvent(QDragEnterEvent* e) override;
     void dropEvent(QDropEvent* e) override;
 

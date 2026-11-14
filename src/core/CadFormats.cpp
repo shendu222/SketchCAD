@@ -2503,19 +2503,65 @@ void DxfImportCtx::handleEntity(const QString& t, const std::vector<DxfPair>& p)
 //   空/纯 SHX 西文字体(txt/romans/monotxt 等) → 留空走程序默认字体；
 //   中文大字体(hztxt/gbcbig/gbenor/chineset/bigs/fs 等 .shx) → "SimSun"（宋体，
 //     与主流 CAD 打开此类图纸的观感一致）；ttf/ttc/otf → 去扩展名作族名（Qt 按族名可命中）。
+// 中文工程字体（宋/仿/楷系）→「长仿宋体」（GB/T 14691 工程图标准汉字字体）；
+// 黑体/无衬线（中望CAD 亦显示为黑体）与西文字体原样返回，不影响其它图纸。
+// ⚠️ 中文比较一律用 QStringLiteral / fromUtf8，禁用 QLatin1String(中文字面量)。
+static QString cjkFontToLongFangSong(const QString& fam) {
+    const QString f = fam.trimmed();
+    if (f.isEmpty()) return QStringLiteral("长仿宋体");
+    const QString l = f.toLower();
+    if (l == QStringLiteral("长仿宋体")) return QStringLiteral("长仿宋体");
+    // 保持原样（纯 ASCII 字体名，QLatin1String 安全）：黑体 + 西文
+    static const char* keepLatin[] = {
+        "simhei", "stheiti", "microsoft yahei",
+        "arial", "tahoma", "times", "calibri", "verdana", "courier", "helvetica" };
+    for (const char* k : keepLatin)
+        if (l == QLatin1String(k)) return f;
+    // 中文无衬线/黑体（中文比较用 QStringLiteral，禁用 QLatin1String）
+    static const QString keepCjk[] = {
+        QStringLiteral("黑体"), QStringLiteral("微软雅黑"), QStringLiteral("华文黑体"),
+        QStringLiteral("等线"), QStringLiteral("思源黑体") };
+    for (const QString& k : keepCjk)
+        if (l == k.toLower()) return f;
+    // 宋/仿/楷系中文工程字体 → 长仿宋体
+    static const QString cjkKey[] = {
+        QStringLiteral("simsun"), QStringLiteral("宋"), QStringLiteral("fang"),
+        QStringLiteral("仿"), QStringLiteral("kai"), QStringLiteral("楷"),
+        QStringLiteral("stsong"), QStringLiteral("stfangsong"), QStringLiteral("stkaiti"),
+        QStringLiteral("nsimsun"), QStringLiteral("新宋体"), QStringLiteral("华文宋体"),
+        QStringLiteral("华文仿宋"), QStringLiteral("华文楷体") };
+    for (const QString& k : cjkKey)
+        if (l.contains(k)) return QStringLiteral("长仿宋体");
+    // 仍含 CJK 汉字 → 视为中文工程字体，归一长仿宋体
+    for (const QChar& c : f)
+        if (c.unicode() >= 0x4E00 && c.unicode() <= 0x9FFF) return QStringLiteral("长仿宋体");
+    return f;   // 其余（纯西文等）保持原样
+}
+
+// 把 DWG/DXF 文字样式里的字体文件名 / 字体族名，归一为 SketchCAD 渲染用的字体族名。
+// 背景：施工图纸库这批 DWG 在中望CAD 中显示为「长仿宋体」（GB/T 14691 工程汉字标准字体），
+// 但其 STYLE 记录携带的是中文宋/仿宋系字体名（SimSun/宋体、FangSong/仿宋、FangSong_GB2312，
+// 或 hztxt/gbcbig 等 SHX 形字体）。旧实现把 CJK SHX 一律映射到 SimSun(宋体)、其余原样透传，
+// 导致本程序渲染为宋体/系统默认，与中望CAD 的「长仿宋体」显示不一致。
+// 现统一把「中文工程字体」归一为「长仿宋体」，与中望CAD 显示基准对齐；
+// 西文/黑体等保持不变。空字体（无 3/4/1000）→ 长仿宋体（GB/T 14691 默认）。
 static QString textStyleFontFamily(const QString& fontFileRaw) {
     const QString ff = fontFileRaw.trimmed();
-    if (ff.isEmpty()) return QString();
+    if (ff.isEmpty()) return QStringLiteral("长仿宋体");   // 无显式字体 → GB/T 14691 默认长仿宋体
     const QString base = ff.section(QLatin1Char('.'), 0, 0).toLower();  // 去扩展名并小写
     static const char* cjkShx[] = { "hztxt", "hztxtbig5", "gbcbig", "gbenor", "gbcbig5",
                                     "chineset", "chineset3", "bigfont", "big5", "fs", "fsbig" };
     for (const char* n : cjkShx)
-        if (base == QLatin1String(n)) return QStringLiteral("SimSun");
+        if (base == QLatin1String(n)) return QStringLiteral("长仿宋体");
     const QString ext = ff.section(QLatin1Char('.'), -1).toLower();
+    QString fam;
     if (ext == QLatin1String("ttf") || ext == QLatin1String("ttc") || ext == QLatin1String("otf"))
-        return ff.left(ff.size() - ext.size() - 1);   // 保留原族名大小写
-    if (!ff.contains(QLatin1Char('.'))) return ff;    // 无扩展名 = 已是族名（XDATA "SimSun" 等）
-    return QString();                                 // 其余（txt.shx 等）走默认
+        fam = ff.left(ff.size() - ext.size() - 1);   // 保留原族名大小写
+    else if (!ff.contains(QLatin1Char('.')))
+        fam = ff;                                     // 无扩展名 = 已是族名（XDATA "SimSun" 等）
+    else
+        return QString();                             // 其余（txt.shx 等西文形字体）走默认
+    return cjkFontToLongFangSong(fam);
 }
 
 // 扫描 token 流并按 SECTION 分发实体（ENTITIES 与 BLOCKS 共用一套 handleEntity）。

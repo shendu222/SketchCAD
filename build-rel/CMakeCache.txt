@@ -178,6 +178,21 @@ CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 //Value Computed by CMake
 CMAKE_PROJECT_NAME:STATIC=SketchCAD
 
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION:STATIC=1.1.1
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_MAJOR:STATIC=1
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_MINOR:STATIC=1
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_PATCH:STATIC=1
+
+//Value Computed by CMake
+CMAKE_PROJECT_VERSION_TWEAK:STATIC=
+
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=C:/Qt/Tools/mingw1310_64/bin/ranlib.exe
 
@@ -289,6 +304,9 @@ Qt6GuiTools_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6GuiTools
 //The directory containing a CMake configuration file for Qt6Gui.
 Qt6Gui_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Gui
 
+//The directory containing a CMake configuration file for Qt6LinguistTools.
+Qt6LinguistTools_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools
+
 //The directory containing a CMake configuration file for Qt6Network.
 Qt6Network_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Network
 
@@ -309,6 +327,9 @@ Qt6QmlTools_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6QmlTools
 
 //The directory containing a CMake configuration file for Qt6Qml.
 Qt6Qml_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml
+
+//The directory containing a CMake configuration file for Qt6Sql.
+Qt6Sql_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql
 
 //The directory containing a CMake configuration file for Qt6WidgetsTools.
 Qt6WidgetsTools_DIR:PATH=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6WidgetsTools
@@ -1198,6 +1219,8 @@ QT_FEATURE_splashscreen:INTERNAL=ON
 QT_FEATURE_splitter:INTERNAL=ON
 //Qt feature: sql (from target Qt6::Core)
 QT_FEATURE_sql:INTERNAL=ON
+//Qt feature: sqlmodel (from target Qt6::Sql)
+QT_FEATURE_sqlmodel:INTERNAL=ON
 //Qt feature: sse2 (from target Qt6::Core)
 QT_FEATURE_sse2:INTERNAL=ON
 //Qt feature: sse3 (from target Qt6::Core)
@@ -1480,5 +1503,6 @@ _CMAKE_CXX_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=FALSE
 _CMAKE_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
 //CMAKE_INSTALL_PREFIX during last run
 _GNUInstallDirs_LAST_CMAKE_INSTALL_PREFIX:INTERNAL=C:/Program Files (x86)/SketchCAD
+_Qt6_LINGUIST_TOOLS_DIR:INTERNAL=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6LinguistTools
 __qt_qml_macros_module_base_dir:INTERNAL=C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Qml
 

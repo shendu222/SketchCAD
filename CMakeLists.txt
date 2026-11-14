@@ -25,6 +25,9 @@ set(CORE_SOURCES
     src/core/Element.cpp
     src/core/ElementValidate.cpp   # 鲁棒性守卫层：读档前图元只读校验/丢弃/修复（不动几何算法）
     src/core/ElementFactory.cpp
+    src/core/standards/ToleranceDB.cpp  # ISO 公差数据库：IT01~IT18 标准公差 + 轴/孔基本偏差（GB/T 1800.1 / ISO 286-1）
+    src/core/standards/ComplianceChecker.cpp  # 模型合规检查器：图层命名合规（GB/T 18617 / ISO 13567）
+    src/core/Layer.cpp                  # 图层结构与 GB/T 18617 图层命名建议/合规判定（伴 Layer.h）
     src/core/ScriptApi.h
     src/core/ScriptApi.cpp
     src/core/JavaScriptEngine.cpp
@@ -139,6 +142,7 @@ target_compile_options(SketchDwgBridge PRIVATE -Wall -Wextra)
 
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
+    src/ui/DeleteKeyFilter.cpp  # Del 键应用级兜底：绕开 QShortcutMap 吞键，纯 Qt Widgets 依赖
     src/ui/ThemeManager.cpp     # 内置亮/暗主题单例（setColorScheme + 画布背景色 + themeChanged 广播）
     src/ui/DrawingTheme.cpp     # 绘图区域全套主题配色（网格/坐标轴/引导线/HUD/徽标/选中/约束…）
     src/ui/ElementPath.cpp
@@ -161,6 +165,7 @@ set(UI_SOURCES
     src/ui/ElementPanel.cpp
     src/ui/PropertyPanel.cpp
     src/ui/LayerPanel.cpp
+    src/ui/StandardsPanel.cpp     # 工程制图合规检查面板（STDCHECK 结果展示 / 双击跳转图元）
     src/ui/LogPanel.cpp
     src/ui/CommandLine.cpp
     src/ui/CommandPalette.cpp      # 命令面板对话框（Ctrl+Shift+P；过滤逻辑在 CommandCatalog）
@@ -329,6 +334,25 @@ add_executable(SketchSelfTest
     src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
     src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
     src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
+    # ---- DEL 键端到端交互自测（t_deleteKeyInteraction）：真实 GraphicsView + 真实 QKeyEvent ----
+    # 只接入 GraphicsView 及其最小依赖闭包（工具层 + 两个被工具引用的对话框），
+    # 不含 MainWindow/其余面板，保持自测目标无头、可直注按键事件。
+    src/ui/GraphicsView.cpp
+    src/ui/DeleteKeyFilter.cpp  # 应用级 Del 兜底（策略纯函数 + 窗口级真实派发自测）
+    src/ui/tools/ToolContext.cpp
+    src/ui/tools/ToolManager.cpp
+    src/ui/tools/Tools.cpp
+    src/ui/tools/FreehandLineTool.cpp
+    src/ui/tools/SplineEditTool.cpp
+    src/ui/tools/PolylineTool.cpp
+    src/ui/tools/BoundaryTool.cpp
+    src/ui/tools/PolylineEditTool.cpp
+    src/ui/tools/ShapeSelectTool.cpp
+    src/ui/tools/MTextTool.cpp
+    src/ui/tools/TableTool.cpp
+    src/ui/tools/WeldTool.cpp
+    src/ui/MTextDialog.cpp
+    src/ui/TableDialog.cpp
 )
 target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql Qt6::Network SketchDwgBridge)
 target_include_directories(SketchSelfTest PRIVATE

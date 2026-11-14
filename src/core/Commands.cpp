@@ -28,12 +28,14 @@
 #include <QRegularExpression>
 #include <QFile>              // P0-01：dxfout 文件写出
 #include <QMap>
+#include <cmath>             // 正多边形命令行显式尺寸：sin/cos/acos 确定性计算顶点
 #include <QSet>
 #include <QStringList>
 #include <algorithm>
 #include <cmath>              // 命令补齐：std::fabs / 数学常数
 #include "Section.h"          // HATCH/BHATCH：SectionStyle 装配关联填充
 #include "standards/StandardsDB.h" // 标准知识库：内嵌 12 类机械制图国标数据（standards 命令 / LLM 工具 / 浏览面板共用单例）
+#include "standards/ComplianceChecker.h" // 图层命名合规检查（stdcheck 命令；GB/T 18617 / ISO 13567）
 #include "SheetSpec.h"              // 图框幅面驱动：SheetFrameOptions / applySheetFrameToModel（按 A0–A4 联动图框）
 
 namespace SketchCAD {
@@ -523,7 +525,80 @@ bool PolyModeCommand::execute(const CommandContext& ctx) {
     // 用最后一个点作为光标位置（命令行无真实光标）
     Vec3 cur = pts.empty() ? Vec3(0, 0, 0) : pts.back();
 
-    polygon::Result r = polygon::compute(pm, pts, {}, cur, m->elements(), param, sides);
+    // ---- 正多边形家族（poly_regular / poly_circumscribed / poly_star）命令行显式尺寸 ----
+    // 核心修复：让 LLM/脚本直接给「中心 + 尺寸 + 边数」，由 C++ 确定性计算顶点，
+    // LLM 完全不必手算三角函数坐标（六边形此前因 LLM 幻觉坐标而翻车）。
+    // 语法（详见 CommandCatalog 条目）：
+    //   poly_regular       <cx,cy> <circumradius> <sides>          外接圆半径 + 边数
+    //   poly_regular       <cx,cy> side:<length> <sides>           边长 + 边数（推荐：LLM 原样转发提示词尺寸）
+    //   poly_circumscribed <cx,cy> <apothem> <sides>               边心距 + 边数
+    //   poly_star          <cx,cy> <outerR> <points> [innerRatio]  外半径 + 角数 [内比]
+    // 仅给 <cx,cy> <sides>（无尺寸）时退化为原交互式行为（半径取光标，命令行下为 0）。
+    polygon::Result explicitR;
+    bool haveExplicit = false;
+    if (pm == polygon::Mode::RegularInscribed ||
+        pm == polygon::Mode::RegularCircumscribed ||
+        pm == polygon::Mode::Star) {
+        const QStringList extra = ctx.toks.mid(1 + (int)pts.size());
+        bool hasMarker = false;
+        for (const QString& t : extra) {
+            if (t.startsWith(QStringLiteral("side:"), Qt::CaseInsensitive) ||
+                t.startsWith(QStringLiteral("r:"), Qt::CaseInsensitive) ||
+                t.startsWith(QStringLiteral("radius:"), Qt::CaseInsensitive)) {
+                hasMarker = true; break;
+            }
+        }
+        if (extra.size() >= 2 || hasMarker) {
+            sides = 6;                      // 覆盖 legacy 误把 size 当 sides 的解析
+            double sizeVal = 0.0;
+            bool sideMode = false;
+            bool sizeSet = false;
+            double starInner = 0.382;       // 经典星形内半径比（可省略）
+            int numCount = 0;
+            bool sizeFromMarker = false;   // 尺寸已由 side:/r:/radius: 标记设定
+            for (const QString& t : extra) {
+                if (t.startsWith(QStringLiteral("side:"), Qt::CaseInsensitive)) {
+                    sideMode = true;
+                    sizeVal = t.mid(5).toDouble(); sizeSet = true; sizeFromMarker = true;
+                } else if (t.startsWith(QStringLiteral("r:"), Qt::CaseInsensitive) ||
+                           t.startsWith(QStringLiteral("radius:"), Qt::CaseInsensitive)) {
+                    sizeVal = t.mid(t.indexOf(QLatin1Char(':')) + 1).toDouble();
+                    sizeSet = true; sizeFromMarker = true;
+                } else {
+                    bool ok = false;
+                    const double v = t.toDouble(&ok);
+                    if (ok) {
+                        ++numCount;
+                        if (numCount == 1 && !sizeFromMarker)     { sizeVal = v; sizeSet = true; }
+                        else if (numCount == 1 && sizeFromMarker) { sides = std::max(3, (int)v); }
+                        else if (numCount == 2)                   { sides = std::max(3, (int)v); }
+                        else if (numCount == 3 && pm == polygon::Mode::Star) { starInner = v; }
+                    }
+                }
+            }
+            if (sizeSet && !pts.empty()) {
+                const Vec3 c = pts[0];
+                const double kPi = std::acos(-1.0);
+                if (pm == polygon::Mode::RegularInscribed) {
+                    // 边长 → 外接圆半径 R = L / (2·sin(π/n))；半径形式直接用 sizeVal
+                    const double R = sideMode ? (sizeVal / (2.0 * std::sin(kPi / sides))) : sizeVal;
+                    explicitR = polygon::regularInscribedR(c, R, sides);
+                    haveExplicit = true;
+                } else if (pm == polygon::Mode::RegularCircumscribed) {
+                    // 边心距 a → 外接圆半径 R = a / cos(π/n)
+                    const double R = sizeVal / std::cos(kPi / sides);
+                    explicitR = polygon::regularInscribedR(c, R, sides);
+                    haveExplicit = true;
+                } else { // Star
+                    explicitR = polygon::starR(c, sizeVal, sides, starInner);
+                    haveExplicit = true;
+                }
+            }
+        }
+    }
+
+    polygon::Result r = haveExplicit ? explicitR
+                                    : polygon::compute(pm, pts, {}, cur, m->elements(), param, sides);
     if (!r.valid) {
         m->log(r.msg.isEmpty()
             ? QStringLiteral("无法创建多边形: ") + ctx.cmd : r.msg, "warn");
@@ -4819,6 +4894,40 @@ void CommandRegistry::registerBuiltins() {
                    QStringLiteral("info"));
             return true;
         }));
+
+    // ---- 工程制图合规检查（STDCHECK / CHECKCOMPLIANCE）----
+    // 依据 7 类 GB/T 规范（线宽粗细比 / 两线最小间隙 / 字号下限 / 粗糙度符号 /
+    // 焊缝符号完整性 / 幅面留边 / 图层命名 GB/T 18617）检查当前图纸；
+    // 仅作诊断报告，不修改任何图元。
+    //   stdcheck           检查工程制图合规性
+    //   checkcompliance    AI 助手(checkCompliance) 调用的同义入口
+    // 经 SketchModel::logAppended 逐条上报诊断，并 notifyComplianceReport 刷新合规面板；
+    // 检查为轻量同步遍历（图元量级小、毫秒级），不阻塞编辑器交互。
+    auto runCompliance = [](const CommandContext& ctx) {
+        SketchModel* m = ctx.model;
+        const QVector<ComplianceIssue> issues = ComplianceChecker::run(m);
+        if (issues.isEmpty()) {
+            m->log(QStringLiteral("STDCHECK：未发现不合规项，图纸符合相关 GB/T 规范。"),
+                   QStringLiteral("info"));
+            ComplianceChecker::notifyComplianceReport(issues);
+            return true;
+        }
+        m->log(QStringLiteral("STDCHECK：发现 %1 个不合规项（7 类 GB/T 规范）：").arg(issues.size()),
+               QStringLiteral("warn"));
+        for (const ComplianceIssue& iss : issues) {
+            const QString sev = (iss.severity == QStringLiteral("严重")) ? QStringLiteral("error")
+                              : (iss.severity == QStringLiteral("提示")) ? QStringLiteral("info")
+                              : QStringLiteral("warn");
+            m->log(QStringLiteral("  [#%1] %2 %3：%4（建议：%5）")
+                       .arg(iss.elementId).arg(iss.ruleId).arg(iss.severity)
+                       .arg(iss.message).arg(iss.fixHint),
+                   sev);
+        }
+        ComplianceChecker::notifyComplianceReport(issues);
+        return true;
+    };
+    registerExact("stdcheck", std::make_shared<LambdaCommand>(runCompliance));
+    registerExact("checkcompliance", std::make_shared<LambdaCommand>(runCompliance));
 
     // ---- 图框幅面驱动（sheetframe）----
     // 依据所选图纸幅面（A0–A4）联动重新生成图框：仅替换「图框 / 标题栏」两层图元，

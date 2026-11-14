@@ -111,6 +111,13 @@ void CommandLine::onReturn() {
 }
 
 void CommandLine::keyPressEvent(QKeyEvent* e) {
+    // 命令行空内容时 Del 删除当前选中图元（QLineEdit 会吃掉 Delete 的 ShortcutOverride，
+    // 菜单快捷键到不了画布；有输入时仍按文本删除字符，不影响命令编辑）。
+    if (e->key() == Qt::Key_Delete && text().isEmpty()) {
+        model_->deleteSelected();
+        e->accept();
+        return;
+    }
     // 空格在空输入时等价于回车：重复上一命令（避免插入空格字符）
     if (e->key() == Qt::Key_Space && text().trimmed().isEmpty()) {
         if (!interp_->lastCommand().isEmpty())

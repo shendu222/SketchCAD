@@ -341,6 +341,14 @@ void paintDimension(QPainter* p, const Element& e, Ctx& c) {
     p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);
     QFont f = p->font();
     f.setPixelSize(std::max(6, (int)std::lround(st.textHeight * c.scaleDev)));
+    // 文字样式驱动（STYLE 表 + 图元字段合并）：标注默认长仿宋体（与屏幕渲染同源）
+    {
+        const ResolvedTextStyle rs = resolveTextStyle(e, c.model);
+        if (!rs.fontFamily.isEmpty()) f.setFamily(rs.fontFamily);
+        f.setBold(rs.bold);
+        f.setItalic(rs.italic);
+        f.setStretch((int)std::lround(rs.widthFactor * 100));
+    }
     p->setFont(f);
     const QFontMetricsF fm(f);
     const double tw = fm.horizontalAdvance(fullText), th = fm.height();
@@ -394,6 +402,8 @@ void paintGdt(QPainter* p, const Element& e, Ctx& c) {
     if (!texts.empty()) {
         p->save();
         p->setPen(rs.color);
+        // 文字样式驱动（STYLE 表 + 图元字段合并）：引线/框格默认长仿宋体
+        const ResolvedTextStyle rsTxt = resolveTextStyle(e, c.model);
         for (const auto& t : texts) {
             if (t.text.isEmpty()) continue;
             p->save();
@@ -401,6 +411,10 @@ void paintGdt(QPainter* p, const Element& e, Ctx& c) {
             p->scale(1.0 / c.scaleDev, -1.0 / c.scaleDev);
             QFont f = p->font();
             f.setPixelSize(std::max(6, (int)std::lround(t.height * c.scaleDev)));
+            if (!rsTxt.fontFamily.isEmpty()) f.setFamily(rsTxt.fontFamily);
+            f.setBold(rsTxt.bold);
+            f.setItalic(rsTxt.italic);
+            f.setStretch((int)std::lround(rsTxt.widthFactor * 100));
             p->setFont(f);
             p->drawText(QPointF(0, 0), t.text);
             p->restore();

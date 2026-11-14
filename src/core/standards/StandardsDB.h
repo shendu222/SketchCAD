@@ -40,6 +40,12 @@ public:
     // 返回某表的原始 JSON 对象（探针 / 调试用）；不存在返回空对象。
     QJsonObject tableObject(const QString& table) const;
 
+    // ---- 面向 LLM 的「高频国标知识摘要」（数据派生，不新增第 13 张资源表）----
+    // 仅列高频规则 + 标准号（全部经 query() 从已装载的 12 类表读取），
+    // 并明确要求精确数值走 queryStandard 工具；供 NlAssistant 构造时拼入
+    // system prompt，控制上下文体积（不放全量 12 表数据）。
+    QString summary() const;
+
 private:
     QHash<QString, QJsonObject> tables_;
 };

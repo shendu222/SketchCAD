@@ -100,7 +100,7 @@ src/core/Commands.cpp HelpCommand ← 重写：总表自动枚举 + <cmd> 详情
 - **P2 别名通道**：别名 c→circle 得分为正；前缀匹配得分 > 子序列；阈值外判不匹配（3）
 - **P3 最近使用**：空查询置顶序（move→circle→原序）；pushRecent 去重置顶（2）
 - **H1 help 详情**：`help line` 成功、输出含「用法（Usage:）」、样例与实现同源（3）
-- **H2 别名/回落**：`help h` 解析到 hatch；未收录的 poly_regular 经 poly_ 前缀命中走「暂无详细帮助」回落（4）
+- **H2 别名/回落**：`help h` 解析到 hatch；未收录的 rect_chamfer 经 rect_ 前缀命中走「暂无详细帮助」回落（注：poly_regular 等已收录进 CommandCatalog，不再触发回落，故回落样本改用 rect_chamfer/rect_fillet 这类"注册前缀但 catalog 未列"的命令）（4）
 - **H3 未知容错**：`help circl` 失败 + 「您是不是想输入」含 circle（2）
 - **H4 总数一致**：help 总表含别名单列段；**解析出的命令总数 == `commandNames().size()`（注册表+家族全集）**；别名计数 == AliasTable 条数；分组行逐名覆盖全集（5）
 - **H5 冲突自检**：Ctrl+X 大小写规格化检出 1 组冲突且含双方动作名；无冲突返回空（4）

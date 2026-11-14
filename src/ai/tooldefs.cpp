@@ -40,6 +40,29 @@ QVector<LlmTool> schemas() {
                        "\"table\":{\"type\":\"string\",\"description\":\"标准表名（12 类之一）\"},"
                        "\"key\":{\"type\":\"string\",\"description\":\"键名；省略则返回该表全部键值\"}},"
                        "\"required\":[\"table\"]}") });
+
+    // 面向国标问答的精确查询工具：rule 为自然语言规则短语，内部一律先经
+    // StandardsDB::query 取数；数值型规则再复用 ToleranceDB 的 ISO 286-1 公式，
+    // 绝不复制常数表、绝不凭模型记忆给数。
+    t.append({ QStringLiteral("queryStandard"),
+        QStringLiteral("按规则精确查询机械制图国标数值/条文，返回带标准号与数据来源的确定答案。"
+                       "任何涉及具体数字的标准问题都必须调用本工具，禁止凭记忆作答。"
+                       "rule 为自然语言短语，例如「M20 粗牙螺距」「Φ30 IT7 标准公差」"
+                       "「H7 孔上下偏差」「线宽粗细比」「最小间隙」「汉字最小字高」"
+                       "「A3 幅面」「Ra 优先系列」。"),
+        QStringLiteral("{\"type\":\"object\",\"properties\":{"
+                       "\"rule\":{\"type\":\"string\",\"description\":\"要精确查询的国标规则/数值短语\"}},"
+                       "\"required\":[\"rule\"]}") });
+
+    // 面向「当前图纸是否合规」的只读检查工具：直接调 ComplianceChecker::run(model)，
+    // 与命令行 stdcheck / 合规面板同源。纯读、不写模型、不执行任何命令。
+    t.append({ QStringLiteral("checkCompliance"),
+        QStringLiteral("对当前打开的图纸运行工程制图合规检查（ComplianceChecker::run，7 类 GB/T 规则），"
+                       "返回逐规则结论与不合规明细。问「这张图线宽合规吗」「图纸是否符合国标」时必须调用。"
+                       "可选 rule 聚焦某条规则（如「线宽」或 R1_line_width_ratio）；省略返回全部 7 条。"
+                       "纯读、零副作用、不会执行任何绘图命令。"),
+        QStringLiteral("{\"type\":\"object\",\"properties\":{"
+                       "\"rule\":{\"type\":\"string\",\"description\":\"可选：聚焦的规则名或编号；省略则检查全部规则\"}}}") });
     return t;
 }
 

@@ -63,6 +63,31 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     cDimStd->addItem(QStringLiteral("GB/T 4458（国标）"), (int)DimensionStandard::GBT);
     cDimStd->addItem(QStringLiteral("ISO 129（国际）"),  (int)DimensionStandard::ISO);
 
+    // ---- 文字样式（字体）：取自模型 STYLE 表，运行时随表刷新 ----
+    cTextStyle = new QComboBox();
+    cTextStyle->setToolTip(QStringLiteral("文字样式（字体）：引用 STYLE 表；修改样式将同步更新所有引用它的文字"));
+    // ---- 字号（字高 mm）----
+    sTextHeight = new QDoubleSpinBox();
+    sTextHeight->setRange(0.0, 1000.0);
+    sTextHeight->setDecimals(2);
+    sTextHeight->setSuffix(QStringLiteral(" mm"));
+    // ---- 宽度因子（仅 Text/MText 明确语义）----
+    sWidthFactor = new QDoubleSpinBox();
+    sWidthFactor->setRange(0.1, 10.0);
+    sWidthFactor->setDecimals(2);
+    sWidthFactor->setSingleStep(0.05);
+    // ---- 9 点对齐（仅 Text/MText）----
+    cTextAlign = new QComboBox();
+    cTextAlign->addItem(QStringLiteral("左上"), 0);
+    cTextAlign->addItem(QStringLiteral("中上"), 1);
+    cTextAlign->addItem(QStringLiteral("右上"), 2);
+    cTextAlign->addItem(QStringLiteral("左中"), 3);
+    cTextAlign->addItem(QStringLiteral("中心"), 4);
+    cTextAlign->addItem(QStringLiteral("右中"), 5);
+    cTextAlign->addItem(QStringLiteral("左下"), 6);
+    cTextAlign->addItem(QStringLiteral("中下"), 7);
+    cTextAlign->addItem(QStringLiteral("右下"), 8);
+
     sX = new QDoubleSpinBox(); sY  = new QDoubleSpinBox();
     sX2 = new QDoubleSpinBox(); sY2 = new QDoubleSpinBox();
     sLen = new QDoubleSpinBox(); sAng = new QDoubleSpinBox();
@@ -151,6 +176,10 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     form_->addRow(QStringLiteral("内接圆半径"), sPolyInRadius);
     form_->addRow(QStringLiteral("外接圆半径"), sPolyCircRadius);
     form_->addRow(QStringLiteral("标注文本"), eText);
+    form_->addRow(QStringLiteral("文字样式"), cTextStyle);
+    form_->addRow(QStringLiteral("字号"), sTextHeight);
+    form_->addRow(QStringLiteral("宽度因子"), sWidthFactor);
+    form_->addRow(QStringLiteral("对齐方式"), cTextAlign);
     form_->addRow(QStringLiteral("尺寸值"), sDimValue);
     // 公差表达规则（需用户手动填值；具体注写形式随"单标注标准"切换：GB/T 默认无、ISO 默认极限偏差）
     form_->addRow(QStringLiteral("上偏差 +"), sTolUp);
@@ -171,6 +200,11 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     connect(eName, &QLineEdit::editingFinished, this, &PropertyPanel::apply);
     connect(eLayer, &QLineEdit::editingFinished, this, &PropertyPanel::apply);
     connect(eText, &QLineEdit::editingFinished, this, &PropertyPanel::apply);
+    // 文字样式/字号/宽度因子/对齐：改动经 apply 写回图元字段（styleName / radius 或 dimTextHeight / widthFactor / textAlign）
+    connect(cTextStyle, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PropertyPanel::apply);
+    connect(sTextHeight, &QDoubleSpinBox::editingFinished, this, &PropertyPanel::apply);
+    connect(sWidthFactor, &QDoubleSpinBox::editingFinished, this, &PropertyPanel::apply);
+    connect(cTextAlign, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &PropertyPanel::apply);
     // 数值输入框使用 editingFinished（回车或失焦时触发），而非 valueChanged（每输入一位数字就触发），
     // 避免用户输入"120"时先以"1"再以"12"修改图元。
     connect(sDimValue, &QDoubleSpinBox::editingFinished, this, &PropertyPanel::applyDimValue);
@@ -237,7 +271,9 @@ void PropertyPanel::clearFields() {
                        (QWidget*)sAng, (QWidget*)sR, (QWidget*)eText, (QWidget*)sDimValue,
                        (QWidget*)sTolUp, (QWidget*)sTolLo, (QWidget*)eFit, (QWidget*)cDimStd,
                        (QWidget*)sPolySides, (QWidget*)sPolySideLen,
-                       (QWidget*)sPolyInRadius, (QWidget*)sPolyCircRadius})
+                       (QWidget*)sPolyInRadius, (QWidget*)sPolyCircRadius,
+                       (QWidget*)cTextStyle, (QWidget*)sTextHeight,
+                       (QWidget*)sWidthFactor, (QWidget*)cTextAlign})
         showRow(w, false);
     cWidth->setCurrentIndex(0);
     cLineStyle->setCurrentIndex((int)model_->defaultLineStyle());
@@ -258,7 +294,9 @@ void PropertyPanel::setEnabledFields(bool on) {
                        (QWidget*)sLen, (QWidget*)sAng, (QWidget*)sR, (QWidget*)sDimValue,
                        (QWidget*)sTolUp, (QWidget*)sTolLo, (QWidget*)eFit, (QWidget*)cDimStd,
                        (QWidget*)sPolySides, (QWidget*)sPolySideLen,
-                       (QWidget*)sPolyInRadius, (QWidget*)sPolyCircRadius})
+                       (QWidget*)sPolyInRadius, (QWidget*)sPolyCircRadius,
+                       (QWidget*)cTextStyle, (QWidget*)sTextHeight,
+                       (QWidget*)sWidthFactor, (QWidget*)cTextAlign})
         w->setEnabled(on);
 }
 
@@ -277,7 +315,12 @@ void PropertyPanel::load(int id) {
     const bool hasR   = (e->type == ElementType::Circle || e->type == ElementType::Arc);
     const bool isDim  = (e->type == ElementType::Dimension);
     const bool isText = (e->type == ElementType::Text);
+    const bool isMText = (e->type == ElementType::MText);
+    const bool isFcf  = (e->type == ElementType::Fcf);
+    const bool isMLeader = (e->type == ElementType::MLeader);
+    const bool isTable = (e->type == ElementType::Table);
     const bool isPoly = (e->type == ElementType::Polygon && e->pts.size() >= 3);
+    const bool isTextLike = isText || isMText || isDim || isFcf || isMLeader || isTable;
 
     if (!e->pts.empty()) { sX->setValue(e->pts[0].x); sY->setValue(e->pts[0].y); }
     labX->setText(isLine ? QStringLiteral("起点 X") : QStringLiteral("基点 X"));
@@ -294,11 +337,51 @@ void PropertyPanel::load(int id) {
     showRow(sLen, isLine); showRow(sAng, isLine);
 
     showRow(sR, hasR); sR->setValue(e->radius);
-    showRow(eText, isDim || isText);
+    showRow(eText, isDim || isText || isMText);
     eText->setText(e->text);
-    // 文本图元：把"标注文本"行标签临时改为"文本"，更贴切
-    if (QLabel* lb = qobject_cast<QLabel*>(form_->labelForField(eText)))
-        lb->setText(isText ? QStringLiteral("文本") : QStringLiteral("标注文本"));
+    // 文本类图元的"文本"行标签随类型更贴切
+    {
+        QString lbl = QStringLiteral("文本");
+        if (isDim) lbl = QStringLiteral("标注文本");
+        else if (isMText) lbl = QStringLiteral("多行文本");
+        if (QLabel* lb = qobject_cast<QLabel*>(form_->labelForField(eText)))
+            lb->setText(lbl);
+    }
+    // ---- 文字样式 / 字号 / 宽度因子 / 对齐（需求 C：文字图元属性面板可编辑）----
+    // 文字样式下拉：取自模型 STYLE 表（含 LongFangSong），随表实时刷新
+    cTextStyle->clear();
+    for (int i = 0; i < model_->textStyleCount(); ++i)
+        cTextStyle->addItem(model_->textStyleAt(i).name);
+
+    showRow(cTextStyle, isTextLike);
+    showRow(sTextHeight, isTextLike);
+    showRow(sWidthFactor, isText || isMText);
+    showRow(cTextAlign, isText || isMText);
+
+    if (isTextLike) {
+        // 当前样式名；空（旧档未关联）回落 "Standard"（系统默认字体），与渲染解析一致
+        const QString curStyle = e->styleName.isEmpty() ? QStringLiteral("Standard") : e->styleName;
+        int si = cTextStyle->findText(curStyle);
+        if (si < 0) si = cTextStyle->findText(QStringLiteral("Standard"));
+        if (si < 0 && cTextStyle->count() > 0) si = 0;
+        cTextStyle->setCurrentIndex(si >= 0 ? si : 0);
+    }
+    if (isTextLike) {
+        QSignalBlocker bh(sTextHeight);
+        // Dimension：dimTextHeight 覆盖字高；0=随图幅/标准派生。其余图元：radius=字高(mm)
+        if (isDim) sTextHeight->setValue(e->dimTextHeight);
+        else       sTextHeight->setValue(e->radius > 0.1 ? e->radius : 3.5);
+        if (QLabel* lb = qobject_cast<QLabel*>(form_->labelForField(sTextHeight)))
+            lb->setText(isDim ? QStringLiteral("字号(0=派生)") : QStringLiteral("字号"));
+    }
+    if (isText || isMText) {
+        QSignalBlocker bw(sWidthFactor), ba(cTextAlign);
+        sWidthFactor->setValue(e->widthFactor > 0 ? e->widthFactor : 1.0);
+        int ai = cTextAlign->findData(e->textAlign);
+        if (ai < 0) ai = 0;
+        cTextAlign->setCurrentIndex(ai);
+    }
+
     showRow(sDimValue, isDim);
     showRow(sTolUp, isDim);
     showRow(sTolLo, isDim);
@@ -392,7 +475,27 @@ void PropertyPanel::apply() {
         e.name = eName->text();
         e.layer = eLayer->text();
         if (e.type == ElementType::Circle || e.type == ElementType::Arc) e.radius = sR->value();
-        if (e.type == ElementType::Dimension || e.type == ElementType::Text) e.text = eText->text();
+        if (e.type == ElementType::Dimension || e.type == ElementType::Text
+            || e.type == ElementType::MText) e.text = eText->text();
+        // 文字样式与字号（需求 C：属性面板可查看/修改文字字体、字号等）
+        const bool textLike = (e.type == ElementType::Text || e.type == ElementType::MText ||
+                               e.type == ElementType::Dimension || e.type == ElementType::Fcf ||
+                               e.type == ElementType::MLeader || e.type == ElementType::Table);
+        if (textLike) {
+            e.styleName = cTextStyle->currentText();   // 引用 STYLE 表（含 LongFangSong）
+        }
+        if (e.type == ElementType::Text || e.type == ElementType::MText ||
+            e.type == ElementType::Fcf || e.type == ElementType::MLeader ||
+            e.type == ElementType::Table) {
+            e.radius = sTextHeight->value();           // 字高(mm)
+        }
+        if (e.type == ElementType::Dimension) {
+            e.dimTextHeight = sTextHeight->value();    // 字高覆盖；0=随图幅/标准派生
+        }
+        if (e.type == ElementType::Text || e.type == ElementType::MText) {
+            e.widthFactor = sWidthFactor->value();
+            e.textAlign   = cTextAlign->currentData().toInt();
+        }
     });
 }
 

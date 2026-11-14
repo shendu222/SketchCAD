@@ -3513,9 +3513,26 @@ void SketchModel::paste() {
     log(QStringLiteral("已粘贴: ") + e.name);
 }
 void SketchModel::deleteSelected() {
-    if (selectedId_ < 0) { log(QStringLiteral("未选中要删除的图元"), "warn"); return; }
-    removeElement(selectedId_);
-    log(QStringLiteral("已删除选中图元"));
+    // 只删除当前真实存在的选中图元：多选集合优先，回退主选择。
+    std::vector<int> ids;
+    ids.reserve(selectedIds_.size() + 1);
+    for (int id : selectedIds_) {
+        if (id >= 0 && element(id)) ids.push_back(id);
+    }
+    if (ids.empty() && selectedId_ >= 0 && element(selectedId_))
+        ids.push_back(selectedId_);
+    if (ids.empty()) {
+        if (!selectedIds_.empty() || selectedId_ >= 0) clearSelection();
+        log(QStringLiteral("未选中要删除的图元"), "warn");
+        return;
+    }
+    // 原子单步撤销：整批删除压入同一个 memento，Ctrl+Z 一次恢复全部选中图元。
+    pushMemento(QStringLiteral("删除选中图元"));
+    for (int id : ids) removeElementQuiet(id);
+    refreshHatchBoundaries(ids);   // 边界联动：与删除同属一个撤销步，不单独压栈
+    // 删除后选择集必须清空，避免高亮残留或下一次 Del 误删未选中图元。
+    if (!selectedIds_.empty() || selectedId_ >= 0) clearSelection();
+    log(QStringLiteral("已删除 %1 个选中图元").arg(ids.size()));
 }
 void SketchModel::reorderElement(int id, int beforeId) {
     auto it = find(id);

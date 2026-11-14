@@ -49,6 +49,14 @@ private:
     bool isDestructive(const QString& line) const;
     QString runQueryTool(const QString& name, const QJsonObject& args);
 
+    // ---- 国标只读工具（与 runSketchCommand 的动作出口严格分离）----
+    // queryStandardRule：内部一律先经 StandardsDB::query 取数；数值型规则再复用
+    //   ToleranceDB 的 GB/T 1800.1 公式实时计算，不复制常数、不凭记忆给数。
+    // complianceReport：调 ComplianceChecker::run(model_)，与 stdcheck 命令同源。
+    // 二者均为纯读，绝不调用 interp_->execute。
+    QString queryStandardRule(const QString& rule) const;
+    QString complianceReport(const QString& focus) const;
+
     CommandInterpreter* interp_;
     LlmProvider* provider_;
     AppContextProvider* ctx_;
