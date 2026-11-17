@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ConstraintSolverFacade.h"
 #include "AppSettings.h"
 #include "SketchModel.h"   // 回落日志需要完整类型（m->log）
@@ -39,7 +40,7 @@ R ConstraintSolverFacade::route(SketchModel* m, const char* op,
         return activeFn();
     } catch (const std::exception& e) {
         if (m) {
-            m->log(QStringLiteral("约束求解「%1」异常，已回落修复模型：%2")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("约束求解「%1」异常，已回落修复模型：%2"))
                      .arg(QLatin1String(op)).arg(QString::fromUtf8(e.what())),
                    QStringLiteral("warn"));
         }
@@ -140,11 +141,11 @@ QString ConstraintSolverFacade::drive(SketchModel& m, const QString& name, doubl
     QVector<QPair<QString, double>> changed;
     QString err;
     if (!vars_.resolveDrive(name, val, changed, &err)) {
-        m.log(QStringLiteral("参数驱动失败：%1").arg(err), QStringLiteral("warn"));
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("参数驱动失败：%1")).arg(err), QStringLiteral("warn"));
         return err;
     }
     if (changed.isEmpty()) {
-        m.log(QStringLiteral("变量 %1 驱动值未变化（= %2），无需重解").arg(name).arg(val),
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("变量 %1 驱动值未变化（= %2），无需重解")).arg(name).arg(val),
               QStringLiteral("info"));
         return {};
     }
@@ -168,16 +169,16 @@ QString ConstraintSolverFacade::drive(SketchModel& m, const QString& name, doubl
         if (!over.isEmpty()) {
             QStringList ids;
             for (int id : over) ids << QString::number(id);
-            m.log(QStringLiteral("过约束告警：尺寸 #%1 所在约束冗余/冲突（过约束尺寸开关已开，请移除矛盾或冗余约束）")
+            m.log(SketchCAD::I18n::t(QString::fromUtf8("过约束告警：尺寸 #%1 所在约束冗余/冲突（过约束尺寸开关已开，请移除矛盾或冗余约束）"))
                      .arg(ids.join(QStringLiteral(", "))), QStringLiteral("warn"));
         }
     }
 
     if (applied == 0)
-        m.log(QStringLiteral("变量 %1 = %2 已更新，但未关联任何模型标注").arg(name).arg(val),
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("变量 %1 = %2 已更新，但未关联任何模型标注")).arg(name).arg(val),
               QStringLiteral("info"));
     else
-        m.log(QStringLiteral("参数驱动：%1 个变量已应用并重解约束").arg(applied), QStringLiteral("info"));
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("参数驱动：%1 个变量已应用并重解约束")).arg(applied), QStringLiteral("info"));
     return {};
 }
 

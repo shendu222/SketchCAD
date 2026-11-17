@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "SheetFrameDialog.h"
 #include "core/Element.h"
 #include "core/Vec.h"
@@ -93,7 +94,7 @@ static QString scaleText(double v) {
 enum BarPreviewKind { BarTitle = 0, BarBom, BarAdd, BarCode, BarParam };
 
 SheetFrameDialog::SheetFrameDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("新建图框 — GB/T 14689"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("新建图框 — GB/T 14689")));
     resize(1040, 800);
     buildUi();
 
@@ -120,14 +121,14 @@ void SheetFrameDialog::buildUi() {
     auto* leftCol = new QVBoxLayout();
 
     // ---- 模板（需求 13）----
-    auto* gbTpl = new QGroupBox(QStringLiteral("模板"), this);
+    auto* gbTpl = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("模板")), this);
     auto* tplLay = new QHBoxLayout(gbTpl);
-    tplLay->addWidget(new QLabel(QStringLiteral("模板名称:"), gbTpl));
+    tplLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("模板名称:")), gbTpl));
     cbTemplate_ = new QComboBox(gbTpl);
     cbTemplate_->setMinimumWidth(150);
     tplLay->addWidget(cbTemplate_, 1);
-    btnTplSave_ = new QPushButton(QStringLiteral("存为模板"), gbTpl);
-    btnTplManage_ = new QPushButton(QStringLiteral("管理模板"), gbTpl);
+    btnTplSave_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("存为模板")), gbTpl);
+    btnTplManage_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("管理模板")), gbTpl);
     tplLay->addWidget(btnTplSave_);
     tplLay->addWidget(btnTplManage_);
     connect(cbTemplate_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
@@ -140,7 +141,7 @@ void SheetFrameDialog::buildUi() {
     leftCol->addWidget(gbTpl);
 
     // ---- 图幅（A0~A4 单选 / 加长图幅+下拉 / 自定义+长L宽W，附图布局）----
-    auto* gbFmt = new QGroupBox(QStringLiteral("图幅"), this);
+    auto* gbFmt = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("图幅")), this);
     auto* fmtLay = new QGridLayout(gbFmt);
     grpFmt_ = new QButtonGroup(this);
     // 基本幅面单选行（附图：A0~A4 五项一行；A5 仍属核心枚举，仅对话框不提供）
@@ -157,7 +158,7 @@ void SheetFrameDialog::buildUi() {
     }
     fmtLay->addLayout(fmtRow, 0, 0, 1, 2);
     // 加长图幅（单选 + 下拉；下拉仅在选中时可用）
-    rbExt_ = new QRadioButton(QStringLiteral("加长图幅"), gbFmt);
+    rbExt_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("加长图幅")), gbFmt);
     grpFmt_->addButton(rbExt_, 100);
     cbExt_ = new QComboBox(gbFmt);
     cbExt_->setEnabled(false);
@@ -168,7 +169,7 @@ void SheetFrameDialog::buildUi() {
     fmtLay->addWidget(rbExt_, 1, 0);
     fmtLay->addWidget(cbExt_, 1, 1);
     // 自定义（单选 + 长L/宽W）
-    rbCustom_ = new QRadioButton(QStringLiteral("自定义"), gbFmt);
+    rbCustom_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("自定义")), gbFmt);
     grpFmt_->addButton(rbCustom_, 101);
     fmtLay->addWidget(rbCustom_, 2, 0, 1, 2);
     auto* custRow = new QHBoxLayout();
@@ -176,8 +177,8 @@ void SheetFrameDialog::buildUi() {
     sbCW_->setSuffix(QStringLiteral(" mm")); sbCW_->setEnabled(false);
     sbCH_ = new QDoubleSpinBox(gbFmt); sbCH_->setRange(10, 100000); sbCH_->setValue(420);
     sbCH_->setSuffix(QStringLiteral(" mm")); sbCH_->setEnabled(false);
-    custRow->addWidget(new QLabel(QStringLiteral("长L:"), gbFmt)); custRow->addWidget(sbCW_, 1);
-    custRow->addWidget(new QLabel(QStringLiteral("宽W:"), gbFmt)); custRow->addWidget(sbCH_, 1);
+    custRow->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("长L:")), gbFmt)); custRow->addWidget(sbCW_, 1);
+    custRow->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("宽W:")), gbFmt)); custRow->addWidget(sbCH_, 1);
     fmtLay->addLayout(custRow, 3, 0, 1, 2);
 
     connect(grpFmt_, QOverload<int, bool>::of(&QButtonGroup::idToggled), this,
@@ -207,10 +208,10 @@ void SheetFrameDialog::buildUi() {
     // ---- 布置方式 + 绘图比例（附图：同一组框，无标题）----
     auto* gbLayout = new QGroupBox(QString(), this);
     auto* layGrid = new QGridLayout(gbLayout);
-    layGrid->addWidget(new QLabel(QStringLiteral("布置方式:"), gbLayout), 0, 0);
+    layGrid->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("布置方式:")), gbLayout), 0, 0);
     auto* oriRow = new QHBoxLayout();
-    rbLand_ = new QRadioButton(QStringLiteral("横置"), gbLayout);
-    rbPort_ = new QRadioButton(QStringLiteral("竖置"), gbLayout);
+    rbLand_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("横置")), gbLayout);
+    rbPort_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("竖置")), gbLayout);
     rbLand_->setChecked(true);
     oriRow->addWidget(rbLand_); oriRow->addSpacing(40); oriRow->addWidget(rbPort_);
     layGrid->addLayout(oriRow, 0, 1, 1, 2);
@@ -219,7 +220,7 @@ void SheetFrameDialog::buildUi() {
     connect(rbPort_, &QRadioButton::toggled, this,
             [this](bool on) { if (!updating_ && on) { opts_.landscape = false; updatePreview(); } });
 
-    layGrid->addWidget(new QLabel(QStringLiteral("绘图比例:"), gbLayout), 1, 0);
+    layGrid->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("绘图比例:")), gbLayout), 1, 0);
     auto* scaleRow = new QHBoxLayout();
     cbScaleNum_ = new QComboBox(gbLayout);   // 前值（附图：第一个下拉）
     cbScaleDen_ = new QComboBox(gbLayout);   // 后值（附图：第二个下拉）
@@ -245,22 +246,22 @@ void SheetFrameDialog::buildUi() {
     connect(cbScaleDen_, &QComboBox::currentTextChanged, this, onScaleChanged);
 
     // 计算(C)<：由图上长度/实际长度反推比例并回填两个下拉
-    btnScaleCalc_ = new QPushButton(QStringLiteral("计算(C)<"), gbLayout);
+    btnScaleCalc_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("计算(C)<")), gbLayout);
     layGrid->addWidget(btnScaleCalc_, 2, 1, 1, 2);
     connect(btnScaleCalc_, &QPushButton::clicked, this, [this]() {
         QDialog dlg(this);
-        dlg.setWindowTitle(QStringLiteral("比例计算"));
+        dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("比例计算")));
         auto* fl = new QFormLayout(&dlg);
         auto* spImg  = new QDoubleSpinBox(&dlg);   // 图上长度
         auto* spReal = new QDoubleSpinBox(&dlg);   // 实际长度
         spImg->setRange(0.001, 1e7);  spImg->setValue(100.0);  spImg->setSuffix(QStringLiteral(" mm"));
         spReal->setRange(0.001, 1e7); spReal->setValue(100.0); spReal->setSuffix(QStringLiteral(" mm"));
-        fl->addRow(QStringLiteral("图上长度:"), spImg);
-        fl->addRow(QStringLiteral("实际长度:"), spReal);
+        fl->addRow(SketchCAD::I18n::t(QString::fromUtf8("图上长度:")), spImg);
+        fl->addRow(SketchCAD::I18n::t(QString::fromUtf8("实际长度:")), spReal);
         auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          Qt::Horizontal, &dlg);
-        box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-        box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+        box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+        box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
         fl->addRow(box);
         connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
         connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
@@ -281,18 +282,18 @@ void SheetFrameDialog::buildUi() {
     leftCol->addWidget(gbLayout);
 
     // ---- 分区（GB/T 14689：偶数 + 25~75mm 实时校验）----
-    auto* gbZone = new QGroupBox(QStringLiteral("分区"), this);
+    auto* gbZone = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("分区")), this);
     gbZone->setCheckable(true); gbZone->setChecked(false);
     auto* zoneLay = new QGridLayout(gbZone);
     sbZoneX_ = new QSpinBox(gbZone); sbZoneX_->setRange(2, 40); sbZoneX_->setSingleStep(2);
     sbZoneX_->setValue(opts_.zoneCountX);
     sbZoneY_ = new QSpinBox(gbZone); sbZoneY_->setRange(2, 40); sbZoneY_->setSingleStep(2);
     sbZoneY_->setValue(opts_.zoneCountY);
-    zoneLay->addWidget(new QLabel(QStringLiteral("长度分区数:"), gbZone), 0, 0);
+    zoneLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("长度分区数:")), gbZone), 0, 0);
     zoneLay->addWidget(sbZoneX_, 0, 1);
-    zoneLay->addWidget(new QLabel(QStringLiteral("宽度分区数:"), gbZone), 1, 0);
+    zoneLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("宽度分区数:")), gbZone), 1, 0);
     zoneLay->addWidget(sbZoneY_, 1, 1);
-    lblZone_ = new QLabel(QStringLiteral("分区默认关闭"), gbZone);
+    lblZone_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("分区默认关闭")), gbZone);
     zoneLay->addWidget(lblZone_, 2, 0, 1, 2);
     connect(gbZone, &QGroupBox::toggled, this,
             [this](bool on) { if (updating_) return; opts_.zonesEnabled = on;
@@ -306,17 +307,17 @@ void SheetFrameDialog::buildUi() {
     // ---- 底部选项组（附图：自动填写日期/对中符号/装订线/指定图框位置/装订宽度 + 确定取消）----
     auto* gbAux = new QGroupBox(QString(), this);
     auto* auxGrid = new QGridLayout(gbAux);
-    chkAutoDate_ = new QCheckBox(QStringLiteral("自动填写日期"), gbAux);
-    chkCenter_   = new QCheckBox(QStringLiteral("对中符号"), gbAux);
-    chkBinding_  = new QCheckBox(QStringLiteral("装订线"), gbAux);
+    chkAutoDate_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("自动填写日期")), gbAux);
+    chkCenter_   = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("对中符号")), gbAux);
+    chkBinding_  = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("装订线")), gbAux);
     chkBinding_->setChecked(true);
-    chkFramePos_ = new QCheckBox(QStringLiteral("指定图框位置"), gbAux);
+    chkFramePos_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("指定图框位置")), gbAux);
     auxGrid->addWidget(chkAutoDate_, 0, 0);
     auxGrid->addWidget(chkCenter_,   0, 1);
     auxGrid->addWidget(chkBinding_,  1, 0);
     auxGrid->addWidget(chkFramePos_, 1, 1);
     auto* bindRow = new QHBoxLayout();
-    bindRow->addWidget(new QLabel(QStringLiteral("装订宽度"), gbAux));
+    bindRow->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("装订宽度")), gbAux));
     sbBindingW_ = new QSpinBox(gbAux); sbBindingW_->setRange(5, 100);
     sbBindingW_->setValue((int)opts_.bindingWidth);
     bindRow->addWidget(sbBindingW_, 1);
@@ -338,8 +339,8 @@ void SheetFrameDialog::buildUi() {
 
     // 确定 / 取消（附图：确定居左、取消居右）
     auto* btnRow = new QHBoxLayout();
-    auto* btnOk = new QPushButton(QStringLiteral("确定"), gbAux);
-    auto* btnCancel = new QPushButton(QStringLiteral("取消"), gbAux);
+    auto* btnOk = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("确定")), gbAux);
+    auto* btnCancel = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("取消")), gbAux);
     btnRow->addWidget(btnOk);
     btnRow->addStretch(1);
     btnRow->addWidget(btnCancel);
@@ -360,7 +361,7 @@ void SheetFrameDialog::buildUi() {
     auto* rightCol = new QVBoxLayout();
 
     // ---- 实时预览 ----
-    rightCol->addWidget(new QLabel(QStringLiteral("实时预览"), this));
+    rightCol->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("实时预览")), this));
     previewLabel_ = new QLabel(this);
     previewLabel_->setMinimumSize(380, 300);
     previewLabel_->setFrameShape(QFrame::StyledPanel);
@@ -381,37 +382,37 @@ void SheetFrameDialog::buildUi() {
     };
     chkTitle_ = new QCheckBox(this);
     cbTitleStyle_ = new QComboBox(this);
-    cbTitleStyle_->addItem(QStringLiteral("标题栏1"));
+    cbTitleStyle_->addItem(SketchCAD::I18n::t(QString::fromUtf8("标题栏1")));
     cbTitleStyle_->setMinimumWidth(140);
-    btnPrevTitle_ = new QPushButton(QStringLiteral("预览"), this);
+    btnPrevTitle_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("预览")), this);
     addBarRow(chkTitle_, QStringLiteral("标题栏"), true, cbTitleStyle_, btnPrevTitle_);
 
     chkBom_ = new QCheckBox(this);
     cbBomStyle_ = new QComboBox(this);
     cbBomStyle_->addItem(QStringLiteral("mx"));
-    btnPrevBom_ = new QPushButton(QStringLiteral("预览"), this);
+    btnPrevBom_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("预览")), this);
     addBarRow(chkBom_, QStringLiteral("明细栏"), false, cbBomStyle_, btnPrevBom_);
 
     chkAddBar_ = new QCheckBox(this);
     cbAddBar_ = new QComboBox(this);
     for (const auto& p : additionalBarPresets()) cbAddBar_->addItem(p.label);
-    btnPrevAddBar_ = new QPushButton(QStringLiteral("预览"), this);
+    btnPrevAddBar_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("预览")), this);
     addBarRow(chkAddBar_, QStringLiteral("附加栏"), false, cbAddBar_, btnPrevAddBar_);
     // 是否显示左分区（附图：附加栏行下缩进子复选；控制分区左带字母 A..n）
-    chkZoneLeft_ = new QCheckBox(QStringLiteral("是否显示左分区"), this);
+    chkZoneLeft_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("是否显示左分区")), this);
     barGrid->addWidget(chkZoneLeft_, barRow, 1);
     ++barRow;
 
     chkCodeBar_ = new QCheckBox(this);
     cbCodeBar_ = new QComboBox(this);
     for (const auto& p : codeBarPresets()) cbCodeBar_->addItem(p.label);
-    btnPrevCodeBar_ = new QPushButton(QStringLiteral("预览"), this);
+    btnPrevCodeBar_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("预览")), this);
     addBarRow(chkCodeBar_, QStringLiteral("代号栏"), false, cbCodeBar_, btnPrevCodeBar_);
 
     chkParamBar_ = new QCheckBox(this);
     cbParamBar_ = new QComboBox(this);
     for (const auto& p : paramBarPresets()) cbParamBar_->addItem(p.label);
-    btnPrevParamBar_ = new QPushButton(QStringLiteral("预览"), this);
+    btnPrevParamBar_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("预览")), this);
     addBarRow(chkParamBar_, QStringLiteral("参数栏"), false, cbParamBar_, btnPrevParamBar_);
 
     rightCol->addLayout(barGrid);
@@ -462,29 +463,29 @@ void SheetFrameDialog::buildUi() {
     connect(btnPrevParamBar_,&QPushButton::clicked, this, [this] { showBarPreview(BarParam); });
 
     // ---- 比例调整设置（附图右下组）----
-    auto* gbAdj = new QGroupBox(QStringLiteral("比例调整设置"), this);
+    auto* gbAdj = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("比例调整设置")), this);
     auto* adjLay = new QVBoxLayout(gbAdj);
-    chkDimAdj_ = new QCheckBox(QStringLiteral("标注随图框比例调整"), gbAdj);
+    chkDimAdj_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("标注随图框比例调整")), gbAdj);
     chkDimAdj_->setChecked(true);
     adjLay->addWidget(chkDimAdj_);
-    chkTextAdj_ = new QCheckBox(QStringLiteral("文字随图框比例调整"), gbAdj);
+    chkTextAdj_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("文字随图框比例调整")), gbAdj);
     chkTextAdj_->setChecked(true);
     adjLay->addWidget(chkTextAdj_);
     auto* thRow = new QHBoxLayout();
     thRow->addSpacing(20);
-    chkTextInitH_ = new QCheckBox(QStringLiteral("指定初始高度:"), gbAdj);
+    chkTextInitH_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("指定初始高度:")), gbAdj);
     sbTextInitH_ = new QDoubleSpinBox(gbAdj);
     sbTextInitH_->setRange(0.5, 20.0); sbTextInitH_->setSingleStep(0.5);
     sbTextInitH_->setValue(opts_.textInitHeight);
     sbTextInitH_->setSuffix(QStringLiteral(" mm")); sbTextInitH_->setEnabled(false);
     thRow->addWidget(chkTextInitH_); thRow->addWidget(sbTextInitH_, 1);
     adjLay->addLayout(thRow);
-    chkLwAdj_ = new QCheckBox(QStringLiteral("线宽随图框比例调整"), gbAdj);
+    chkLwAdj_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("线宽随图框比例调整")), gbAdj);
     chkLwAdj_->setChecked(true);
     adjLay->addWidget(chkLwAdj_);
     auto* lwRow = new QHBoxLayout();
     lwRow->addSpacing(20);
-    chkLwInit_ = new QCheckBox(QStringLiteral("指定初始比例:"), gbAdj);
+    chkLwInit_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("指定初始比例:")), gbAdj);
     sbLwInit_ = new QDoubleSpinBox(gbAdj);
     sbLwInit_->setRange(0.05, 5.0); sbLwInit_->setSingleStep(0.05);
     sbLwInit_->setValue(opts_.lineWidthInitRatio);
@@ -606,8 +607,8 @@ void SheetFrameDialog::applyTemplate(const SheetFrameTemplate& t) {
 void SheetFrameDialog::saveCurrentAsTemplate() {
     QString name = cbTemplate_->currentText().trimmed();
     bool ok = false;
-    name = QInputDialog::getText(this, QStringLiteral("存为模板"),
-                                 QStringLiteral("模板名称:"), QLineEdit::Normal, name, &ok)
+    name = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("存为模板")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("模板名称:")), QLineEdit::Normal, name, &ok)
                .trimmed();
     if (!ok || name.isEmpty()) return;
     SheetFrameTemplate t;
@@ -632,7 +633,7 @@ void SheetFrameDialog::saveCurrentAsTemplate() {
 // ---- 管理模板（需求 13）：列表 + 删除/重命名 ----
 void SheetFrameDialog::manageTemplates() {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("管理模板"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("管理模板")));
     dlg.resize(320, 380);
     auto* lay = new QVBoxLayout(&dlg);
     auto* list = new QListWidget(&dlg);
@@ -643,9 +644,9 @@ void SheetFrameDialog::manageTemplates() {
     }
     lay->addWidget(list);
     auto* btnRow = new QHBoxLayout();
-    auto* btnDel = new QPushButton(QStringLiteral("删除"), &dlg);
-    auto* btnRen = new QPushButton(QStringLiteral("重命名"), &dlg);
-    auto* btnClose = new QPushButton(QStringLiteral("关闭"), &dlg);
+    auto* btnDel = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")), &dlg);
+    auto* btnRen = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("重命名")), &dlg);
+    auto* btnClose = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), &dlg);
     btnRow->addWidget(btnDel); btnRow->addWidget(btnRen); btnRow->addStretch(1);
     btnRow->addWidget(btnClose);
     lay->addLayout(btnRow);
@@ -658,8 +659,8 @@ void SheetFrameDialog::manageTemplates() {
         const int row = list->currentRow();
         if (row < 0) return;
         bool ok = false;
-        const QString name = QInputDialog::getText(list, QStringLiteral("重命名模板"),
-                                                   QStringLiteral("新名称:"), QLineEdit::Normal,
+        const QString name = QInputDialog::getText(list, SketchCAD::I18n::t(QString::fromUtf8("重命名模板")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("新名称:")), QLineEdit::Normal,
                                                    list->item(row)->text(), &ok).trimmed();
         if (ok && !name.isEmpty()) list->item(row)->setText(name);
     });
@@ -719,19 +720,19 @@ void SheetFrameDialog::showBarPreview(int kind) {
 
     static const char* kNames[] = {"标题栏", "明细栏", "附加栏", "代号栏", "参数栏"};
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("预览 — %1").arg(QString::fromUtf8(kNames[kind])));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("预览 — %1")).arg(QString::fromUtf8(kNames[kind])));
     auto* lay = new QVBoxLayout(&dlg);
     auto* lbl = new QLabel(&dlg);
     lbl->setPixmap(renderPreview(els, 520, 400));
     lay->addWidget(lbl);
-    auto* btnClose = new QPushButton(QStringLiteral("关闭"), &dlg);
+    auto* btnClose = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), &dlg);
     lay->addWidget(btnClose);
     connect(btnClose, &QPushButton::clicked, &dlg, &QDialog::accept);
     dlg.exec();
 }
 
 void SheetFrameDialog::validateZones() {
-    if (!opts_.zonesEnabled) { lblZone_->setText(QStringLiteral("分区默认关闭")); return; }
+    if (!opts_.zonesEnabled) { lblZone_->setText(SketchCAD::I18n::t(QString::fromUtf8("分区默认关闭"))); return; }
     const double W = opts_.widthMm(), H = opts_.heightMm();
     const SheetFormat ff = opts_.frameMarginFormat();
     const SheetFrameMargins mg = standardSheetFrameMargins(ff);   // 标准留边（GB/T 14689），与落盘同源

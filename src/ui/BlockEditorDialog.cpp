@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "BlockEditorDialog.h"
 
 #include <QDialogButtonBox>
@@ -29,22 +30,21 @@ BlockEditorDialog::BlockEditorDialog(SketchModel* model, const QString& blockNam
                                      QWidget* parent)
     : QDialog(parent), model_(model), blockName_(blockName)
 {
-    setWindowTitle(QStringLiteral("在位编辑块 — %1").arg(blockName_));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("在位编辑块 — %1")).arg(blockName_));
     setMinimumSize(680, 520);
 
     auto* top = new QHBoxLayout;
-    auto* addLineBtn = new QPushButton(QStringLiteral("添加直线"));
-    auto* addCircleBtn = new QPushButton(QStringLiteral("添加圆"));
-    delBtn_        = new QPushButton(QStringLiteral("删除选中"));
-    auto* fitBtn    = new QPushButton(QStringLiteral("适应窗口"));
+    auto* addLineBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("添加直线")));
+    auto* addCircleBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("添加圆")));
+    delBtn_        = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除选中")));
+    auto* fitBtn    = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("适应窗口")));
     top->addWidget(addLineBtn);
     top->addWidget(addCircleBtn);
     top->addWidget(delBtn_);
     top->addWidget(fitBtn);
     top->addStretch(1);
 
-    info_ = new QLabel(QStringLiteral(
-        "在下方直接拖动图元即可修改块内几何；确定后所有引用实时同步。Esc / 取消丢弃不落盘。"));
+    info_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("在下方直接拖动图元即可修改块内几何；确定后所有引用实时同步。Esc / 取消丢弃不落盘。")));
     info_->setWordWrap(true);
 
     scene_ = new QGraphicsScene(this);
@@ -55,8 +55,8 @@ BlockEditorDialog::BlockEditorDialog(SketchModel* model, const QString& blockNam
     view_->setDragMode(QGraphicsView::NoDrag);   // 拖动由图元自身的 ItemIsMovable 承担
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
 
     auto* lay = new QVBoxLayout(this);
     lay->addLayout(top);
@@ -134,8 +134,8 @@ void BlockEditorDialog::onAddCircle() {
 void BlockEditorDialog::onDeleteSelected() {
     const auto sel = scene_->selectedItems();
     if (sel.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("删除"),
-                                 QStringLiteral("请先在编辑区点选要删除的图元。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("删除")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("请先在编辑区点选要删除的图元。")));
         return;
     }
     for (auto* gi : sel) {

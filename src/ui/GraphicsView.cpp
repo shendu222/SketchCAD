@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "GraphicsView.h"
 #include "ElementPath.h"   // buildPath/rawBounds 已下沉（无头复用）
 #include "dnd.h"
@@ -1160,7 +1161,7 @@ bool GraphicsView::buildItemFor(const Element& e) {
     else { try { item = new ElementItem(e); } catch (const std::bad_alloc&) { item = nullptr; } }
     if (!item) {
         memLimited_ = true;
-        model_->log(QStringLiteral("内存不足，场景项创建已暂停（已建 %1 项）。图形仍可平移缩放与拾取。")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("内存不足，场景项创建已暂停（已建 %1 项）。图形仍可平移缩放与拾取。"))
                         .arg(items_.size()), "error");
         return false;
     }
@@ -1517,7 +1518,7 @@ void GraphicsView::refreshConstraintDiagnostics() {
     for (int id : diag.overconstrainedIds) conflictIds_.insert(id);
     if (!conflictIds_.empty()) {
         QStringList s; for (int id : conflictIds_) s << QString::number(id);
-        model_->log(QStringLiteral("约束诊断：%1（涉及图元 #%2）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("约束诊断：%1（涉及图元 #%2）"))
                        .arg(diag.stateText()).arg(s.join(" #")), "error");
     }
     rebuild();
@@ -1865,7 +1866,7 @@ void GraphicsView::applySnapOverride(bool snap::SnapConfig::* field, const QStri
     c.*field = true;                  // 仅该类型生效
     snapCfg_ = c;
     snapOverrideActive_ = true;
-    model_->log(QStringLiteral("临时捕捉覆盖：仅 %1（Shift+右键），放置一点后自动恢复").arg(name));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("临时捕捉覆盖：仅 %1（Shift+右键），放置一点后自动恢复")).arg(name));
     refreshSnapAtCursor();
 }
 
@@ -1873,25 +1874,25 @@ void GraphicsView::clearSnapOverride() {
     if (!snapOverrideActive_) return;
     snapCfg_ = snapRestore_;          // 恢复覆盖前的活动配置
     snapOverrideActive_ = false;
-    model_->log(QStringLiteral("已清除临时捕捉覆盖，恢复原有捕捉配置"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已清除临时捕捉覆盖，恢复原有捕捉配置")));
     refreshSnapAtCursor();
 }
 
 // 弹出「临时捕捉覆盖」菜单：列出全部捕捉类型，选中即 applySnapOverride（单次有效）。
 void GraphicsView::showSnapOverrideMenu(const QPoint& globalPos) {
     QMenu menu(this);
-    menu.setTitle(QStringLiteral("临时捕捉覆盖（仅本次生效）"));
+    menu.setTitle(SketchCAD::I18n::t(QString::fromUtf8("临时捕捉覆盖（仅本次生效）")));
     for (const auto& d : snap::snapFieldDefs()) {
         QAction* a = menu.addAction(d.label);
         connect(a, &QAction::triggered, this, [this, d]() { applySnapOverride(d.field, d.label); });
     }
     menu.addSeparator();
-    QAction* off = menu.addAction(QStringLiteral("清除覆盖（恢复原有配置）"));
+    QAction* off = menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("清除覆盖（恢复原有配置）")));
     connect(off, &QAction::triggered, this, [this]() { clearSnapOverride(); });
     menu.addSeparator();
-    QAction* tk = menu.addAction(QStringLiteral("临时追踪点 (TK) — 光标处"));
+    QAction* tk = menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("临时追踪点 (TK) — 光标处")));
     connect(tk, &QAction::triggered, this, [this]() { addTrackPointAtCursor(); });
-    QAction* tkc = menu.addAction(QStringLiteral("清除全部临时追踪点"));
+    QAction* tkc = menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("清除全部临时追踪点")));
     connect(tkc, &QAction::triggered, this, [this]() { clearTrackPoints(); });
     menu.exec(globalPos);
 }
@@ -1901,7 +1902,7 @@ void GraphicsView::showSnapOverrideMenu(const QPoint& globalPos) {
 // 与快捷键/状态栏/命令 ortho/snap 三入口同源互斥（SketchModel 广播信号同步）。
 void GraphicsView::showTrackingQuickMenu(const QPoint& globalPos) {
     QMenu menu(this);
-    menu.setTitle(QStringLiteral("捕捉与追踪"));
+    menu.setTitle(SketchCAD::I18n::t(QString::fromUtf8("捕捉与追踪")));
 
     auto addToggle = [&](const QString& label, bool checked,
                          std::function<void(bool)> apply) {
@@ -1932,7 +1933,7 @@ void GraphicsView::showTrackingQuickMenu(const QPoint& globalPos) {
               });
 
     menu.addSeparator();
-    QAction* osnap = menu.addAction(QStringLiteral("捕捉设置 (Shift+右键 = 临时覆盖)"));
+    QAction* osnap = menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("捕捉设置 (Shift+右键 = 临时覆盖)")));
     connect(osnap, &QAction::triggered, this, [this]() {
         showSnapOverrideMenu(QCursor::pos());
     });
@@ -1957,7 +1958,7 @@ void GraphicsView::clearOtrackAnchors() {
 // 参与对象追踪对齐线计算；不随图存档，绘制结束/清空图纸时丢弃。
 void GraphicsView::addTrackPointAtCursor() {
     model_->addTrackPoint(lastMouseWorld_);
-    model_->log(QStringLiteral("已放置临时追踪点 (TK)：(%1, %2)")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已放置临时追踪点 (TK)：(%1, %2)"))
                     .arg(lastMouseWorld_.x, 0, 'f', 2).arg(lastMouseWorld_.y, 0, 'f', 2));
     refreshSnapAtCursor();
 }
@@ -1965,7 +1966,7 @@ void GraphicsView::addTrackPointAtCursor() {
 void GraphicsView::clearTrackPoints() {
     if (model_->trackPoints().empty()) return;
     model_->clearTrackPoints();
-    model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已清除全部临时追踪点 (TK)")));
     refreshSnapAtCursor();
 }
 
@@ -2016,7 +2017,7 @@ void GraphicsView::restoreConflictingShortcuts() {
 }
 
 void GraphicsView::logSnapToggle(const QString& name, bool on) {
-    model_->log(QStringLiteral("捕捉 %1 已%2").arg(name).arg(on ? QStringLiteral("开启") : QStringLiteral("关闭")),
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("捕捉 %1 已%2")).arg(name).arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开启")) : SketchCAD::I18n::t(QString::fromUtf8("关闭"))),
                 QStringLiteral("info"));
 }
 
@@ -2265,7 +2266,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
               .arg(ucsHud.name)
               .arg(ucsHud.origin.x, 0, 'f', 1).arg(ucsHud.origin.y, 0, 'f', 1)
               .arg(math::rad2deg(ucsHud.angleRad), 0, 'f', 1);
-    p->drawText(10, 18, QString("工作平面 %1     %2     当前线宽 %3     拾取容差 %4px")
+    p->drawText(10, 18, QString(SketchCAD::I18n::t(QString::fromUtf8("工作平面 %1     %2     当前线宽 %3     拾取容差 %4px")))
                             .arg(planeName(model_->plane()))
                             .arg(ucsTxt)
                             .arg(lineWidthName(model_->defaultWidth()))
@@ -2273,23 +2274,23 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
     if (drawToolActive_) {
         const auto mk = [](bool on) { return on ? QStringLiteral("✓") : QStringLiteral("✗"); };
         p->setPen(th.hudAccentBlue);
-        p->drawText(10, 36, QString("捕捉开关  [E]端点%1  [T]切线%2  [M]中点%3  [C]圆心%4  [X]交点%5   （绘制中按对应键切换）")
+        p->drawText(10, 36, QString(SketchCAD::I18n::t(QString::fromUtf8("捕捉开关  [E]端点%1  [T]切线%2  [M]中点%3  [C]圆心%4  [X]交点%5   （绘制中按对应键切换）")))
                                 .arg(mk(snapCfg_.endpoint))
                                 .arg(mk(snapCfg_.tangent))
                                 .arg(mk(snapCfg_.midpoint))
                                 .arg(mk(snapCfg_.center))
                                 .arg(mk(snapCfg_.intersection)));
-        p->drawText(10, 54, QString("捕捉开关② [Q]象限%1 [P]垂足%2 [I]插入%3 [N]节点%4 [A]最近%5 [O]外观%6 [L]平行%7 [W]延伸%8 [B]两点中点%9")
+        p->drawText(10, 54, QString(SketchCAD::I18n::t(QString::fromUtf8("捕捉开关② [Q]象限%1 [P]垂足%2 [I]插入%3 [N]节点%4 [A]最近%5 [O]外观%6 [L]平行%7 [W]延伸%8 [B]两点中点%9")))
                                 .arg(mk(snapCfg_.quadrant)).arg(mk(snapCfg_.perpendicular)).arg(mk(snapCfg_.insertion))
                                 .arg(mk(snapCfg_.node)).arg(mk(snapCfg_.nearest)).arg(mk(snapCfg_.apparent))
                                 .arg(mk(snapCfg_.parallel)).arg(mk(snapCfg_.extension)).arg(mk(snapCfg_.midBetween)));
         // 追踪状态行：极轴（含增量角）/ 对象追踪 / 临时追踪点数量（命令行 polar/otrack/tk 可控制）
         const auto& tc = model_->trackConfig();
         p->setPen(th.hudAccentOrange);
-        p->drawText(10, 72, QString("追踪      极轴%1（增量 %2°%3）  对象追踪%4  临时追踪点 %5 个")
+        p->drawText(10, 72, QString(SketchCAD::I18n::t(QString::fromUtf8("追踪      极轴%1（增量 %2°%3）  对象追踪%4  临时追踪点 %5 个")))
                                 .arg(mk(tc.polar))
                                 .arg(tc.polarIncrement, 0, 'f', 0)
-                                .arg(tc.polarRelative ? QStringLiteral("·相对上一段") : QStringLiteral("·绝对"))
+                                .arg(tc.polarRelative ? SketchCAD::I18n::t(QString::fromUtf8("·相对上一段")) : SketchCAD::I18n::t(QString::fromUtf8("·绝对")))
                                 .arg(mk(tc.objectTrack))
                                 .arg(model_->trackPoints().size()));
     }
@@ -2300,7 +2301,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         const auto on = [](bool b) { return b ? QStringLiteral("✓") : QStringLiteral("✗"); };
         p->setPen(th.hudAccentGreen);
         p->drawText(10, drawToolActive_ ? 90 : 36,
-                    QString("输入约束  [F8]正交%1  [F9]栅格吸附%2（步长 %3 mm）  捕捉容差 %4 px")
+                    QString(SketchCAD::I18n::t(QString::fromUtf8("输入约束  [F8]正交%1  [F9]栅格吸附%2（步长 %3 mm）  捕捉容差 %4 px")))
                         .arg(on(model_->orthoMode()))
                         .arg(on(model_->gridSnap()))
                         .arg(model_->gridSnapStep(), 0, 'f', 2)
@@ -2407,7 +2408,7 @@ void GraphicsView::cycleSelection(const QPoint& vp, const std::vector<int>& ids)
         cycleIdx_ = (cycleIdx_ + 1) % (int)ids.size();
     }
     model_->setSelected(cycleList_[cycleIdx_]);
-    model_->log(QString("选择循环：第 %1 / %2 个（继续 Ctrl+点击切换，其他点击退出循环）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("选择循环：第 %1 / %2 个（继续 Ctrl+点击切换，其他点击退出循环）")))
                     .arg(cycleIdx_ + 1).arg(cycleList_.size()));
 }
 
@@ -2818,7 +2819,7 @@ void GraphicsView::cancelDrawing() {
     }
     const bool had = dimPending_ || drawing_ || !pendingPts_.empty() || !pickedIds_.empty() || !trimBounds_.empty();
     resetPending();
-    model_->log(had ? QStringLiteral("已取消当前操作") : QStringLiteral("当前没有进行中的操作"),
+    model_->log(had ? SketchCAD::I18n::t(QString::fromUtf8("已取消当前操作")) : SketchCAD::I18n::t(QString::fromUtf8("当前没有进行中的操作")),
                 had ? "warn" : "info");
     updateCommandPrompt();
 }
@@ -2877,29 +2878,29 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
         const int hit = hitTest(mapFromScene(QPointF(w.x, w.y)));
         if (pickedIds_.empty()) {
             // 第 1 步：点选第一条直线
-            if (hit < 0) { model_->log(tname + QStringLiteral("：请点选第一条直线"), "warn"); return; }
+            if (hit < 0) { model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请点选第一条直线")), "warn"); return; }
             const Element* e0 = model_->element(hit);
             if (!e0 || e0->type != ElementType::Line || e0->pts.size() < 2) {
-                model_->log(tname + QStringLiteral("：请点选直线图元作为第 1 条边"), "warn"); return;
+                model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请点选直线图元作为第 1 条边")), "warn"); return;
             }
             pickedIds_.push_back(hit);
-            model_->log(tname + QStringLiteral("：已选第 1 条直线 #%1，请点选第 2 条相交直线").arg(hit));
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：已选第 1 条直线 #%1，请点选第 2 条相交直线")).arg(hit));
             return;
         }
         // 第 2 步：点选第二条直线（须与第一条相交）
-        if (hit < 0) { model_->log(tname + QStringLiteral("：请点选第 2 条直线"), "warn"); return; }
+        if (hit < 0) { model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请点选第 2 条直线")), "warn"); return; }
         const Element* b = model_->element(hit);
         if (!b || b->type != ElementType::Line || b->pts.size() < 2) {
-            model_->log(tname + QStringLiteral("：请点选直线图元作为第 2 条边"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请点选直线图元作为第 2 条边")), "warn"); return;
         }
         bool dup = false;
         for (int id : pickedIds_) if (id == hit) dup = true;
-        if (dup) { model_->log(tname + QStringLiteral("：请勿重复选择同一条直线，请点选另一条直线"), "warn"); return; }
+        if (dup) { model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请勿重复选择同一条直线，请点选另一条直线")), "warn"); return; }
         const Element* a = model_->element(pickedIds_.front());
         if (!a) { resetPending(); return; }
         const auto ips = geo::intersectElements(*a, *b);
         if (ips.empty()) {
-            model_->log(tname + QStringLiteral("：所选两条直线不相交，无法标注夹角"), "warn");
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：所选两条直线不相交，无法标注夹角")), "warn");
             resetPending();
             return;
         }
@@ -2912,12 +2913,12 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
         el.pts = {v, p1, p2};
         const dim::Geom g = dim::build(el);
         if (!g.valid) {
-            model_->log(tname + QStringLiteral("：几何退化，无法标注"), "warn");
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：几何退化，无法标注")), "warn");
             resetPending();
             return;
         }
         const int id = commitElement(el);
-        model_->log(QString("已创建%1 #%2 = %3").arg(tname).arg(id).arg(g.label));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2 = %3"))).arg(tname).arg(id).arg(g.label));
         resetPending();
         return;
     }
@@ -2929,9 +2930,9 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
         pendingPts_.push_back(w);
         const int n = (int)pendingPts_.size();
         if (dt == DimensionType::Leader) {
-            if (n < 2) { model_->log(tname + QStringLiteral("：已拾取起点，请拾取下一点（引线折点）")); return; }
+            if (n < 2) { model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：已拾取起点，请拾取下一点（引线折点）"))); return; }
         } else { // Ordinate
-            if (n < 2) { model_->log(tname + QStringLiteral("：已拾取被测点，请拾取坐标基准点")); return; }
+            if (n < 2) { model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：已拾取被测点，请拾取坐标基准点"))); return; }
         }
         Element el = ElementFactory::create(ElementType::Dimension, tname, model_);
         el.dtype = dt;
@@ -2940,12 +2941,12 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
         if (dt == DimensionType::Ordinate) el.rotation = 0.0;   // 默认标注 X 坐标（后续可切换 Y）
         const dim::Geom g = dim::build(el);
         if (!g.valid) {
-            model_->log(tname + QStringLiteral("：数据不足，无法标注"), "warn");
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：数据不足，无法标注")), "warn");
             resetPending();
             return;
         }
         const int id = commitElement(el);
-        model_->log(QString("已创建%1 #%2").arg(tname).arg(id));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2"))).arg(tname).arg(id));
         return;
     }
 
@@ -2958,7 +2959,7 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
     // ---- 第1步：选择图元 ----
     const int hit = hitTest(mapFromScene(QPointF(w.x, w.y)));
     if (hit < 0) {
-        model_->log(tname + QStringLiteral("：请点选要标注的图元"), "warn");
+        model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：请点选要标注的图元")), "warn");
         return;
     }
     const Element* e = model_->element(hit);
@@ -2972,7 +2973,7 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
         dimPreviewType_ = (dt == DimensionType::Baseline || dt == DimensionType::Continue)
                               ? dt : geo::lineDimType(dt);
         dimPending_ = true;
-        model_->log(QString("已选直线 #%1，移动鼠标预览标注，点击确认").arg(hit));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选直线 #%1，移动鼠标预览标注，点击确认"))).arg(hit));
     } else if (e->type == ElementType::Circle || e->type == ElementType::Arc) {
         // 圆/弧：标注直径或半径
         dimTargetId_ = hit;
@@ -2981,22 +2982,22 @@ void GraphicsView::handleDimension(const Vec3& w, DimensionType dt) {
                             : (dt == DimensionType::Arc) ? DimensionType::Arc
                                                          : DimensionType::Diameter;
         dimPending_ = true;
-        model_->log(QString("已选圆 #%1，移动鼠标预览方向，点击确认（右键切换直径/半径）").arg(hit));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选圆 #%1，移动鼠标预览方向，点击确认（右键切换直径/半径）"))).arg(hit));
     } else if (e->type == ElementType::Polygon || e->type == ElementType::Rectangle) {
         // 多边形/矩形：找离点击最近的边
         const int ei = findNearestEdge(*e, w);
         if (ei < 0) {
-            model_->log(tname + QStringLiteral("：未找到有效边"), "warn");
+            model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：未找到有效边")), "warn");
             return;
         }
         dimTargetId_ = hit;
         dimEdgeIdx_ = ei;
         dimPreviewType_ = DimensionType::Aligned;
         dimPending_ = true;
-        model_->log(QString("已选多边形 #%1 第 %2 条边，移动鼠标预览标注，点击确认")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选多边形 #%1 第 %2 条边，移动鼠标预览标注，点击确认")))
                         .arg(hit).arg(ei + 1));
     } else {
-        model_->log(tname + QStringLiteral("：暂不支持此图元类型"), "warn");
+        model_->log(SketchCAD::I18n::t(tname) + SketchCAD::I18n::t(QString::fromUtf8("：暂不支持此图元类型")), "warn");
     }
 }
 
@@ -3026,7 +3027,7 @@ void GraphicsView::finalizeDimension(const Vec3& w) {
         const dim::Geom g = dim::build(el);
         if (g.valid) {
             const int id = commitElement(el);
-            model_->log(QString("已创建%1 #%2 = %3 mm（%4）").arg(tname).arg(id).arg(g.label)
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2 = %3 mm（%4）"))).arg(SketchCAD::I18n::t(tname)).arg(id).arg(g.label)
                         .arg(dimensionStandardName(model_->dimensionStandard())));
         }
     } else if (e->type == ElementType::Circle || e->type == ElementType::Arc) {
@@ -3045,7 +3046,7 @@ void GraphicsView::finalizeDimension(const Vec3& w) {
         if (dir.len() < 1e-9) dir = Vec3(1, 0, 0);
         el.pts = {e->pts[0], e->pts[0] + dir};
         const int id = commitElement(el);
-        model_->log(QString("已创建%1 #%2：%3").arg(tname).arg(id).arg(dim::build(el, model_->dimStyle()).label));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2：%3"))).arg(SketchCAD::I18n::t(tname)).arg(id).arg(dim::build(el, model_->dimStyle()).label));
     } else if ((e->type == ElementType::Polygon || e->type == ElementType::Rectangle)
                && dimEdgeIdx_ >= 0) {
         // ---- 多边形边标注 ----
@@ -3067,7 +3068,7 @@ void GraphicsView::finalizeDimension(const Vec3& w) {
         const dim::Geom g = dim::build(el);
         if (g.valid) {
             const int id = commitElement(el);
-            model_->log(QString("已创建%1 #%2 = %3 mm（%4）").arg(tname).arg(id).arg(g.label)
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2 = %3 mm（%4）"))).arg(SketchCAD::I18n::t(tname)).arg(id).arg(g.label)
                         .arg(dimensionStandardName(model_->dimensionStandard())));
         }
     }
@@ -3167,14 +3168,14 @@ void GraphicsView::edgeEndpoints(const Element& e, int idx, Vec3& a, Vec3& b) co
 }
 
 void GraphicsView::handleConstraint(int hitId) {
-    if (hitId < 0) { model_->log(QStringLiteral("约束：请点选图元"), "warn"); return; }
+    if (hitId < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("约束：请点选图元")), "warn"); return; }
     if (!pickedIds_.empty() && pickedIds_[0] == hitId) {
-        model_->log(QStringLiteral("约束：请选择不同的第 2 个图元"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("约束：请选择不同的第 2 个图元")), "warn");
         return;
     }
     pickedIds_.push_back(hitId);
     if (pickedIds_.size() < 2) {
-        model_->log(QString("约束：已选中 #%1，请拾取第 2 个图元").arg(hitId));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("约束：已选中 #%1，请拾取第 2 个图元"))).arg(hitId));
         return;
     }
     Element el = ElementFactory::create(ElementType::Constraint, QString(), model_);
@@ -3185,7 +3186,7 @@ void GraphicsView::handleConstraint(int hitId) {
     const Element* ea = model_->element(el.refA);
     if (ea && !ea->pts.empty()) el.pts = {ea->pts[0]};
     const int id = commitElement(el);
-    model_->log(QString("已建立约束 #%1：#%2 ↔ #%3（可在属性面板改类型；求解器为后续规划项）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已建立约束 #%1：#%2 ↔ #%3（可在属性面板改类型；求解器为后续规划项）")))
                     .arg(id).arg(el.refA).arg(el.refB));
 }
 
@@ -3194,20 +3195,20 @@ void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool /*extend*/) {
     // 计算两线所在直线交点后自动判定——线段已相交则修剪多余部分，
     // 线段不相交则分别延长到交点；每条只移动离点选端最远的端点（保留端不变）。
     const QString op = QStringLiteral("修剪/延伸");
-    if (hitId < 0) { model_->log(op + QStringLiteral("：请点选直线"), "warn"); return; }
+    if (hitId < 0) { model_->log(op + SketchCAD::I18n::t(QString::fromUtf8("：请点选直线")), "warn"); return; }
     const Element* e = model_->element(hitId);
     if (!e || e->type != ElementType::Line) {
-        model_->log(op + QStringLiteral("：当前仅支持直线图元"), "warn");
+        model_->log(op + SketchCAD::I18n::t(QString::fromUtf8("：当前仅支持直线图元")), "warn");
         return;
     }
     if (pickedIds_.empty()) {
         pickedIds_.push_back(hitId);
         pendingPts_.push_back(w);
-        model_->log(op + QStringLiteral("：已选第 1 条 #%1，请拾取第 2 条直线（点中选中的那一端会被保留）").arg(hitId));
+        model_->log(op + SketchCAD::I18n::t(QString::fromUtf8("：已选第 1 条 #%1，请拾取第 2 条直线（点中选中的那一端会被保留）")).arg(hitId));
         return;
     }
     if (pickedIds_[0] == hitId) {
-        model_->log(op + QStringLiteral("：第 2 条不能是同一条直线"), "warn");
+        model_->log(op + SketchCAD::I18n::t(QString::fromUtf8("：第 2 条不能是同一条直线")), "warn");
         resetPending();
         return;
     }
@@ -3222,14 +3223,14 @@ void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool /*extend*/) {
     }
 
     // 两次改动合并为一次撤销（Ctrl+Z 整体回退）
-    model_->beginEdit(QStringLiteral("修改-修剪/延伸"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-修剪/延伸")));
     if (ca) model_->updateElementQuiet(a->id, [&](Element& el) { el.pts = oa.pts; });
     if (cb) model_->updateElementQuiet(e->id,  [&](Element& el) { el.pts = ob.pts; });
 
     Vec3 P; math::lineLineIntersect(a->pts[0], a->pts[1], e->pts[0], e->pts[1], P);
     const int n = (ca ? 1 : 0) + (cb ? 1 : 0);
     model_->setSelected(e->id);
-    model_->log(QString("已%1 %2 条直线，交于 (%3, %4)")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已%1 %2 条直线，交于 (%3, %4)")))
                     .arg(op).arg(n).arg(P.x, 0, 'f', 2).arg(P.y, 0, 'f', 2));
     resetPending();
 }
@@ -3241,14 +3242,14 @@ void GraphicsView::handleTrimExtend(int hitId, const Vec3& w, bool /*extend*/) {
 // 两档共用同一套算法，差别只是传给引擎的 cutters 集合。
 void GraphicsView::handleTrimAny(int hitId, const Vec3& w, bool shift) {
     if (shift) {
-        if (hitId < 0) { model_->log(QStringLiteral("剪切：Shift+点击用于指定边界，请点在图元上"), "warn"); return; }
+        if (hitId < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("剪切：Shift+点击用于指定边界，请点在图元上")), "warn"); return; }
         auto it = std::find(trimBounds_.begin(), trimBounds_.end(), hitId);
         if (it != trimBounds_.end()) {
             trimBounds_.erase(it);
-            model_->log(QString("剪切：已取消边界 #%1（当前 %2 条）").arg(hitId).arg(trimBounds_.size()));
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("剪切：已取消边界 #%1（当前 %2 条）"))).arg(hitId).arg(trimBounds_.size()));
         } else {
             trimBounds_.push_back(hitId);
-            model_->log(QString("剪切：已指定边界 #%1（当前 %2 条），再点击要剪掉的部分")
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("剪切：已指定边界 #%1（当前 %2 条），再点击要剪掉的部分")))
                             .arg(hitId).arg(trimBounds_.size()));
         }
         viewport()->update();
@@ -3256,11 +3257,11 @@ void GraphicsView::handleTrimAny(int hitId, const Vec3& w, bool shift) {
     }
 
     if (hitId < 0) {
-        model_->log(QStringLiteral("剪切：请点击要剪掉的那一段（Shift+点击可先指定边界）"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剪切：请点击要剪掉的那一段（Shift+点击可先指定边界）")), "warn");
         return;
     }
     if (std::find(trimBounds_.begin(), trimBounds_.end(), hitId) != trimBounds_.end()) {
-        model_->log(QStringLiteral("剪切：该图元已被指定为边界，不能同时作为剪切目标"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剪切：该图元已被指定为边界，不能同时作为剪切目标")), "warn");
         return;
     }
     const Element* tgt = model_->element(hitId);
@@ -3280,23 +3281,23 @@ void GraphicsView::handleTrimAny(int hitId, const Vec3& w, bool shift) {
     std::vector<Element> parts;
     QString msg;
     if (!trim::trimElement(*tgt, cutters, w, parts, msg)) {
-        model_->log(QStringLiteral("剪切：") + msg, "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剪切：")) + msg, "warn");
         return;
     }
 
     const QString tn = tgt->typeName();
     if (parts.empty()) {
         model_->removeElement(hitId);
-        model_->log(QString("已剪切%1 #%2：整体位于边界之间，已移除").arg(tn).arg(hitId));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已剪切%1 #%2：整体位于边界之间，已移除"))).arg(tn).arg(hitId));
     } else {
         const auto ids = model_->replaceElement(hitId, parts, QStringLiteral("剪切") + tn);
         QStringList ss;
         for (int i : ids) ss << ("#" + QString::number(i));
-        model_->log(QString("已剪切%1 #%2 → 保留 %3 段：%4")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已剪切%1 #%2 → 保留 %3 段：%4")))
                         .arg(tn).arg(hitId).arg(ids.size()).arg(ss.join(", ")));
     }
     // 边界是一次性的：剪完就清掉，避免用户以为还生效而误剪
-    if (!trimBounds_.empty()) { trimBounds_.clear(); model_->log(QStringLiteral("剪切：指定边界已重置")); }
+    if (!trimBounds_.empty()) { trimBounds_.clear(); model_->log(SketchCAD::I18n::t(QString::fromUtf8("剪切：指定边界已重置"))); }
     viewport()->update();
 }
 
@@ -3374,7 +3375,7 @@ bool GraphicsView::beginGripHot(const Vec3& w) {
     gripArmed_ = false;
     gripDragMoved_ = false;
     gripMode_ = grip::Mode::Stretch;
-    model_->log(QStringLiteral("夹点拉伸：移动光标预览，按住拖拽或再次单击确认，Ctrl 切换模式，Esc 取消"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("夹点拉伸：移动光标预览，按住拖拽或再次单击确认，Ctrl 切换模式，Esc 取消")));
     viewport()->update();
     return true;
 }
@@ -3412,12 +3413,12 @@ void GraphicsView::commitGrip() {
     if (!r.reject.isEmpty()) {
         model_->log(r.reject, "warn");          // 边界拒绝：比例≤0 / 镜像轴退化
     } else if (r.changes.empty()) {
-        model_->log(QStringLiteral("夹点%1：没有可作用的图元").arg(mName), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("夹点%1：没有可作用的图元")).arg(mName), "warn");
     } else {
         // 落盘三件套（translateSelection 同款）：beginEdit 压一次快照 + 全 Quiet 应用
-        model_->beginEdit(QStringLiteral("夹点%1").arg(mName));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("夹点%1")).arg(mName));
         modify::applyChanges(model_, r.changes, QString());
-        model_->log(QString("夹点%1完成：%2 项变更，Ctrl+Z 可整组撤销")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("夹点%1完成：%2 项变更，Ctrl+Z 可整组撤销")))
                         .arg(mName).arg(r.changes.size()));
     }
     gripHot_ = gripArmed_ = gripDragMoved_ = false;
@@ -3430,7 +3431,7 @@ void GraphicsView::cancelGrip() {
     clearGripPreview();
     gripHot_ = gripArmed_ = gripDragMoved_ = false;
     gripData_ = grip::Grips{};
-    model_->log(QStringLiteral("已取消夹点编辑"), "warn");
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消夹点编辑")), "warn");
     refreshHover(lastMouseWorld_);
     viewport()->update();
 }
@@ -3463,10 +3464,10 @@ void GraphicsView::finalizeShapePick() {
     if (pendingPts_.size() >= 2 && model_->hasActivePickFilter())
         ids = model_->applyPickFilterOnce(ids);
     if (ids.empty()) {
-        model_->log(QString("%1：没有图元被选中").arg(shape::modeName(m)), "warn");
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("%1：没有图元被选中"))).arg(shape::modeName(m)), "warn");
     } else {
         model_->addToSelection(ids);
-        model_->log(QString("%1完成：%2 个图元已并入选区")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("%1完成：%2 个图元已并入选区")))
                         .arg(shape::modeName(m)).arg(ids.size()));
     }
     clearPreview();
@@ -3544,12 +3545,12 @@ void GraphicsView::handleRightButton() {
             && (dimPreviewType_ == DimensionType::Radius || dimPreviewType_ == DimensionType::Diameter)) {
             dimPreviewType_ = (dimPreviewType_ == DimensionType::Diameter)
                               ? DimensionType::Radius : DimensionType::Diameter;
-            model_->log(QString("已切换为%1")
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已切换为%1")))
                             .arg(QString::fromUtf8(dimensionTypeName(dimPreviewType_))));
             return;
         }
         resetPending();
-        model_->log(QStringLiteral("已取消标注"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消标注")));
         return;
     }
 
@@ -3564,13 +3565,13 @@ void GraphicsView::handleRightButton() {
         clearOtrackAnchors();         // 结束绘制丢弃对象追踪锚点
         trackNow_ = snap::TrackResult{};
         resetPending();
-        model_->log(chain ? QStringLiteral("已结束连续直线绘制")
-                          : QStringLiteral("已结束当前绘制"));
+        model_->log(chain ? SketchCAD::I18n::t(QString::fromUtf8("已结束连续直线绘制"))
+                          : SketchCAD::I18n::t(QString::fromUtf8("已结束当前绘制")));
         return;
     }
     if (model_->activeTool() != "select") {
         model_->setActiveTool("select");
-        model_->log(QStringLiteral("已退出绘制工具，回到选择状态"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已退出绘制工具，回到选择状态")));
         return;
     }
     // 选择/空闲态：行为可配置（interaction/rightClickIdleRepeat，默认 AutoCAD 约定）。
@@ -3590,21 +3591,21 @@ void GraphicsView::showContextMenu(const QPoint& globalPos) {
     const auto& sel = model_->selection();
     if (!sel.empty()) {
         // ---- 选中上下文 ----
-        menu.addAction(QStringLiteral("特性"), this, [this] { emit requestShowProperties(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("特性")), this, [this] { emit requestShowProperties(); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("复制"), this, [this] { model_->copySelected(); });
-        menu.addAction(QStringLiteral("删除"), this, [this] { model_->deleteSelected(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("复制")), this, [this] { model_->copySelected(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("删除")), this, [this] { model_->deleteSelected(); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("反选"), this, [this] { model_->invertSelection(); });
-        menu.addAction(QStringLiteral("全部不选"), this, [this] { model_->clearSelection(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("反选")), this, [this] { model_->invertSelection(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("全部不选")), this, [this] { model_->clearSelection(); });
     } else {
         // ---- 空白上下文 ----
-        menu.addAction(QStringLiteral("全选"), this, [this] { model_->selectAll(); });
-        menu.addAction(QStringLiteral("粘贴"), this, [this] { model_->paste(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("全选")), this, [this] { model_->selectAll(); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("粘贴")), this, [this] { model_->paste(); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("缩放范围"), this, [this] { fitView(); });
-        menu.addAction(model_->showGrid() ? QStringLiteral("隐藏栅格")
-                                          : QStringLiteral("显示栅格"),
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("缩放范围")), this, [this] { fitView(); });
+        menu.addAction(model_->showGrid() ? SketchCAD::I18n::t(QString::fromUtf8("隐藏栅格"))
+                                          : SketchCAD::I18n::t(QString::fromUtf8("显示栅格")),
                        this, [this] { model_->setShowGrid(!model_->showGrid()); });
     }
     menu.exec(globalPos);
@@ -3615,7 +3616,7 @@ void GraphicsView::showContextMenu(const QPoint& globalPos) {
 void GraphicsView::applyCommandOption(const QString& key) {
     const QStringList opts = model_->commandOptions();
     if (CommandPrompt::matchOption(key, opts).isEmpty()) {
-        model_->log(QStringLiteral("当前命令无选项 %1").arg(key), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("当前命令无选项 %1")).arg(key), "warn");
         return;
     }
     const QString k = key.toUpper();
@@ -3624,9 +3625,9 @@ void GraphicsView::applyCommandOption(const QString& key) {
             pendingPts_.pop_back();
             updatePreview(lastMouseWorld_);   // 以最近光标位置重绘预览
             updateCommandPrompt();
-            model_->log(QStringLiteral("已放弃上一点"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已放弃上一点")));
         } else {
-            model_->log(QStringLiteral("没有可放弃的点"), "info");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("没有可放弃的点")), "info");
         }
         return;
     }
@@ -3634,13 +3635,13 @@ void GraphicsView::applyCommandOption(const QString& key) {
         if (model_->activeTool() == QStringLiteral("polyline") && pendingPts_.size() >= 3) {
             pendingPts_.push_back(pendingPts_.front());   // 回到起点闭合
             finalizePoly(false);
-            model_->log(QStringLiteral("已闭合多段线"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已闭合多段线")));
         } else {
-            model_->log(QStringLiteral("当前命令不支持闭合选项"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("当前命令不支持闭合选项")), "warn");
         }
         return;
     }
-    model_->log(QStringLiteral("选项 %1 暂未在该命令中实现").arg(key), "info");
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("选项 %1 暂未在该命令中实现")).arg(key), "info");
 }
 
 // ======================= 动态输入 DYN =======================
@@ -3663,9 +3664,9 @@ void GraphicsView::ensureDynBox() {
     dynAng_->setPlaceholderText(QStringLiteral("°"));
     dynLen_->setFrame(false);
     dynAng_->setFrame(false);
-    lay->addWidget(new QLabel(QStringLiteral("距离"), dynBox_));
+    lay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("距离")), dynBox_));
     lay->addWidget(dynLen_);
-    lay->addWidget(new QLabel(QStringLiteral("角度"), dynBox_));
+    lay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("角度")), dynBox_));
     lay->addWidget(dynAng_);
     connect(dynLen_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
     connect(dynAng_, &QLineEdit::returnPressed, this, &GraphicsView::commitDynInput);
@@ -3699,10 +3700,10 @@ bool GraphicsView::handleBackspaceKey() {
     if (pendingPts_.empty() && pickedIds_.empty()) return false;
     if (!pendingPts_.empty()) {
         pendingPts_.pop_back();
-        model_->log(QStringLiteral("已回退一个拾取点"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已回退一个拾取点")), "warn");
     } else {
         pickedIds_.pop_back();
-        model_->log(QStringLiteral("已回退一个参考图元"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已回退一个参考图元")), "warn");
     }
     if (pendingPts_.empty() && pickedIds_.empty()) resetPending();
     else                                             clearPreview();
@@ -3805,7 +3806,7 @@ void GraphicsView::commitDynInput() {
     const Vec3 pt = last + ucs.xAxis() * (len * std::cos(rad))
                         + ucs.yAxis() * (len * std::sin(rad));
     hideDynBox();
-    model_->log(QString(">> 距离=%1 角度=%2  [DYN 输入]")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8(">> 距离=%1 角度=%2  [DYN 输入]")))
                     .arg(len, 0, 'f', 2).arg(ang, 0, 'f', 1), "cmd");
     injectPoint(pt);
 }
@@ -3826,7 +3827,7 @@ void GraphicsView::finalizeLine() {
     const double len = pendingPts_[0].distTo(tail);
     const int id = model_->addElement(el);      // 触发 rebuild()，预览项在那里被销毁
     model_->setSelected(id);
-    model_->log(QString("已创建直线 #%1  长度 %2 mm").arg(id).arg(len, 0, 'f', 2));
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建直线 #%1  长度 %2 mm"))).arg(id).arg(len, 0, 'f', 2));
 
     clearPreview();
     pendingPts_.clear();
@@ -3836,7 +3837,7 @@ void GraphicsView::finalizeLine() {
         drawing_ = true;
         if (!chainHinted_) {
             chainHinted_ = true;
-            model_->log(QStringLiteral("连续直线模式：继续点击可接着画，右键或 Esc 结束"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("连续直线模式：继续点击可接着画，右键或 Esc 结束")));
         }
     } else {
         drawing_ = false;
@@ -3860,14 +3861,14 @@ int GraphicsView::pickRefElement(const QPoint& vp, const std::vector<ElementType
 
 void GraphicsView::addLineSegment(const Vec3& a, const Vec3& b) {
     if (a.distTo(b) < 1e-9) {
-        model_->log(QStringLiteral("线段长度为零，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("线段长度为零，已忽略")), "warn");
         return;
     }
     Element el = ElementFactory::create(ElementType::Line, QStringLiteral("直线"), model_);
     el.pts = {a, b};
     const int id = model_->addElement(el);
     model_->setSelected(id);
-    model_->log(QString("已创建直线 #%1  (%2, %3) → (%4, %5)")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建直线 #%1  (%2, %3) → (%4, %5)")))
                     .arg(id)
                     .arg(a.x, 0, 'f', 2).arg(a.y, 0, 'f', 2)
                     .arg(b.x, 0, 'f', 2).arg(b.y, 0, 'f', 2));
@@ -3875,9 +3876,9 @@ void GraphicsView::addLineSegment(const Vec3& a, const Vec3& b) {
 
 void GraphicsView::finalizeSnake() {
     if (pendingPts_.size() < 2) {
-        model_->log(QStringLiteral("Snake 折线至少需要两个点"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("Snake 折线至少需要两个点")), "warn");
     } else {
-        model_->log(QString("已结束 Snake 折线，共 %1 段").arg(pendingPts_.size() - 1));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已结束 Snake 折线，共 %1 段"))).arg(pendingPts_.size() - 1));
     }
     resetPending();
 }
@@ -3909,7 +3910,7 @@ void GraphicsView::handleLineSubTool(const Vec3& w, QMouseEvent* e) {
     // 角度直线：选起点后按参数(angle,length)直接绘制（参数输入条，要求 3）
     if (m == line::Mode::Angle) {
         if (lp.length < 1e-9) {
-            model_->log(QStringLiteral("角度直线：长度无效，请在参数输入条输入长度"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("角度直线：长度无效，请在参数输入条输入长度")), "warn");
             return;
         }
         const Vec3 a = snapWorld(w);
@@ -3923,19 +3924,19 @@ void GraphicsView::handleLineSubTool(const Vec3& w, QMouseEvent* e) {
     if (m == line::Mode::Parallel) {
         if (pickedIds_.empty()) {
             const int id = pickRefElement(vp, {ElementType::Line, ElementType::Rectangle});
-            if (id < 0) { model_->log(QStringLiteral("请拾取合适的参考直线/矩形边"), "warn"); return; }
+            if (id < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("请拾取合适的参考直线/矩形边")), "warn"); return; }
             pickedIds_.push_back(id);
-            model_->log(QString("已选择参考线 #%1").arg(id));
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选择参考线 #%1"))).arg(id));
             drawing_ = true;
             updatePreview(w);
             return;
         }
         const Element* ref = model_->element(pickedIds_[0]);
-        if (!ref) { model_->log(QStringLiteral("参考图元已不存在"), "warn"); resetPending(); return; }
+        if (!ref) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元已不存在")), "warn"); resetPending(); return; }
         line::ParallelCopies pc = line::parallelCopies(*ref, snapWorld(w), lp.spacing, qMax(1, lp.count));
         if (!pc.valid) { model_->log(pc.msg, "warn"); resetPending(); return; }
         for (const auto& seg : pc.lines) addLineSegment(seg.first, seg.second);
-        model_->log(QString("已创建 %1 条平行线（间隔 %2 mm，参考线 #%3）")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建 %1 条平行线（间隔 %2 mm，参考线 #%3）")))
                         .arg((int)pc.lines.size()).arg(lp.spacing, 0, 'f', 2).arg(pickedIds_[0]));
         resetPending();
         return;
@@ -3956,7 +3957,7 @@ void GraphicsView::handleLineSubTool(const Vec3& w, QMouseEvent* e) {
     pendingPts_.push_back(snapWorld(w));
     drawing_ = true;
     // 分段式命令反馈：记录已拾取的定位点
-    model_->log(QString("已拾取定位点 %1: (%2, %3)").arg(pendingPts_.size())
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已拾取定位点 %1: (%2, %3)"))).arg(pendingPts_.size())
                     .arg(pendingPts_.back().x, 0, 'f', 2)
                     .arg(pendingPts_.back().y, 0, 'f', 2));
 
@@ -4010,7 +4011,7 @@ void GraphicsView::commitXlineAndContinue(const Vec3& through, double angleDeg, 
     Element el = ElementFactory::createXline(through, angleDeg, model_);
     const int id = model_->addElement(el);      // 触发 rebuild()，预览项在那里被销毁
     model_->setSelected(id);
-    model_->log(QString("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")))
                     .arg(id).arg(desc)
                     .arg(through.x, 0, 'f', 2).arg(through.y, 0, 'f', 2)
                     .arg(angleDeg, 0, 'f', 1));
@@ -4085,7 +4086,7 @@ void GraphicsView::handleXlineSubTool(const Vec3& w, QMouseEvent* e) {
 
     pendingPts_.push_back(snapWorld(w));
     drawing_ = true;
-    model_->log(QString("已拾取点 %1: (%2, %3)").arg(pendingPts_.size())
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已拾取点 %1: (%2, %3)"))).arg(pendingPts_.size())
                     .arg(pendingPts_.back().x, 0, 'f', 2)
                     .arg(pendingPts_.back().y, 0, 'f', 2));
 
@@ -4113,19 +4114,19 @@ void GraphicsView::handleXlineSubTool(const Vec3& w, QMouseEvent* e) {
 void GraphicsView::finalizeCircle() {
     if (pendingPts_.size() < 2) return;
     const double r = pendingPts_[0].distTo(pendingPts_[1]);
-    if (r < 1e-6) { model_->log(QStringLiteral("圆：半径为 0，已忽略"), "warn"); resetPending(); return; }
+    if (r < 1e-6) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆：半径为 0，已忽略")), "warn"); resetPending(); return; }
     Element el = ElementFactory::create(ElementType::Circle, QStringLiteral("圆"), model_);
     el.pts = {pendingPts_[0]};
     el.radius = r;
     const int id = commitElement(el);
-    model_->log(QString("已创建圆 #%1  r=%2 mm（圆心+半径）").arg(id).arg(r, 0, 'f', 2));
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建圆 #%1  r=%2 mm（圆心+半径）"))).arg(id).arg(r, 0, 'f', 2));
 }
 
 void GraphicsView::finalizeCircle3P() {
     if (pendingPts_.size() < 3) return;
     Vec3 c; double r = 0;
     if (!geo::circleFrom3Points(pendingPts_[0], pendingPts_[1], pendingPts_[2], c, r)) {
-        model_->log(QStringLiteral("三点圆：三点共线，无法确定唯一圆，请重新拾取"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("三点圆：三点共线，无法确定唯一圆，请重新拾取")), "warn");
         resetPending();
         return;
     }
@@ -4133,7 +4134,7 @@ void GraphicsView::finalizeCircle3P() {
     el.pts = {c};
     el.radius = r;
     const int id = commitElement(el);
-    model_->log(QString("已创建圆 #%1  圆心(%2, %3) r=%4 mm（三点定圆）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建圆 #%1  圆心(%2, %3) r=%4 mm（三点定圆）")))
                     .arg(id).arg(c.x, 0, 'f', 2).arg(c.y, 0, 'f', 2).arg(r, 0, 'f', 2));
 }
 
@@ -4147,9 +4148,9 @@ bool GraphicsView::isCircleSubTool(const QString& t) const {
 
 bool GraphicsView::collectRef(const QPoint& vp, const std::vector<ElementType>& allowed) {
     const int id = pickRefElement(vp, allowed);
-    if (id < 0) { model_->log(QStringLiteral("请拾取合适的参考图元"), "warn"); return false; }
+    if (id < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("请拾取合适的参考图元")), "warn"); return false; }
     pickedIds_.push_back(id);
-    model_->log(QString("已选择参考图元 #%1").arg(id));
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选择参考图元 #%1"))).arg(id));
     drawing_ = true;
     return true;
 }
@@ -4159,7 +4160,7 @@ void GraphicsView::collectSketchPoint(const Vec3& w, int need) {
     pendingPts_.push_back(p);
     drawing_ = true;
     // 分段式命令反馈：记录已拾取的第 need 个点
-    model_->log(QString("已拾取点 %1/%2: (%3, %4)")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已拾取点 %1/%2: (%3, %4)")))
                     .arg((int)pendingPts_.size()).arg(need)
                     .arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2));
 }
@@ -4230,12 +4231,12 @@ void GraphicsView::handleCircleSubTool(const Vec3& w, QMouseEvent* e) {
     circle::Result r = circle::compute(m, pendingPts_, pickedIds_, w,
                                        model_->elements(), param);
     if (r.valid) finalizeCircleEx(r, model_->activeTool());
-    else model_->log(r.msg.isEmpty() ? QStringLiteral("无法创建圆") : r.msg, "warn");
+    else model_->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建圆")) : r.msg, "warn");
 }
 
 void GraphicsView::finalizeCircleEx(const circle::Result& r, const QString& method) {
     if (!r.valid || r.radius < 1e-6) {
-        model_->log(QStringLiteral("圆：半径为 0 或无效，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆：半径为 0 或无效，已忽略")), "warn");
         resetPending();
         return;
     }
@@ -4243,7 +4244,7 @@ void GraphicsView::finalizeCircleEx(const circle::Result& r, const QString& meth
     el.pts = {r.center};
     el.radius = r.radius;
     const int id = commitElement(el);
-    model_->log(QString("已创建圆 #%1  圆心(%2, %3) r=%4 mm（%5）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建圆 #%1  圆心(%2, %3) r=%4 mm（%5）")))
                     .arg(id).arg(r.center.x, 0, 'f', 2).arg(r.center.y, 0, 'f', 2)
                     .arg(r.radius, 0, 'f', 2).arg(method));
 }
@@ -4252,7 +4253,7 @@ void GraphicsView::finalizeArc() {
     if (pendingPts_.size() < 3) return;
     const Vec3 c = pendingPts_[0];
     const double r = c.distTo(pendingPts_[1]);
-    if (r < 1e-6) { model_->log(QStringLiteral("圆弧：半径为 0，已忽略"), "warn"); resetPending(); return; }
+    if (r < 1e-6) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆弧：半径为 0，已忽略")), "warn"); resetPending(); return; }
     const double s = (pendingPts_[1] - c).angleDeg();
     trackArcAngle((pendingPts_[2] - c).angleDeg());   // 把最后一次点击也计入扫掠
     double sweep = arcSweep_;
@@ -4265,7 +4266,7 @@ void GraphicsView::finalizeArc() {
     el.startAngle = s;
     el.endAngle = s + sweep;
     const int id = commitElement(el);
-    model_->log(QString("已创建圆弧 #%1  r=%2 mm  起始 %3°  扫掠 %4°")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建圆弧 #%1  r=%2 mm  起始 %3°  扫掠 %4°")))
                     .arg(id).arg(r, 0, 'f', 2).arg(s, 0, 'f', 1).arg(sweep, 0, 'f', 1));
 }
 
@@ -4340,12 +4341,12 @@ void GraphicsView::handleArcSubTool(const Vec3& w, QMouseEvent* e) {
     // ---- Step 3: 多解工具的选解点击 ----
     arc::Result r = arc::compute(m, pendingPts_, pickedIds_, w, model_->elements(), param);
     if (r.valid) finalizeArcEx(r, model_->activeTool());
-    else model_->log(r.msg.isEmpty() ? QStringLiteral("无法创建圆弧") : r.msg, "warn");
+    else model_->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建圆弧")) : r.msg, "warn");
 }
 
 void GraphicsView::finalizeArcEx(const arc::Result& r, const QString& method) {
     if (!r.valid || r.radius < 1e-6) {
-        model_->log(QStringLiteral("圆弧：半径为 0 或无效，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆弧：半径为 0 或无效，已忽略")), "warn");
         resetPending();
         return;
     }
@@ -4356,7 +4357,7 @@ void GraphicsView::finalizeArcEx(const arc::Result& r, const QString& method) {
     el.endAngle   = r.endAngle;
     const double sweep = r.endAngle - r.startAngle;
     const int id = commitElement(el);
-    model_->log(QString("已创建圆弧 #%1  圆心(%2, %3) r=%4 mm  起始 %5°  扫掠 %6°（%7）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建圆弧 #%1  圆心(%2, %3) r=%4 mm  起始 %5°  扫掠 %6°（%7）")))
                     .arg(id)
                     .arg(r.center.x, 0, 'f', 2).arg(r.center.y, 0, 'f', 2)
                     .arg(r.radius, 0, 'f', 2)
@@ -4388,12 +4389,12 @@ void GraphicsView::handlePolySubTool(const Vec3& w, QMouseEvent* e) {
     polygon::Result r = polygon::compute(m, pendingPts_, pickedIds_, w,
                                          model_->elements(), param, sides);
     if (r.valid) finalizePolyEx(r, model_->activeTool());
-    else model_->log(r.msg.isEmpty() ? QStringLiteral("无法创建多边形") : r.msg, "warn");
+    else model_->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建多边形")) : r.msg, "warn");
 }
 
 void GraphicsView::finalizePolyEx(const polygon::Result& r, const QString& method) {
     if (!r.valid || r.pts.size() < 2) {
-        model_->log(QStringLiteral("多边形：顶点数不足，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("多边形：顶点数不足，已忽略")), "warn");
         resetPending();
         return;
     }
@@ -4403,7 +4404,7 @@ void GraphicsView::finalizePolyEx(const polygon::Result& r, const QString& metho
     el.pts = r.pts;
     el.closed = true;
     const int id = commitElement(el);
-    model_->log(QString("已创建%1 #%2（%3 个顶点）（%4）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2（%3 个顶点）（%4）")))
                     .arg(name).arg(id).arg((int)el.pts.size()).arg(method));
 }
 
@@ -4424,12 +4425,12 @@ void GraphicsView::handleSplineSubTool(const Vec3& w, QMouseEvent* e) {
     // ---- Step 2: 点击确认（光标位置参与计算）----
     spline::Result r = spline::compute(m, pendingPts_, w);
     if (r.valid) finalizeSplineEx(r, model_->activeTool());
-    else model_->log(r.msg.isEmpty() ? QStringLiteral("无法创建曲线") : r.msg, "warn");
+    else model_->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建曲线")) : r.msg, "warn");
 }
 
 void GraphicsView::finalizeSplineEx(const spline::Result& r, const QString& method) {
     if (!r.valid || r.pts.size() < 2) {
-        model_->log(QStringLiteral("曲线：定义点不足，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("曲线：定义点不足，已忽略")), "warn");
         resetPending();
         return;
     }
@@ -4439,7 +4440,7 @@ void GraphicsView::finalizeSplineEx(const spline::Result& r, const QString& meth
     el.splineSubType = r.subType;
     el.closed = false;  // 样条曲线一律开放
     const int id = commitElement(el);
-    model_->log(QString("已创建%1 #%2（%3 个定义点）（%4）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2（%3 个定义点）（%4）")))
                     .arg(name).arg(id).arg((int)el.pts.size()).arg(method));
 }
 
@@ -4500,19 +4501,19 @@ void GraphicsView::handleEllipseSubTool(const Vec3& w, QMouseEvent* e) {
     ellipse::Result r = ellipse::compute(m, pendingPts_, pickedIds_, w,
                                          model_->elements(), param);
     if (r.valid) finalizeEllipseEx(r, model_->activeTool());
-    else model_->log(r.msg.isEmpty() ? QStringLiteral("无法创建椭圆") : r.msg, "warn");
+    else model_->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建椭圆")) : r.msg, "warn");
 }
 
 void GraphicsView::finalizeEllipseEx(const ellipse::Result& r, const QString& method) {
     if (!r.valid || r.radius < 1e-6 || r.radiusY < 1e-6) {
-        model_->log(QStringLiteral("椭圆：半轴为 0 或无效，已忽略"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("椭圆：半轴为 0 或无效，已忽略")), "warn");
         resetPending();
         return;
     }
     Element el = ElementFactory::createEllipse(r.center, r.radius, r.radiusY,
                                                r.rotation, model_);
     const int id = commitElement(el);
-    model_->log(QString("已创建椭圆 #%1  中心(%2, %3)  %4（%5）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建椭圆 #%1  中心(%2, %3)  %4（%5）")))
                     .arg(id).arg(r.center.x, 0, 'f', 2).arg(r.center.y, 0, 'f', 2)
                     .arg(el.sizeDesc()).arg(method));
 }
@@ -4522,7 +4523,7 @@ void GraphicsView::finalizeRect() {
     Element el = ElementFactory::create(ElementType::Rectangle, QStringLiteral("矩形"), model_);
     el.pts = {pendingPts_[0], pendingPts_[1]};
     const int id = commitElement(el);
-    model_->log("已创建矩形 #" + QString::number(id) + "  " + el.sizeDesc());
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已创建矩形 #")) + QString::number(id) + "  " + el.sizeDesc());
 }
 
 void GraphicsView::finalizePoly(bool spline) {
@@ -4531,7 +4532,7 @@ void GraphicsView::finalizePoly(bool spline) {
                             spline ? QStringLiteral("样条曲线") : QStringLiteral("多边形"), model_);
     el.pts = pendingPts_;
     const int id = commitElement(el);
-    model_->log(QString("已创建%1 #%2（%3 个控制点）")
+    model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2（%3 个控制点）")))
                     .arg(el.name).arg(id).arg((int)el.pts.size()));
 }
 
@@ -4740,7 +4741,7 @@ void GraphicsView::mouseMoveEvent(QMouseEvent* e) {
         const Vec3 delta = w - dragMoveLast_;
         if (delta.len() > 1e-6) {
             // 首次发生有效位移 → 正式进入拖拽，压一次撤销快照
-            model_->beginEdit(QStringLiteral("平移图元"));
+            model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("平移图元")));
             draggingEntities_ = true;
             dragMovePending_ = false;
         }
@@ -4813,7 +4814,7 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
         draggingEntities_ = false;
         if (wasDrag) {
             const Vec3 w = toVec3(mapToScene(e->position().toPoint()));
-            model_->log(QString("已平移 %1 个图元至 (%2, %3)")
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已平移 %1 个图元至 (%2, %3)")))
                             .arg(model_->selection().size())
                             .arg(w.x, 0, 'f', 2).arg(w.y, 0, 'f', 2));
         }
@@ -4857,8 +4858,8 @@ void GraphicsView::mouseReleaseEvent(QMouseEvent* e) {
                 }
                 if (pickFilterOn) sel = model_->applyPickFilterOnce(sel);
                 if (additive) model_->addToSelection(sel); else model_->setSelection(sel);
-                model_->log(QStringLiteral("框选完成：选中 %1 个图元%2")
-                                .arg(sel.size()).arg(additive ? QStringLiteral("（已并入选区）") : QString()));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("框选完成：选中 %1 个图元%2"))
+                                .arg(sel.size()).arg(additive ? SketchCAD::I18n::t(QString::fromUtf8("（已并入选区）")) : QString()));
             } else {
                 model_->selectWindow(r, additive);
             }
@@ -5002,7 +5003,7 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
             gripMode_ = grip::nextMode(gripMode_);
             gripData_.refCursor = lastMouseWorld_;   // 模式零参考重置：预览从恒等起步
             gripDragMoved_ = false;
-            model_->log(QString("夹点模式：%1（Ctrl 继续切换，移动预览，单击/Enter 确认，Esc 取消）")
+            model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("夹点模式：%1（Ctrl 继续切换，移动预览，单击/Enter 确认，Esc 取消）")))
                             .arg(grip::modeName(gripMode_)));
             updateGripPreview(lastMouseWorld_);
             e->accept();
@@ -5043,7 +5044,7 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
         if (dimPending_ || drawing_ || !pendingPts_.empty() || !pickedIds_.empty() ||
             !trimBounds_.empty() || marqueeActive_) {
             resetPending();
-            model_->log(QStringLiteral("已取消当前操作"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消当前操作")), "warn");
             e->accept();
             return;
         }
@@ -5068,7 +5069,7 @@ void GraphicsView::keyPressEvent(QKeyEvent* e) {
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::Snake) { finalizeSnake(); e->accept(); return; }
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::SnakeX) { finalizeSnake(); e->accept(); return; }
         if (isLineSubTool(t) && line::modeFromString(t) == line::Mode::SnakeY) { finalizeSnake(); e->accept(); return; }
-        if (t == "line") { resetPending(); model_->log(QStringLiteral("已结束连续直线绘制")); e->accept(); return; }
+        if (t == "line") { resetPending(); model_->log(SketchCAD::I18n::t(QString::fromUtf8("已结束连续直线绘制"))); e->accept(); return; }
     }
     QGraphicsView::keyPressEvent(e);
 }
@@ -5126,7 +5127,7 @@ void GraphicsView::createDefaultAt(const QString& type, const Vec3& w) {
     else {
         bool isDim = false;
         const DimensionType dt = dimToolType(t, isDim);
-        if (!isDim) { model_->log("未知图元类型: " + type + "，已忽略", "warn"); return; }
+        if (!isDim) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("未知图元类型: ")) + type + SketchCAD::I18n::t(QString::fromUtf8("，已忽略")), "warn"); return; }
         e = ElementFactory::create(ElementType::Dimension, QString::fromUtf8(dimensionTypeName(dt)), model_);
         e.dtype = dt;
         e.standard = model_->dimensionStandard();
@@ -5144,7 +5145,7 @@ void GraphicsView::createDefaultAt(const QString& type, const Vec3& w) {
     }
     const int id = model_->addElement(e);
     model_->setSelected(id);
-    model_->log("拖拽创建: " + e.name + " #" + QString::number(id));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("拖拽创建: ")) + e.name + " #" + QString::number(id));
 }
 
 void GraphicsView::dragEnterEvent(QDragEnterEvent* e) {

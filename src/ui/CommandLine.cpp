@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "CommandLine.h"
 #include "core/CommandInterpreter.h"
 #include "core/CommandPrompt.h"
@@ -7,9 +8,26 @@
 
 namespace SketchCAD {
 
+namespace {
+// 选项提示「KEY/中文标签」按当前语言重译为「KEY/英文标签」，再拼成 [C/Close U/Undo]。
+// 命令关键字 KEY 保持原样（命令行输入语义不变），仅标签走 I18n::t()。
+QString localizedOptionPrompt(const QStringList& opts) {
+    if (opts.isEmpty()) return QString();
+    QStringList out;
+    out.reserve(opts.size());
+    for (const QString& opt : opts) {
+        const int slash = opt.indexOf(QLatin1Char('/'));
+        if (slash < 0) { out << SketchCAD::I18n::t(opt); continue; }
+        out << opt.left(slash) + QLatin1Char('/')
+               + SketchCAD::I18n::t(opt.mid(slash + 1));
+    }
+    return QStringLiteral("[") + out.join(QLatin1Char(' ')) + QStringLiteral("]");
+}
+} // namespace
+
 CommandLine::CommandLine(SketchModel* m, CommandInterpreter* ci, QWidget* p)
     : QLineEdit(p), model_(m), interp_(ci) {
-    setPlaceholderText(QStringLiteral("输入命令 (如 line 0,0 10,0) — 输入 help 查看, Tab 补全, ↑↓ 历史"));
+    setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("输入命令 (如 line 0,0 10,0) — 输入 help 查看, Tab 补全, ↑↓ 历史")));
     auto* comp = new QCompleter(interp_->commandNames(), this);
     comp->setCaseSensitivity(Qt::CaseInsensitive);
     setCompleter(comp);
@@ -48,20 +66,26 @@ void CommandLine::setModel(SketchModel* m) {
 }
 
 void CommandLine::updatePlaceholder() {
-    const QString def = QStringLiteral("输入命令 (如 line 0,0 10,0) — 输入 help 查看, Tab 补全, ↑↓ 历史");
-    QString ph = lastPrompt_.isEmpty() ? def : lastPrompt_;
-    const QString opt = CommandPrompt::formatOptionPrompt(lastOptions_);
+    const QString def = SketchCAD::I18n::t(QString::fromUtf8("输入命令 (如 line 0,0 10,0) — 输入 help 查看, Tab 补全, ↑↓ 历史"));
+    // lastPrompt_ 是模型下发的分段命令提示（中文），需要按当前语言重译。
+    QString ph = lastPrompt_.isEmpty() ? def : SketchCAD::I18n::t(lastPrompt_);
+    const QString opt = localizedOptionPrompt(lastOptions_);
     if (!opt.isEmpty()) ph += QStringLiteral("  ") + opt;
     setPlaceholderText(ph);
+}
+
+// 语言切换：重译默认占位提示（分段提示 lastPrompt_ 由模型在下次下发时按新语言重译）。
+void CommandLine::retranslate() {
+    updatePlaceholder();
 }
 
 void CommandLine::repeatLastCommand() {
     const QString lc = interp_->lastCommand();
     if (lc.isEmpty()) return;
-    model_->log(QStringLiteral("重复命令: ") + lc, "cmd");
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("重复命令: ")) + lc, "cmd");
     interp_->addHistory(lc);
     histIdx_ = interp_->history().size();
-    if (!interp_->execute(lc)) model_->log(QStringLiteral("命令执行失败"), "error");
+    if (!interp_->execute(lc)) model_->log(SketchCAD::I18n::t(QString::fromUtf8("命令执行失败")), "error");
     clear();
 }
 
@@ -85,7 +109,7 @@ void CommandLine::onReturn() {
         // 1) 选项关键字优先（如 C/闭合、U/放弃），拦截后不再当作坐标或命令
         const QString key = CommandPrompt::matchOption(cmd, model_->commandOptions());
         if (!key.isEmpty()) {
-            model_->log(">> " + cmd + QStringLiteral("  [选项 %1]").arg(key), "cmd");
+            model_->log(">> " + cmd + SketchCAD::I18n::t(QString::fromUtf8("  [选项 %1]")).arg(key), "cmd");
             emit optionEntered(key);
             clear();
             return;
@@ -94,7 +118,7 @@ void CommandLine::onReturn() {
         //    解析出的局部坐标经 model->toWorld 转世界系（唯一换算入口）。
         Vec3 pt;
         if (model_->parsePointToWorld(cmd, model_->lastInputPointWorld(), pt)) {
-            model_->log(">> " + cmd + QStringLiteral("  [坐标输入]"), "cmd");
+            model_->log(">> " + cmd + SketchCAD::I18n::t(QString::fromUtf8("  [坐标输入]")), "cmd");
             emit pointEntered(pt);
             clear();
             return;
@@ -106,7 +130,7 @@ void CommandLine::onReturn() {
     interp_->addHistory(cmd);
     histIdx_ = interp_->history().size();
     bool ok = interp_->execute(cmd);
-    if (!ok) model_->log(QStringLiteral("命令执行失败"), "error");
+    if (!ok) model_->log(SketchCAD::I18n::t(QString::fromUtf8("命令执行失败")), "error");
     clear();
 }
 
@@ -148,7 +172,7 @@ void CommandLine::keyPressEvent(QKeyEvent* e) {
             for (int i = 1; i < c.size(); ++i)
                 while (!c[i].startsWith(common) && !common.isEmpty()) common.chop(1);
             if (common.length() > prefix.length()) setText(common);
-            model_->log("候选: " + c.join(" "));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("候选: ")) + c.join(" "));
         }
         e->accept(); return;
     }

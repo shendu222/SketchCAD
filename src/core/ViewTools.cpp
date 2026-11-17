@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ViewTools.h"
 #include "Geometry.h"     // geo::rotateAroundCentroid（既有 Transform 原语，转角投影复用）
 #include <cmath>
@@ -63,7 +64,7 @@ bool buildDirectionSymbol(const DirectionSymbolSpec& s, std::vector<Element>& ou
     const Vec3 dir = dirOf(s.angleDeg);
     const Vec3 head = Vec3(s.anchor.x + dir.x * s.arrowLen, s.anchor.y + dir.y * s.arrowLen, 0.0);
     // 箭杆（细实线）
-    out.push_back(mkLine(s.anchor, head, 0.7, s.layer, QStringLiteral("向视箭头")));
+    out.push_back(mkLine(s.anchor, head, 0.7, s.layer, SketchCAD::I18n::t(QString::fromUtf8("向视箭头"))));
     // V 形箭头（半张角 15°，自箭头前端反向张开）
     const double wing = s.arrowLen * 0.30;
     const double r15 = 15.0 * K_PI / 180.0;
@@ -72,14 +73,14 @@ bool buildDirectionSymbol(const DirectionSymbolSpec& s, std::vector<Element>& ou
         const double cs = std::cos(sign * r15), sn = std::sin(sign * r15);
         return Vec3(head.x + (bx * cs - by * sn) * wing, head.y + (bx * sn + by * cs) * wing, 0.0);
     };
-    out.push_back(mkLine(head, wingTip(+1.0), 0.7, s.layer, QStringLiteral("向视箭头")));
-    out.push_back(mkLine(head, wingTip(-1.0), 0.7, s.layer, QStringLiteral("向视箭头")));
+    out.push_back(mkLine(head, wingTip(+1.0), 0.7, s.layer, SketchCAD::I18n::t(QString::fromUtf8("向视箭头"))));
+    out.push_back(mkLine(head, wingTip(-1.0), 0.7, s.layer, SketchCAD::I18n::t(QString::fromUtf8("向视箭头"))));
     // 字母标识：箭杆中点、沿法向偏移
     const Vec3 mid = Vec3(s.anchor.x + dir.x * s.arrowLen * 0.5, s.anchor.y + dir.y * s.arrowLen * 0.5, 0.0);
     const Vec3 perp(-dir.y, dir.x, 0.0);
     out.push_back(mkText(Vec3(mid.x + perp.x * s.textHeight * 1.2,
                               mid.y + perp.y * s.textHeight * 1.2, 0.0),
-                         s.letter, s.textHeight, s.layer, QStringLiteral("向视字母")));
+                         s.letter, s.textHeight, s.layer, SketchCAD::I18n::t(QString::fromUtf8("向视字母"))));
     return true;
 }
 
@@ -97,16 +98,16 @@ bool buildHoleProjection(const HoleProjectionSpec& s, std::vector<Element>& out)
     const Vec3 p1 = Vec3(far.x + dir.x * 2.0, far.y + dir.y * 2.0, 0.0);
     out.push_back(mkCenterLine(p0, p1, s.layer, QStringLiteral("孔轴中心线")));
     // 两端投影圆（近端 + 远端）
-    out.push_back(mkCircle(s.anchor, r, s.layer, QStringLiteral("投影圆")));
-    out.push_back(mkCircle(far, r, s.layer, QStringLiteral("投影圆")));
+    out.push_back(mkCircle(s.anchor, r, s.layer, SketchCAD::I18n::t(QString::fromUtf8("投影圆"))));
+    out.push_back(mkCircle(far, r, s.layer, SketchCAD::I18n::t(QString::fromUtf8("投影圆"))));
     // 两侧轮廓母线（连接两圆轮廓，±法向）
     const Vec3 perp(-dir.y, dir.x, 0.0);
     out.push_back(mkLine(Vec3(s.anchor.x + perp.x * r, s.anchor.y + perp.y * r, 0.0),
                          Vec3(far.x + perp.x * r, far.y + perp.y * r, 0.0),
-                         0.7, s.layer, QStringLiteral("投影轮廓")));
+                         0.7, s.layer, SketchCAD::I18n::t(QString::fromUtf8("投影轮廓"))));
     out.push_back(mkLine(Vec3(s.anchor.x - perp.x * r, s.anchor.y - perp.y * r, 0.0),
                          Vec3(far.x - perp.x * r, far.y - perp.y * r, 0.0),
-                         0.7, s.layer, QStringLiteral("投影轮廓")));
+                         0.7, s.layer, SketchCAD::I18n::t(QString::fromUtf8("投影轮廓"))));
     return true;
 }
 

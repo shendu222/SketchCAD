@@ -1,4 +1,5 @@
 #include "CenterLineGen.h"
+#include "core/I18n.h"
 #include <cmath>
 #include <algorithm>
 #include "Geometry.h"   // geo:: 几何原语（intersectElements / elementBounds / elementCentroid）
@@ -70,7 +71,7 @@ std::vector<Element> makeCenterLine(CenterLineKind kind,
                                     const CLParams& p,
                                     QString* reason) {
     auto fail = [&](const char* msg) -> std::vector<Element> {
-        if (reason) *reason = QString::fromUtf8(msg);
+        if (reason) *reason = SketchCAD::I18n::t(QString::fromUtf8(msg));
         return {};
     };
 

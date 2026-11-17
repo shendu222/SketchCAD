@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ModifyInputDialog.h"
 #include <QFormLayout>
 #include <QDialogButtonBox>
@@ -43,25 +44,25 @@ ModifyInputDialog::ModifyInputDialog(Mode m, const QString& title,
         addD(QStringLiteral("Δy (mm)"), res_.dy, -1e6, 1e6);
         break;
     case M_Rotate:
-        addD(QStringLiteral("旋转中心 X"), res_.cx, -1e6, 1e6);
-        addD(QStringLiteral("旋转中心 Y"), res_.cy, -1e6, 1e6);
-        addD(QStringLiteral("角度（度，CCW 为正）"), res_.angleDeg, -360.0, 360.0);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("旋转中心 X")), res_.cx, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("旋转中心 Y")), res_.cy, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("角度（度，CCW 为正）")), res_.angleDeg, -360.0, 360.0);
         break;
     case M_Scale:
-        addD(QStringLiteral("缩放中心 X"), res_.cx, -1e6, 1e6);
-        addD(QStringLiteral("缩放中心 Y"), res_.cy, -1e6, 1e6);
-        addD(QStringLiteral("缩放因子（>0）"), res_.factor, 1e-6, 1e6, 4);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("缩放中心 X")), res_.cx, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("缩放中心 Y")), res_.cy, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("缩放因子（>0）")), res_.factor, 1e-6, 1e6, 4);
         break;
     case M_Lengthen:
         addI(QStringLiteral("端点（0=起点 / 1=终点）"), res_.side, 0, 1);
-        addD(QStringLiteral("Δ长度 (mm，正=延长 负=缩短)"), res_.deltaMm, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("Δ长度 (mm，正=延长 负=缩短)")), res_.deltaMm, -1e6, 1e6);
         break;
     case M_Offset:
-        addD(QStringLiteral("偏移距离 (mm，左正右负)"), res_.distMm, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("偏移距离 (mm，左正右负)")), res_.distMm, -1e6, 1e6);
         break;
     case M_Break:
-        addD(QStringLiteral("打断点 X"), res_.px, -1e6, 1e6);
-        addD(QStringLiteral("打断点 Y"), res_.py, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("打断点 X")), res_.px, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("打断点 Y")), res_.py, -1e6, 1e6);
         break;
     case M_Divide: {
         // 段数（默认 2）
@@ -77,25 +78,25 @@ ModifyInputDialog::ModifyInputDialog(Mode m, const QString& title,
             auto* s1 = new QSpinBox(this); s1->setRange(-1, 99999); s1->setValue(res_.id1);
             QObject::connect(s1, QOverload<int>::of(&QSpinBox::valueChanged),
                              this, [&](int v){ res_.id1 = v; });
-            addRow(QStringLiteral("线段 1 ID"), s1);
+            addRow(SketchCAD::I18n::t(QString::fromUtf8("线段 1 ID")), s1);
             auto* s2 = new QSpinBox(this); s2->setRange(-1, 99999); s2->setValue(res_.id2);
             QObject::connect(s2, QOverload<int>::of(&QSpinBox::valueChanged),
                              this, [&](int v){ res_.id2 = v; });
-            addRow(QStringLiteral("线段 2 ID"), s2);
+            addRow(SketchCAD::I18n::t(QString::fromUtf8("线段 2 ID")), s2);
         }
-        addD(QStringLiteral("圆角半径 (mm，=0 即倒角)"), res_.radiusMm, 0.0, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("圆角半径 (mm，=0 即倒角)")), res_.radiusMm, 0.0, 1e6);
         break;
     case M_Stretch:
-        addD(QStringLiteral("基点 X (端点坐标)"), res_.baseX, -1e6, 1e6);
-        addD(QStringLiteral("基点 Y"), res_.baseY, -1e6, 1e6);
-        addD(QStringLiteral("目标 X"), res_.toX, -1e6, 1e6);
-        addD(QStringLiteral("目标 Y"), res_.toY, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("基点 X (端点坐标)")), res_.baseX, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("基点 Y")), res_.baseY, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("目标 X")), res_.toX, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("目标 Y")), res_.toY, -1e6, 1e6);
         break;
     case M_MirrorLine:
-        addD(QStringLiteral("轴点 1 X"), res_.p1.x, -1e6, 1e6);
-        addD(QStringLiteral("轴点 1 Y"), res_.p1.y, -1e6, 1e6);
-        addD(QStringLiteral("轴点 2 X"), res_.p2.x, -1e6, 1e6);
-        addD(QStringLiteral("轴点 2 Y"), res_.p2.y, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("轴点 1 X")), res_.p1.x, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("轴点 1 Y")), res_.p1.y, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("轴点 2 X")), res_.p2.x, -1e6, 1e6);
+        addD(SketchCAD::I18n::t(QString::fromUtf8("轴点 2 Y")), res_.p2.y, -1e6, 1e6);
         break;
     case M_Align: {
         auto* box = new QComboBox(this);
@@ -103,7 +104,7 @@ ModifyInputDialog::ModifyInputDialog(Mode m, const QString& title,
         box->setCurrentText(res_.kind);
         QObject::connect(box, &QComboBox::currentTextChanged, this,
                          [&](const QString& s){ res_.kind = s; });
-        addRow(QStringLiteral("对齐方式"), box);
+        addRow(SketchCAD::I18n::t(QString::fromUtf8("对齐方式")), box);
         break;
     }
     }

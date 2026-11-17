@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "NewDrawingDialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -35,13 +36,13 @@ static double parseScaleRatio(const QString& s, bool& ok) {
 }
 
 NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("新建图纸 — 选择幅面"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("新建图纸 — 选择幅面")));
     resize(360, 320);
 
     auto* root = new QVBoxLayout(this);
 
     // ---- 幅面 A0~A5 ----
-    auto* gbFmt = new QGroupBox(QStringLiteral("图纸幅面 (GB/T 14689 / ISO 128)"), this);
+    auto* gbFmt = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("图纸幅面 (GB/T 14689 / ISO 128)")), this);
     auto* fmtLay = new QVBoxLayout(gbFmt);
     auto* grpFmt = new QButtonGroup(this);
     static const QPair<SheetFormat, QString> kFmts[] = {
@@ -63,11 +64,11 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     root->addWidget(gbFmt);
 
     // ---- 摆放方向 ----
-    auto* gbOri = new QGroupBox(QStringLiteral("摆放方向"), this);
+    auto* gbOri = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("摆放方向")), this);
     auto* oriLay = new QHBoxLayout(gbOri);
     auto* grpOri = new QButtonGroup(this);
-    auto* rbLand = new QRadioButton(QStringLiteral("横向（长边水平）"), gbOri);
-    auto* rbPort = new QRadioButton(QStringLiteral("纵向（长边垂直）"), gbOri);
+    auto* rbLand = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("横向（长边水平）")), gbOri);
+    auto* rbPort = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("纵向（长边垂直）")), gbOri);
     grpOri->addButton(rbLand, 1);
     grpOri->addButton(rbPort, 0);
     rbLand->setChecked(true);   // 工程图默认横向
@@ -78,11 +79,11 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     root->addWidget(gbOri);
 
     // ---- 投影法（GB/T 14665-2012 第7章 图形符号）----
-    auto* gbProj = new QGroupBox(QStringLiteral("投影法 (GB/T 14665-2012 第7章)"), this);
+    auto* gbProj = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("投影法 (GB/T 14665-2012 第7章)")), this);
     auto* projLay = new QHBoxLayout(gbProj);
     auto* grpProj = new QButtonGroup(this);
-    auto* rbFirst = new QRadioButton(QStringLiteral("第一角画法（国标）"), gbProj);
-    auto* rbThird = new QRadioButton(QStringLiteral("第三角画法（ISO）"), gbProj);
+    auto* rbFirst = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("第一角画法（国标）")), gbProj);
+    auto* rbThird = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("第三角画法（ISO）")), gbProj);
     grpProj->addButton(rbFirst, 0);
     grpProj->addButton(rbThird, 1);
     rbFirst->setChecked(true);   // 国标默认第一角
@@ -93,11 +94,11 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     root->addWidget(gbProj);
 
     // ---- 标题栏样式 ----
-    auto* gbTb = new QGroupBox(QStringLiteral("标题栏样式"), this);
+    auto* gbTb = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("标题栏样式")), this);
     auto* tbLay = new QHBoxLayout(gbTb);
     auto* grpTb = new QButtonGroup(this);
-    auto* rbTbStd = new QRadioButton(QStringLiteral("标准标题栏（GB/T 10609.1）"), gbTb);
-    auto* rbTbNone = new QRadioButton(QStringLiteral("无标题栏（仅图框）"), gbTb);
+    auto* rbTbStd = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("标准标题栏（GB/T 10609.1）")), gbTb);
+    auto* rbTbNone = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("无标题栏（仅图框）")), gbTb);
     grpTb->addButton(rbTbStd, 0);
     grpTb->addButton(rbTbNone, 1);
     rbTbStd->setChecked(true);   // 默认标准
@@ -111,10 +112,10 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     });
     root->addWidget(gbTb);
 
-    root->addWidget(new QLabel(QStringLiteral("新建后自动生成对应图框与标准标题栏，可随后在「填写标题栏」中录入。"), this));
+    root->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("新建后自动生成对应图框与标准标题栏，可随后在「填写标题栏」中录入。")), this));
 
     // ---- 绘图比例（GB/T 14690）----
-    auto* gbScale = new QGroupBox(QStringLiteral("绘图比例 (GB/T 14690)"), this);
+    auto* gbScale = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("绘图比例 (GB/T 14690)")), this);
     auto* scaleLay = new QHBoxLayout(gbScale);
     auto* cbScale = new QComboBox(gbScale);
     static const QPair<QString, double> kScales[] = {
@@ -145,16 +146,16 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
                 double v = cbScale->itemData(i).toDouble();
                 if (v < 0.0) {   // 自定义
                     bool ok = false;
-                    QString txt = QInputDialog::getText(this, QStringLiteral("自定义比例"),
-                        QStringLiteral("输入比例（图形:实际），如 1:2 或 2:1，也可填小数 0.5"),
+                    QString txt = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("自定义比例")),
+                        SketchCAD::I18n::t(QString::fromUtf8("输入比例（图形:实际），如 1:2 或 2:1，也可填小数 0.5")),
                         QLineEdit::Normal, QStringLiteral("1:1"));
                 double r = parseScaleRatio(txt, ok);
                 if (ok && r > 0.0) {
                     scaleRatio_ = r;
                     // GB/T 14690：非标准比例允许使用，但应提示用户（T16）
                     if (!isStandardDrawingScale(r)) {
-                        QMessageBox::information(this, QStringLiteral("比例提示"),
-                            QStringLiteral("“%1” 不在 GB/T 14690 标准比例系列内，仍可绘制，但建议优先采用标准比例。").arg(txt));
+                        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("比例提示")),
+                            SketchCAD::I18n::t(QString::fromUtf8("“%1” 不在 GB/T 14690 标准比例系列内，仍可绘制，但建议优先采用标准比例。")).arg(txt));
                     }
                 } else {
                     cbScale->setCurrentText(QStringLiteral("1:1"));
@@ -168,8 +169,8 @@ NewDrawingDialog::NewDrawingDialog(QWidget* parent) : QDialog(parent) {
     // ---- 确认/取消 ----
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                     Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(box);

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PrintPreviewDialog.h"
 #include "PrintEngine.h"
 #include <QPrinter>
@@ -13,7 +14,7 @@ namespace SketchCAD {
 PrintPreviewDialog::PrintPreviewDialog(SketchModel* model, const PrintSettings& settings,
                                        QWidget* parent)
     : QDialog(parent), model_(model), s_(settings) {
-    setWindowTitle(QStringLiteral("打印预览"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("打印预览")));
     resize(900, 700);
 
     printer_ = new QPrinter(QPrinter::HighResolution);
@@ -23,14 +24,14 @@ PrintPreviewDialog::PrintPreviewDialog(SketchModel* model, const PrintSettings& 
     preview_->setZoomFactor(1.0);
 
     auto* toolbar = new QToolBar(this);
-    auto* zoomIn = toolbar->addAction(QStringLiteral("放大"));
-    auto* zoomOut = toolbar->addAction(QStringLiteral("缩小"));
-    auto* fit = toolbar->addAction(QStringLiteral("适应窗口"));
+    auto* zoomIn = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("放大")));
+    auto* zoomOut = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("缩小")));
+    auto* fit = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("适应窗口")));
     toolbar->addSeparator();
-    auto* printBtn = toolbar->addAction(QStringLiteral("打印..."));
-    auto* pdfBtn = toolbar->addAction(QStringLiteral("导出 PDF..."));
+    auto* printBtn = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("打印...")));
+    auto* pdfBtn = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("导出 PDF...")));
     toolbar->addSeparator();
-    auto* closeBtn = toolbar->addAction(QStringLiteral("关闭"));
+    auto* closeBtn = toolbar->addAction(SketchCAD::I18n::t(QString::fromUtf8("关闭")));
 
     connect(zoomIn, &QAction::triggered, preview_, &QPrintPreviewWidget::zoomIn);
     connect(zoomOut, &QAction::triggered, preview_, &QPrintPreviewWidget::zoomOut);
@@ -56,15 +57,15 @@ void PrintPreviewDialog::onPaintRequested(QPrinter* printer) {
 }
 
 void PrintPreviewDialog::onExportPdf() {
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF"),
+    const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("导出 PDF")),
                                                      QStringLiteral("SketchCAD.pdf"),
-                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+                                                     SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
     if (path.isEmpty()) return;
     if (PrintEngine::exportPdf(model_, s_, path))
-        QMessageBox::information(this, QStringLiteral("导出成功"),
-                                QStringLiteral("已生成 PDF：%1").arg(path));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("导出成功")),
+                                SketchCAD::I18n::t(QString::fromUtf8("已生成 PDF：%1")).arg(path));
     else
-        QMessageBox::warning(this, QStringLiteral("导出失败"), QStringLiteral("生成 PDF 时出错。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("导出失败")), SketchCAD::I18n::t(QString::fromUtf8("生成 PDF 时出错。")));
 }
 
 } // namespace SketchCAD

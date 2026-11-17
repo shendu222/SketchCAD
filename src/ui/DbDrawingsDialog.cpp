@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "DbDrawingsDialog.h"
 #include "core/DrawingDb.h"
 
@@ -24,7 +25,7 @@ namespace {
 }
 
 DbDrawingsDialog::DbDrawingsDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("数据库绘图记录"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("数据库绘图记录")));
     resize(760, 480);
 
     auto* root = new QVBoxLayout(this);
@@ -37,10 +38,10 @@ DbDrawingsDialog::DbDrawingsDialog(QWidget* parent) : QDialog(parent) {
 
     // ---- 底部操作行 ----
     auto* btnRow = new QHBoxLayout();
-    auto* btnSaveCur = new QPushButton(QStringLiteral("保存当前图纸到数据库..."), this);
-    auto* btnSaveTpl = new QPushButton(QStringLiteral("另存当前图纸为模板..."), this);
-    auto* btnRefresh = new QPushButton(QStringLiteral("刷新"), this);
-    auto* btnClose   = new QPushButton(QStringLiteral("关闭"), this);
+    auto* btnSaveCur = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("保存当前图纸到数据库...")), this);
+    auto* btnSaveTpl = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("另存当前图纸为模板...")), this);
+    auto* btnRefresh = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("刷新")), this);
+    auto* btnClose   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), this);
     btnRow->addWidget(btnSaveCur);
     btnRow->addWidget(btnSaveTpl);
     btnRow->addStretch(1);
@@ -61,11 +62,11 @@ void DbDrawingsDialog::buildDrawingsTable() {
     drawingsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     drawingsTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     drawingsTable_->setHorizontalHeaderLabels({
-        QStringLiteral("ID"), QStringLiteral("名称"),
-        QStringLiteral("创建时间"), QStringLiteral("更新时间"),
-        QStringLiteral("操作") });
+        QStringLiteral("ID"), SketchCAD::I18n::t(QString::fromUtf8("名称")),
+        SketchCAD::I18n::t(QString::fromUtf8("创建时间")), SketchCAD::I18n::t(QString::fromUtf8("更新时间")),
+        SketchCAD::I18n::t(QString::fromUtf8("操作")) });
     drawingsTable_->horizontalHeader()->setStretchLastSection(true);
-    tabs_->addTab(drawingsTable_, QStringLiteral("图档"));
+    tabs_->addTab(drawingsTable_, SketchCAD::I18n::t(QString::fromUtf8("图档")));
     rebuildDrawings();
 }
 
@@ -74,11 +75,11 @@ void DbDrawingsDialog::buildTemplatesTable() {
     templatesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     templatesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     templatesTable_->setHorizontalHeaderLabels({
-        QStringLiteral("ID"), QStringLiteral("模板名称"),
-        QStringLiteral("参考尺寸 (mm)"), QStringLiteral("创建时间"),
-        QStringLiteral("操作") });
+        QStringLiteral("ID"), SketchCAD::I18n::t(QString::fromUtf8("模板名称")),
+        SketchCAD::I18n::t(QString::fromUtf8("参考尺寸 (mm)")), SketchCAD::I18n::t(QString::fromUtf8("创建时间")),
+        SketchCAD::I18n::t(QString::fromUtf8("操作")) });
     templatesTable_->horizontalHeader()->setStretchLastSection(true);
-    tabs_->addTab(templatesTable_, QStringLiteral("模板"));
+    tabs_->addTab(templatesTable_, SketchCAD::I18n::t(QString::fromUtf8("模板")));
     rebuildTemplates();
 }
 
@@ -111,8 +112,8 @@ void DbDrawingsDialog::rebuildDrawings() {
         auto* opLay = new QHBoxLayout(op);
         opLay->setContentsMargins(4, 2, 4, 2);
         opLay->setSpacing(4);
-        auto* btnOpen = new QPushButton(QStringLiteral("打开"));
-        auto* btnDel  = new QPushButton(QStringLiteral("删除"));
+        auto* btnOpen = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("打开")));
+        auto* btnDel  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
         opLay->addWidget(btnOpen);
         opLay->addWidget(btnDel);
         drawingsTable_->setCellWidget(r, 4, op);
@@ -120,15 +121,15 @@ void DbDrawingsDialog::rebuildDrawings() {
         connect(btnOpen, &QPushButton::clicked, this,
                 [this, id]() { emit openDrawingRequested(id); });
         connect(btnDel, &QPushButton::clicked, this, [this, id]() {
-            if (QMessageBox::question(this, QStringLiteral("删除确认"),
-                    QStringLiteral("确定从数据库中删除该图档？此操作不可撤销。"),
+            if (QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("删除确认")),
+                    SketchCAD::I18n::t(QString::fromUtf8("确定从数据库中删除该图档？此操作不可撤销。")),
                     QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
                 return;
             if (DrawingDb::instance()->deleteDrawing(id))
                 rebuildDrawings();
             else
-                QMessageBox::warning(this, QStringLiteral("删除失败"),
-                    QStringLiteral("删除图档失败：") + DrawingDb::instance()->lastError());
+                QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("删除失败")),
+                    SketchCAD::I18n::t(QString::fromUtf8("删除图档失败：")) + DrawingDb::instance()->lastError());
         });
     }
     drawingsTable_->resizeColumnsToContents();
@@ -161,8 +162,8 @@ void DbDrawingsDialog::rebuildTemplates() {
         auto* opLay = new QHBoxLayout(op);
         opLay->setContentsMargins(4, 2, 4, 2);
         opLay->setSpacing(4);
-        auto* btnApply = new QPushButton(QStringLiteral("应用"));
-        auto* btnDel   = new QPushButton(QStringLiteral("删除"));
+        auto* btnApply = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("应用")));
+        auto* btnDel   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
         opLay->addWidget(btnApply);
         opLay->addWidget(btnDel);
         templatesTable_->setCellWidget(r, 4, op);
@@ -170,15 +171,15 @@ void DbDrawingsDialog::rebuildTemplates() {
         connect(btnApply, &QPushButton::clicked, this,
                 [this, id]() { emit applyTemplateRequested(id); });
         connect(btnDel, &QPushButton::clicked, this, [this, id]() {
-            if (QMessageBox::question(this, QStringLiteral("删除确认"),
-                    QStringLiteral("确定从数据库中删除该模板？此操作不可撤销。"),
+            if (QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("删除确认")),
+                    SketchCAD::I18n::t(QString::fromUtf8("确定从数据库中删除该模板？此操作不可撤销。")),
                     QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
                 return;
             if (DrawingDb::instance()->deleteTemplate(id))
                 rebuildTemplates();
             else
-                QMessageBox::warning(this, QStringLiteral("删除失败"),
-                    QStringLiteral("删除模板失败：") + DrawingDb::instance()->lastError());
+                QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("删除失败")),
+                    SketchCAD::I18n::t(QString::fromUtf8("删除模板失败：")) + DrawingDb::instance()->lastError());
         });
     }
     templatesTable_->resizeColumnsToContents();
@@ -188,16 +189,16 @@ void DbDrawingsDialog::rebuildTemplates() {
 
 void DbDrawingsDialog::onSaveCurrent() {
     bool ok = false;
-    QString name = QInputDialog::getText(this, QStringLiteral("保存到数据库"),
-        QStringLiteral("输入图纸名称："), QLineEdit::Normal, QString(), &ok);
+    QString name = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("保存到数据库")),
+        SketchCAD::I18n::t(QString::fromUtf8("输入图纸名称：")), QLineEdit::Normal, QString(), &ok);
     if (ok && !name.trimmed().isEmpty())
         emit saveCurrentRequested(name.trimmed());
 }
 
 void DbDrawingsDialog::onSaveTemplate() {
     bool ok = false;
-    QString name = QInputDialog::getText(this, QStringLiteral("另存为模板"),
-        QStringLiteral("输入模板名称（将记录当前图纸尺寸作为参考尺寸）："),
+    QString name = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("另存为模板")),
+        SketchCAD::I18n::t(QString::fromUtf8("输入模板名称（将记录当前图纸尺寸作为参考尺寸）：")),
         QLineEdit::Normal, QString(), &ok);
     if (ok && !name.trimmed().isEmpty())
         emit saveTemplateRequested(name.trimmed());

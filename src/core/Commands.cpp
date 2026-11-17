@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Commands.h"
 #include "MacroScript.h"
 #include "SketchModel.h"
@@ -95,7 +96,7 @@ void CommandContext::makeLine(const Vec3& a, const Vec3& b) const {
     Element e = ElementFactory::create(ElementType::Line, "直线", model);
     e.pts = {a, b};
     int id = model->addElement(e);
-    model->log(QString("已创建直线 #%1 (%2,%3)->(%4,%5)")
+    model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建直线 #%1 (%2,%3)->(%4,%5)")))
                    .arg(id).arg(a.x,0,'f',2).arg(a.y,0,'f',2).arg(b.x,0,'f',2).arg(b.y,0,'f',2));
 }
 
@@ -147,22 +148,22 @@ static bool runTextCmd(const CommandContext& ctx, bool multi) {
     SketchModel* m = ctx.model;
     QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
     if (t.size() < 4) {
-        m->log(multi ? QStringLiteral("用法：mtext <x,y> <字高> <内容...>")
-                     : QStringLiteral("用法：text <x,y> <字高> <内容...>"), QStringLiteral("error"));
+        m->log(multi ? SketchCAD::I18n::t(QString::fromUtf8("用法：mtext <x,y> <字高> <内容...>"))
+                     : SketchCAD::I18n::t(QString::fromUtf8("用法：text <x,y> <字高> <内容...>")), QStringLiteral("error"));
         return false;
     }
     Vec3 pos;
-    if (!ctx.tryParsePoint(t[1], pos)) { m->log(QStringLiteral("插入点坐标无效"), QStringLiteral("error")); return false; }
+    if (!ctx.tryParsePoint(t[1], pos)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("插入点坐标无效")), QStringLiteral("error")); return false; }
     bool ok = false; double h = t[2].toDouble(&ok);
-    if (!ok || h <= 0.0) { m->log(QStringLiteral("字高须为正数"), QStringLiteral("error")); return false; }
+    if (!ok || h <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("字高须为正数")), QStringLiteral("error")); return false; }
     const QString content = t.mid(3).join(QChar(' '));
     Element e = multi ? ElementFactory::createMText(pos, content, h)
                       : ElementFactory::createText(pos, content, h);
     const int id = m->addElement(e);   // addElement 自带单步撤销
-    if (id < 0) { m->log(QStringLiteral("文字创建失败"), QStringLiteral("error")); return false; }
+    if (id < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("文字创建失败")), QStringLiteral("error")); return false; }
     cmdRememberArgs(ctx.cmd, t);
-    m->log(QStringLiteral("已创建%1 #%2：%3")
-               .arg(multi ? QStringLiteral("多行文字") : QStringLiteral("文字"))
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2：%3"))
+               .arg(multi ? SketchCAD::I18n::t(QString::fromUtf8("多行文字")) : SketchCAD::I18n::t(QString::fromUtf8("文字")))
                .arg(id).arg(content.left(20)), QStringLiteral("info"));
     return true;
 }
@@ -173,79 +174,79 @@ static bool runTextCmd(const CommandContext& ctx, bool multi) {
 
 bool LineCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log("用法: line x1,y1 x2,y2", "warn"); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line x1,y1 x2,y2")), "warn"); return false; }
     Vec3 a, b;
-    if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) { m->log("点解析失败", "warn"); return false; }
+    if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
     Element e = ElementFactory::create(ElementType::Line, "直线", m); e.pts = {a, b};
-    int id = m->addElement(e); m->log("已创建直线 #" + QString::number(id));
+    int id = m->addElement(e); m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建直线 #")) + QString::number(id));
     return true;
 }
 
 bool CircleCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log("用法: circle cx,cy r", "warn"); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: circle cx,cy r")), "warn"); return false; }
     Vec3 c; double r;
-    if (!ctx.parsePoint(1, c)) { m->log("圆心解析失败", "warn"); return false; }
+    if (!ctx.parsePoint(1, c)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("圆心解析失败")), "warn"); return false; }
     bool ok; r = ctx.toks[2].toDouble(&ok);
-    if (!ok || r <= 0) { m->log("半径无效", "warn"); return false; }
+    if (!ok || r <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("半径无效")), "warn"); return false; }
     Element e = ElementFactory::create(ElementType::Circle, "圆", m); e.pts = {c}; e.radius = r;
-    int id = m->addElement(e); m->log("已创建圆 #" + QString::number(id));
+    int id = m->addElement(e); m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建圆 #")) + QString::number(id));
     return true;
 }
 
 bool Circle3PCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 4) { m->log("用法: circle3p x1,y1 x2,y2 x3,y3", "warn"); return false; }
+    if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: circle3p x1,y1 x2,y2 x3,y3")), "warn"); return false; }
     Vec3 a, b, c;
     if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b) || !ctx.parsePoint(3, c)) {
-        m->log("点解析失败", "warn"); return false;
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false;
     }
     Vec3 ctr; double r = 0;
     if (!geo::circleFrom3Points(a, b, c, ctr, r)) {
-        m->log("三点共线或重合，无法确定圆", "warn"); return false;
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("三点共线或重合，无法确定圆")), "warn"); return false;
     }
     Element e = ElementFactory::create(ElementType::Circle, "圆", m); e.pts = {ctr}; e.radius = r;
     int id = m->addElement(e);
-    m->log(QString("已创建三点圆 #%1  圆心(%2, %3) R=%4")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建三点圆 #%1  圆心(%2, %3) R=%4")))
                .arg(id).arg(ctr.x, 0, 'f', 2).arg(ctr.y, 0, 'f', 2).arg(r, 0, 'f', 2));
     return true;
 }
 
 bool ArcCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 4) { m->log("用法: arc cx,cy r a0 a1", "warn"); return false; }
+    if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: arc cx,cy r a0 a1")), "warn"); return false; }
     Vec3 c; double r, a0, a1;
-    if (!ctx.parsePoint(1, c)) { m->log("圆心解析失败", "warn"); return false; }
+    if (!ctx.parsePoint(1, c)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("圆心解析失败")), "warn"); return false; }
     bool ok; r = ctx.toks[2].toDouble(&ok); a0 = ctx.toks[3].toDouble(&ok);
     a1 = ctx.toks.size() >= 5 ? ctx.toks[4].toDouble(&ok) : a0 + 360.0;
-    if (!ok || r <= 0) { m->log("参数无效", "warn"); return false; }
+    if (!ok || r <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数无效")), "warn"); return false; }
     Element e = ElementFactory::create(ElementType::Arc, "圆弧", m);
     e.pts = {c}; e.radius = r; e.startAngle = a0; e.endAngle = a1;
-    int id = m->addElement(e); m->log("已创建圆弧 #" + QString::number(id));
+    int id = m->addElement(e); m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建圆弧 #")) + QString::number(id));
     return true;
 }
 
 bool RectCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log("用法: rect x0,y0 x1,y1", "warn"); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: rect x0,y0 x1,y1")), "warn"); return false; }
     Vec3 a, b;
-    if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) { m->log("点解析失败", "warn"); return false; }
+    if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
     Element e = ElementFactory::create(ElementType::Rectangle, "矩形", m); e.pts = {a, b};
-    int id = m->addElement(e); m->log("已创建矩形 #" + QString::number(id));
+    int id = m->addElement(e); m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建矩形 #")) + QString::number(id));
     return true;
 }
 
 bool PolySplineCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log("用法: " + ctx.cmd + " p1 p2 ...", "warn"); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ")) + ctx.cmd + " p1 p2 ...", "warn"); return false; }
     std::vector<Vec3> ps;
     for (int i = 1; i < ctx.toks.size(); ++i) {
-        Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败: " + ctx.toks[i], "warn"); return false; }
+        Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败: ")) + ctx.toks[i], "warn"); return false; }
         ps.push_back(p);
     }
     Element e = ElementFactory::create(type_, name_, m); e.pts = ps;
     int id = m->addElement(e);
-    m->log("已创建" + name_ + " #" + QString::number(id) + " (" + QString::number(ps.size()) + " 顶点)");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建")) + name_ + " #" + QString::number(id) + " (" + QString::number(ps.size()) + SketchCAD::I18n::t(QString::fromUtf8(" 顶点)")));
     return true;
 }
 
@@ -260,46 +261,46 @@ bool LineModeCommand::execute(const CommandContext& ctx) {
     switch (lm) {
     case line::Mode::TwoPoint: {
         auto pts = ctx.parsePts(1, 2);
-        if (pts.size() < 2) { m->log("用法: line_2pt x1,y1 x2,y2", "warn"); return false; }
+        if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_2pt x1,y1 x2,y2")), "warn"); return false; }
         ctx.makeLine(pts[0], pts[1]); return true; }
     case line::Mode::Horizontal: {
         auto pts = ctx.parsePts(1, 2);
-        if (pts.size() < 2) { m->log("用法: line_h x1,y1 x2,y2", "warn"); return false; }
+        if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_h x1,y1 x2,y2")), "warn"); return false; }
         auto r = line::horizontal(pts[0], pts[1]); ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Vertical: {
         auto pts = ctx.parsePts(1, 2);
-        if (pts.size() < 2) { m->log("用法: line_v x1,y1 x2,y2", "warn"); return false; }
+        if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_v x1,y1 x2,y2")), "warn"); return false; }
         auto r = line::vertical(pts[0], pts[1]); ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Angle: {
         double ang = 30.0;
-        if (ctx.toks.size() >= 4) { bool ok; ang = ctx.toks[ctx.toks.size()-1].toDouble(&ok); if (!ok) { m->log("角度无效", "warn"); return false; } }
+        if (ctx.toks.size() >= 4) { bool ok; ang = ctx.toks[ctx.toks.size()-1].toDouble(&ok); if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("角度无效")), "warn"); return false; } }
         auto pts = ctx.parsePts(1, 2);
-        if (pts.size() < 2) { m->log("用法: line_angle x1,y1 x2,y2 [angle]", "warn"); return false; }
+        if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_angle x1,y1 x2,y2 [angle]")), "warn"); return false; }
         auto r = line::angle(pts[0], pts[1], ang); ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Parallel: {
-        if (ctx.toks.size() < 4) { m->log("用法: line_parallel refId x1,y1 x2,y2", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_parallel refId x1,y1 x2,y2")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 2);
-        if (refs.empty() || pts.size() < 2) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::parallelThroughPoint(*ref, pts[0], pts[1]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::ParallelThroughPoint: {
-        if (ctx.toks.size() < 3) { m->log("用法: line_parallel_pt refId x,y", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_parallel_pt refId x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 1);
-        if (refs.empty() || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::parallelAligned(*ref, pts[0]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Orthogonal: {
-        if (ctx.toks.size() < 4) { m->log("用法: line_orthogonal refId x1,y1 x2,y2", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_orthogonal refId x1,y1 x2,y2")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 2);
-        if (refs.empty() || pts.size() < 2) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::orthogonalThroughPoint(*ref, pts[0], pts[1]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
@@ -307,75 +308,75 @@ bool LineModeCommand::execute(const CommandContext& ctx) {
     case line::Mode::AngleFromLine: {
         double ang = 30.0;
         if (ctx.toks.size() >= 5) { bool ok; ang = ctx.toks[ctx.toks.size()-1].toDouble(&ok); if (!ok) ang = 30.0; }
-        if (ctx.toks.size() < 4) { m->log("用法: line_rel_angle refId x1,y1 x2,y2 [angle]", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_rel_angle refId x1,y1 x2,y2 [angle]")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 2);
-        if (refs.empty() || pts.size() < 2) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::relativeAngle(*ref, pts[0], pts[1], ang);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::OrthogonalFromLine: {
-        if (ctx.toks.size() < 4) { m->log("用法: line_orthogonal_from_line refId x1,y1 x2,y2", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_orthogonal_from_line refId x1,y1 x2,y2")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 2);
-        if (refs.empty() || pts.size() < 2) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::orthogonalFromLine(*ref, pts[0], pts[1]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::FromPointToLine: {
-        if (ctx.toks.size() < 3) { m->log("用法: line_from_point_to_line refId x,y", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_from_point_to_line refId x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 1);
-        if (refs.empty() || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::fromPointToLine(*ref, pts[0]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Bisector: {
-        if (ctx.toks.size() < 4) { m->log("用法: line_bisector refId1 refId2 x,y", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_bisector refId1 refId2 x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 2); auto pts = ctx.parsePts(3, 1);
-        if (refs.size() < 2 || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.size() < 2 || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* l1 = m->element(refs[0]); const Element* l2 = m->element(refs[1]);
-        if (!l1 || !l2) { m->log("参考图元不存在", "warn"); return false; }
+        if (!l1 || !l2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::bisector(*l1, *l2, pts[0], pts[0]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::TangentPC: {
-        if (ctx.toks.size() < 3) { m->log("用法: line_tangent_pc circleId x,y", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_tangent_pc circleId x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 1);
-        if (refs.empty() || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* c = m->element(refs[0]);
-        if (!c) { m->log("参考图元不存在", "warn"); return false; }
+        if (!c) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::tangentPC(*c, pts[0], pts[0]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::TangentCC: {
-        if (ctx.toks.size() < 3) { m->log("用法: line_tangent_cc circleId1 circleId2", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_tangent_cc circleId1 circleId2")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 2);
-        if (refs.size() < 2) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* c1 = m->element(refs[0]); const Element* c2 = m->element(refs[1]);
-        if (!c1 || !c2) { m->log("参考图元不存在", "warn"); return false; }
+        if (!c1 || !c2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::tangentCC(*c1, *c2, Vec3(0,0,0));
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::TangentOrthogonal: {
-        if (ctx.toks.size() < 4) { m->log("用法: line_tangent_ortho circleId lineId x,y", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_tangent_ortho circleId lineId x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 2); auto pts = ctx.parsePts(3, 1);
-        if (refs.size() < 2 || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.size() < 2 || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* c = m->element(refs[0]); const Element* l = m->element(refs[1]);
-        if (!c || !l) { m->log("参考图元不存在", "warn"); return false; }
+        if (!c || !l) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         auto r = line::tangentOrthogonal(*c, *l, pts[0]);
         if (!r.valid) { m->log(r.msg, "warn"); return false; }
         ctx.makeLine(r.a, r.b); return true; }
     case line::Mode::Snake:
     case line::Mode::SnakeX:
     case line::Mode::SnakeY: {
-        if (ctx.toks.size() < 3) { m->log("用法: line_snake p1 p2 ...", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: line_snake p1 p2 ...")), "warn"); return false; }
         std::vector<Vec3> snakePts;
         for (int i = 1; i < ctx.toks.size(); ++i) {
-            Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log("点解析失败", "warn"); return false; }
+            Vec3 p; if (!ctx.tryParsePoint(ctx.toks[i], p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
             snakePts.push_back(p);
         }
         bool xFirst = (lm == line::Mode::SnakeX) ? true : (lm == line::Mode::SnakeY) ? false : true;
@@ -385,7 +386,7 @@ bool LineModeCommand::execute(const CommandContext& ctx) {
         }
         return true; }
     default:
-        m->log("未实现的直线子命令: " + ctx.cmd, "warn"); return false;
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未实现的直线子命令: ")) + ctx.cmd, "warn"); return false;
     }
 }
 
@@ -401,7 +402,7 @@ bool XlineCommand::execute(const CommandContext& ctx) {
     auto makeXline = [&](const Vec3& through, double angleDeg, const QString& desc) {
         Element e = ElementFactory::createXline(through, angleDeg, m);
         const int id = m->addElement(e);
-        m->log(QString("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建构造线 #%1  %2 通过(%3, %4) 角度 %5°")))
                    .arg(id).arg(desc)
                    .arg(through.x, 0, 'f', 2).arg(through.y, 0, 'f', 2)
                    .arg(angleDeg, 0, 'f', 1));
@@ -426,15 +427,15 @@ bool XlineCommand::execute(const CommandContext& ctx) {
             }
         }
         auto pts = ctx.parsePts(1, 2);
-        if (pts.size() < 2) { m->log(QString("用法: %1 x1,y1 x2,y2 或 %1 x,y 角度").arg(ctx.cmd), "warn"); return false; }
+        if (pts.size() < 2) { m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 x1,y1 x2,y2 或 %1 x,y 角度"))).arg(ctx.cmd), "warn"); return false; }
         return fromResult(line::twoPoint(pts[0], pts[1]), QStringLiteral("两点")); }
     case line::Mode::Horizontal: {
         auto pts = ctx.parsePts(1, 1);
-        if (pts.empty()) { m->log("用法: xline_h x,y", "warn"); return false; }
+        if (pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xline_h x,y")), "warn"); return false; }
         makeXline(pts[0], 0.0, QStringLiteral("水平")); return true; }
     case line::Mode::Vertical: {
         auto pts = ctx.parsePts(1, 1);
-        if (pts.empty()) { m->log("用法: xline_v x,y", "warn"); return false; }
+        if (pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xline_v x,y")), "warn"); return false; }
         makeXline(pts[0], 90.0, QStringLiteral("竖直")); return true; }
     case line::Mode::Angle: {
         // xline_angle x,y [角度]（缺省 30°，与 line_angle 默认一致）
@@ -445,25 +446,25 @@ bool XlineCommand::execute(const CommandContext& ctx) {
             if (ok) ang = v;
         }
         auto pts = ctx.parsePts(1, 1);
-        if (pts.empty()) { m->log("用法: xline_angle x,y [角度]", "warn"); return false; }
+        if (pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xline_angle x,y [角度]")), "warn"); return false; }
         makeXline(pts[0], ang, QStringLiteral("角度")); return true; }
     case line::Mode::Bisector: {
-        if (ctx.toks.size() < 4) { m->log("用法: xline_bisector refId1 refId2 x,y", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xline_bisector refId1 refId2 x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 2); auto pts = ctx.parsePts(3, 1);
-        if (refs.size() < 2 || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.size() < 2 || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* l1 = m->element(refs[0]); const Element* l2 = m->element(refs[1]);
-        if (!l1 || !l2) { m->log("参考图元不存在", "warn"); return false; }
+        if (!l1 || !l2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         return fromResult(line::bisector(*l1, *l2, pts[0], pts[0]), QStringLiteral("角平分")); }
     case line::Mode::Parallel: {
-        if (ctx.toks.size() < 3) { m->log("用法: xline_parallel refId x,y", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xline_parallel refId x,y")), "warn"); return false; }
         auto refs = ctx.parseRefs(1, 1); auto pts = ctx.parsePts(2, 1);
-        if (refs.empty() || pts.empty()) { m->log("参数解析失败", "warn"); return false; }
+        if (refs.empty() || pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数解析失败")), "warn"); return false; }
         const Element* ref = m->element(refs[0]);
-        if (!ref) { m->log("参考图元不存在", "warn"); return false; }
+        if (!ref) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参考图元不存在")), "warn"); return false; }
         // 平行过点：方向取参考线方向，过点位置由用户给定（cur 取同一点，无偏移歧义）
         return fromResult(line::parallelThroughPoint(*ref, pts[0], pts[0]), QStringLiteral("平行")); }
     default:
-        m->log("未实现的构造线子命令: " + ctx.cmd, "warn"); return false;
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未实现的构造线子命令: ")) + ctx.cmd, "warn"); return false;
     }
 }
 
@@ -484,7 +485,7 @@ bool ArcModeCommand::execute(const CommandContext& ctx) {
 
     arc::Result r = arc::compute(am, pts, refs, cur, m->elements(), param);
     if (!r.valid) { m->log(r.msg.isEmpty()
-        ? QStringLiteral("无法创建圆弧: ") + ctx.cmd : r.msg, "warn"); return true; }
+        ? SketchCAD::I18n::t(QString::fromUtf8("无法创建圆弧: ")) + ctx.cmd : r.msg, "warn"); return true; }
 
     Element el = ElementFactory::createArc(r.center, r.radius, r.startAngle, r.endAngle, m);
     if (!r.msg.isEmpty() && r.msg.startsWith(QStringLiteral("椭圆弧"))) {
@@ -505,7 +506,7 @@ bool PolyModeCommand::execute(const CommandContext& ctx) {
 
     auto pts = ctx.parsePts(1, rc.pts);
     if ((int)pts.size() < rc.pts) {
-        m->log(QStringLiteral("用法: %1 %2 [参数]")
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 %2 [参数]"))
                .arg(ctx.cmd)
                .arg(QString(rc.pts, 'p').replace('p', "x,y ")), "warn");
         return false;
@@ -601,7 +602,7 @@ bool PolyModeCommand::execute(const CommandContext& ctx) {
                                     : polygon::compute(pm, pts, {}, cur, m->elements(), param, sides);
     if (!r.valid) {
         m->log(r.msg.isEmpty()
-            ? QStringLiteral("无法创建多边形: ") + ctx.cmd : r.msg, "warn");
+            ? SketchCAD::I18n::t(QString::fromUtf8("无法创建多边形: ")) + ctx.cmd : r.msg, "warn");
         return true;
     }
 
@@ -641,49 +642,49 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
     if (cmd == "spline_from_polyline" || cmd == "spline_append_pt" ||
         cmd == "spline_insert_pts"   || cmd == "spline_remove_pts" ||
         cmd == "spline_remove_between" || cmd == "spline_explode") {
-        if (ctx.toks.size() < 2) { m->log(QStringLiteral("用法: %1 <id> ...").arg(cmd), "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 <id> ...")).arg(cmd), "warn"); return false; }
         bool ok = false;
         const int id = ctx.toks[1].toInt(&ok);
-        if (!ok) { m->log(QStringLiteral("id 无效"), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), "warn"); return false; }
         const Element* e = m->element(id);
-        if (!e) { m->log(QStringLiteral("未找到图元 #") + ctx.toks[1], "warn"); return false; }
+        if (!e) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到图元 #")) + ctx.toks[1], "warn"); return false; }
 
         if (cmd == "spline_from_polyline") {
             const std::vector<Vec3> pts = spline::polylineControlPoints(*e);
-            if (pts.size() < 2) { m->log(QStringLiteral("源图元不是可转换的折线/多边形/矩形"), "warn"); return false; }
+            if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("源图元不是可转换的折线/多边形/矩形")), "warn"); return false; }
             Element sp = ElementFactory::create(ElementType::Spline, QStringLiteral("样条曲线"), m);
             sp.pts = pts;
             sp.closed = false;
             sp.splineSubType = static_cast<int>(spline::SubType::CatmullRom);
             const auto ids = m->replaceElement(id, {sp}, QStringLiteral("折线转样条"));
             if (!ids.empty())
-                m->log(QString("已将 #%1 转换为样条 #%2（%3 个控制点）")
+                m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将 #%1 转换为样条 #%2（%3 个控制点）")))
                            .arg(id).arg(ids.front()).arg((int)pts.size()));
             return true;
         }
 
         // 以下命令只作用于样条
         if (e->type != ElementType::Spline) {
-            m->log(QString("图元 #%1 不是样条曲线").arg(id), "warn");
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("图元 #%1 不是样条曲线"))).arg(id), "warn");
             return false;
         }
 
         if (cmd == "spline_append_pt") {
             Vec3 p;
-            if (!ctx.parsePoint(2, p)) { m->log(QStringLiteral("用法: spline_append_pt <id> x,y"), "warn"); return false; }
+            if (!ctx.parsePoint(2, p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: spline_append_pt <id> x,y")), "warn"); return false; }
             const bool atFront = p.distTo(e->pts.front()) < p.distTo(e->pts.back());
             m->updateElement(id, [&](Element& out) {
                 if (atFront) out.pts.insert(out.pts.begin(), p);
                 else         out.pts.push_back(p);
             });
-            m->log(QString("已在样条 #%1 %2追加控制点").arg(id)
-                       .arg(atFront ? QStringLiteral("前端") : QStringLiteral("后端")));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在样条 #%1 %2追加控制点"))).arg(id)
+                       .arg(atFront ? SketchCAD::I18n::t(QString::fromUtf8("前端")) : SketchCAD::I18n::t(QString::fromUtf8("后端"))));
             return true;
         }
         if (cmd == "spline_insert_pts") {
             Vec3 p;
-            if (!ctx.parsePoint(2, p)) { m->log(QStringLiteral("用法: spline_insert_pts <id> x,y"), "warn"); return false; }
-            if (e->pts.size() < 2) { m->log(QStringLiteral("样条控制点不足"), "warn"); return false; }
+            if (!ctx.parsePoint(2, p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: spline_insert_pts <id> x,y")), "warn"); return false; }
+            if (e->pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("样条控制点不足")), "warn"); return false; }
             int bestSeg = -1; double bestD = 1e100; Vec3 bestProj;
             for (int i = 0; i + 1 < (int)e->pts.size(); ++i) {
                 const Vec3 proj = math::projPointLine(p, e->pts[i], e->pts[i + 1]);
@@ -694,24 +695,24 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
             m->updateElement(id, [&](Element& out) {
                 out.pts.insert(out.pts.begin() + bestSeg + 1, bestProj);
             });
-            m->log(QString("已在样条 #%1 第 %2 段插入控制点").arg(id).arg(bestSeg + 1));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在样条 #%1 第 %2 段插入控制点"))).arg(id).arg(bestSeg + 1));
             return true;
         }
         if (cmd == "spline_remove_pts") {
-            if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: spline_remove_pts <id> <index>（0 起）"), "warn"); return false; }
+            if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: spline_remove_pts <id> <index>（0 起）")), "warn"); return false; }
             const int idx = ctx.toks[2].toInt();
-            if (idx < 0 || idx >= (int)e->pts.size()) { m->log(QStringLiteral("索引越界"), "warn"); return false; }
-            if (e->pts.size() <= 2) { m->log(QStringLiteral("样条至少保留 2 个控制点"), "warn"); return false; }
+            if (idx < 0 || idx >= (int)e->pts.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("索引越界")), "warn"); return false; }
+            if (e->pts.size() <= 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("样条至少保留 2 个控制点")), "warn"); return false; }
             m->updateElement(id, [&](Element& out) { out.pts.erase(out.pts.begin() + idx); });
-            m->log(QString("已删除样条 #%1 的控制点 %2").arg(id).arg(idx));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除样条 #%1 的控制点 %2"))).arg(id).arg(idx));
             return true;
         }
         if (cmd == "spline_remove_between") {
-            if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法: spline_remove_between <id> <i> <j>"), "warn"); return false; }
+            if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: spline_remove_between <id> <i> <j>")), "warn"); return false; }
             int a = ctx.toks[2].toInt(), b = ctx.toks[3].toInt();
             if (a > b) std::swap(a, b);
             if (a < 0 || b >= (int)e->pts.size() || b - a <= 1) {
-                m->log(QStringLiteral("索引无效或两点相邻（无需删除中间段）"), "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("索引无效或两点相邻（无需删除中间段）")), "warn");
                 return false;
             }
             m->updateElement(id, [&](Element& out) {
@@ -721,13 +722,13 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
                 for (int i = b; i < (int)out.pts.size(); ++i) nv.push_back(out.pts[i]);
                 out.pts = std::move(nv);
             });
-            m->log(QString("已删除样条 #%1 控制点 %2 到 %3 之间的部分").arg(id).arg(a).arg(b));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除样条 #%1 控制点 %2 到 %3 之间的部分"))).arg(id).arg(a).arg(b));
             return true;
         }
         // spline_explode
         {
             const auto segs = spline::explodeToLines(e->pts, e->splineSubType);
-            if (segs.empty()) { m->log(QString("样条 #%1 无法分解为线段").arg(id), "warn"); return false; }
+            if (segs.empty()) { m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("样条 #%1 无法分解为线段"))).arg(id), "warn"); return false; }
             std::vector<Element> lines;
             lines.reserve(segs.size());
             for (const auto& s : segs) {
@@ -737,7 +738,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
                 lines.push_back(std::move(ln));
             }
             const auto ids = m->replaceElement(id, lines, QStringLiteral("样条分解为线段"));
-            m->log(QString("已将样条 #%1 分解为 %2 条线段").arg(id).arg((int)ids.size()));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将样条 #%1 分解为 %2 条线段"))).arg(id).arg((int)ids.size()));
             return true;
         }
     }
@@ -748,12 +749,12 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
             if (!ctx.tryParsePoint(ctx.toks[i], p)) {
-                m->log(QStringLiteral("点解析失败: ") + ctx.toks[i], "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败: ")) + ctx.toks[i], "warn");
                 return false;
             }
             pts.push_back(p);
         }
-        if (pts.size() < 2) { m->log(QStringLiteral("用法: freehand_line x1,y1 x2,y2 ...（≥2 点）"), "warn"); return false; }
+        if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: freehand_line x1,y1 x2,y2 ...（≥2 点）")), "warn"); return false; }
         Element el = ElementFactory::create(ElementType::Spline, QStringLiteral("自由手绘线"), m);
         el.pts = std::move(pts);
         el.closed = false;
@@ -765,7 +766,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
     // ---- 样条绘制子模式（spline_parabola / spline_hyperbola / ...）----
     const spline::Mode sm = spline::modeFromString(cmd);
     if (sm == spline::Mode::Free) {
-        m->log(QStringLiteral("未实现的样条子命令: ") + cmd, "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未实现的样条子命令: ")) + cmd, "warn");
         return false;
     }
     const spline::ReqCount rc = spline::requirements(sm);
@@ -775,7 +776,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
         // 定点数模式：恰好解析 rc.pts 个点
         pts = ctx.parsePts(1, rc.pts);
         if ((int)pts.size() < rc.pts) {
-            m->log(QStringLiteral("用法: %1 %2")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 %2"))
                    .arg(cmd)
                    .arg(QString(rc.pts, 'p').replace('p', "x,y ")), "warn");
             return false;
@@ -785,13 +786,13 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
             if (!ctx.tryParsePoint(ctx.toks[i], p)) {
-                m->log(QStringLiteral("点解析失败: ") + ctx.toks[i], "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败: ")) + ctx.toks[i], "warn");
                 return false;
             }
             pts.push_back(p);
         }
         if (pts.size() < 2) {
-            m->log(QStringLiteral("用法: %1 x1,y1 x2,y2 ...（≥2 点）").arg(cmd), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 x1,y1 x2,y2 ...（≥2 点）")).arg(cmd), "warn");
             return false;
         }
         // 过点样条直存（不注入光标点，与 UI 行为一致：命令行无真实光标）
@@ -809,7 +810,7 @@ bool SplineModeCommand::execute(const CommandContext& ctx) {
     spline::Result r = spline::compute(sm, pts, cur);
     if (!r.valid) {
         m->log(r.msg.isEmpty()
-            ? QStringLiteral("无法创建曲线: ") + cmd : r.msg, "warn");
+            ? SketchCAD::I18n::t(QString::fromUtf8("无法创建曲线: ")) + cmd : r.msg, "warn");
         return true;
     }
 
@@ -833,7 +834,7 @@ bool EllipseModeCommand::execute(const CommandContext& ctx) {
     const ellipse::Mode em = ellipse::modeFromString(cmd);
     // modeFromString 对未知串兜底为 OnePoint，这里做一次显式校验
     if (ellipse::stringFromMode(em) != cmd) {
-        m->log(QStringLiteral("未实现的椭圆子命令: ") + cmd, "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未实现的椭圆子命令: ")) + cmd, "warn");
         return false;
     }
     const ellipse::ReqCount rc = ellipse::requirements(em);
@@ -841,21 +842,21 @@ bool EllipseModeCommand::execute(const CommandContext& ctx) {
     // ---- 参考图元模式（ellipse_inscribed）：第一个参数是框选图元 id ----
     if (rc.refs > 0) {
         if (ctx.toks.size() < 2) {
-            m->log(QStringLiteral("用法: %1 <外框矩形/多边形id>").arg(cmd), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 <外框矩形/多边形id>")).arg(cmd), "warn");
             return false;
         }
         bool ok = false;
         const int id = ctx.toks[1].toInt(&ok);
-        if (!ok) { m->log(QStringLiteral("id 无效"), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), "warn"); return false; }
         const Element* e = m->element(id);
-        if (!e) { m->log(QStringLiteral("未找到图元 #") + ctx.toks[1], "warn"); return false; }
+        if (!e) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到图元 #")) + ctx.toks[1], "warn"); return false; }
 
         ellipse::Result r = ellipse::compute(em, {}, {id}, Vec3(0, 0, 0),
                                             m->elements(), 0.0);
-        if (!r.valid) { m->log(r.msg.isEmpty() ? QStringLiteral("无法创建椭圆") : r.msg, "warn"); return false; }
+        if (!r.valid) { m->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建椭圆")) : r.msg, "warn"); return false; }
         Element el = ElementFactory::createEllipse(r.center, r.radius, r.radiusY, r.rotation, m);
         const int nid = m->addElement(el);
-        m->log(QString("已创建椭圆 #%1  %2（%3）").arg(nid).arg(el.sizeDesc()).arg(cmd));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建椭圆 #%1  %2（%3）"))).arg(nid).arg(el.sizeDesc()).arg(cmd));
         return true;
     }
 
@@ -872,7 +873,7 @@ bool EllipseModeCommand::execute(const CommandContext& ctx) {
         // 逐个拼出用法提示，例如 "x,y x,y x,y"
         QString usage;
         for (int i = 0; i < need; ++i) usage += QStringLiteral("x,y ");
-        m->log(QStringLiteral("用法: %1 %2").arg(cmd, usage.trimmed()), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: %1 %2")).arg(cmd, usage.trimmed()), "warn");
         return false;
     }
 
@@ -884,12 +885,12 @@ bool EllipseModeCommand::execute(const CommandContext& ctx) {
 
     ellipse::Result r = ellipse::compute(em, inputs, {}, cur, m->elements(), 0.0);
     if (!r.valid) {
-        m->log(r.msg.isEmpty() ? QStringLiteral("无法创建椭圆: ") + cmd : r.msg, "warn");
+        m->log(r.msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("无法创建椭圆: ")) + cmd : r.msg, "warn");
         return false;
     }
     Element el = ElementFactory::createEllipse(r.center, r.radius, r.radiusY, r.rotation, m);
     const int id = m->addElement(el);
-    m->log(QString("已创建椭圆 #%1  中心(%2, %3)  %4（%5）")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建椭圆 #%1  中心(%2, %3)  %4（%5）")))
                .arg(id).arg(r.center.x, 0, 'f', 2).arg(r.center.y, 0, 'f', 2)
                .arg(el.sizeDesc()).arg(cmd));
     return true;
@@ -912,13 +913,13 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
             if (!ctx.tryParsePoint(ctx.toks[i], p)) {
-                m->log(QStringLiteral("点解析失败: ") + ctx.toks[i], "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败: ")) + ctx.toks[i], "warn");
                 return false;
             }
             pts.push_back(p);
         }
         if (pts.size() < 2) {
-            m->log(QStringLiteral("用法: polyline x,y x,y [x,y ...]"), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline x,y x,y [x,y ...]")), "warn");
             return false;
         }
         bool closed = (pts.size() >= 3 && pts.front().distTo(pts.back()) < 1e-6);
@@ -927,19 +928,19 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
         Element el = ElementFactory::createPolyline(pts, flags, closed, m);
         const int id = m->addElement(el);
         m->setSelected(id);
-        m->log(QString("已创建折线 #%1（%2 节点，%3）").arg(id).arg((int)pts.size())
-                   .arg(closed ? QStringLiteral("闭合") : QStringLiteral("开放")));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建折线 #%1（%2 节点，%3）"))).arg(id).arg((int)pts.size())
+                   .arg(closed ? SketchCAD::I18n::t(QString::fromUtf8("闭合")) : SketchCAD::I18n::t(QString::fromUtf8("开放"))));
         return true;
     }
 
     // ---- 编辑：所有子命令形如 <cmd> <id> [...] ----
     if (ctx.toks.size() < 2) {
-        m->log(QStringLiteral("用法: ") + cmd + QStringLiteral(" <id> [...]"), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ")) + cmd + QStringLiteral(" <id> [...]"), "warn");
         return false;
     }
     bool okId = false;
     const int id = ctx.toks[1].toInt(&okId);
-    if (!okId) { m->log(QStringLiteral("id 无效"), "warn"); return false; }
+    if (!okId) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), "warn"); return false; }
 
     // ---- from_segments：多源 ID 列表，不走「需先选折线」通用分支 ----
     if (cmd == "polyline_from_segments") {
@@ -973,25 +974,25 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
                 for (bool a : s->arcFlags) nflags.push_back(a);
             }
         }
-        if (npts.size() < 2) { m->log(QStringLiteral("段节点不足"), "warn"); return false; }
+        if (npts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("段节点不足")), "warn"); return false; }
         Element el = ElementFactory::createPolyline(npts, nflags, false, m);
         const int nid = m->addElement(el);
         m->setSelected(nid);
-        m->log(QString("已合并 %1 段为折线 #%2").arg(ctx.toks.size() - 1).arg(nid));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已合并 %1 段为折线 #%2"))).arg(ctx.toks.size() - 1).arg(nid));
         return true;
     }
 
     const Element* ep = m->element(id);
     if (!ep || ep->type != ElementType::Polyline) {
-        m->log(QStringLiteral("未找到折线 #") + ctx.toks[1], "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到折线 #")) + ctx.toks[1], "warn");
         return false;
     }
     const auto& pts = ep->pts;
     const auto& arcFlags = ep->arcFlags;
 
     if (cmd == "polyline_add_node") {
-        if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: polyline_add_node <id> x,y"), "warn"); return false; }
-        Vec3 p; if (!ctx.parsePoint(2, p)) { m->log(QStringLiteral("点解析失败"), "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_add_node <id> x,y")), "warn"); return false; }
+        Vec3 p; if (!ctx.parsePoint(2, p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
         const int n = (int)pts.size();
         const int nSegs = ep->closed ? n : n - 1;
         int bestSeg = -1; double bestD = 1e100; Vec3 bestProj;
@@ -1024,28 +1025,28 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
             for (int i = bestSeg + 1; i < (int)out.arcFlags.size(); ++i) nf.push_back(out.arcFlags[i]);
             out.arcFlags = std::move(nf);
         });
-        m->log(QString("已在折线 #%1 第 %2 段插入节点").arg(id).arg(bestSeg + 1));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在折线 #%1 第 %2 段插入节点"))).arg(id).arg(bestSeg + 1));
         return true;
     }
     if (cmd == "polyline_append_node") {
-        if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: polyline_append_node <id> x,y"), "warn"); return false; }
-        Vec3 p; if (!ctx.parsePoint(2, p)) { m->log(QStringLiteral("点解析失败"), "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_append_node <id> x,y")), "warn"); return false; }
+        Vec3 p; if (!ctx.parsePoint(2, p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
         m->updateElement(id, [&](Element& out) {
             if (p.distTo(out.pts.front()) < p.distTo(out.pts.back()))
                 out.pts.insert(out.pts.begin(), p);
             else
                 out.pts.push_back(p);
         });
-        m->log(QString("已追加折线 #%1 节点").arg(id));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已追加折线 #%1 节点"))).arg(id));
         return true;
     }
     if (cmd == "polyline_delete_node") {
-        if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: polyline_delete_node <id> <idx>"), "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_delete_node <id> <idx>")), "warn"); return false; }
         bool ok; int idx = ctx.toks[2].toInt(&ok);
-        if (!ok || idx < 0 || idx >= (int)pts.size()) { m->log(QStringLiteral("节点索引无效"), "warn"); return false; }
+        if (!ok || idx < 0 || idx >= (int)pts.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("节点索引无效")), "warn"); return false; }
         if ((int)pts.size() <= 2) {
             m->removeElement(id);
-            m->log(QString("折线 #%1 节点过少，已删除").arg(id));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("折线 #%1 节点过少，已删除"))).arg(id));
             return true;
         }
         m->updateElement(id, [&](Element& out) {
@@ -1059,14 +1060,14 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
             }
             out.arcFlags = std::move(nf);
         });
-        m->log(QString("已删除折线 #%1 节点 %2").arg(id).arg(idx));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除折线 #%1 节点 %2"))).arg(id).arg(idx));
         return true;
     }
     if (cmd == "polyline_delete_between") {
-        if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法: polyline_delete_between <id> <i> <j>"), "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_delete_between <id> <i> <j>")), "warn"); return false; }
         int a = ctx.toks[2].toInt(), b = ctx.toks[3].toInt();
         if (a > b) std::swap(a, b);
-        if (b - a <= 1) { m->log(QStringLiteral("两节点相邻无需删除"), "warn"); return false; }
+        if (b - a <= 1) { m->log(SketchCAD::I18n::t(QString::fromUtf8("两节点相邻无需删除")), "warn"); return false; }
         m->updateElement(id, [&](Element& out) {
             std::vector<Vec3> nv;
             for (int i = 0; i <= a; ++i) nv.push_back(out.pts[i]);
@@ -1077,14 +1078,14 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
             for (int k = b; k < (int)out.arcFlags.size(); ++k) nf.push_back(out.arcFlags[k]);
             out.arcFlags = std::move(nf);
         });
-        m->log(QString("已删除折线 #%1 节点 %2..%3 之间").arg(id).arg(a).arg(b));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除折线 #%1 节点 %2..%3 之间"))).arg(id).arg(a).arg(b));
         return true;
     }
     if (cmd == "polyline_trim_segments") {
-        if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: polyline_trim_segments <id> <segIdx>"), "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_trim_segments <id> <segIdx>")), "warn"); return false; }
         bool ok; int seg = ctx.toks[2].toInt(&ok);
-        if (!ok || seg < 0 || seg >= (int)arcFlags.size()) { m->log(QStringLiteral("段索引无效"), "warn"); return false; }
-        if ((int)pts.size() <= 2) { m->log(QStringLiteral("修剪后节点不足"), "warn"); return false; }
+        if (!ok || seg < 0 || seg >= (int)arcFlags.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("段索引无效")), "warn"); return false; }
+        if ((int)pts.size() <= 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("修剪后节点不足")), "warn"); return false; }
         const int n = (int)pts.size();
         const int delNode = (seg + 1) % n;
         m->updateElement(id, [&](Element& out) {
@@ -1094,13 +1095,13 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
             for (int k = seg + 1; k < (int)out.arcFlags.size(); ++k) nf.push_back(out.arcFlags[k]);
             out.arcFlags = std::move(nf);
         });
-        m->log(QString("已修剪折线 #%1 第 %2 段").arg(id).arg(seg + 1));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已修剪折线 #%1 第 %2 段"))).arg(id).arg(seg + 1));
         return true;
     }
     if (cmd == "polyline_equidistant") {
-        if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法: polyline_equidistant <id> <d>"), "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_equidistant <id> <d>")), "warn"); return false; }
         bool ok; const double d = ctx.toks[2].toDouble(&ok);
-        if (!ok) { m->log(QStringLiteral("距离无效"), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("距离无效")), "warn"); return false; }
         std::vector<Vec3> np(pts.size());
         for (int i = 0; i < (int)pts.size(); ++i) np[i] = pts[i];
         const int n = (int)pts.size();
@@ -1124,7 +1125,7 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
         out.name = ep->name + QStringLiteral("(等距)");
         const int nid = m->addElement(out);
         m->setSelected(nid);
-        m->log(QString("已创建等距折线 #%1 (d=%2)").arg(nid).arg(d));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建等距折线 #%1 (d=%2)"))).arg(nid).arg(d));
         return true;
     }
     if (cmd == "polyline_arcs_to_chords") {
@@ -1132,22 +1133,22 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
         m->updateElement(id, [&](Element& out) {
             std::fill(out.arcFlags.begin(), out.arcFlags.end(), false);
         });
-        m->log(QString("已将折线 #%1 的 %2 段弧转直线").arg(id).arg(nArc));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将折线 #%1 的 %2 段弧转直线"))).arg(id).arg(nArc));
         return true;
     }
     if (cmd == "polyline_change_segment_type") {
-        if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法: polyline_change_segment_type <id> <i> <j>"), "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: polyline_change_segment_type <id> <i> <j>")), "warn"); return false; }
         bool o1, o2; int a = ctx.toks[2].toInt(&o1), b = ctx.toks[3].toInt(&o2);
-        if (!o1 || !o2) { m->log(QStringLiteral("索引无效"), "warn"); return false; }
+        if (!o1 || !o2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("索引无效")), "warn"); return false; }
         if (a > b) std::swap(a, b);
         m->updateElement(id, [&](Element& out) {
             for (int k = a; k <= b; ++k)
                 if (k < (int)out.arcFlags.size()) out.arcFlags[k] = !out.arcFlags[k];
         });
-        m->log(QString("已切换折线 #%1 第 %2..%3 段类型").arg(id).arg(a + 1).arg(b + 1));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已切换折线 #%1 第 %2..%3 段类型"))).arg(id).arg(a + 1).arg(b + 1));
         return true;
     }
-    m->log(QStringLiteral("未实现的折线子命令: ") + cmd, "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未实现的折线子命令: ")) + cmd, "warn");
     return false;
 }
 
@@ -1157,25 +1158,25 @@ bool PolylineModeCommand::execute(const CommandContext& ctx) {
 
 bool DeleteCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 2) { m->log("用法: delete <id>", "warn"); return false; }
+    if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: delete <id>")), "warn"); return false; }
     bool ok; int id = ctx.toks[1].toInt(&ok);
-    if (!ok) { m->log("id 无效", "warn"); return false; }
-    if (!m->removeElement(id)) { m->log("未找到图元 #" + QString::number(id), "warn"); return false; }
-    m->log("已删除图元 #" + QString::number(id));
+    if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), "warn"); return false; }
+    if (!m->removeElement(id)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到图元 #")) + QString::number(id), "warn"); return false; }
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已删除图元 #")) + QString::number(id));
     return true;
 }
 
 bool TrimCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 3) {
-        m->log("用法: trim <目标id> <点击点x,y> [边界id ...]（边界省略=全场景为界）", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: trim <目标id> <点击点x,y> [边界id ...]（边界省略=全场景为界）")), "warn");
         return false;
     }
     const int tid = ctx.toks[1].toInt();
     const Element* tgt = m->element(tid);
-    if (!tgt) { m->log("trim: 找不到图元 #" + ctx.toks[1], "warn"); return false; }
+    if (!tgt) { m->log(SketchCAD::I18n::t(QString::fromUtf8("trim: 找不到图元 #")) + ctx.toks[1], "warn"); return false; }
     Vec3 click;
-    if (!ctx.parsePoint(2, click)) { m->log("trim: 点击点解析失败", "warn"); return false; }
+    if (!ctx.parsePoint(2, click)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("trim: 点击点解析失败")), "warn"); return false; }
 
     std::vector<Element> cutters;
     if (ctx.toks.size() >= 4) {
@@ -1197,12 +1198,12 @@ bool TrimCommand::execute(const CommandContext& ctx) {
     const QString tn = tgt->typeName();
     if (parts.empty()) {
         m->removeElement(tid);
-        m->log(QString("已剪切%1 #%2：整体位于边界之间，已移除").arg(tn).arg(tid));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已剪切%1 #%2：整体位于边界之间，已移除"))).arg(tn).arg(tid));
     } else {
         const auto ids = m->replaceElement(tid, parts, QStringLiteral("剪切") + tn);
         QStringList ss;
         for (int i : ids) ss << ("#" + QString::number(i));
-        m->log(QString("已剪切%1 #%2 → 保留 %3 段：%4")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已剪切%1 #%2 → 保留 %3 段：%4")))
                    .arg(tn).arg(tid).arg(ids.size()).arg(ss.join(", ")));
     }
     return true;
@@ -1218,23 +1219,23 @@ bool ListCommand::execute(const CommandContext& ctx) {
             bool ok = false;
             const int id = ctx.toks[i].toInt(&ok);
             const Element* e = ok ? m->element(id) : nullptr;
-            if (!e) { m->log("list: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            if (!e) { m->log("list: #" + ctx.toks[i] + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
             targets.push_back(*e);
         }
     } else {
         targets = m->elements();
     }
 
-    if (targets.empty()) { m->log("模型为空：无图元可列出", "warn"); return true; }
-    m->log(QString("---- 对象列表（共 %1 个）----").arg(targets.size()));
+    if (targets.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("模型为空：无图元可列出")), "warn"); return true; }
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("---- 对象列表（共 %1 个）----"))).arg(targets.size()));
     for (const auto& e : targets) {
         // 首行：id + 类型 + 图层 + 主尺寸描述
-        m->log(QString("#%1 %2  [图层 %3]  %4")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("#%1 %2  [图层 %3]  %4")))
                    .arg(e.id).arg(e.typeName(), e.layer, e.sizeDesc()));
         // 次行（封闭图元）：面积 / 周长 / 形心 —— 与 AREA/MASSPROP 命令同源
         const auto ar = inquiry::areaOfElement(e);
         if (ar.ok) {
-            m->log(QString("     面积 %1 mm² / 周长 %2 mm / 形心 (%3, %4)")
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("     面积 %1 mm² / 周长 %2 mm / 形心 (%3, %4)")))
                        .arg(ar.area, 0, 'f', 2).arg(ar.perimeter, 0, 'f', 2)
                        .arg(ar.centroid.x, 0, 'f', 2).arg(ar.centroid.y, 0, 'f', 2));
         }
@@ -1256,16 +1257,16 @@ bool ListCommand::execute(const CommandContext& ctx) {
 bool DistCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 3) {
-        m->log("用法: dist x1,y1 x2,y2", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dist x1,y1 x2,y2")), "warn");
         return false;
     }
     Vec3 a, b;
     if (!ctx.parsePoint(1, a) || !ctx.parsePoint(2, b)) {
-        m->log("dist: 点解析失败（格式 x,y）", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("dist: 点解析失败（格式 x,y）")), "warn");
         return false;
     }
     const auto r = inquiry::distTwoPoints(a, b);
-    m->log(QString("距离 = %1 mm    ΔX = %2    ΔY = %3    XY平面角 = %4°")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("距离 = %1 mm    ΔX = %2    ΔY = %3    XY平面角 = %4°")))
                .arg(r.distance, 0, 'f', 4).arg(r.dx, 0, 'f', 2)
                .arg(r.dy, 0, 'f', 2).arg(r.angleDeg, 0, 'f', 2));
     return true;
@@ -1281,14 +1282,14 @@ bool AreaCommand::execute(const CommandContext& ctx) {
         for (int i = 1; i < ctx.toks.size(); ++i) {
             Vec3 p;
             if (!ctx.parsePoint(i, p)) {
-                m->log("area: 第 " + QString::number(i) + " 个点解析失败（" + ctx.toks[i] + "）", "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("area: 第 ")) + QString::number(i) + SketchCAD::I18n::t(QString::fromUtf8(" 个点解析失败（")) + ctx.toks[i] + "）", "warn");
                 return false;
             }
             ring.push_back(p);
         }
         const auto r = inquiry::areaOfPolygon(ring);
         if (!r.ok) { m->log("area: " + r.error, "warn"); return false; }
-        m->log(QString("点列模式（%1 个顶点）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("点列模式（%1 个顶点）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")))
                    .arg(ring.size()).arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
                    .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
         return true;
@@ -1301,7 +1302,7 @@ bool AreaCommand::execute(const CommandContext& ctx) {
             bool ok = false;
             const int id = ctx.toks[i].toInt(&ok);
             const Element* e = ok ? m->element(id) : nullptr;
-            if (!e) { m->log("area: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            if (!e) { m->log("area: #" + ctx.toks[i] + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
             targets.push_back(*e);
         }
     } else {
@@ -1309,7 +1310,7 @@ bool AreaCommand::execute(const CommandContext& ctx) {
             if (const Element* e = m->element(id)) targets.push_back(*e);
         }
         if (targets.empty()) {
-            m->log("用法: area <封闭图元id> | area x1,y1 x2,y2 [x3,y3 ...]（或先选中图元/一组首尾相接的直线）", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: area <封闭图元id> | area x1,y1 x2,y2 [x3,y3 ...]（或先选中图元/一组首尾相接的直线）")), "warn");
             return false;
         }
     }
@@ -1322,7 +1323,7 @@ bool AreaCommand::execute(const CommandContext& ctx) {
     if (allLines) {
         const auto r = inquiry::areaOfClosedLineChain(targets);
         if (!r.ok) { m->log("area: " + r.error, "warn"); return false; }
-        m->log(QString("直线链模式（%1 条边围成多边形）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("直线链模式（%1 条边围成多边形）：面积 = %2 mm²    周长 = %3 mm    形心 = (%4, %5)")))
                    .arg(targets.size()).arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
                    .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
         return true;
@@ -1338,13 +1339,13 @@ bool AreaCommand::execute(const CommandContext& ctx) {
         }
         ++counted;
         total += r.area;
-        m->log(QString("#%1 %2：面积 = %3 mm²    周长 = %4 mm    形心 = (%5, %6)")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("#%1 %2：面积 = %3 mm²    周长 = %4 mm    形心 = (%5, %6)")))
                    .arg(e.id).arg(e.typeName())
                    .arg(r.area, 0, 'f', 4).arg(r.perimeter, 0, 'f', 4)
                    .arg(r.centroid.x, 0, 'f', 2).arg(r.centroid.y, 0, 'f', 2));
     }
     if (counted >= 2)
-        m->log(QString("合计 %1 个封闭区域：总面积 = %2 mm²").arg(counted).arg(total, 0, 'f', 4));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("合计 %1 个封闭区域：总面积 = %2 mm²"))).arg(counted).arg(total, 0, 'f', 4));
     return counted > 0;
 }
 
@@ -1357,7 +1358,7 @@ bool MassPropCommand::execute(const CommandContext& ctx) {
             bool ok = false;
             const int id = ctx.toks[i].toInt(&ok);
             const Element* e = ok ? m->element(id) : nullptr;
-            if (!e) { m->log("massprop: #" + ctx.toks[i] + " 不存在", "warn"); return false; }
+            if (!e) { m->log("massprop: #" + ctx.toks[i] + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
             targets.push_back(*e);
         }
     } else {
@@ -1365,7 +1366,7 @@ bool MassPropCommand::execute(const CommandContext& ctx) {
             if (const Element* e = m->element(id)) targets.push_back(*e);
         }
         if (targets.empty()) {
-            m->log("用法: massprop <封闭图元id> ...（或先选中图元）", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: massprop <封闭图元id> ...（或先选中图元）")), "warn");
             return false;
         }
     }
@@ -1376,16 +1377,16 @@ bool MassPropCommand::execute(const CommandContext& ctx) {
             m->log(QString("massprop: #%1 %2 —— %3").arg(e.id).arg(e.typeName(), r.error), "warn");
             continue;
         }
-        m->log(QString("---- #%1 %2 质量特性 ----").arg(e.id).arg(e.typeName()));
-        m->log(QString("  面积        %1 mm²").arg(r.area, 0, 'f', 4));
-        m->log(QString("  周长        %1 mm").arg(r.perimeter, 0, 'f', 4));
-        m->log(QString("  包围盒      (%1, %2) ~ (%3, %4)    %5 × %6")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("---- #%1 %2 质量特性 ----"))).arg(e.id).arg(e.typeName()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("  面积        %1 mm²"))).arg(r.area, 0, 'f', 4));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("  周长        %1 mm"))).arg(r.perimeter, 0, 'f', 4));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("  包围盒      (%1, %2) ~ (%3, %4)    %5 × %6")))
                    .arg(r.bbox.left(), 0, 'f', 2).arg(r.bbox.bottom(), 0, 'f', 2)
                    .arg(r.bbox.right(), 0, 'f', 2).arg(r.bbox.top(), 0, 'f', 2)
                    .arg(r.bbox.width(), 0, 'f', 2).arg(r.bbox.height(), 0, 'f', 2));
-        m->log(QString("  形心        (%1, %2)")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("  形心        (%1, %2)")))
                    .arg(r.centroid.x, 0, 'f', 3).arg(r.centroid.y, 0, 'f', 3));
-        m->log(QString("  惯性矩(形心) Ix = %1    Iy = %2    Ixy = %3 mm⁴")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("  惯性矩(形心) Ix = %1    Iy = %2    Ixy = %3 mm⁴")))
                    .arg(r.ixBar, 0, 'f', 2).arg(r.iyBar, 0, 'f', 2).arg(r.ixyBar, 0, 'f', 2));
     }
     return true;
@@ -1394,19 +1395,19 @@ bool MassPropCommand::execute(const CommandContext& ctx) {
 bool IdCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 2) {
-        m->log("用法: id x,y", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: id x,y")), "warn");
         return false;
     }
     Vec3 p;
     if (!ctx.parsePoint(1, p)) {
-        m->log("id: 点解析失败（格式 x,y）", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("id: 点解析失败（格式 x,y）")), "warn");
         return false;
     }
     const auto r = inquiry::idPoint(p, m->elements());
-    m->log(QString("坐标: X = %1    Y = %2    Z = %3")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("坐标: X = %1    Y = %2    Z = %3")))
                .arg(p.x, 0, 'f', 4).arg(p.y, 0, 'f', 4).arg(p.z, 0, 'f', 4));
     if (r.nearest)
-        m->log(QString("最近图元: #%1 %2（距离 %3 mm）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("最近图元: #%1 %2（距离 %3 mm）")))
                    .arg(r.nearest->id).arg(r.nearest->typeName())
                    .arg(r.nearestDist, 0, 'f', 4));
     return true;
@@ -1446,19 +1447,19 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
     };
 
     if (cmd == "move" || cmd == "move_copy") {
-        if (ctx.toks.size() < 3) { m->log("用法: move <dx> <dy>", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: move <dx> <dy>")), "warn"); return false; }
         bool copy = (cmd == "move_copy");
         bool ok1, ok2;
         double dx = ctx.toks[1].toDouble(&ok1), dy = ctx.toks[2].toDouble(&ok2);
-        if (!ok1 || !ok2) { m->log("位移参数解析失败", "warn"); return false; }
-        if (m->selection().empty()) { m->log("无可移动图元（请先选中）", "warn"); return false; }
+        if (!ok1 || !ok2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("位移参数解析失败")), "warn"); return false; }
+        if (m->selection().empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可移动图元（请先选中）")), "warn"); return false; }
         if (copy) {
             // move_copy：复制（新增）一份偏置后的副本，原图元不动
             auto src = selectedElems();
             auto changes = modify::makeMoveCopy(src, Vec3(dx, dy), /*copy=*/true);
-            m->beginEdit(QStringLiteral("修改-复制移动"));
+            m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-复制移动")));
             auto added = modify::applyChanges(m, changes, QString());
-            m->log(QString("已复制移动 %1 个图元（Δ=(%2,%3)），新增 %4 个")
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已复制移动 %1 个图元（Δ=(%2,%3)），新增 %4 个")))
                        .arg(src.size()).arg(dx, 0, 'f', 2).arg(dy, 0, 'f', 2)
                        .arg(added.size()));
             return true;
@@ -1466,7 +1467,7 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         // 普通 move：整组平移（单一入口，与菜单「移动/复制」语义一致）
         const int n = m->selection().size();
         m->translateSelection(Vec3(dx, dy), QStringLiteral("修改-移动"));
-        m->log(QString("已移动 %1 个图元（Δ=(%2,%3)）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已移动 %1 个图元（Δ=(%2,%3)）")))
                    .arg(n).arg(dx, 0, 'f', 2).arg(dy, 0, 'f', 2));
         return true;
     }
@@ -1475,22 +1476,22 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         const double dx = ctx.toks.size() >= 2 ? ctx.toks[1].toDouble() : 10.0;
         const double dy = ctx.toks.size() >= 3 ? ctx.toks[2].toDouble() : 0.0;
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可复制图元（请先选中）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可复制图元（请先选中）")), "warn"); return false; }
         auto changes = modify::makeDuplicate(src, dx, dy);
-        m->beginEdit(QStringLiteral("修改-复制"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-复制")));
         auto added = modify::applyChanges(m, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        m->log(QString("已复制 %1 个图元（偏置=(%2,%3)）→ %4")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已复制 %1 个图元（偏置=(%2,%3)）→ %4")))
                    .arg(src.size()).arg(dx, 0, 'f', 2).arg(dy, 0, 'f', 2).arg(ids.join(", ")));
         return true;
     }
     if (cmd == "rotate") {
-        if (ctx.toks.size() < 2) { m->log("用法: rotate <angleDeg> [cx cy]", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: rotate <angleDeg> [cx cy]")), "warn"); return false; }
         double a = ctx.toks[1].toDouble();
         // 默认绕"选中图元的几何质心"旋转；提供 cx,cy 时绕指定点旋转
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可旋转图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可旋转图元")), "warn"); return false; }
         Vec3 c;
         if (ctx.toks.size() >= 4 && ctx.parsePoint(2, c)) {
             // 显式中心
@@ -1505,18 +1506,18 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
             if (cnt > 0) c = Vec3(c.x / cnt, c.y / cnt, 0);
         }
         auto changes = modify::makeRotate(src, c, a);
-        m->beginEdit(QStringLiteral("修改-旋转"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-旋转")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已旋转 %1 个图元（中心=(%2,%3)，角度=%4°）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已旋转 %1 个图元（中心=(%2,%3)，角度=%4°）")))
                    .arg(src.size()).arg(c.x, 0, 'f', 2).arg(c.y, 0, 'f', 2).arg(a, 0, 'f', 2));
         return true;
     }
     if (cmd == "scale") {
-        if (ctx.toks.size() < 2) { m->log("用法: scale <factor> [cx cy]", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: scale <factor> [cx cy]")), "warn"); return false; }
         double k = ctx.toks[1].toDouble();
-        if (k <= 0) { m->log("缩放因子必须 > 0", "warn"); return false; }
+        if (k <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("缩放因子必须 > 0")), "warn"); return false; }
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可缩放图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可缩放图元")), "warn"); return false; }
         Vec3 c;
         if (ctx.toks.size() >= 4 && ctx.parsePoint(2, c)) {
             // 显式中心
@@ -1530,29 +1531,29 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
             if (cnt > 0) c = Vec3(c.x / cnt, c.y / cnt, 0);
         }
         auto changes = modify::makeScale(src, c, k);
-        m->beginEdit(QStringLiteral("修改-缩放"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-缩放")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已缩放 %1 个图元（中心=(%2,%3)，因子=%4）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已缩放 %1 个图元（中心=(%2,%3)，因子=%4）")))
                    .arg(src.size()).arg(c.x, 0, 'f', 2).arg(c.y, 0, 'f', 2).arg(k, 0, 'f', 3));
         return true;
     }
     if (cmd == "mirror") {
         if (ctx.toks.size() < 2) {
-            m->log("用法: mirror point <x> <y> | mirror line <x1> <y1> <x2> <y2> | mirror h | mirror v", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: mirror point <x> <y> | mirror line <x1> <y1> <x2> <y2> | mirror h | mirror v")), "warn");
             return false;
         }
         const QString kind = ctx.toks[1].toLower();
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可镜像图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可镜像图元")), "warn"); return false; }
         bool isPoint = false;
         Vec3 b1, b2(1, 0, 0);
         if (kind == "point") {
-            if (ctx.toks.size() < 4) { m->log("用法: mirror point <x> <y>", "warn"); return false; }
-            if (!ctx.parsePoint(2, b1)) { m->log("中心点解析失败", "warn"); return false; }
+            if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: mirror point <x> <y>")), "warn"); return false; }
+            if (!ctx.parsePoint(2, b1)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("中心点解析失败")), "warn"); return false; }
             isPoint = true;
         } else if (kind == "line") {
-            if (ctx.toks.size() < 6) { m->log("用法: mirror line <x1> <y1> <x2> <y2>", "warn"); return false; }
-            if (!ctx.parsePoint(2, b1) || !ctx.parsePoint(4, b2)) { m->log("轴点解析失败", "warn"); return false; }
+            if (ctx.toks.size() < 6) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: mirror line <x1> <y1> <x2> <y2>")), "warn"); return false; }
+            if (!ctx.parsePoint(2, b1) || !ctx.parsePoint(4, b2)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("轴点解析失败")), "warn"); return false; }
             isPoint = false;
         } else if (kind == "h" || kind == "horizontal" || kind == "v" || kind == "vertical") {
             // 便捷：关于「选区所有控制点的几何中心」的水平 / 竖直直线镜像
@@ -1562,93 +1563,93 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
             if (kind == "h" || kind == "horizontal") { b1 = Vec3(0, cy, 0); b2 = Vec3(1, cy, 0); }
             else                                     { b1 = Vec3(cx, 0, 0); b2 = Vec3(cx, 1, 0); }
             isPoint = false;
-        } else { m->log("未知镜像方式: " + kind, "warn"); return false; }
+        } else { m->log(SketchCAD::I18n::t(QString::fromUtf8("未知镜像方式: ")) + kind, "warn"); return false; }
         auto changes = modify::makeMirror(src, isPoint, b1, b2);
-        m->beginEdit(QStringLiteral("修改-镜像"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-镜像")));
         auto added = modify::applyChanges(m, changes, QString());
-        m->log(QString("已生成 %1 个镜像图元（%2）").arg(added.size()).arg(kind));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已生成 %1 个镜像图元（%2）"))).arg(added.size()).arg(kind));
         return true;
     }
     if (cmd == "revert" || cmd == "revert_direction") {
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可反向图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可反向图元")), "warn"); return false; }
         auto changes = modify::makeRevertDirection(src);
-        m->beginEdit(QStringLiteral("修改-反向"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-反向")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已反向 %1 个图元").arg(src.size()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已反向 %1 个图元"))).arg(src.size()));
         return true;
     }
     if (cmd == "lengthen") {
-        if (ctx.toks.size() < 3) { m->log("用法: lengthen <side:0|1> <deltaMm>", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: lengthen <side:0|1> <deltaMm>")), "warn"); return false; }
         int side = ctx.toks[1].toInt();
         double d = ctx.toks[2].toDouble();
-        if (side < 0 || side > 1) { m->log("side 必须为 0（起点）或 1（终点）", "warn"); return false; }
+        if (side < 0 || side > 1) { m->log(SketchCAD::I18n::t(QString::fromUtf8("side 必须为 0（起点）或 1（终点）")), "warn"); return false; }
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可延长图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可延长图元")), "warn"); return false; }
         auto changes = modify::makeLengthen(src, side, d);
-        m->beginEdit(QStringLiteral("修改-延长"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-延长")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已延长 %1 个图元（side=%2，Δ=%3 mm）").arg(src.size()).arg(side).arg(d, 0, 'f', 2));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已延长 %1 个图元（side=%2，Δ=%3 mm）"))).arg(src.size()).arg(side).arg(d, 0, 'f', 2));
         return true;
     }
     if (cmd == "offset") {
-        if (ctx.toks.size() < 2) { m->log("用法: offset <distMm>", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: offset <distMm>")), "warn"); return false; }
         double d = ctx.toks[1].toDouble();
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可偏移图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可偏移图元")), "warn"); return false; }
         auto changes = modify::makeOffset(src, d);
-        m->beginEdit(QStringLiteral("修改-偏移"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-偏移")));
         auto applied = modify::applyChanges(m, changes, QString());
-        m->log(QString("已偏移 %1 个图元（Δ=%2 mm）").arg(applied.size()).arg(d, 0, 'f', 2));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已偏移 %1 个图元（Δ=%2 mm）"))).arg(applied.size()).arg(d, 0, 'f', 2));
         return true;
     }
     if (cmd == "break_at") {
-        if (ctx.toks.size() < 3) { m->log("用法: break_at <id> <px,py>", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: break_at <id> <px,py>")), "warn"); return false; }
         bool ok; int id = ctx.toks[1].toInt(&ok);
-        if (!ok) { m->log("id 无效", "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), "warn"); return false; }
         Vec3 p;
-        if (!ctx.parsePoint(2, p)) { m->log("点解析失败", "warn"); return false; }
+        if (!ctx.parsePoint(2, p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
         // 单点打断：把 id 加入 src，然后 makeBreakDivide(src, id, p, 0)
         std::vector<Element> src;
         if (const Element* e = m->element(id)) src.push_back(*e);
-        else { m->log("图元不存在", "warn"); return false; }
+        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元不存在")), "warn"); return false; }
         auto changes = modify::makeBreakDivide(src, id, p, 0);
-        if (changes.empty()) { m->log("打断失败（点不在线段内或为端点）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-打断"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("打断失败（点不在线段内或为端点）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-打断")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已打断图元 #%1 于 (%2,%3)").arg(id).arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已打断图元 #%1 于 (%2,%3)"))).arg(id).arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2));
         return true;
     }
     if (cmd == "divide") {
-        if (ctx.toks.size() < 3) { m->log("用法: divide <id> <n>", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: divide <id> <n>")), "warn"); return false; }
         bool ok; int id = ctx.toks[1].toInt(&ok), n = ctx.toks[2].toInt(&ok);
-        if (!ok || n < 2) { m->log("id 或段数无效", "warn"); return false; }
+        if (!ok || n < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 或段数无效")), "warn"); return false; }
         std::vector<Element> src;
         if (const Element* e = m->element(id)) src.push_back(*e);
-        else { m->log("图元不存在", "warn"); return false; }
+        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元不存在")), "warn"); return false; }
         // 等分需要给个虚拟的切点；改 makeBreakDivide 走"等分"分支：传 n，cut 设为任意值
         auto changes = modify::makeBreakDivide(src, id, Vec3(0, 0, 0), n);
-        if (changes.empty()) { m->log("等分失败", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-等分"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("等分失败")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-等分")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已把图元 #%1 等分为 %2 段").arg(id).arg(n));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已把图元 #%1 等分为 %2 段"))).arg(id).arg(n));
         return true;
     }
     if (cmd == "fillet") {
-        if (ctx.toks.size() < 4) { m->log("用法: fillet <id1> <id2> <radiusMm>（radius=0 即倒角）", "warn"); return false; }
+        if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: fillet <id1> <id2> <radiusMm>（radius=0 即倒角）")), "warn"); return false; }
         bool ok1, ok2; int id1 = ctx.toks[1].toInt(&ok1), id2 = ctx.toks[2].toInt(&ok2);
-        if (!ok1 || !ok2) { m->log("id 解析失败", "warn"); return false; }
+        if (!ok1 || !ok2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 解析失败")), "warn"); return false; }
         double r = ctx.toks[3].toDouble();
-        if (r < 0) { m->log("radius 必须 ≥ 0", "warn"); return false; }
+        if (r < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("radius 必须 ≥ 0")), "warn"); return false; }
         std::vector<Element> pool = m->elements();
         auto changes = modify::makeFillet(id1, id2, r, pool);
-        if (changes.empty()) { m->log("圆角失败（两线平行或不相交）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-圆角"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("圆角失败（两线平行或不相交）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-圆角")));
         auto added = modify::applyChanges(m, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        m->log(QString("已对 #%1 与 #%2 做%3（r=%4），新增 %5：%6")
-                   .arg(id1).arg(id2).arg(r > 0 ? "圆角" : "倒角")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已对 #%1 与 #%2 做%3（r=%4），新增 %5：%6")))
+                   .arg(id1).arg(id2).arg(r > 0 ? SketchCAD::I18n::t(QString::fromUtf8("圆角")) : SketchCAD::I18n::t(QString::fromUtf8("倒角")))
                    .arg(r, 0, 'f', 2).arg(added.size()).arg(ids.join(", ")));
         return true;
     }
@@ -1658,15 +1659,15 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         //   * 额外给 angleDeg → 距离-角度倒角（沿 a 回退 d1，倒角线与 a 成 angleDeg，自动求 b 退距）
         // 几何全部走 corner 核心层，model 仅按 Change 落盘，可独立调用、易于扩展。
         if (ctx.toks.size() < 5) {
-            m->log(QStringLiteral("用法: chamfer <id1> <id2> <d1> <d2> [angleDeg]"), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: chamfer <id1> <id2> <d1> <d2> [angleDeg]")), "warn");
             return false;
         }
         bool ok1, ok2; int id1 = ctx.toks[1].toInt(&ok1), id2 = ctx.toks[2].toInt(&ok2);
-        if (!ok1 || !ok2) { m->log(QStringLiteral("id 解析失败"), "warn"); return false; }
+        if (!ok1 || !ok2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 解析失败")), "warn"); return false; }
         double d1 = ctx.toks[3].toDouble(), d2 = ctx.toks[4].toDouble();
         const Element* ea = m->element(id1);
         const Element* eb = m->element(id2);
-        if (!ea || !eb) { m->log(QStringLiteral("图元不存在"), "warn"); return false; }
+        if (!ea || !eb) { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元不存在")), "warn"); return false; }
         corner::CornerResult res;
         if (ctx.toks.size() >= 6) {
             double ang = ctx.toks[5].toDouble();
@@ -1674,32 +1675,32 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         } else {
             res = corner::chamferPair(*ea, *eb, d1, d2);
         }
-        if (!res.ok) { m->log(QStringLiteral("倒角失败：") + res.msg, "warn"); return false; }
+        if (!res.ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("倒角失败：")) + res.msg, "warn"); return false; }
         auto changes = modify::makeCornerChanges(id1, id2, res);
-        m->beginEdit(QStringLiteral("修改-倒角"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-倒角")));
         auto added = modify::applyChanges(m, changes, QString());
         QStringList ids; for (int id : added) ids << ("#" + QString::number(id));
-        m->log(QString("已对 #%1 与 #%2 做倒角（d1=%3, d2=%4），新增 %5：%6")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已对 #%1 与 #%2 做倒角（d1=%3, d2=%4），新增 %5：%6")))
                    .arg(id1).arg(id2).arg(d1, 0, 'f', 2).arg(d2, 0, 'f', 2)
                    .arg(added.size()).arg(ids.join(", ")));
         return true;
     }
     if (cmd == "explode") {
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可分解图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解图元")), "warn"); return false; }
         auto changes = modify::makeExplode(src);
-        if (changes.empty()) { m->log("无可分解对象", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-分解"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解对象")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-分解")));
         auto added = modify::applyChanges(m, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        m->log(QString("已分解 %1 个图元 → 新增 %2 段：%3")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已分解 %1 个图元 → 新增 %2 段：%3")))
                    .arg(src.size()).arg(added.size()).arg(ids.join(", ")));
         return true;
     }
     if (cmd == "align") {
         if (ctx.toks.size() < 2) {
-            m->log("用法: align left|centerx|right|topy|centery|bottom", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: align left|centerx|right|topy|centery|bottom")), "warn");
             return false;
         }
         int kind = -1;
@@ -1710,7 +1711,7 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         else if (k == "topy" || k == "t")     kind = 3;
         else if (k == "centery" || k == "cy") kind = 4;
         else if (k == "bottom" || k == "b")   kind = 5;
-        else { m->log("未知对齐方式: " + k, "warn"); return false; }
+        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("未知对齐方式: ")) + k, "warn"); return false; }
         // 取第一个选区元素作为 ref，其余为 src
         std::vector<Element> src;
         const Element* refE = nullptr;
@@ -1721,62 +1722,62 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
             if (!refE) refE = e;
             else { src.push_back(*e); ++idx; }
         }
-        if (!refE || src.empty()) { m->log("至少需要 2 个选中图元（1 参考 + 1+ 待对齐）", "warn"); return false; }
+        if (!refE || src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("至少需要 2 个选中图元（1 参考 + 1+ 待对齐）")), "warn"); return false; }
         auto changes = modify::makeAlign(src, *refE, kind);
-        m->beginEdit(QStringLiteral("修改-对齐"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-对齐")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已对齐 %1 个图元（方式=%2）").arg(src.size()).arg(k));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已对齐 %1 个图元（方式=%2）"))).arg(src.size()).arg(k));
         return true;
     }
     if (cmd == "stretch") {
-        if (ctx.toks.size() < 3) { m->log("用法: stretch <basex,basey> <tox,toy>", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: stretch <basex,basey> <tox,toy>")), "warn"); return false; }
         Vec3 base, to;
-        if (!ctx.parsePoint(1, base) || !ctx.parsePoint(2, to)) { m->log("点解析失败", "warn"); return false; }
+        if (!ctx.parsePoint(1, base) || !ctx.parsePoint(2, to)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可拉伸图元", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可拉伸图元")), "warn"); return false; }
         auto changes = modify::makeStretch(src, base, to);
-        if (changes.empty()) { m->log("未选中任何端点（basePt 必须命中图元端点容差 1e-3 mm）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-拉伸"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未选中任何端点（basePt 必须命中图元端点容差 1e-3 mm）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-拉伸")));
         modify::applyChanges(m, changes, QString());
-        m->log(QString("已拉伸 %1 个端点").arg(changes.size()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已拉伸 %1 个端点"))).arg(changes.size()));
         return true;
     }
     if (cmd == "join") {
         // 连合：把选区中同层、端点相接的 Line/Arc 连成 Polyline。
         //   join [tol]    tol 缺省 0.5mm（GUI 菜单入口传视图捕捉容差 worldTol()）
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可连合图元（请先选中 Line/Arc）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可连合图元（请先选中 Line/Arc）")), "warn"); return false; }
         double tol = modify::kJoinDefaultTol;
         if (ctx.toks.size() >= 2) {
             bool ok = false; tol = ctx.toks[1].toDouble(&ok);
-            if (!ok || tol <= 0) { m->log("容差须为正数（mm）", "warn"); return false; }
+            if (!ok || tol <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("容差须为正数（mm）")), "warn"); return false; }
         }
         auto changes = modify::makeJoin(src, tol);
-        if (changes.empty()) { m->log("未发现可连合的端点相接链（同层 Line/Arc 且端点距 ≤ 容差）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-连合"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未发现可连合的端点相接链（同层 Line/Arc 且端点距 ≤ 容差）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-连合")));
         auto added = modify::applyChanges(m, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        m->log(QString("已连合为 %1 条折线（容差 %2 mm）：%3")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已连合为 %1 条折线（容差 %2 mm）：%3")))
                    .arg(added.size()).arg(tol, 0, 'f', 3).arg(ids.join(", ")));
         return true;
     }
     if (cmd == "arrayrect") {
         // 矩形阵列：arrayrect <rows> <cols> <rowSpacing> <colSpacing>
-        if (ctx.toks.size() < 5) { m->log("用法: arrayrect <行数> <列数> <行间距> <列间距>", "warn"); return false; }
+        if (ctx.toks.size() < 5) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: arrayrect <行数> <列数> <行间距> <列间距>")), "warn"); return false; }
         bool ok1, ok2, ok3, ok4;
         const int rows = ctx.toks[1].toInt(&ok1), cols = ctx.toks[2].toInt(&ok2);
         const double rsp = ctx.toks[3].toDouble(&ok3), csp = ctx.toks[4].toDouble(&ok4);
         if (!ok1 || !ok2 || !ok3 || !ok4 || rows < 1 || cols < 1) {
-            m->log("参数无效（行/列 ≥1，间距可为 0）", "warn"); return false;
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("参数无效（行/列 ≥1，间距可为 0）")), "warn"); return false;
         }
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可阵列图元（请先选中）")), "warn"); return false; }
         auto changes = modify::makeRectangularArray(src, rows, cols, rsp, csp);
-        if (changes.empty()) { m->log("1×1 阵列无副本（原图元保留）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-矩形阵列"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("1×1 阵列无副本（原图元保留）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-矩形阵列")));
         auto added = modify::applyChanges(m, changes, QString());
-        m->log(QString("矩形阵列 %1×%2（间距 %3/%4 mm）：新增 %5 个副本")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("矩形阵列 %1×%2（间距 %3/%4 mm）：新增 %5 个副本")))
                    .arg(rows).arg(cols).arg(rsp, 0, 'f', 2).arg(csp, 0, 'f', 2).arg(added.size()));
         return true;
     }
@@ -1784,7 +1785,7 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         // 环形阵列：arraypolar <cx,cy> <count> [angleRange]
         // 基点语义与 AutoCAD 对齐：选中单个圆/弧且未显式给中心时，默认取其圆心。
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可阵列图元（请先选中）")), "warn"); return false; }
         Vec3 center;
         int argIdx = 1;
         bool centerGiven = (ctx.toks.size() >= 2 && ctx.parsePoint(1, center));
@@ -1796,20 +1797,20 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
             if (first && !first->pts.empty()) {
                 center = first->pts[0];   // 默认捕捉圆心
             } else {
-                m->log("用法: arraypolar <cx,cy> <count> [角度范围]（选中圆/弧时可省略中心=圆心）", "warn");
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: arraypolar <cx,cy> <count> [角度范围]（选中圆/弧时可省略中心=圆心）")), "warn");
                 return false;
             }
         }
-        if (ctx.toks.size() <= argIdx) { m->log("缺少数量参数 <count>", "warn"); return false; }
+        if (ctx.toks.size() <= argIdx) { m->log(SketchCAD::I18n::t(QString::fromUtf8("缺少数量参数 <count>")), "warn"); return false; }
         bool ok = false;
         const int count = ctx.toks[argIdx].toInt(&ok);
-        if (!ok || count < 1) { m->log("数量须 ≥1", "warn"); return false; }
+        if (!ok || count < 1) { m->log(SketchCAD::I18n::t(QString::fromUtf8("数量须 ≥1")), "warn"); return false; }
         const double range = ctx.toks.size() > argIdx + 1 ? ctx.toks[argIdx + 1].toDouble() : 360.0;
         auto changes = modify::makePolarArray(src, center, count, range);
-        if (changes.empty()) { m->log("count<2 无副本（原图元保留）", "warn"); return false; }
-        m->beginEdit(QStringLiteral("修改-环形阵列"));
+        if (changes.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("count<2 无副本（原图元保留）")), "warn"); return false; }
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-环形阵列")));
         auto added = modify::applyChanges(m, changes, QString());
-        m->log(QString("环形阵列 %1 份 / %2°（中心 %3,%4）：新增 %5 个副本")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("环形阵列 %1 份 / %2°（中心 %3,%4）：新增 %5 个副本")))
                    .arg(count).arg(range, 0, 'f', 2)
                    .arg(center.x, 0, 'f', 2).arg(center.y, 0, 'f', 2).arg(added.size()));
         return true;
@@ -1820,14 +1821,14 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         bool divide = (ctx.toks.size() >= 2 && ctx.toks[1].toLower() == "divide");
         const int baseIdx = divide ? 2 : 1;
         if (ctx.toks.size() < baseIdx + 2) {
-            m->log("用法: arraypath <路径id> <间距> | arraypath divide <路径id> <数量>", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: arraypath <路径id> <间距> | arraypath divide <路径id> <数量>")), "warn");
             return false;
         }
         bool ok = false;
         const int pathId = ctx.toks[baseIdx].toInt(&ok);
-        if (!ok) { m->log("路径 id 无效", "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("路径 id 无效")), "warn"); return false; }
         const Element* path = m->element(pathId);
-        if (!path) { m->log("路径图元不存在", "warn"); return false; }
+        if (!path) { m->log(SketchCAD::I18n::t(QString::fromUtf8("路径图元不存在")), "warn"); return false; }
         // 路径离散：Polyline 用弧感知采样，Spline 用样条采样；其余类型不支持
         std::vector<Vec3> pathPts;
         if (path->type == ElementType::Polyline && path->pts.size() >= 2) {
@@ -1835,31 +1836,31 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
         } else if (path->type == ElementType::Spline && path->pts.size() >= 2) {
             pathPts = geo::sampleSpline(path->pts, 32);
         } else {
-            m->log("路径仅支持折线（Polyline）或样条（Spline）", "warn"); return false;
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("路径仅支持折线（Polyline）或样条（Spline）")), "warn"); return false;
         }
         double spacing = 0.0; int count = 0;
         if (divide) {
             count = ctx.toks[baseIdx + 1].toInt(&ok);
-            if (!ok || count < 2) { m->log("数量须 ≥2", "warn"); return false; }
+            if (!ok || count < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("数量须 ≥2")), "warn"); return false; }
         } else {
             spacing = ctx.toks[baseIdx + 1].toDouble(&ok);
-            if (!ok || spacing < 0) { m->log("间距须 ≥0（0 = 按数量均分，需用 divide）", "warn"); return false; }
+            if (!ok || spacing < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("间距须 ≥0（0 = 按数量均分，需用 divide）")), "warn"); return false; }
         }
         auto src = selectedElems();
-        if (src.empty()) { m->log("无可阵列图元（请先选中）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可阵列图元（请先选中）")), "warn"); return false; }
         auto changes = modify::makePathArray(src, pathPts, spacing, count);
         if (changes.empty()) {
-            m->log(divide ? "路径退化或数量不足，未生成副本"
-                          : "路径长度小于间距，放不下第二个项目（未生成副本）", "warn");
+            m->log(divide ? SketchCAD::I18n::t(QString::fromUtf8("路径退化或数量不足，未生成副本"))
+                          : SketchCAD::I18n::t(QString::fromUtf8("路径长度小于间距，放不下第二个项目（未生成副本）")), "warn");
             return false;
         }
-        m->beginEdit(QStringLiteral("修改-路径阵列"));
+        m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-路径阵列")));
         auto added = modify::applyChanges(m, changes, QString());
-        m->log(QString("路径阵列沿 #%1：%2 个位置点，新增 %3 个副本")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("路径阵列沿 #%1：%2 个位置点，新增 %3 个副本")))
                    .arg(pathId).arg(changes.size() / (int)src.size() + 1).arg(added.size()));
         return true;
     }
-    m->log("未知 modify 子命令: " + cmd, "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知 modify 子命令: ")) + cmd, "warn");
     return false;
 }
 
@@ -1869,13 +1870,13 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
 
 bool PlaneCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 2) { m->log("用法: plane xy|yz|xz", "warn"); return false; }
+    if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: plane xy|yz|xz")), "warn"); return false; }
     QString p = ctx.toks[1].toLower();
     if (p == "xy") m->setPlane(Plane::XY);
     else if (p == "yz") m->setPlane(Plane::YZ);
     else if (p == "xz") m->setPlane(Plane::XZ);
-    else { m->log("未知平面: " + p, "warn"); return false; }
-    m->log("已切换到 " + QString(planeName(m->plane())) + " 工作平面");
+    else { m->log(SketchCAD::I18n::t(QString::fromUtf8("未知平面: ")) + p, "warn"); return false; }
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已切换到 ")) + QString(planeName(m->plane())) + SketchCAD::I18n::t(QString::fromUtf8(" 工作平面")));
     return true;
 }
 
@@ -1886,9 +1887,9 @@ bool UcsCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     const QStringList& t = ctx.toks;
     if (t.size() < 2) {
-        m->log("当前 UCS: " + m->currentUcs().describe() +
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("当前 UCS: ")) + m->currentUcs().describe() +
                (m->currentUcs().isWorld() ? "（世界系）" : ""));
-        m->log("用法: ucs world|view|3p|object|z|origin|save|set|restore|delete|list|coords");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs world|view|3p|object|z|origin|save|set|restore|delete|list|coords")));
         return true;
     }
     const QString sub = t[1].toLower();
@@ -1896,116 +1897,116 @@ bool UcsCommand::execute(const CommandContext& ctx) {
     // ---- 定义方式 ①：世界 ----
     if (sub == "world" || sub == "w") {
         m->setCurrentUcs(Ucs("WORLD", Vec3(0, 0, 0), 0.0));
-        m->log("UCS 已切换到世界坐标系（WORLD）");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已切换到世界坐标系（WORLD）")));
         return true;
     }
     // ---- 定义方式 ②：视图（平面视图下视图系与世界系一致）----
     if (sub == "view" || sub == "v") {
         m->setCurrentUcs(Ucs("WORLD", Vec3(0, 0, 0), 0.0));
-        m->log("UCS 已对齐视图（平面视图下视图系=世界系）");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已对齐视图（平面视图下视图系=世界系）")));
         return true;
     }
     // ---- 定义方式 ③：三点 ----
     if (sub == "3p" || sub == "three") {
-        if (t.size() < 4) { m->log("用法: ucs 3p <原点x,y> <X正向点x,y> [Y侧点x,y]", "warn"); return false; }
+        if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs 3p <原点x,y> <X正向点x,y> [Y侧点x,y]")), "warn"); return false; }
         Vec3 p1, p2, p3;
         // UCS 定义锚点一律按世界系解释（tryParsePointRaw）：定义坐标系是坐标管理
         // 层操作，不做"用当前 UCS 定义新 UCS"的链式换算，避免歧义与读数不一致。
-        if (!CommandContext::tryParsePointRaw(t[2], p1) || !CommandContext::tryParsePointRaw(t[3], p2)) { m->log("点解析失败", "warn"); return false; }
-        if (t.size() >= 5 && !CommandContext::tryParsePointRaw(t[4], p3)) { m->log("点解析失败", "warn"); return false; }
+        if (!CommandContext::tryParsePointRaw(t[2], p1) || !CommandContext::tryParsePointRaw(t[3], p2)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
+        if (t.size() >= 5 && !CommandContext::tryParsePointRaw(t[4], p3)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }
         const Vec3 d = p2 - p1;
-        if (d.len2D() < 1e-12) { m->log("X 正向点与原点重合，无法定义 UCS", "warn"); return false; }
+        if (d.len2D() < 1e-12) { m->log(SketchCAD::I18n::t(QString::fromUtf8("X 正向点与原点重合，无法定义 UCS")), "warn"); return false; }
         m->setCurrentUcs(Ucs("UCS3P", p1, d.angleRad()));
-        m->log("UCS(三点) 已定义: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS(三点) 已定义: ")) + m->currentUcs().describe());
         return true;
     }
     // ---- 定义方式 ④：对象 ----
     if (sub == "object" || sub == "ob") {
-        if (t.size() < 3) { m->log("用法: ucs object <图元id>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs object <图元id>")), "warn"); return false; }
         bool ok = false;
         const int id = t[2].toInt(&ok);
         const Element* e = ok ? m->element(id) : nullptr;
-        if (!e || e->pts.size() < 2) { m->log("图元不存在或点数不足（需 ≥2 点）", "warn"); return false; }
+        if (!e || e->pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元不存在或点数不足（需 ≥2 点）")), "warn"); return false; }
         const Vec3 d = e->pts[1] - e->pts[0];
-        if (d.len2D() < 1e-12) { m->log("图元前两点重合，无法确定 X 轴", "warn"); return false; }
+        if (d.len2D() < 1e-12) { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元前两点重合，无法确定 X 轴")), "warn"); return false; }
         m->setCurrentUcs(Ucs("UCSOBJ", e->pts[0], d.angleRad()));
-        m->log("UCS(对象) 已定义: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS(对象) 已定义: ")) + m->currentUcs().describe());
         return true;
     }
     // ---- 定义方式 ⑤：Z 轴（原点 + 绕 Z 旋转角；平面制图下 Z 轴法向恒定）----
     if (sub == "z" || sub == "zaxis") {
-        if (t.size() < 4) { m->log("用法: ucs z <原点x,y> <绕Z旋转角°>", "warn"); return false; }
+        if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs z <原点x,y> <绕Z旋转角°>")), "warn"); return false; }
         Vec3 p;
-        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log("点解析失败", "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
+        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
         bool ok = false;
         const double deg = t[3].toDouble(&ok);
-        if (!ok) { m->log("角度解析失败: " + t[3], "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("角度解析失败: ")) + t[3], "warn"); return false; }
         m->setCurrentUcs(Ucs("UCSZ", p, math::deg2rad(deg)));
-        m->log("UCS(Z轴) 已定义: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS(Z轴) 已定义: ")) + m->currentUcs().describe());
         return true;
     }
     // ---- 便捷定义：平移原点（可选旋转）----
     if (sub == "origin" || sub == "org") {
-        if (t.size() < 3) { m->log("用法: ucs origin <x,y> [旋转角°]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs origin <x,y> [旋转角°]")), "warn"); return false; }
         Vec3 p;
-        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log("点解析失败", "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
+        if (!CommandContext::tryParsePointRaw(t[2], p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("点解析失败")), "warn"); return false; }   // UCS 定义锚点=世界系（见 3p 注释）
         double deg = 0.0;
         if (t.size() >= 4) {
             bool ok = false;
             deg = t[3].toDouble(&ok);
-            if (!ok) { m->log("角度解析失败: " + t[3], "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("角度解析失败: ")) + t[3], "warn"); return false; }
         }
         m->setCurrentUcs(Ucs("UCSORG", p, math::deg2rad(deg)));
-        m->log("UCS(原点) 已定义: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS(原点) 已定义: ")) + m->currentUcs().describe());
         return true;
     }
     // ---- CRUD ----
     if (sub == "save" || sub == "s") {
-        if (t.size() < 3) { m->log("用法: ucs save <名称>", "warn"); return false; }
-        if (!m->ucsSave(t[2])) { m->log("名称无效（不能为空或 WORLD）", "warn"); return false; }
-        m->log("UCS 已保存: " + t[2] + " = " + m->currentUcs().describe());
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs save <名称>")), "warn"); return false; }
+        if (!m->ucsSave(t[2])) { m->log(SketchCAD::I18n::t(QString::fromUtf8("名称无效（不能为空或 WORLD）")), "warn"); return false; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已保存: ")) + t[2] + " = " + m->currentUcs().describe());
         return true;
     }
     if (sub == "set" || sub == "restore" || sub == "r") {
-        if (t.size() < 3) { m->log("用法: ucs set <名称>", "warn"); return false; }
-        if (!m->ucsSetCurrent(t[2])) { m->log("未找到命名 UCS: " + t[2], "warn"); return false; }
-        m->log("UCS 已切换: " + m->currentUcs().describe());
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs set <名称>")), "warn"); return false; }
+        if (!m->ucsSetCurrent(t[2])) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到命名 UCS: ")) + t[2], "warn"); return false; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已切换: ")) + m->currentUcs().describe());
         return true;
     }
     if (sub == "delete" || sub == "del") {
-        if (t.size() < 3) { m->log("用法: ucs delete <名称>", "warn"); return false; }
-        if (!m->ucsDelete(t[2])) { m->log("删除失败（不存在或为 WORLD）: " + t[2], "warn"); return false; }
-        m->log("UCS 已删除: " + t[2]);
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs delete <名称>")), "warn"); return false; }
+        if (!m->ucsDelete(t[2])) { m->log(SketchCAD::I18n::t(QString::fromUtf8("删除失败（不存在或为 WORLD）: ")) + t[2], "warn"); return false; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已删除: ")) + t[2]);
         return true;
     }
     if (sub == "list" || sub == "?") {
-        m->log(QString("命名 UCS 共 %1 个：").arg(m->ucsCount()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("命名 UCS 共 %1 个："))).arg(m->ucsCount()));
         for (const QString& n : m->ucsNames())
             m->log("  " + n + " = " + m->ucsGet(n).describe());
-        m->log("当前 UCS: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("当前 UCS: ")) + m->currentUcs().describe());
         return true;
     }
     // ---- 坐标读数显示模式 ----
     if (sub == "coords" || sub == "coord") {
         if (t.size() < 3) {
-            m->log(QString("坐标读数当前按 %1 显示").arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
-            m->log("用法: ucs coords wcs|ucs");
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("坐标读数当前按 %1 显示"))).arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ucs coords wcs|ucs")));
             return true;
         }
         const QString mode = t[2].toLower();
         if (mode == "ucs")      m->setCoordDisplayUcs(true);
         else if (mode == "wcs") m->setCoordDisplayUcs(false);
-        else { m->log("未知读数模式: " + mode + "（wcs|ucs）", "warn"); return false; }
-        m->log(QString("坐标读数已切换为按 %1 显示").arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
+        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("未知读数模式: ")) + mode + "（wcs|ucs）", "warn"); return false; }
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("坐标读数已切换为按 %1 显示"))).arg(m->coordDisplayUcs() ? "UCS" : "WCS"));
         return true;
     }
     // ---- 便捷形式：直接用名称切换 ----
     if (m->ucsHas(sub)) {
         m->ucsSetCurrent(sub);
-        m->log("UCS 已切换: " + m->currentUcs().describe());
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("UCS 已切换: ")) + m->currentUcs().describe());
         return true;
     }
-    m->log("未知 ucs 子命令: " + sub, "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知 ucs 子命令: ")) + sub, "warn");
     return false;
 }
 
@@ -2013,23 +2014,23 @@ bool GridCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 2) {
         m->setShowGrid(!m->showGrid());
-        m->log(QString("栅格已") + (m->showGrid() ? "显示" : "隐藏"));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("栅格已"))) + (m->showGrid() ? "显示" : "隐藏"));
         return true;
     }
     QString v = ctx.toks[1].toLower();
     if (v == "on" || v == "1" || v == "true")       m->setShowGrid(true);
     else if (v == "off" || v == "0" || v == "false") m->setShowGrid(false);
-    else { m->log("用法: grid [on|off]（省略参数为切换）", "warn"); return false; }
-    m->log(QString("栅格已") + (m->showGrid() ? "显示" : "隐藏"));
+    else { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: grid [on|off]（省略参数为切换）")), "warn"); return false; }
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("栅格已"))) + (m->showGrid() ? "显示" : "隐藏"));
     return true;
 }
 
 bool ZoomCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 2) { m->log("用法: zoom <倍率>", "warn"); return false; }
+    if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: zoom <倍率>")), "warn"); return false; }
     bool ok; double z = ctx.toks[1].toDouble(&ok);
-    if (!ok || z <= 0) { m->log("倍率无效", "warn"); return false; }
-    m->setViewScale(z); m->log("视图比例: " + QString::number(z, 'f', 2));
+    if (!ok || z <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("倍率无效")), "warn"); return false; }
+    m->setViewScale(z); m->log(SketchCAD::I18n::t(QString::fromUtf8("视图比例: ")) + QString::number(z, 'f', 2));
     return true;
 }
 
@@ -2040,34 +2041,34 @@ bool ZoomCommand::execute(const CommandContext& ctx) {
 bool WidthCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 2) {
-        m->log(QString("当前线宽: %1（用法: width 1|2|3|5）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("当前线宽: %1（用法: width 1|2|3|5）")))
                    .arg(QString::fromUtf8(lineWidthName(m->defaultWidth()))));
         return true;
     }
     bool ok; double px = ctx.toks[1].toDouble(&ok);
-    if (!ok || px <= 0 || px > 20) { m->log("线宽无效（取 1 / 2 / 3 / 5）", "warn"); return false; }
+    if (!ok || px <= 0 || px > 20) { m->log(SketchCAD::I18n::t(QString::fromUtf8("线宽无效（取 1 / 2 / 3 / 5）")), "warn"); return false; }
     m->setDefaultWidth(px);
     if (m->selectedId() >= 0 && m->styleSelected(nullptr, &px))
-        m->log(QString("选中图元线宽 -> %1").arg(QString::fromUtf8(lineWidthName(px))));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("选中图元线宽 -> %1"))).arg(QString::fromUtf8(lineWidthName(px))));
     else
-        m->log(QString("新图元线宽 -> %1").arg(QString::fromUtf8(lineWidthName(px))));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("新图元线宽 -> %1"))).arg(QString::fromUtf8(lineWidthName(px))));
     return true;
 }
 
 bool ColorCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     if (ctx.toks.size() < 2) {
-        m->log(QString("当前颜色: %1（用法: color #RRGGBB | red | blue ...）")
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("当前颜色: %1（用法: color #RRGGBB | red | blue ...）")))
                    .arg(m->defaultColor().name().toUpper()));
         return true;
     }
     QColor c(ctx.toks[1]);
-    if (!c.isValid()) { m->log("颜色无效: " + ctx.toks[1], "warn"); return false; }
+    if (!c.isValid()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("颜色无效: ")) + ctx.toks[1], "warn"); return false; }
     m->setDefaultColor(c);
     if (m->selectedId() >= 0 && m->styleSelected(&c, nullptr))
-        m->log(QString("选中图元颜色 -> %1").arg(c.name().toUpper()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("选中图元颜色 -> %1"))).arg(c.name().toUpper()));
     else
-        m->log(QString("新图元颜色 -> %1").arg(c.name().toUpper()));
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("新图元颜色 -> %1"))).arg(c.name().toUpper()));
     return true;
 }
 
@@ -2079,9 +2080,9 @@ bool ChainCommand::execute(const CommandContext& ctx) {
         QString v = ctx.toks[1].toLower();
         if (v == "on" || v == "1" || v == "true")        m->setChainLine(true);
         else if (v == "off" || v == "0" || v == "false") m->setChainLine(false);
-        else { m->log("用法: chain [on|off]（省略参数为切换）", "warn"); return false; }
+        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: chain [on|off]（省略参数为切换）")), "warn"); return false; }
     }
-    m->log(QString("连续直线模式：%1").arg(m->chainLine() ? "开（右键结束）" : "关"));
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("连续直线模式：%1"))).arg(m->chainLine() ? SketchCAD::I18n::t(QString::fromUtf8("开（右键结束）")) : SketchCAD::I18n::t(QString::fromUtf8("关"))));
     return true;
 }
 
@@ -2107,24 +2108,24 @@ bool DimCommand::execute(const CommandContext& ctx) {
         {"leader", DimensionType::Leader}, {"note", DimensionType::Leader},
         {"ordinate", DimensionType::Ordinate}, {"ord", DimensionType::Ordinate}};
     if (ctx.toks.size() < 2) {
-        m->log("用法: dim linear|aligned|h|v x1,y1 x2,y2 [尺寸线位置 px,py]", "warn");
-        m->log("      dim angle（先选中两条相交直线） | dim radius|dia <圆id> [引出角度]", "warn");
-        m->log("      dim baseline|continue x1,y1 x2,y2 | dim arc <圆id> [起角 终角]", "warn");
-        m->log("      dim leader 起点 折点 [文本点] | dim ordinate 被测点 基准点 [0/90]", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim linear|aligned|h|v x1,y1 x2,y2 [尺寸线位置 px,py]")), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("      dim angle（先选中两条相交直线） | dim radius|dia <圆id> [引出角度]")), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("      dim baseline|continue x1,y1 x2,y2 | dim arc <圆id> [起角 终角]")), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("      dim leader 起点 折点 [文本点] | dim ordinate 被测点 基准点 [0/90]")), "warn");
         return false;
     }
     const QString t = ctx.toks[1].toLower();
-    if (!dmap.contains(t)) { m->log("未知标注类型: " + t, "warn"); return false; }
+    if (!dmap.contains(t)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未知标注类型: ")) + t, "warn"); return false; }
     const DimensionType dt = dmap.value(t);
     Element e = ElementFactory::create(ElementType::Dimension, QString::fromUtf8(dimensionTypeName(dt)), m);
     e.dtype = dt;
     e.standard = m->dimensionStandard();   // 新建标注跟随当前标准（默认 GB/T 4458）
 
     if (dt == DimensionType::Radius || dt == DimensionType::Diameter) {
-        if (ctx.toks.size() < 3) { m->log("用法: dim radius|dia <圆或圆弧 id> [引出角度]", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim radius|dia <圆或圆弧 id> [引出角度]")), "warn"); return false; }
         const Element* c = m->element(ctx.toks[2].toInt());
         if (!c || (c->type != ElementType::Circle && c->type != ElementType::Arc)) {
-            m->log("dim: #" + ctx.toks[2] + " 不是圆或圆弧", "warn"); return false;
+            m->log("dim: #" + ctx.toks[2] + SketchCAD::I18n::t(QString::fromUtf8(" 不是圆或圆弧")), "warn"); return false;
         }
         const double ang = (ctx.toks.size() >= 4) ? ctx.toks[3].toDouble() : 45.0;
         e.radius = c->radius;
@@ -2136,19 +2137,19 @@ bool DimCommand::execute(const CommandContext& ctx) {
         // 与 pts[2] 坐标重合的端点一并联动），无需改内核即可实现夹角驱动。
         const auto sel = m->selection();
         if (sel.size() != 2) {
-            m->log(QStringLiteral("dim angle: 请先选中两条相交直线"), QStringLiteral("warn"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("dim angle: 请先选中两条相交直线")), QStringLiteral("warn"));
             return false;
         }
         const Element* a = m->element(sel[0]);
         const Element* b = m->element(sel[1]);
         if (!a || !b || a->type != ElementType::Line || b->type != ElementType::Line
             || a->pts.size() < 2 || b->pts.size() < 2) {
-            m->log(QStringLiteral("dim angle: 所选两个图元必须都是直线"), QStringLiteral("warn"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("dim angle: 所选两个图元必须都是直线")), QStringLiteral("warn"));
             return false;
         }
         const auto ips = geo::intersectElements(*a, *b);
         if (ips.empty()) {
-            m->log(QStringLiteral("dim angle: 所选两条直线不相交，无法标注夹角"), QStringLiteral("warn"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("dim angle: 所选两条直线不相交，无法标注夹角")), QStringLiteral("warn"));
             return false;
         }
         const Vec3 v  = ips.front();
@@ -2157,10 +2158,10 @@ bool DimCommand::execute(const CommandContext& ctx) {
         e.pts = {v, p1, p2};
     } else if (dt == DimensionType::Arc) {
         // 弧长标注：引用一个圆或圆弧；圆没有起止角时用默认 0°~90° 扫掠
-        if (ctx.toks.size() < 3) { m->log("用法: dim arc <圆或圆弧 id> [起始角 终止角]", "warn"); return false; }
+        if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim arc <圆或圆弧 id> [起始角 终止角]")), "warn"); return false; }
         const Element* c = m->element(ctx.toks[2].toInt());
         if (!c || (c->type != ElementType::Circle && c->type != ElementType::Arc)) {
-            m->log("dim: #" + ctx.toks[2] + " 不是圆或圆弧", "warn"); return false;
+            m->log("dim: #" + ctx.toks[2] + SketchCAD::I18n::t(QString::fromUtf8(" 不是圆或圆弧")), "warn"); return false;
         }
         e.radius = c->radius;
         e.refA = c->id;
@@ -2171,35 +2172,35 @@ bool DimCommand::execute(const CommandContext& ctx) {
             bool ok1 = false, ok2 = false;
             const double a0 = ctx.toks[3].toDouble(&ok1), a1 = ctx.toks[4].toDouble(&ok2);
             if (ok1 && ok2) { e.startAngle = a0; e.endAngle = a1; }
-            else m->log("dim arc: 起始角/终止角解析失败，使用默认 0°~90°", "warn");
+            else m->log(SketchCAD::I18n::t(QString::fromUtf8("dim arc: 起始角/终止角解析失败，使用默认 0°~90°")), "warn");
         }
     } else if (dt == DimensionType::Leader || dt == DimensionType::Ordinate) {
         // 引线标注：2~3 点（起点 + 折点 [+ 文本点]）；坐标标注：2 点（被测点 + 基准点）
         if (dt == DimensionType::Leader) {
-            if (ctx.toks.size() < 4) { m->log("用法: dim leader 起点x,y 折点x,y [文本点x,y]", "warn"); return false; }
+            if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim leader 起点x,y 折点x,y [文本点x,y]")), "warn"); return false; }
             Vec3 p0, p1, p2;
             if (!ctx.parsePoint(2, p0) || !ctx.parsePoint(3, p1)) {
-                m->log("dim leader: 点解析失败", "warn"); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("dim leader: 点解析失败")), "warn"); return false;
             }
             e.pts = {p0, p1};
             if (ctx.toks.size() >= 5 && ctx.parsePoint(4, p2)) e.pts.push_back(p2);
         } else {
-            if (ctx.toks.size() < 4) { m->log("用法: dim ordinate 被测点x,y 基准点x,y [旋转角]", "warn"); return false; }
+            if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim ordinate 被测点x,y 基准点x,y [旋转角]")), "warn"); return false; }
             Vec3 p0, p1;
             if (!ctx.parsePoint(2, p0) || !ctx.parsePoint(3, p1)) {
-                m->log("dim ordinate: 点解析失败", "warn"); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("dim ordinate: 点解析失败")), "warn"); return false;
             }
             e.pts = {p0, p1};
             if (ctx.toks.size() >= 5) {
                 bool ok = false; const double rot = ctx.toks[4].toDouble(&ok);
                 if (ok) e.rotation = rot;   // 0/180→X 坐标，90/270→Y 坐标
-                else m->log("dim ordinate: 旋转角解析失败，默认 X 坐标", "warn");
+                else m->log(SketchCAD::I18n::t(QString::fromUtf8("dim ordinate: 旋转角解析失败，默认 X 坐标")), "warn");
             }
         }
     } else {
         Vec3 a, b, pos;
         if (ctx.toks.size() < 4 || !ctx.parsePoint(2, a) || !ctx.parsePoint(3, b)) {
-            m->log("用法: dim " + t + " x1,y1 x2,y2 [尺寸线位置 px,py]", "warn"); return false;
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dim ")) + t + SketchCAD::I18n::t(QString::fromUtf8(" x1,y1 x2,y2 [尺寸线位置 px,py]")), "warn"); return false;
         }
         e.pts = {a, b};
         if (ctx.toks.size() >= 5 && ctx.tryParsePoint(ctx.toks[4], pos)) e.pts.push_back(pos);
@@ -2207,9 +2208,9 @@ bool DimCommand::execute(const CommandContext& ctx) {
 
     const double mv = geo::measureDimension(e);
     // 引线标注按设计无数值测量（measured=0），不应以"测量值为 0"为由拒绝创建
-    if (dt != DimensionType::Leader && mv < 1e-9) { m->log("dim: 测量值为 0，标注未创建", "warn"); return false; }
+    if (dt != DimensionType::Leader && mv < 1e-9) { m->log(SketchCAD::I18n::t(QString::fromUtf8("dim: 测量值为 0，标注未创建")), "warn"); return false; }
     const int id = m->addElement(e);
-    m->log(QString("已创建%1 #%2 = %3%4")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建%1 #%2 = %3%4")))
                .arg(QString::fromUtf8(dimensionTypeName(dt)))
                .arg(id).arg(mv, 0, 'f', 2)
                .arg(dt == DimensionType::Angle ? QStringLiteral("°") : QStringLiteral(" mm")));
@@ -2220,7 +2221,7 @@ bool DimSmartCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     const int id = m->smartDimension();
     if (id < 0) {
-        m->log("dims: 请先选中单条直线(→对齐标注)或单个圆/圆弧(→直径标注)", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("dims: 请先选中单条直线(→对齐标注)或单个圆/圆弧(→直径标注)")), "warn");
         return false;
     }
     return true;
@@ -2264,7 +2265,7 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     const auto cname = [](ConstraintType t) { return QString::fromUtf8(constraintTypeName(t)); };
 
     if (ctx.toks.size() < 2) {
-        m->log(QStringLiteral("用法：constraint add <类型> <idA> <idB> [值|轴id] | solve | list | check | diagnose | clear"), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint add <类型> <idA> <idB> [值|轴id] | solve | list | check | diagnose | clear")), "warn");
         return false;
     }
     const QString sub = ctx.toks[1].toLower();
@@ -2272,9 +2273,9 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     // ---- help：列出全部支持的约束类型（来自统一注册表）----
     if (sub == "help") {
         const auto descs = ConstraintSolver::constraintDescriptors();
-        m->log(QStringLiteral("共 %1 种几何约束：").arg(descs.size()), "info");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("共 %1 种几何约束：")).arg(descs.size()), "info");
         for (const auto& d : descs)
-            m->log(QStringLiteral("  %1  %2 | 适用：%3 | 参数：%4")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  %1  %2 | 适用：%3 | 参数：%4"))
                        .arg(QString::fromUtf8(d.id), -14).arg(QString::fromUtf8(d.name))
                        .arg(QString::fromUtf8(d.applicable)).arg(QString::fromUtf8(d.params)),
                    "info");
@@ -2283,8 +2284,8 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     // ---- list：列出全部显式约束 ----
     if (sub == "list") {
         const auto& cs = m->constraints();
-        if (cs.empty()) { m->log(QStringLiteral("当前无显式几何约束"), "info"); return true; }
-        m->log(QStringLiteral("显式几何约束 %1 条：").arg(cs.size()), "info");
+        if (cs.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前无显式几何约束")), "info"); return true; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("显式几何约束 %1 条：")).arg(cs.size()), "info");
         for (size_t i = 0; i < cs.size(); ++i) {
             const auto& r = cs[i];
             QString extra;
@@ -2292,9 +2293,9 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
             if (r.value > 0)   extra += QStringLiteral(" 值=%1").arg(r.value, 0, 'f', 2);
             if (r.idxA >= 0)   extra += QStringLiteral(" idxA=%1").arg(r.idxA);
             if (r.idxB >= 0)   extra += QStringLiteral(" idxB=%1").arg(r.idxB);
-            m->log(QStringLiteral("  %1. 「%2」 主动#%3 → 被动#%4%5  %6")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  %1. 「%2」 主动#%3 → 被动#%4%5  %6"))
                        .arg(i + 1).arg(cname(r.type)).arg(r.idA).arg(r.idB).arg(extra)
-                       .arg(r.satisfied ? QStringLiteral("✓已满足") : QStringLiteral("✗未满足")),
+                       .arg(r.satisfied ? SketchCAD::I18n::t(QString::fromUtf8("✓已满足")) : SketchCAD::I18n::t(QString::fromUtf8("✗未满足"))),
                    r.satisfied ? "info" : "warn");
         }
         return true;
@@ -2302,22 +2303,22 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     // ---- check：冲突 / 过约束检测 ----
     if (sub == "check") {
         const auto conf = ConstraintSolver::detectConflicts(*m);
-        if (conf.empty()) { m->log(QStringLiteral("冲突检测：未发现冲突或过约束"), "info"); return true; }
-        m->log(QStringLiteral("冲突检测：发现 %1 处问题").arg(conf.size()), "warn");
+        if (conf.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("冲突检测：未发现冲突或过约束")), "info"); return true; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("冲突检测：发现 %1 处问题")).arg(conf.size()), "warn");
         for (const auto& s : conf) m->log(QStringLiteral("  ⚠ %1").arg(s), "warn");
         return false;
     }
     // ---- diagnose：逐实体自由度与欠/过约束诊断（只读）----
     if (sub == "diagnose" || sub == "dof") {
         const auto d = ConstraintSolver::diagnose(*m);
-        m->log(QStringLiteral("约束诊断：%1（总自由度=%2，被约束图元剩余=%3，冲突/冗余=%4 条）")
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("约束诊断：%1（总自由度=%2，被约束图元剩余=%3，冲突/冗余=%4 条）"))
                    .arg(d.stateText()).arg(d.totalDof).arg(d.freeDof).arg(d.overDof),
                d.state == ConstraintDiagnosis::WellConstrained ? "info" : "warn");
         for (const auto& ei : d.elementInfo)
-            m->log(QStringLiteral("  #%1(%2)  固有=%3 可控=%4 已约束=%5 剩余=%6%7")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  #%1(%2)  固有=%3 可控=%4 已约束=%5 剩余=%6%7"))
                        .arg(ei.id).arg(QString::fromUtf8(elementTypeName(ei.type)))
                        .arg(ei.naturalDof).arg(ei.activeVars).arg(ei.appliedRank).arg(ei.remainingDof)
-                       .arg(ei.overconstrained ? QStringLiteral("  ⚠过约束") : QString()),
+                       .arg(ei.overconstrained ? SketchCAD::I18n::t(QString::fromUtf8("  ⚠过约束")) : QString()),
                    "info");
         for (const auto& s : d.messages)
             m->log(QStringLiteral("  → %1").arg(s),
@@ -2328,13 +2329,13 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     // ---- solve：求解全部 ----
     if (sub == "solve") {
         const auto rep = ConstraintSolver::solveAll(*m);
-        m->log(QStringLiteral("约束求解：共 %1 条，已满足 %2 条，失败 %3 条；自由度(DOF)=%4，有效约束秩=%5，残差=%.3e")
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("约束求解：共 %1 条，已满足 %2 条，失败 %3 条；自由度(DOF)=%4，有效约束秩=%5，残差=%.3e"))
                    .arg(rep.total).arg(rep.solved).arg(rep.failures.size())
                    .arg(rep.diag.dof).arg(rep.diag.rank).arg(rep.diag.residualNorm),
                rep.failures.empty() ? "info" : "warn");
         for (const auto& f : rep.failures) m->log(QStringLiteral("  ✗ %1").arg(f.reason), "error");
         if (!rep.diag.redundantIdx.empty())
-            m->log(QStringLiteral("  ⓘ 检测到 %1 条冗余约束（下标：%2），可删除以简化系统")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  ⓘ 检测到 %1 条冗余约束（下标：%2），可删除以简化系统"))
                        .arg(rep.diag.redundantIdx.size())
                        .arg([&](){ QString s; for (int v : rep.diag.redundantIdx) s += QString::number(v) + " "; return s; }()),
                    "info");
@@ -2342,71 +2343,71 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     }
     // ---- clear：清空 ----
     if (sub == "clear") {
-        if (m->constraints().empty()) { m->log(QStringLiteral("当前无显式几何约束"), "info"); return true; }
+        if (m->constraints().empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前无显式几何约束")), "info"); return true; }
         m->clearConstraints();
-        m->log(QStringLiteral("已清空全部显式几何约束"), "info");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("已清空全部显式几何约束")), "info");
         return true;
     }
 
     // ---- dimension：尺寸驱动子命令（Request M 新增）----
     if (sub == "dimension") {
         if (ctx.toks.size() < 3) {
-            m->log(QStringLiteral("用法：constraint dimension link <标注id> [参数名] | setvalue <标注id> <值>"), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint dimension link <标注id> [参数名] | setvalue <标注id> <值>")), "warn");
             return false;
         }
         const QString dsub = ctx.toks[2].toLower();
         if (dsub == "link") {
-            if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：constraint dimension link <标注id> [参数名]"), "warn"); return false; }
+            if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint dimension link <标注id> [参数名]")), "warn"); return false; }
             bool ok = false; const int dimId = ctx.toks[3].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的标注 id：%1")).arg(ctx.toks[3]), "warn"); return false; }
             const QString param = (ctx.toks.size() > 4) ? ctx.toks[4] : QString();
             const QString err = ConstraintSolverFacade::instance().linkDimension(*m, dimId, param);
-            if (!err.isEmpty()) { m->log(QStringLiteral("关联尺寸标注失败：%1").arg(err), "error"); return false; }
-            m->log(QStringLiteral("已关联尺寸标注 #%1%2，修改其数值即可驱动几何重构")
-                       .arg(dimId).arg(param.isEmpty() ? QString() : QStringLiteral("（参数 %1）").arg(param)), "info");
+            if (!err.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("关联尺寸标注失败：%1")).arg(err), "error"); return false; }
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已关联尺寸标注 #%1%2，修改其数值即可驱动几何重构"))
+                       .arg(dimId).arg(param.isEmpty() ? QString() : SketchCAD::I18n::t(QString::fromUtf8("（参数 %1）")).arg(param)), "info");
             return true;
         }
         if (dsub == "setvalue") {
-            if (ctx.toks.size() < 5) { m->log(QStringLiteral("用法：constraint dimension setvalue <标注id> <值>"), "warn"); return false; }
+            if (ctx.toks.size() < 5) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint dimension setvalue <标注id> <值>")), "warn"); return false; }
             bool ok = false; const int dimId = ctx.toks[3].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的标注 id：%1").arg(ctx.toks[3]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的标注 id：%1")).arg(ctx.toks[3]), "warn"); return false; }
             bool okv = false; const double val = ctx.toks[4].toDouble(&okv);
-            if (!okv) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
+            if (!okv) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的数值：%1")).arg(ctx.toks[4]), "warn"); return false; }
             const QString err = ConstraintSolverFacade::instance().setDimensionValue(*m, dimId, val);
-            if (!err.isEmpty()) { m->log(QStringLiteral("设置标注值失败：%1").arg(err), "error"); return false; }
-            m->log(QStringLiteral("已将标注 #%1 设为 %2，几何已联动重构").arg(dimId).arg(val, 0, 'f', 3), "info");
+            if (!err.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("设置标注值失败：%1")).arg(err), "error"); return false; }
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已将标注 #%1 设为 %2，几何已联动重构")).arg(dimId).arg(val, 0, 'f', 3), "info");
             return true;
         }
-        m->log(QStringLiteral("未知 dimension 子命令：%1（支持 link / setvalue）").arg(dsub), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未知 dimension 子命令：%1（支持 link / setvalue）")).arg(dsub), "warn");
         return false;
     }
 
     // ---- param：参数表子命令（Request M 新增）----
     if (sub == "param") {
         if (ctx.toks.size() < 3) {
-            m->log(QStringLiteral("用法：constraint param set <名称> <值> | list"), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint param set <名称> <值> | list")), "warn");
             return false;
         }
         const QString psub = ctx.toks[2].toLower();
         if (psub == "list") {
             const auto& ps = m->params();
-            if (ps.empty()) { m->log(QStringLiteral("参数表为空"), "info"); return true; }
-            m->log(QStringLiteral("参数表（%1 项）：").arg(ps.size()), "info");
+            if (ps.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数表为空")), "info"); return true; }
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("参数表（%1 项）：")).arg(ps.size()), "info");
             for (const auto& kv : ps)
                 m->log(QStringLiteral("  %1 = %2").arg(kv.first).arg(kv.second, 0, 'f', 3), "info");
             return true;
         }
         if (psub == "set") {
-            if (ctx.toks.size() < 5) { m->log(QStringLiteral("用法：constraint param set <名称> <值>"), "warn"); return false; }
+            if (ctx.toks.size() < 5) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint param set <名称> <值>")), "warn"); return false; }
             const QString name = ctx.toks[3];
             bool ok = false; const double val = ctx.toks[4].toDouble(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的数值：%1").arg(ctx.toks[4]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的数值：%1")).arg(ctx.toks[4]), "warn"); return false; }
             const QString err = ConstraintSolverFacade::instance().driveParameter(*m, name, val);
-            if (!err.isEmpty()) { m->log(QStringLiteral("参数驱动失败：%1").arg(err), "warn"); return false; }
-            m->log(QStringLiteral("已将参数 %1 设为 %2 并联动驱动全部关联标注/几何").arg(name).arg(val, 0, 'f', 3), "info");
+            if (!err.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数驱动失败：%1")).arg(err), "warn"); return false; }
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已将参数 %1 设为 %2 并联动驱动全部关联标注/几何")).arg(name).arg(val, 0, 'f', 3), "info");
             return true;
         }
-        m->log(QStringLiteral("未知 param 子命令：%1（支持 set / list）").arg(psub), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未知 param 子命令：%1（支持 set / list）")).arg(psub), "warn");
         return false;
     }
 
@@ -2414,23 +2415,23 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     const bool hasAdd = (sub == "add");
     const int iType = hasAdd ? 2 : 1;
     if (ctx.toks.size() <= iType) {
-        m->log(QStringLiteral("用法：constraint add <类型> <idA> <idB> [值|轴id] [idxA] [idxB]（fixed/fixedpoint 可省略 idB）"), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint add <类型> <idA> <idB> [值|轴id] [idxA] [idxB]（fixed/fixedpoint 可省略 idB）")), "warn");
         return false;
     }
     const QString t = ctx.toks[iType].toLower();
     if (!cmap.contains(t)) {
-        m->log(QStringLiteral("未知约束类型：%1（输入 constraint help 查看全部 %2 种）").arg(t).arg(kConstraintTypeCount), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("未知约束类型：%1（输入 constraint help 查看全部 %2 种）")).arg(t).arg(kConstraintTypeCount), "warn");
         return false;
     }
     const ConstraintType ct = cmap[t];
     const bool singleEnd = (ct == ConstraintType::Fixed || ct == ConstraintType::FixedPoint);
     if (ctx.toks.size() <= iType + 1) {
-        m->log(QStringLiteral("用法：constraint add %1 <idA> [idB] [值|轴id] [idxA] [idxB]").arg(t), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint add %1 <idA> [idB] [值|轴id] [idxA] [idxB]")).arg(t), "warn");
         return false;
     }
     bool okA = false;
     const int idA = ctx.toks[iType + 1].toInt(&okA);
-    if (!okA) { m->log(QStringLiteral("无效的图元 id：%1").arg(ctx.toks[iType + 1]), "warn"); return false; }
+    if (!okA) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的图元 id：%1")).arg(ctx.toks[iType + 1]), "warn"); return false; }
     int idB = -1;
     int argPos = iType + 2;                       // 当前待解析的可选参数位置
     if (singleEnd) {
@@ -2441,11 +2442,11 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
         }
     } else {
         if (ctx.toks.size() <= argPos) {
-            m->log(QStringLiteral("用法：constraint add %1 <idA> <idB> [值|轴id] [idxA] [idxB]").arg(t), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：constraint add %1 <idA> <idB> [值|轴id] [idxA] [idxB]")).arg(t), "warn");
             return false;
         }
         bool okB = false; idB = ctx.toks[argPos].toInt(&okB);
-        if (!okB) { m->log(QStringLiteral("无效的图元 id：%1").arg(ctx.toks[argPos]), "warn"); return false; }
+        if (!okB) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的图元 id：%1")).arg(ctx.toks[argPos]), "warn"); return false; }
         ++argPos;
     }
 
@@ -2455,15 +2456,15 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
         const QString v = ctx.toks[argPos];
         if (ct == ConstraintType::Symmetric || ct == ConstraintType::SymmetricPoint) {
             bool ok = false; const int ax = v.toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的对称轴图元 id：%1").arg(v), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的对称轴图元 id：%1")).arg(v), "warn"); return false; }
             axisId = ax;
         } else if (ct == ConstraintType::Dimensional || ct == ConstraintType::Distance || ct == ConstraintType::Angle) {
             bool ok = false; const double dv = v.toDouble(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的数值参数：%1").arg(v), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的数值参数：%1")).arg(v), "warn"); return false; }
             value = dv;
         } else {
             bool ok = false; const int iv = v.toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的控制点索引：%1").arg(v), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的控制点索引：%1")).arg(v), "warn"); return false; }
             idxA = iv;
         }
         ++argPos;
@@ -2471,11 +2472,11 @@ bool ConstraintCommand::execute(const CommandContext& ctx) {
     if (ctx.toks.size() > argPos) { bool ok=false; idxB = ctx.toks[argPos].toInt(&ok); if (!ok) idxB = -1; ++argPos; }
 
     const QString err = ConstraintSolverFacade::instance().addConstraint(*m, ct, idA, idB, value, axisId, idxA, idxB);
-    if (!err.isEmpty()) { m->log(QStringLiteral("约束添加失败：%1").arg(err), "error"); return false; }
-    m->log(QStringLiteral("已添加「%1」约束：主动#%2 → 被动#%3%4%5%6，并已求解")
+    if (!err.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("约束添加失败：%1")).arg(err), "error"); return false; }
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已添加「%1」约束：主动#%2 → 被动#%3%4%5%6，并已求解"))
                .arg(cname(ct)).arg(idA).arg(idB)
-               .arg(axisId >= 0 ? QStringLiteral("（对称轴 #%1）").arg(axisId) : QString())
-               .arg(value > 0 ? QStringLiteral("（目标值 %1）").arg(value, 0, 'f', 2) : QString())
+               .arg(axisId >= 0 ? SketchCAD::I18n::t(QString::fromUtf8("（对称轴 #%1）")).arg(axisId) : QString())
+               .arg(value > 0 ? SketchCAD::I18n::t(QString::fromUtf8("（目标值 %1）")).arg(value, 0, 'f', 2) : QString())
                .arg(idxA >= 0 ? QStringLiteral("（idxA=%1 idxB=%2）").arg(idxA).arg(idxB) : QString()),
            "info");
     return true;
@@ -2492,9 +2493,9 @@ bool SelectCommand::execute(const CommandContext& ctx) {
     if (cmd == "invert") { m->invertSelection(); return true; }
 
     auto parseId = [&](int& out) -> bool {
-        if (ctx.toks.size() < 2) { m->log("用法: " + cmd + " <图元id>", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ")) + cmd + SketchCAD::I18n::t(QString::fromUtf8(" <图元id>")), "warn"); return false; }
         bool ok = false; int id = ctx.toks[1].toInt(&ok);
-        if (!ok) { m->log("无效的图元 id: " + ctx.toks[1], "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的图元 id: ")) + ctx.toks[1], "warn"); return false; }
         out = id; return true;
     };
 
@@ -2517,17 +2518,17 @@ bool SelectCommand::execute(const CommandContext& ctx) {
         int id; if (!parseId(id)) return false; m->deselectIntersected(id); return true;
     }
     if (cmd == "select_layer") {
-        if (ctx.toks.size() < 2) { m->log("用法: select_layer <图层名>", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: select_layer <图层名>")), "warn"); return false; }
         m->selectLayer(ctx.toks[1]); return true;
     }
     if (cmd == "deselect_layer") {
-        if (ctx.toks.size() < 2) { m->log("用法: deselect_layer <图层名>", "warn"); return false; }
+        if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: deselect_layer <图层名>")), "warn"); return false; }
         m->deselectLayer(ctx.toks[1]); return true;
     }
     if (cmd == "toggle_layer") {
         int id; if (!parseId(id)) return false; m->toggleLayerOf(id); return true;
     }
-    m->log("未知选择命令: " + cmd, "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知选择命令: ")) + cmd, "warn");
     return false;
 }
 
@@ -2552,19 +2553,18 @@ bool QSelectCommand::execute(const CommandContext& ctx) {
         else if (key == "layer")     layer = val;
         else if (key == "color")     color = val;
         else if (key == "linestyle") linestyle = val;
-        else m->log(QStringLiteral("快速选择：未知关键字 '%1'（可用 type/layer/color/linestyle）").arg(key), "warn");
+        else m->log(SketchCAD::I18n::t(QString::fromUtf8("快速选择：未知关键字 '%1'（可用 type/layer/color/linestyle）")).arg(key), "warn");
     }
 
     // 全空（未指定任何维度）= 不执行选择，避免盲目全选，并给出用法提示。
     if (type.isEmpty() && layer.isEmpty() && color.isEmpty() && linestyle.isEmpty()) {
-        m->log(QStringLiteral("快速选择：未指定任何过滤条件，未改变选择集。"
-                              "用法: qselect type=直线 [layer=0] [color=#ff0000] [linestyle=实线]"), "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("快速选择：未指定任何过滤条件，未改变选择集。用法: qselect type=直线 [layer=0] [color=#ff0000] [linestyle=实线]")), "warn");
         return true;   // 非致命：仅提示，不改变选择集
     }
 
     const std::vector<int> hits = qselectByDims(m, type, layer, color, linestyle);
     m->applySelectionDelta(hits, QSelectAction::Replace);   // 单次落地，一次 selectionChanged
-    m->log(QStringLiteral("快速选择：命中 %1 个对象（已替换选择集）").arg(hits.size()));
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("快速选择：命中 %1 个对象（已替换选择集）")).arg(hits.size()));
     return true;
 }
 
@@ -2587,7 +2587,7 @@ bool LayerCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     const QStringList& t = ctx.toks;
     if (t.size() < 2) {
-        m->log("用法: layer <add|delete|rename|visible|lock|set|assign|apply|list> ...", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer <add|delete|rename|visible|lock|set|assign|apply|list> ...")), "warn");
         return false;
     }
     const QString sub = t[1].toLower();
@@ -2605,7 +2605,7 @@ bool LayerCommand::execute(const CommandContext& ctx) {
         return true;
     }
     if (sub == "add") {
-        if (t.size() < 3) { m->log("用法: layer add <名称> [颜色] [线宽] [线型]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer add <名称> [颜色] [线宽] [线型]")), "warn"); return false; }
         QColor c; double w = 1.0; LineStyle ls = LineStyle::Solid;
         if (t.size() >= 4) { c = QColor(t[3]); if (!c.isValid()) c = QColor(); }
         if (t.size() >= 5) { bool ok; double v = t[4].toDouble(&ok); if (ok) w = v; }
@@ -2613,63 +2613,63 @@ bool LayerCommand::execute(const CommandContext& ctx) {
         return m->addLayer(t[2], c, w, ls);
     }
     if (sub == "delete") {
-        if (t.size() < 3) { m->log("用法: layer delete <名称>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer delete <名称>")), "warn"); return false; }
         return m->removeLayer(t[2]);
     }
     if (sub == "rename") {
-        if (t.size() < 4) { m->log("用法: layer rename <旧名> <新名>", "warn"); return false; }
+        if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer rename <旧名> <新名>")), "warn"); return false; }
         return m->renameLayer(t[2], t[3]);
     }
     if (sub == "visible") {
-        if (t.size() < 3) { m->log("用法: layer visible <名称> [on|off]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer visible <名称> [on|off]")), "warn"); return false; }
         bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
         return m->setLayerVisible(t[2], on);
     }
     if (sub == "lock") {
-        if (t.size() < 3) { m->log("用法: layer lock <名称> [on|off]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer lock <名称> [on|off]")), "warn"); return false; }
         bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
         return m->setLayerLocked(t[2], on);
     }
     if (sub == "assign") {
-        if (t.size() < 3) { m->log("用法: layer assign <名称>（把选中图元移入该层，保留图元原有属性）", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer assign <名称>（把选中图元移入该层，保留图元原有属性）")), "warn"); return false; }
         m->assignSelectionToLayer(t[2], false);
         return true;
     }
     if (sub == "apply") {
-        if (t.size() < 3) { m->log("用法: layer apply <名称>（把图层样式套用到本层图元）", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer apply <名称>（把图层样式套用到本层图元）")), "warn"); return false; }
         m->applyLayerStyleToElements(t[2]);
         return true;
     }
     // ---- 图层动态语义：冻结 / 打印 / 透明度（独立子命令 + set 字段双入口）----
     if (sub == "frozen") {
-        if (t.size() < 3) { m->log("用法: layer frozen <名称> [on|off]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer frozen <名称> [on|off]")), "warn"); return false; }
         bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
         return m->setLayerFrozen(t[2], on);
     }
     if (sub == "plot") {
-        if (t.size() < 3) { m->log("用法: layer plot <名称> [on|off]", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer plot <名称> [on|off]")), "warn"); return false; }
         bool on = (t.size() < 4) || (t[3].toLower() != "off" && t[3].toLower() != "0");
         return m->setLayerPlot(t[2], on);
     }
     if (sub == "alpha") {
-        if (t.size() < 4) { m->log("用法: layer alpha <名称> <0..1>", "warn"); return false; }
+        if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer alpha <名称> <0..1>")), "warn"); return false; }
         bool ok; double v = t[3].toDouble(&ok);
-        if (!ok || v < 0.0 || v > 1.0) { m->log(QStringLiteral("无效透明度(需0..1): %1").arg(t[3]), "warn"); return false; }
+        if (!ok || v < 0.0 || v > 1.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效透明度(需0..1): %1")).arg(t[3]), "warn"); return false; }
         return m->setLayerAlpha(t[2], v);
     }
     if (sub == "set") {
-        if (t.size() < 5) { m->log("用法: layer set <名称> <color|width|style|frozen|plot|alpha> <值>", "warn"); return false; }
+        if (t.size() < 5) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: layer set <名称> <color|width|style|frozen|plot|alpha> <值>")), "warn"); return false; }
         const QString name = t[2];
         const Layer* l = m->findLayer(name);
-        if (!l) { m->log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+        if (!l) { m->log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
         const QString field = t[3].toLower();
         if (field == "color") {
             QColor nc = QColor(t[4]);
-            if (!nc.isValid()) { m->log(QStringLiteral("无效颜色: %1").arg(t[4]), "warn"); return false; }
+            if (!nc.isValid()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效颜色: %1")).arg(t[4]), "warn"); return false; }
             return m->setLayerStyle(name, &nc, nullptr, nullptr);   // 只改颜色，同步本层颜色
         } else if (field == "width") {
             bool ok; double v = t[4].toDouble(&ok);
-            if (!ok) { m->log(QStringLiteral("无效线宽: %1").arg(t[4]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效线宽: %1")).arg(t[4]), "warn"); return false; }
             return m->setLayerStyle(name, nullptr, &v, nullptr);   // 只改线宽，同步本层线宽
         } else if (field == "style") {
             LineStyle ls = parseLineStyleArg(t[4]);
@@ -2682,13 +2682,13 @@ bool LayerCommand::execute(const CommandContext& ctx) {
             return m->setLayerPlot(name, on);
         } else if (field == "alpha") {
             bool ok; double v = t[4].toDouble(&ok);
-            if (!ok || v < 0.0 || v > 1.0) { m->log(QStringLiteral("无效透明度(需0..1): %1").arg(t[4]), "warn"); return false; }
+            if (!ok || v < 0.0 || v > 1.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效透明度(需0..1): %1")).arg(t[4]), "warn"); return false; }
             return m->setLayerAlpha(name, v);
         } else {
-            m->log(QStringLiteral("未知字段: %1").arg(t[3]), "warn"); return false;
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("未知字段: %1")).arg(t[3]), "warn"); return false;
         }
     }
-    m->log(QStringLiteral("未知图层命令: layer %1").arg(sub), "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知图层命令: layer %1")).arg(sub), "warn");
     return false;
 }
 
@@ -2724,15 +2724,15 @@ bool BlockCommand::execute(const CommandContext& ctx) {
     // ---------------- attdef：为块定义追加属性定义 ----------------
     if (cmd == "attdef") {
         if (t.size() < 3) {
-            m->log("用法: attdef <块名> <标签> [提示] [x,y] [字高]", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: attdef <块名> <标签> [提示] [x,y] [字高]")), "warn");
             return false;
         }
         BlockDef* d = m->findBlockDef(t[1]);
-        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[1]), "warn"); return false; }
+        if (!d) { m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(t[1]), "warn"); return false; }
         AttributeDef a;
         a.tag = t[2];
         for (const auto& e : d->attdefs)
-            if (e.tag == a.tag) { m->log(QStringLiteral("属性 %1 已存在").arg(a.tag), "warn"); return false; }
+            if (e.tag == a.tag) { m->log(SketchCAD::I18n::t(QString::fromUtf8("属性 %1 已存在")).arg(a.tag), "warn"); return false; }
         if (t.size() >= 4) a.prompt = t[3];
         a.defaultValue = a.tag;                       // 默认值 = 标签（便于插入后立即辨认）
         Vec3 pos(0, 0, 0);
@@ -2743,7 +2743,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
         BlockDef copy = *d;
         copy.attdefs.push_back(a);
         m->redefineBlock(copy);
-        m->log(QStringLiteral("块 %1 已新增属性定义 %2（位置 %3,%4，字高 %5）")
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已新增属性定义 %2（位置 %3,%4，字高 %5）"))
                    .arg(t[1]).arg(a.tag).arg(a.pos.x, 0, 'f', 1).arg(a.pos.y, 0, 'f', 1)
                    .arg(a.height, 0, 'f', 1));
         return true;
@@ -2752,11 +2752,11 @@ bool BlockCommand::execute(const CommandContext& ctx) {
     // ---------------- attedit：编辑某引用的属性值 ----------------
     if (cmd == "attedit") {
         if (t.size() < 4) {
-            m->log("用法: attedit <引用id> <标签> <值>", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: attedit <引用id> <标签> <值>")), "warn");
             return false;
         }
         bool ok; const int id = t[1].toInt(&ok);
-        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的引用 id: %1")).arg(t[1]), "warn"); return false; }
         // 值可含空格：从 t[3] 起拼接
         QString value = t[3];
         for (int i = 4; i < t.size(); ++i) value += QStringLiteral(" ") + t[i];
@@ -2775,7 +2775,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
         };
         if (t.size() >= 2) {
             bool ok; const int id = t[1].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的引用 id: %1")).arg(t[1]), "warn"); return false; }
             show(id);
             return true;
         }
@@ -2785,19 +2785,19 @@ bool BlockCommand::execute(const CommandContext& ctx) {
             show(e.id);
             ++n;
         }
-        if (n == 0) m->log(QStringLiteral("当前图纸没有块引用"), "warn");
-        else        m->log(QStringLiteral("属性提取完成：%1 个块引用").arg(n));
+        if (n == 0) m->log(SketchCAD::I18n::t(QString::fromUtf8("当前图纸没有块引用")), "warn");
+        else        m->log(SketchCAD::I18n::t(QString::fromUtf8("属性提取完成：%1 个块引用")).arg(n));
         return true;
     }
 
     // ---------------- dynset：设置动态参数值 / 可见性状态 ----------------
     if (cmd == "dynset") {
         if (t.size() < 4) {
-            m->log("用法: dynset <引用id> <参数名> <值|状态名>", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dynset <引用id> <参数名> <值|状态名>")), "warn");
             return false;
         }
         bool ok; const int id = t[1].toInt(&ok);
-        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[1]), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的引用 id: %1")).arg(t[1]), "warn"); return false; }
         const QString pname = t[2];
         const QString vraw  = t[3];
         // 优先按数值解释；若该参数是可见性（或数值解析失败且有同名状态），则按状态名处理
@@ -2817,7 +2817,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
         }
         if (isVis) return m->setBlockDynState(id, pname, stateForVis);
         if (!numOk) {
-            m->log(QStringLiteral("参数值「%1」既不是数值、也不是已声明的可见性状态").arg(vraw), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("参数值「%1」既不是数值、也不是已声明的可见性状态")).arg(vraw), "warn");
             return false;
         }
         return m->setBlockDynValue(id, pname, num);
@@ -2825,10 +2825,10 @@ bool BlockCommand::execute(const CommandContext& ctx) {
 
     // ---------------- dynlist：列出块定义的动态参数 ----------------
     if (cmd == "dynlist") {
-        if (t.size() < 2) { m->log("用法: dynlist <块名>", "warn"); return false; }
+        if (t.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: dynlist <块名>")), "warn"); return false; }
         const BlockDef* d = m->findBlockDef(t[1]);
-        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[1]), "warn"); return false; }
-        if (d->dynParams.empty()) { m->log(QStringLiteral("块 %1 没有动态参数").arg(t[1])); return true; }
+        if (!d) { m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(t[1]), "warn"); return false; }
+        if (d->dynParams.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 没有动态参数")).arg(t[1])); return true; }
         for (const auto& p : d->dynParams) {
             QString s = QStringLiteral("动态参数 %1（%2）：影响 %3 个图元 默认 %4")
                             .arg(p.name, QString::fromUtf8(dynParamTypeName(p.type)))
@@ -2845,13 +2845,13 @@ bool BlockCommand::execute(const CommandContext& ctx) {
 
     // ---------------- block 子命令 ----------------
     if (t.size() < 2) {
-        m->log("用法: block <create|insert|list|info|redefine|explode|delete|rename> ...", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block <create|insert|list|info|redefine|explode|delete|rename> ...")), "warn");
         return false;
     }
     const QString sub = t[1].toLower();
 
     if (sub == "list") {
-        if (m->blockCount() == 0) { m->log(QStringLiteral("当前没有块定义")); return true; }
+        if (m->blockCount() == 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前没有块定义"))); return true; }
         QString s = QStringLiteral("块表(%1): ").arg(m->blockCount());
         for (const auto& d : m->blockTable())
             s += QStringLiteral("[%1 图元%2 属性%3 参数%4] ")
@@ -2861,15 +2861,15 @@ bool BlockCommand::execute(const CommandContext& ctx) {
     }
 
     if (sub == "info") {
-        if (t.size() < 3) { m->log("用法: block info <块名>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block info <块名>")), "warn"); return false; }
         const BlockDef* d = m->findBlockDef(t[2]);
-        if (!d) { m->log(QStringLiteral("块 %1 不存在").arg(t[2]), "warn"); return false; }
-        m->log(QStringLiteral("块 %1：基点(%2,%3)，块内 %4 个图元，属性 %5，动态参数 %6%7")
+        if (!d) { m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(t[2]), "warn"); return false; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1：基点(%2,%3)，块内 %4 个图元，属性 %5，动态参数 %6%7"))
                    .arg(d->name).arg(d->basePoint.x, 0, 'f', 2).arg(d->basePoint.y, 0, 'f', 2)
                    .arg(d->entities.size()).arg(d->attdefs.size()).arg(d->dynParams.size())
-                   .arg(d->description.isEmpty() ? QString() : QStringLiteral(" 说明：") + d->description));
+                   .arg(d->description.isEmpty() ? QString() : SketchCAD::I18n::t(QString::fromUtf8(" 说明：")) + d->description));
         for (const auto& a : d->attdefs)
-            m->log(QStringLiteral("  属性 %1（%2）默认=%3 @(%4,%5) 字高%6")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  属性 %1（%2）默认=%3 @(%4,%5) 字高%6"))
                        .arg(a.tag, a.prompt, a.defaultValue)
                        .arg(a.pos.x, 0, 'f', 1).arg(a.pos.y, 0, 'f', 1).arg(a.height, 0, 'f', 1));
         return true;
@@ -2877,7 +2877,7 @@ bool BlockCommand::execute(const CommandContext& ctx) {
 
     if (sub == "create") {
         if (t.size() < 3) {
-            m->log("用法: block create <块名> [基点x,y] [delete|keep]（delete 默认：用块引用替换原图元）", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block create <块名> [基点x,y] [delete|keep]（delete 默认：用块引用替换原图元）")), "warn");
             return false;
         }
         const QString name = t[2];
@@ -2897,9 +2897,9 @@ bool BlockCommand::execute(const CommandContext& ctx) {
         const bool existed = m->hasBlock(name);
         const int refId = m->createBlockFromSelection(name, base, deleteSource);
         if (!existed && m->hasBlock(name)) {
-            m->log(QStringLiteral("块 %1 创建成功（基点 %2,%3%4）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 创建成功（基点 %2,%3%4）"))
                        .arg(name).arg(base.x, 0, 'f', 2).arg(base.y, 0, 'f', 2)
-                       .arg(deleteSource ? QStringLiteral("，已放置块引用") : QString()));
+                       .arg(deleteSource ? SketchCAD::I18n::t(QString::fromUtf8("，已放置块引用")) : QString()));
             (void)refId;
             return true;
         }
@@ -2907,24 +2907,24 @@ bool BlockCommand::execute(const CommandContext& ctx) {
     }
 
     if (sub == "redefine") {
-        if (t.size() < 3) { m->log("用法: block redefine <块名>（用当前选择集替换块内几何）", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block redefine <块名>（用当前选择集替换块内几何）")), "warn"); return false; }
         return m->redefineBlockFromSelection(t[2]);
     }
 
     if (sub == "insert") {
         if (t.size() < 4) {
-            m->log("用法: block insert <块名> <x,y> [旋转角] [sx] [sy]", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block insert <块名> <x,y> [旋转角] [sx] [sy]")), "warn");
             return false;
         }
         Vec3 pos;
         if (!ctx.tryParsePoint(t[3], pos)) {
-            m->log(QStringLiteral("无效插入点: %1").arg(t[3]), "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("无效插入点: %1")).arg(t[3]), "warn");
             return false;
         }
         double rot = 0, sx = 1, sy = 1;
         if (t.size() >= 5) {
             bool ok; const double v = t[4].toDouble(&ok);
-            if (!ok) { m->log(QStringLiteral("无效旋转角: %1").arg(t[4]), "warn"); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效旋转角: %1")).arg(t[4]), "warn"); return false; }
             rot = v;
         }
         if (t.size() >= 6) { bool ok; const double v = t[5].toDouble(&ok); if (ok) sx = v; }
@@ -2933,23 +2933,23 @@ bool BlockCommand::execute(const CommandContext& ctx) {
     }
 
     if (sub == "explode") {
-        if (t.size() < 3) { m->log("用法: block explode <引用id>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block explode <引用id>")), "warn"); return false; }
         bool ok; const int id = t[2].toInt(&ok);
-        if (!ok) { m->log(QStringLiteral("无效的引用 id: %1").arg(t[2]), "warn"); return false; }
+        if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无效的引用 id: %1")).arg(t[2]), "warn"); return false; }
         return !m->explodeBlockRef(id).empty();
     }
 
     if (sub == "delete") {
-        if (t.size() < 3) { m->log("用法: block delete <块名>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block delete <块名>")), "warn"); return false; }
         return m->removeBlock(t[2]);
     }
 
     if (sub == "rename") {
-        if (t.size() < 4) { m->log("用法: block rename <旧名> <新名>", "warn"); return false; }
+        if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: block rename <旧名> <新名>")), "warn"); return false; }
         return m->renameBlock(t[2], t[3]);
     }
 
-    m->log(QStringLiteral("未知块命令: block %1").arg(sub), "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知块命令: block %1")).arg(sub), "warn");
     return false;
 }
 
@@ -2973,12 +2973,12 @@ bool ClipCommand::execute(const CommandContext& ctx) {
         std::vector<Element> src;
         for (int id : m->selection())
             if (const Element* e = m->element(id)) src.push_back(*e);
-        if (src.empty()) { m->log("无可复制图元（请先选中）", "warn"); return false; }
+        if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可复制图元（请先选中）")), "warn"); return false; }
 
         clipboard::Payload p;
         if (cmd == "copybase") {
-            if (ctx.toks.size() < 2) { m->log("用法: copybase <x,y>", "warn"); return false; }
-            if (!ctx.parsePoint(1, p.base)) { m->log("基点解析失败", "warn"); return false; }
+            if (ctx.toks.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: copybase <x,y>")), "warn"); return false; }
+            if (!ctx.parsePoint(1, p.base)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("基点解析失败")), "warn"); return false; }
         } else {
             // copyclip 基点 = 选区包围盒左下角（对齐 AutoCAD 默认基点语义）
             bool first = true;
@@ -2997,10 +2997,10 @@ bool ClipCommand::execute(const CommandContext& ctx) {
         // 命令行与 GUI 菜单共用同一份，语义不会漂移。
         p.blocks = clipboard::collectBlockDeps(*m, p.elements);
 
-        if (!clipboard::putToClipboard(p)) { m->log("写入剪贴板失败", "warn"); return false; }
-        m->log(QString("已复制 %1 个图元到剪贴板（基点 %2,%3%4）")
+        if (!clipboard::putToClipboard(p)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("写入剪贴板失败")), "warn"); return false; }
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已复制 %1 个图元到剪贴板（基点 %2,%3%4）")))
                    .arg(p.elements.size()).arg(p.base.x, 0, 'f', 2).arg(p.base.y, 0, 'f', 2)
-                   .arg(p.blocks.empty() ? QString() : QStringLiteral("，含块 %1 个").arg(p.blocks.size())));
+                   .arg(p.blocks.empty() ? QString() : SketchCAD::I18n::t(QString::fromUtf8("，含块 %1 个")).arg(p.blocks.size())));
         return true;
     }
 
@@ -3008,29 +3008,29 @@ bool ClipCommand::execute(const CommandContext& ctx) {
         clipboard::Payload p;
         QString err;
         if (!clipboard::getFromClipboard(&p, &err)) {
-            m->log(err.isEmpty() ? QStringLiteral("剪贴板内容不可用") : err, "warn");
+            m->log(err.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("剪贴板内容不可用")) : err, "warn");
             return false;
         }
         Vec3 to(0, 0, 0);
         const int ptIdx = 1;
         if (ctx.toks.size() > ptIdx) {
-            if (!ctx.parsePoint(ptIdx, to)) { m->log("落点解析失败", "warn"); return false; }
+            if (!ctx.parsePoint(ptIdx, to)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("落点解析失败")), "warn"); return false; }
         } else if (cmd == "pasteblock") {
-            m->log("用法: pasteblock <x,y>", "warn"); return false;
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: pasteblock <x,y>")), "warn"); return false;
         }
         const bool asBlock = (cmd == "pasteblock");
-        m->beginEdit(asBlock ? QStringLiteral("剪贴板-粘贴为块") : QStringLiteral("剪贴板-粘贴"));
+        m->beginEdit(asBlock ? SketchCAD::I18n::t(QString::fromUtf8("剪贴板-粘贴为块")) : SketchCAD::I18n::t(QString::fromUtf8("剪贴板-粘贴")));
         QString msg;
         if (!clipboard::pasteInto(m, p, to, asBlock, &msg)) {
             m->undo();   // 空转回滚：粘贴失败不留 beginEdit 快照
-            m->log(msg.isEmpty() ? QStringLiteral("粘贴失败") : msg, "warn");
+            m->log(msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("粘贴失败")) : msg, "warn");
             return false;
         }
         m->log(msg);
         return true;
     }
 
-    m->log("未知剪贴板子命令: " + cmd, "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知剪贴板子命令: ")) + cmd, "warn");
     return false;
 }
 
@@ -3038,17 +3038,17 @@ bool XrefCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
     const QStringList& t = ctx.toks;
     if (t.size() < 2) {
-        m->log("用法: xref <attach|detach|list|path> ...", "warn");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xref <attach|detach|list|path> ...")), "warn");
         return false;
     }
     const QString sub = t[1].toLower();
 
     if (sub == "list") {
-        if (m->xrefCount() == 0) { m->log(QStringLiteral("当前图纸没有外部参照")); return true; }
-        m->log(QStringLiteral("外部参照(%1):").arg(m->xrefCount()));
+        if (m->xrefCount() == 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前图纸没有外部参照"))); return true; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("外部参照(%1):")).arg(m->xrefCount()));
         for (const auto& d : m->blockTable()) {
             if (!d.isXref || d.xrefNested) continue;
-            m->log(QStringLiteral("  %1  [%2]  %3  图元%4  ← %5")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  %1  [%2]  %3  图元%4  ← %5"))
                        .arg(d.name)
                        .arg(QString::fromUtf8(xrefStatusName((XrefStatus)d.xrefStatus)))
                        .arg(QString::fromUtf8(xrefPathTypeName((XrefPathType)d.xrefPathType)))
@@ -3057,22 +3057,22 @@ bool XrefCommand::execute(const CommandContext& ctx) {
         }
         const int nestedCount = m->xrefCount(true) - m->xrefCount();
         if (nestedCount > 0)
-            m->log(QStringLiteral("（另有 %1 个嵌套参照，只能在直接附加它的宿主图中分离）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("（另有 %1 个嵌套参照，只能在直接附加它的宿主图中分离）"))
                        .arg(nestedCount));
         return true;
     }
 
     if (sub == "path") {
-        if (t.size() < 3) { m->log("用法: xref path <块名>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xref path <块名>")), "warn"); return false; }
         const QString p = m->xrefResolvedPath(t[2]);
-        if (p.isEmpty()) { m->log(QStringLiteral("%1 不是外部参照").arg(t[2]), "warn"); return false; }
-        m->log(QStringLiteral("外部参照 %1 的绝对路径：%2").arg(t[2], p));
+        if (p.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("%1 不是外部参照")).arg(t[2]), "warn"); return false; }
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("外部参照 %1 的绝对路径：%2")).arg(t[2], p));
         return true;
     }
 
     if (sub == "attach") {
         if (t.size() < 3) {
-            m->log("用法: xref attach <文件路径> [full|relative|none] [x,y] [旋转] [sx] [sy]", "warn");
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xref attach <文件路径> [full|relative|none] [x,y] [旋转] [sx] [sy]")), "warn");
             return false;
         }
         XrefPathType pt = XrefPathType::FullPath;
@@ -3094,11 +3094,11 @@ bool XrefCommand::execute(const CommandContext& ctx) {
     }
 
     if (sub == "detach") {
-        if (t.size() < 3) { m->log("用法: xref detach <块名>", "warn"); return false; }
+        if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: xref detach <块名>")), "warn"); return false; }
         return m->detachXref(t[2]);
     }
 
-    m->log(QStringLiteral("未知外部参照命令: xref %1").arg(sub), "warn");
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知外部参照命令: xref %1")).arg(sub), "warn");
     return false;
 }
 
@@ -3111,9 +3111,9 @@ bool AircraftViewsCommand::execute(const CommandContext& ctx) {
     aircraft::AircraftViewsParams p;
     // 未来可扩展：按 toks 解析 key=value 覆盖默认值
     const auto elems = aircraft::buildThreeViews(p, m);
-    m->beginEdit(QStringLiteral("绘制飞机三面图"));
+    m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制飞机三面图")));
     m->addElementsQuiet(elems);
-    m->log(QStringLiteral("已生成飞机三面图：%1 个图元（侧面图/俯视图/正面图）")
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("已生成飞机三面图：%1 个图元（侧面图/俯视图/正面图）"))
                .arg(elems.size()));
     return true;
 }
@@ -3148,34 +3148,34 @@ bool HelpCommand::execute(const CommandContext& ctx) {
                                      AliasTable::instance().aliases();
             const QStringList sugs = CommandInterpreter::nearestCommands(name, pool);
             if (!sugs.isEmpty())
-                m->log(QStringLiteral("未知命令：%1（您是不是想输入: %2？）")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未知命令：%1（您是不是想输入: %2？）"))
                            .arg(ctx.toks[1].toLower(), sugs.join(QStringLiteral(" / "))),
                        QStringLiteral("warn"));
             else
-                m->log(QStringLiteral("未知命令：%1（输入 help 查看全部命令）")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未知命令：%1（输入 help 查看全部命令）"))
                            .arg(ctx.toks[1].toLower()),
                        QStringLiteral("warn"));
             return false;
         }
 
         if (viaAlias)
-            m->log(QStringLiteral("别名：%1 → %2").arg(ctx.toks[1].toLower(), name),
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("别名：%1 → %2")).arg(ctx.toks[1].toLower(), name),
                    QStringLiteral("info"));
         if (ci) {
-            m->log(QStringLiteral("%1（%2 · 分类：%3）").arg(ci->name, ci->zhName, ci->category),
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("%1（%2 · 分类：%3）")).arg(ci->name, ci->zhName, ci->category),
                    QStringLiteral("info"));
-            if (!ci->summary.isEmpty()) m->log(QStringLiteral("简介：%1").arg(ci->summary));
-            if (!ci->usage.isEmpty())   m->log(QStringLiteral("用法（Usage:）：%1").arg(ci->usage));
-            if (!ci->params.isEmpty())  m->log(QStringLiteral("参数：%1").arg(ci->params));
-            if (!ci->example.isEmpty()) m->log(QStringLiteral("样例：%1").arg(ci->example));
-            if (!ci->shortcut.isEmpty()) m->log(QStringLiteral("快捷键：%1").arg(ci->shortcut));
-            if (!ci->related.isEmpty()) m->log(QStringLiteral("相关命令：%1").arg(ci->related.join(QStringLiteral(" / "))));
+            if (!ci->summary.isEmpty()) m->log(SketchCAD::I18n::t(QString::fromUtf8("简介：%1")).arg(ci->summary));
+            if (!ci->usage.isEmpty())   m->log(SketchCAD::I18n::t(QString::fromUtf8("用法（Usage:）：%1")).arg(ci->usage));
+            if (!ci->params.isEmpty())  m->log(SketchCAD::I18n::t(QString::fromUtf8("参数：%1")).arg(ci->params));
+            if (!ci->example.isEmpty()) m->log(SketchCAD::I18n::t(QString::fromUtf8("样例：%1")).arg(ci->example));
+            if (!ci->shortcut.isEmpty()) m->log(SketchCAD::I18n::t(QString::fromUtf8("快捷键：%1")).arg(ci->shortcut));
+            if (!ci->related.isEmpty()) m->log(SketchCAD::I18n::t(QString::fromUtf8("相关命令：%1")).arg(ci->related.join(QStringLiteral(" / "))));
         } else {
             // 注册表中存在但目录未收录：给出回落信息（不编造用法）
-            m->log(QStringLiteral("%1（分类：%2）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("%1（分类：%2）"))
                        .arg(name, CommandCatalog::categoryOf(name)),
                    QStringLiteral("info"));
-            m->log(QStringLiteral("该命令暂无详细帮助；输入 help 查看全部命令总表。"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("该命令暂无详细帮助；输入 help 查看全部命令总表。")));
         }
         return true;
     }
@@ -3194,7 +3194,7 @@ bool HelpCommand::execute(const CommandContext& ctx) {
         groupOf(CommandCatalog::categoryOf(n)) << n;
     for (const auto& g : groups)
         m->log(QStringLiteral("【%1】%2").arg(g.first, g.second.join(QChar(' '))));
-    m->log(QStringLiteral("命令总数：%1（别名 %2 条，单列如下）")
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("命令总数：%1（别名 %2 条，单列如下）"))
                .arg(names.size())
                .arg(AliasTable::instance().aliases().size()));
     // 别名单列（acad.pgp 兼容）：别名 → 完整命令，按别名升序
@@ -3202,8 +3202,8 @@ bool HelpCommand::execute(const CommandContext& ctx) {
     QStringList aliasItems;
     for (auto it = aliasMap.constBegin(); it != aliasMap.constEnd(); ++it)
         aliasItems << QStringLiteral("%1=%2").arg(it.key(), it.value());
-    m->log(QStringLiteral("别名：%1").arg(aliasItems.join(QStringLiteral(", "))));
-    m->log(QStringLiteral("提示：help <命令名> 查看用法/参数/样例；Ctrl+Shift+P 打开命令面板。"));
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("别名：%1")).arg(aliasItems.join(QStringLiteral(", "))));
+    m->log(SketchCAD::I18n::t(QString::fromUtf8("提示：help <命令名> 查看用法/参数/样例；Ctrl+Shift+P 打开命令面板。")));
     return true;
 }
 
@@ -3248,49 +3248,49 @@ QStringList CommandRegistry::exactNames() const {
 // 生成的新图元已绑定 ctype/refA/refB，进入求解器维护范围，后续移动端点时约束被自动维持。
 bool PerpCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：perp <直线Id> <x,y>"), QStringLiteral("error")); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：perp <直线Id> <x,y>")), QStringLiteral("error")); return false; }
     bool ok; int idA = ctx.toks[1].toInt(&ok);
-    if (!ok) { m->log(QStringLiteral("perp：直线Id 无效"), QStringLiteral("error")); return false; }
-    Vec3 P; if (!ctx.parsePoint(2, P)) { m->log(QStringLiteral("perp：点坐标无效"), QStringLiteral("error")); return false; }
+    if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("perp：直线Id 无效")), QStringLiteral("error")); return false; }
+    Vec3 P; if (!ctx.parsePoint(2, P)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("perp：点坐标无效")), QStringLiteral("error")); return false; }
     const Element* ref = nullptr;
     for (const auto& e : m->elements()) if (e.id == idA) { ref = &e; break; }
-    if (!ref || ref->type != ElementType::Line) { m->log(QStringLiteral("perp：未找到指定直线"), QStringLiteral("error")); return false; }
+    if (!ref || ref->type != ElementType::Line) { m->log(SketchCAD::I18n::t(QString::fromUtf8("perp：未找到指定直线")), QStringLiteral("error")); return false; }
     Element el = ConstraintSolver::drawPerpendicularTo(*ref, P);
     const int nid = m->addElement(el);
-    m->log(QString("perp：已生成垂线 #%1（过 %2,%3 垂直于 #%4）").arg(nid).arg(P.x).arg(P.y).arg(idA), QStringLiteral("info"));
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("perp：已生成垂线 #%1（过 %2,%3 垂直于 #%4）"))).arg(nid).arg(P.x).arg(P.y).arg(idA), QStringLiteral("info"));
     return true;
 }
 
 bool Tangent2Command::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：tangent2 <圆IdA> <圆IdB>"), QStringLiteral("error")); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tangent2 <圆IdA> <圆IdB>")), QStringLiteral("error")); return false; }
     bool ok1, ok2; int idA = ctx.toks[1].toInt(&ok1), idB = ctx.toks[2].toInt(&ok2);
-    if (!ok1 || !ok2) { m->log(QStringLiteral("tangent2：圆Id 无效"), QStringLiteral("error")); return false; }
+    if (!ok1 || !ok2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("tangent2：圆Id 无效")), QStringLiteral("error")); return false; }
     const Element* A = nullptr; const Element* B = nullptr;
     for (const auto& e : m->elements()) { if (e.id == idA) A = &e; if (e.id == idB) B = &e; }
     if (!A || !B || (A->type != ElementType::Circle && A->type != ElementType::Arc) ||
         (B->type != ElementType::Circle && B->type != ElementType::Arc)) {
-        m->log(QStringLiteral("tangent2：需两个圆/圆弧"), QStringLiteral("error")); return false;
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("tangent2：需两个圆/圆弧")), QStringLiteral("error")); return false;
     }
     std::vector<Element> outs;
     const int n = ConstraintSolver::commonTangents(*A, *B, outs);
     for (auto& el : outs) m->addElement(el);
-    m->log(QString("tangent2：生成 %1 条公切线（#%2 ↔ #%3）").arg(n).arg(idA).arg(idB), QStringLiteral("info"));
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("tangent2：生成 %1 条公切线（#%2 ↔ #%3）"))).arg(n).arg(idA).arg(idB), QStringLiteral("info"));
     return true;
 }
 
 bool QConnectCommand::execute(const CommandContext& ctx) {
     SketchModel* m = ctx.model;
-    if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：qconnect <目标圆Id> <x,y>"), QStringLiteral("error")); return false; }
+    if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：qconnect <目标圆Id> <x,y>")), QStringLiteral("error")); return false; }
     bool ok; int idT = ctx.toks[1].toInt(&ok);
-    if (!ok) { m->log(QStringLiteral("qconnect：目标Id 无效"), QStringLiteral("error")); return false; }
-    Vec3 from; if (!ctx.parsePoint(2, from)) { m->log(QStringLiteral("qconnect：点坐标无效"), QStringLiteral("error")); return false; }
+    if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("qconnect：目标Id 无效")), QStringLiteral("error")); return false; }
+    Vec3 from; if (!ctx.parsePoint(2, from)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("qconnect：点坐标无效")), QStringLiteral("error")); return false; }
     const Element* tgt = nullptr;
     for (const auto& e : m->elements()) if (e.id == idT) { tgt = &e; break; }
-    if (!tgt) { m->log(QStringLiteral("qconnect：未找到目标图元"), QStringLiteral("error")); return false; }
+    if (!tgt) { m->log(SketchCAD::I18n::t(QString::fromUtf8("qconnect：未找到目标图元")), QStringLiteral("error")); return false; }
     Element el = ConstraintSolver::quadrantConnector(*tgt, from);
     const int nid = m->addElement(el);
-    m->log(QString("qconnect：已生成象限连接 #%1（从 %2,%3 连到 #%4 最近象限点）").arg(nid).arg(from.x).arg(from.y).arg(idT), QStringLiteral("info"));
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("qconnect：已生成象限连接 #%1（从 %2,%3 连到 #%4 最近象限点）"))).arg(nid).arg(from.x).arg(from.y).arg(idT), QStringLiteral("info"));
     return true;
 }
 
@@ -3315,8 +3315,8 @@ void CommandRegistry::registerBuiltins() {
                 e.name = QStringLiteral("点"); e.color = QColor(0, 0, 0);
                 m->addElement(e); ++n;
             }
-            if (n == 0) { m->log(QStringLiteral("用法：point <x,y> [x,y ...]"), QStringLiteral("error")); return false; }
-            m->log(QString("point：已创建 %1 个点实体（可被 Node 节点捕捉）").arg(n), QStringLiteral("info"));
+            if (n == 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：point <x,y> [x,y ...]")), QStringLiteral("error")); return false; }
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("point：已创建 %1 个点实体（可被 Node 节点捕捉）"))).arg(n), QStringLiteral("info"));
             return true;
         }));
 
@@ -3355,13 +3355,13 @@ void CommandRegistry::registerBuiltins() {
             SketchModel* m = ctx.model;
             if (!m) return false;
             if (ctx.toks.size() > 1) {
-                m->log(QStringLiteral("用法: fieldupdate（无参数，重算全部域）"), QStringLiteral("warn"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: fieldupdate（无参数，重算全部域）")), QStringLiteral("warn"));
                 return false;
             }
             const int n = m->refreshFields();
             m->log(n > 0
-                    ? QStringLiteral("已更新 %1 个域宿主（MText/Table）").arg(n)
-                    : QStringLiteral("未发现含域的 MText/Table 图元"),
+                    ? SketchCAD::I18n::t(QString::fromUtf8("已更新 %1 个域宿主（MText/Table）")).arg(n)
+                    : SketchCAD::I18n::t(QString::fromUtf8("未发现含域的 MText/Table 图元")),
                    QStringLiteral("info"));
             return true;
         }));
@@ -3375,11 +3375,11 @@ void CommandRegistry::registerBuiltins() {
             if (ctx.toks.size() == 1) {
                 const auto& props = m->drawingProps();
                 if (props.empty()) {
-                    m->log(QStringLiteral("当前图纸无自定义特性（用法: prop <名称> <值> 设置，%<PROP:名称>% 引用）"),
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("当前图纸无自定义特性（用法: prop <名称> <值> 设置，%<PROP:名称>% 引用）")),
                            QStringLiteral("info"));
                     return true;
                 }
-                m->log(QStringLiteral("自定义特性共 %1 项：").arg((int)props.size()), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("自定义特性共 %1 项：")).arg((int)props.size()), QStringLiteral("info"));
                 for (const auto& kv : props)
                     m->log(QStringLiteral("  %1 = %2").arg(kv.first, kv.second), QStringLiteral("info"));
                 return true;
@@ -3387,23 +3387,23 @@ void CommandRegistry::registerBuiltins() {
             // prop -r <名>    → 删除
             if (ctx.toks[1] == QStringLiteral("-r")) {
                 if (ctx.toks.size() < 3) {
-                    m->log(QStringLiteral("用法: prop -r <名称>"), QStringLiteral("warn"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: prop -r <名称>")), QStringLiteral("warn"));
                     return false;
                 }
                 const QString name = ctx.toks[2];
                 if (m->drawingProp(name).isEmpty()) {
-                    m->log(QStringLiteral("特性「%1」不存在").arg(name), QStringLiteral("warn"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("特性「%1」不存在")).arg(name), QStringLiteral("warn"));
                     return false;
                 }
                 m->setDrawingProp(name, QString());   // 空值 = 移除
-                m->log(QStringLiteral("已删除特性「%1」").arg(name), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已删除特性「%1」")).arg(name), QStringLiteral("info"));
                 return true;
             }
             // prop <名>       → 查询
             if (ctx.toks.size() == 2) {
                 const QString v = m->drawingProp(ctx.toks[1]);
                 if (v.isEmpty()) {
-                    m->log(QStringLiteral("特性「%1」不存在").arg(ctx.toks[1]), QStringLiteral("warn"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("特性「%1」不存在")).arg(ctx.toks[1]), QStringLiteral("warn"));
                     return false;
                 }
                 m->log(QStringLiteral("%1 = %2").arg(ctx.toks[1], v), QStringLiteral("info"));
@@ -3413,7 +3413,7 @@ void CommandRegistry::registerBuiltins() {
             QString val = ctx.toks[2];
             for (int i = 3; i < (int)ctx.toks.size(); ++i) val += QLatin1Char(' ') + ctx.toks[i];
             m->setDrawingProp(ctx.toks[1], val);
-            m->log(QStringLiteral("已设置特性 %1 = %2（MText/Table 中以 %<PROP:%1>% 引用）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已设置特性 %1 = %2（MText/Table 中以 %<PROP:%1>% 引用）"))
                             .arg(ctx.toks[1], val), QStringLiteral("info"));
             return true;
         }));
@@ -3453,7 +3453,7 @@ void CommandRegistry::registerBuiltins() {
     registerExact("redo", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) { ctx.model->redo(); return true; }));
     registerExact("clear", std::make_shared<LambdaCommand>(
-        [](const CommandContext& ctx) { ctx.model->clear(); ctx.model->log("已清空草图"); return true; }));
+        [](const CommandContext& ctx) { ctx.model->clear(); ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已清空草图"))); return true; }));
 
     // ---- 视图 ----
     registerExact("plane", std::make_shared<PlaneCommand>());
@@ -3481,7 +3481,7 @@ void CommandRegistry::registerBuiltins() {
                     mode = QStringLiteral("baseline");
                 else if (t == QStringLiteral("continue") || t == QStringLiteral("cont") || t == QStringLiteral("c"))
                     mode = QStringLiteral("continue");
-                else { m->log(QStringLiteral("用法：qdim [baseline|continue]（先框选一组平行线/圆阵列）"), QStringLiteral("error")); return false; }
+                else { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：qdim [baseline|continue]（先框选一组平行线/圆阵列）")), QStringLiteral("error")); return false; }
             }
             const auto ids = m->quickDimSelected(mode);
             if (ids.empty()) return false;     // 具体原因已由 quickDimSelected 记录
@@ -3503,11 +3503,11 @@ void CommandRegistry::registerBuiltins() {
                 const QString v = ctx.toks[1].toLower();
                 if      (v == "on"  || v == "1" || v == "true")  on = true;
                 else if (v == "off" || v == "0" || v == "false") on = false;
-                else { ctx.model->log(QStringLiteral("用法：ortho [on|off]"), QStringLiteral("error")); return false; }
+                else { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：ortho [on|off]")), QStringLiteral("error")); return false; }
             }
             ctx.model->setOrthoMode(on);
-            ctx.model->log(QStringLiteral("正交模式 (ORTHO)：%1")
-                               .arg(on ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("正交模式 (ORTHO)：%1"))
+                               .arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))), QStringLiteral("info"));
             return true;
         }));
     // snap [on|off|<步长>]：切换/设定栅格吸附（数字参数 = 同时设定吸附步长 mm）
@@ -3522,7 +3522,7 @@ void CommandRegistry::registerBuiltins() {
                     bool ok = false;
                     const double step = v.toDouble(&ok);
                     if (!ok || step <= 0) {
-                        ctx.model->log(QStringLiteral("用法：snap [on|off|<步长mm>]"), QStringLiteral("error"));
+                        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：snap [on|off|<步长mm>]")), QStringLiteral("error"));
                         return false;
                     }
                     ctx.model->setGridSnapStep(step);
@@ -3530,8 +3530,8 @@ void CommandRegistry::registerBuiltins() {
                 }
             }
             ctx.model->setGridSnap(on);
-            ctx.model->log(QStringLiteral("栅格吸附 (SNAP)：%1（步长 %2 mm）")
-                               .arg(on ? QStringLiteral("开") : QStringLiteral("关"))
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("栅格吸附 (SNAP)：%1（步长 %2 mm）"))
+                               .arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关")))
                                .arg(ctx.model->gridSnapStep(), 0, 'f', 2), QStringLiteral("info"));
             return true;
         }));
@@ -3544,11 +3544,11 @@ void CommandRegistry::registerBuiltins() {
                 const QString v = ctx.toks[1].toLower();
                 if      (v == "on"  || v == "1" || v == "true")  on = true;
                 else if (v == "off" || v == "0" || v == "false") on = false;
-                else { ctx.model->log(QStringLiteral("用法：dyn [on|off]"), QStringLiteral("error")); return false; }
+                else { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dyn [on|off]")), QStringLiteral("error")); return false; }
             }
             ctx.model->setDynMode(on);
-            ctx.model->log(QStringLiteral("动态输入 (DYN)：%1")
-                               .arg(on ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("动态输入 (DYN)：%1"))
+                               .arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))), QStringLiteral("info"));
             return true;
         }));
 
@@ -3565,14 +3565,14 @@ void CommandRegistry::registerBuiltins() {
                     bool ok = false;
                     const double inc = v.toDouble(&ok);
                     if (ok && inc > 0.0 && inc < 360.0) { c.polar = true; c.polarIncrement = inc; }
-                    else { ctx.model->log(QStringLiteral("用法：polar [on|off|<增量角>]"), QStringLiteral("error")); return false; }
+                    else { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：polar [on|off|<增量角>]")), QStringLiteral("error")); return false; }
                 }
             } else {
                 c.polar = !c.polar;
             }
             ctx.model->setTrackConfig(c);
-            ctx.model->log(QStringLiteral("极轴追踪 (POLAR)：%1（增量 %2°）")
-                               .arg(c.polar ? QStringLiteral("开") : QStringLiteral("关"))
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("极轴追踪 (POLAR)：%1（增量 %2°）"))
+                               .arg(c.polar ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关")))
                                .arg(c.polarIncrement, 0, 'f', 0), QStringLiteral("info"));
             return true;
         }));
@@ -3584,26 +3584,26 @@ void CommandRegistry::registerBuiltins() {
                 const QString v = ctx.toks[1].toLower();
                 if (v == "on" || v == "1" || v == "true")        c.objectTrack = true;
                 else if (v == "off" || v == "0" || v == "false") c.objectTrack = false;
-                else { ctx.model->log(QStringLiteral("用法：otrack [on|off]"), QStringLiteral("error")); return false; }
+                else { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：otrack [on|off]")), QStringLiteral("error")); return false; }
             } else {
                 c.objectTrack = !c.objectTrack;
             }
             ctx.model->setTrackConfig(c);
-            ctx.model->log(QStringLiteral("对象捕捉追踪 (OTRACK)：%1")
-                               .arg(c.objectTrack ? QStringLiteral("开") : QStringLiteral("关")), QStringLiteral("info"));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("对象捕捉追踪 (OTRACK)：%1"))
+                               .arg(c.objectTrack ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))), QStringLiteral("info"));
             return true;
         }));
     // tk <x,y>：放置临时追踪点（瞬态，不随图存档；参与对齐线追踪）
     registerExact("tk", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：tk <x,y>（放置临时追踪点）；tkclear 清除全部"), QStringLiteral("error"));
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tk <x,y>（放置临时追踪点）；tkclear 清除全部")), QStringLiteral("error"));
                 return false;
             }
             Vec3 p;
             if (!ctx.parsePoint(1, p)) return false;
             ctx.model->addTrackPoint(p);
-            ctx.model->log(QStringLiteral("已放置临时追踪点 (TK)：(%1, %2)，共 %3 个")
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已放置临时追踪点 (TK)：(%1, %2)，共 %3 个"))
                                .arg(p.x, 0, 'f', 2).arg(p.y, 0, 'f', 2)
                                .arg(ctx.model->trackPoints().size()), QStringLiteral("info"));
             return true;
@@ -3612,11 +3612,11 @@ void CommandRegistry::registerBuiltins() {
     registerExact("tkclear", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.model->trackPoints().empty()) {
-                ctx.model->log(QStringLiteral("当前无临时追踪点"), QStringLiteral("info"));
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("当前无临时追踪点")), QStringLiteral("info"));
                 return true;
             }
             ctx.model->clearTrackPoints();
-            ctx.model->log(QStringLiteral("已清除全部临时追踪点 (TK)"), QStringLiteral("info"));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已清除全部临时追踪点 (TK)")), QStringLiteral("info"));
             return true;
         }));
 
@@ -3652,39 +3652,39 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 2) {
-                m->log(QStringLiteral("用法：group [create <名> | add <名> | remove | list | ungroup <名>]"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：group [create <名> | add <名> | remove | list | ungroup <名>]")),
                        QStringLiteral("error"));
                 return false;
             }
             const QString sub = ctx.toks[1].toLower();
             if (sub == "create" || sub == "创建") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group create <编组名>（先选中对象）"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：group create <编组名>（先选中对象）")), QStringLiteral("error")); return false; }
                 return m->createGroup(ctx.toks[2], m->selection());
             }
             if (sub == "add" || sub == "加入") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group add <编组名>（先选中对象）"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：group add <编组名>（先选中对象）")), QStringLiteral("error")); return false; }
                 const int n = m->addToGroup(ctx.toks[2], m->selection());
-                if (n <= 0) { m->log(QStringLiteral("没有对象被加入编组（检查是否已选中对象/已属该组）"), QStringLiteral("warn")); return false; }
+                if (n <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有对象被加入编组（检查是否已选中对象/已属该组）")), QStringLiteral("warn")); return false; }
                 return true;
             }
             if (sub == "remove" || sub == "移除") {
                 const int n = m->removeFromGroup(m->selection());
-                if (n <= 0) { m->log(QStringLiteral("没有对象被移出编组（先选中编组成员）"), QStringLiteral("warn")); return false; }
+                if (n <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有对象被移出编组（先选中编组成员）")), QStringLiteral("warn")); return false; }
                 return true;
             }
             if (sub == "list" || sub == "列表") {
                 const QStringList gs = m->groupNames();
-                if (gs.isEmpty()) { m->log(QStringLiteral("当前没有编组"), QStringLiteral("info")); return true; }
+                if (gs.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前没有编组")), QStringLiteral("info")); return true; }
                 for (const QString& g : gs)
-                    m->log(QStringLiteral("编组「%1」：%2 个对象").arg(g).arg(m->elementCountInGroup(g)),
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("编组「%1」：%2 个对象")).arg(g).arg(m->elementCountInGroup(g)),
                            QStringLiteral("info"));
                 return true;
             }
             if (sub == "ungroup" || sub == "解散") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：group ungroup <编组名>（对象保留）"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：group ungroup <编组名>（对象保留）")), QStringLiteral("error")); return false; }
                 return m->ungroup(ctx.toks[2]) > 0;
             }
-            m->log(QStringLiteral("未知子命令 %1（可用：create/add/remove/list/ungroup）").arg(sub), QStringLiteral("error"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("未知子命令 %1（可用：create/add/remove/list/ungroup）")).arg(sub), QStringLiteral("error"));
             return false;
         }));
 
@@ -3698,12 +3698,12 @@ void CommandRegistry::registerBuiltins() {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 2) {
                 if (!m->hasActivePickFilter()) {
-                    m->log(QStringLiteral("当前无 FILTER 预选器"), QStringLiteral("info"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("当前无 FILTER 预选器")), QStringLiteral("info"));
                 } else {
                     QStringList desc;
                     for (const auto& c : m->activePickFilter().conds)
                         desc << QStringLiteral("%1=%2").arg(qselectPropName(c.prop), c.value);
-                    m->log(QStringLiteral("当前预选器：%1（作用于下一次拾取/框选/栏选）").arg(desc.join(QStringLiteral(" AND "))),
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("当前预选器：%1（作用于下一次拾取/框选/栏选）")).arg(desc.join(QStringLiteral(" AND "))),
                            QStringLiteral("info"));
                 }
                 return true;
@@ -3711,7 +3711,7 @@ void CommandRegistry::registerBuiltins() {
             const QString sub = ctx.toks[1].toLower();
             if (sub == "none" || sub == "off" || sub == "clear" || sub == "清除") {
                 m->clearActivePickFilter();
-                m->log(QStringLiteral("已清除 FILTER 预选器"), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已清除 FILTER 预选器")), QStringLiteral("info"));
                 return true;
             }
             // key=value 四维解析（与 qselect 同口径；缺省维度不限制）
@@ -3729,7 +3729,7 @@ void CommandRegistry::registerBuiltins() {
                 else if (k == "linestyle" || k == "线型") lineStyle = v;
             }
             if (type.isEmpty() && layer.isEmpty() && color.isEmpty() && lineStyle.isEmpty()) {
-                m->log(QStringLiteral("用法：filter [type=类型] [layer=图层] [color=#rrggbb] [linestyle=线型] | none"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：filter [type=类型] [layer=图层] [color=#rrggbb] [linestyle=线型] | none")),
                        QStringLiteral("error"));
                 return false;
             }
@@ -3773,82 +3773,82 @@ void CommandRegistry::registerBuiltins() {
             if (ctx.toks.size() < 2) {
                 const QString cur = m->currentLayout().isEmpty()
                     ? QStringLiteral("模型空间") : m->currentLayout();
-                m->log(QStringLiteral("当前：%1，共 %2 个布局（用法：layout new/set/list/rename/delete/copy/vpscale）")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("当前：%1，共 %2 个布局（用法：layout new/set/list/rename/delete/copy/vpscale）"))
                            .arg(cur).arg(m->layoutCount()), QStringLiteral("info"));
                 return true;
             }
             const QString sub = ctx.toks[1].toLower();
             if (sub == "new" || sub == "新建") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout new <布局名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout new <布局名>")), QStringLiteral("error")); return false; }
                 // 新布局默认页跟随图纸幅面（新建 A4 横向 → 布局页也是 A4 横向，避免打印回落纵向）
                 PrintSettings fresh;
                 if (m->hasSheetSpec()) applySheetSpecToPage(m->sheetSpec(), fresh);
                 if (!m->addLayout(ctx.toks[2], fresh)) {
-                    m->log(QStringLiteral("新建布局失败（名字为空或已存在）"), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("新建布局失败（名字为空或已存在）")), QStringLiteral("error"));
                     return false;
                 }
                 m->setCurrentLayout(ctx.toks[2]);
                 return true;
             }
             if (sub == "set" || sub == "切换") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout set <布局名|model>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout set <布局名|model>")), QStringLiteral("error")); return false; }
                 const QString nm = ctx.toks[2].toLower();
                 if (nm == "model" || nm == "模型" || nm == "模型空间") {
                     m->setCurrentLayout(QString());
-                    m->log(QStringLiteral("已切换到模型空间"), QStringLiteral("info"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("已切换到模型空间")), QStringLiteral("info"));
                     return true;
                 }
                 if (!m->setCurrentLayout(ctx.toks[2])) {
-                    m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("布局「%1」不存在")).arg(ctx.toks[2]), QStringLiteral("error"));
                     return false;
                 }
                 return true;
             }
             if (sub == "list" || sub == "列表") {
-                m->log(QStringLiteral("模型空间%1").arg(m->currentLayout().isEmpty() ? QStringLiteral("（当前）") : QString()),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("模型空间%1")).arg(m->currentLayout().isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("（当前）")) : QString()),
                        QStringLiteral("info"));
                 for (int i = 0; i < m->layoutCount(); ++i) {
                     const PlotLayoutDef* d = m->layoutAt(i);
-                    m->log(QStringLiteral("布局「%1」：%2 个视口%3")
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("布局「%1」：%2 个视口%3"))
                                .arg(d->name).arg(d->settings.viewports.size())
-                               .arg(m->currentLayout() == d->name ? QStringLiteral("（当前）") : QString()),
+                               .arg(m->currentLayout() == d->name ? SketchCAD::I18n::t(QString::fromUtf8("（当前）")) : QString()),
                            QStringLiteral("info"));
                 }
                 return true;
             }
             if (sub == "rename" || sub == "改名") {
-                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout rename <旧名> <新名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout rename <旧名> <新名>")), QStringLiteral("error")); return false; }
                 if (!m->renameLayout(ctx.toks[2], ctx.toks[3])) {
-                    m->log(QStringLiteral("改名失败（旧名不存在/新名为空或重名）"), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("改名失败（旧名不存在/新名为空或重名）")), QStringLiteral("error"));
                     return false;
                 }
                 return true;
             }
             if (sub == "delete" || sub == "删除") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：layout delete <布局名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout delete <布局名>")), QStringLiteral("error")); return false; }
                 if (!m->removeLayout(ctx.toks[2])) {
-                    m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("布局「%1」不存在")).arg(ctx.toks[2]), QStringLiteral("error"));
                     return false;
                 }
                 return true;
             }
             if (sub == "copy" || sub == "复制") {
-                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout copy <源布局> <新名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout copy <源布局> <新名>")), QStringLiteral("error")); return false; }
                 const PlotLayoutDef* src = m->findLayout(ctx.toks[2]);
-                if (!src) { m->log(QStringLiteral("布局「%1」不存在").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                if (!src) { m->log(SketchCAD::I18n::t(QString::fromUtf8("布局「%1」不存在")).arg(ctx.toks[2]), QStringLiteral("error")); return false; }
                 if (!m->addLayout(ctx.toks[3], src->settings)) {
-                    m->log(QStringLiteral("复制失败（新名为空或已存在）"), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("复制失败（新名为空或已存在）")), QStringLiteral("error"));
                     return false;
                 }
                 return true;
             }
             if (sub == "vpscale" || sub == "视口比例") {
-                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：layout vpscale <视口名> <比例>（如 1:2 或 0.5）"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout vpscale <视口名> <比例>（如 1:2 或 0.5）")), QStringLiteral("error")); return false; }
                 const PlotLayoutDef* def = m->currentLayoutDef();
-                if (!def) { m->log(QStringLiteral("当前处于模型空间（先 layout set <布局名>）"), QStringLiteral("error")); return false; }
+                if (!def) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前处于模型空间（先 layout set <布局名>）")), QStringLiteral("error")); return false; }
                 double sc = 0.0;
                 if (!parseRatio(ctx.toks[3], sc)) {
-                    m->log(QStringLiteral("比例格式错误（示例：1:2 → 出图缩小一半；2:1 → 放大一倍）"), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("比例格式错误（示例：1:2 → 出图缩小一半；2:1 → 放大一倍）")), QStringLiteral("error"));
                     return false;
                 }
                 PrintSettings s = def->settings;
@@ -3859,9 +3859,9 @@ void CommandRegistry::registerBuiltins() {
                         hit = true;
                     }
                 }
-                if (!hit) { m->log(QStringLiteral("当前布局中无视口「%1」").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                if (!hit) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前布局中无视口「%1」")).arg(ctx.toks[2]), QStringLiteral("error")); return false; }
                 m->updateLayout(def->name, s);
-                m->log(QStringLiteral("视口「%1」比例 = %2（模型 mm → 图纸 mm）").arg(ctx.toks[2]).arg(sc, 0, 'f', 4),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("视口「%1」比例 = %2（模型 mm → 图纸 mm）")).arg(ctx.toks[2]).arg(sc, 0, 'f', 4),
                        QStringLiteral("info"));
                 return true;
             }
@@ -3872,24 +3872,24 @@ void CommandRegistry::registerBuiltins() {
             // 冻结集存于视口 frozenLayers（随布局表入档），渲染时该视口内这些图层零输出。
             if (sub == "vpfreeze" || sub == "vpthaw" || sub == "视口冻结") {
                 if (ctx.toks.size() < 3) {
-                    m->log(QStringLiteral("用法：layout vpfreeze <视口名> [图层名]（无图层名 = 列出冻结层；vpthaw 解冻）"),
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：layout vpfreeze <视口名> [图层名]（无图层名 = 列出冻结层；vpthaw 解冻）")),
                            QStringLiteral("error"));
                     return false;
                 }
                 const PlotLayoutDef* def = m->currentLayoutDef();
-                if (!def) { m->log(QStringLiteral("当前处于模型空间（先 layout set <布局名>）"), QStringLiteral("error")); return false; }
+                if (!def) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前处于模型空间（先 layout set <布局名>）")), QStringLiteral("error")); return false; }
                 PrintSettings s = def->settings;
                 int hit = -1;
                 for (int i = 0; i < s.viewports.size(); ++i)
                     if (s.viewports[i].name.compare(ctx.toks[2], Qt::CaseInsensitive) == 0) { hit = i; break; }
-                if (hit < 0) { m->log(QStringLiteral("当前布局中无视口「%1」").arg(ctx.toks[2]), QStringLiteral("error")); return false; }
+                if (hit < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("当前布局中无视口「%1」")).arg(ctx.toks[2]), QStringLiteral("error")); return false; }
                 if (ctx.toks.size() == 3) {
                     // 列出冻结层
                     const QStringList& fl = s.viewports[hit].frozenLayers;
                     if (fl.isEmpty())
-                        m->log(QStringLiteral("视口「%1」未冻结任何图层").arg(s.viewports[hit].name), QStringLiteral("info"));
+                        m->log(SketchCAD::I18n::t(QString::fromUtf8("视口「%1」未冻结任何图层")).arg(s.viewports[hit].name), QStringLiteral("info"));
                     else
-                        m->log(QStringLiteral("视口「%1」冻结图层：%2").arg(s.viewports[hit].name, fl.join(QStringLiteral(", "))),
+                        m->log(SketchCAD::I18n::t(QString::fromUtf8("视口「%1」冻结图层：%2")).arg(s.viewports[hit].name, fl.join(QStringLiteral(", "))),
                                QStringLiteral("info"));
                     return true;
                 }
@@ -3898,16 +3898,16 @@ void CommandRegistry::registerBuiltins() {
                     if (!s.viewports[hit].frozenLayers.contains(layer))
                         s.viewports[hit].frozenLayers.append(layer);
                     m->updateLayout(def->name, s);
-                    m->log(QStringLiteral("视口「%1」已冻结图层「%2」（仅该视口出图隐藏）")
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("视口「%1」已冻结图层「%2」（仅该视口出图隐藏）"))
                                .arg(s.viewports[hit].name, layer), QStringLiteral("info"));
                 } else {
                     s.viewports[hit].frozenLayers.removeAll(layer);
                     m->updateLayout(def->name, s);
-                    m->log(QStringLiteral("视口「%1」已解冻图层「%2」").arg(s.viewports[hit].name, layer), QStringLiteral("info"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("视口「%1」已解冻图层「%2」")).arg(s.viewports[hit].name, layer), QStringLiteral("info"));
                 }
                 return true;
             }
-            m->log(QStringLiteral("未知子命令 %1（可用：new/set/list/rename/delete/copy/vpscale/vpfreeze/vpthaw）").arg(sub), QStringLiteral("error"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("未知子命令 %1（可用：new/set/list/rename/delete/copy/vpscale/vpfreeze/vpthaw）")).arg(sub), QStringLiteral("error"));
             return false;
         }));
 
@@ -3919,7 +3919,7 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 5) {
-                m->log(QStringLiteral("用法：mview <图纸X> <图纸Y> <宽> <高> [比例]，如 mview 10 10 90 60 1:2"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：mview <图纸X> <图纸Y> <宽> <高> [比例]，如 mview 10 10 90 60 1:2")),
                        QStringLiteral("error"));
                 return false;
             }
@@ -3931,13 +3931,13 @@ void CommandRegistry::registerBuiltins() {
                     m->addLayout(QStringLiteral("布局1"), fresh);
                 }
                 m->setCurrentLayout(QStringLiteral("布局1"));
-                m->log(QStringLiteral("已自动创建并切换到布局「布局1」"), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已自动创建并切换到布局「布局1」")), QStringLiteral("info"));
             }
             bool ok = false;
-            const double px = ctx.toks[1].toDouble(&ok);  if (!ok) { m->log(QStringLiteral("参数 1 不是数字"), QStringLiteral("error")); return false; }
-            const double py = ctx.toks[2].toDouble(&ok);  if (!ok) { m->log(QStringLiteral("参数 2 不是数字"), QStringLiteral("error")); return false; }
-            const double pw = ctx.toks[3].toDouble(&ok);  if (!ok || pw <= 0) { m->log(QStringLiteral("视口宽度必须为正数"), QStringLiteral("error")); return false; }
-            const double ph = ctx.toks[4].toDouble(&ok);  if (!ok || ph <= 0) { m->log(QStringLiteral("视口高度必须为正数"), QStringLiteral("error")); return false; }
+            const double px = ctx.toks[1].toDouble(&ok);  if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数 1 不是数字")), QStringLiteral("error")); return false; }
+            const double py = ctx.toks[2].toDouble(&ok);  if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("参数 2 不是数字")), QStringLiteral("error")); return false; }
+            const double pw = ctx.toks[3].toDouble(&ok);  if (!ok || pw <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("视口宽度必须为正数")), QStringLiteral("error")); return false; }
+            const double ph = ctx.toks[4].toDouble(&ok);  if (!ok || ph <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("视口高度必须为正数")), QStringLiteral("error")); return false; }
             double sc = 0.0;   // 0 = 沿用布局整体比例（fit-to-page / 自定义）
             if (ctx.toks.size() >= 6) {
                 const int colon = ctx.toks[5].indexOf(':');
@@ -3945,11 +3945,11 @@ void CommandRegistry::registerBuiltins() {
                     bool okA = false, okB = false;
                     const double a = ctx.toks[5].left(colon).toDouble(&okA);
                     const double b = ctx.toks[5].mid(colon + 1).toDouble(&okB);
-                    if (!okA || !okB || a <= 0 || b <= 0) { m->log(QStringLiteral("比例格式错误（示例：1:2）"), QStringLiteral("error")); return false; }
+                    if (!okA || !okB || a <= 0 || b <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("比例格式错误（示例：1:2）")), QStringLiteral("error")); return false; }
                     sc = a / b;
                 } else {
                     const double v = ctx.toks[5].toDouble(&ok);
-                    if (!ok || v <= 0) { m->log(QStringLiteral("比例必须为正数"), QStringLiteral("error")); return false; }
+                    if (!ok || v <= 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("比例必须为正数")), QStringLiteral("error")); return false; }
                     sc = v;
                 }
             }
@@ -3961,11 +3961,11 @@ void CommandRegistry::registerBuiltins() {
             vp.scale = sc;
             s.viewports.append(vp);
             m->updateLayout(def->name, s);
-            m->log(QStringLiteral("已在布局「%1」新建 %2：paper(%3, %4, %5×%6 mm)%7")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已在布局「%1」新建 %2：paper(%3, %4, %5×%6 mm)%7"))
                        .arg(def->name, vp.name)
                        .arg(px, 0, 'f', 1).arg(py, 0, 'f', 1)
                        .arg(pw, 0, 'f', 1).arg(ph, 0, 'f', 1)
-                       .arg(sc > 0 ? QStringLiteral("，比例 %1").arg(sc, 0, 'f', 4) : QStringLiteral("，比例沿用布局")),
+                       .arg(sc > 0 ? SketchCAD::I18n::t(QString::fromUtf8("，比例 %1")).arg(sc, 0, 'f', 4) : SketchCAD::I18n::t(QString::fromUtf8("，比例沿用布局"))),
                    QStringLiteral("info"));
             return true;
         }));
@@ -3979,18 +3979,18 @@ void CommandRegistry::registerBuiltins() {
     registerExact("ltscale", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("当前全局线型比例 LTSCALE = %1")
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("当前全局线型比例 LTSCALE = %1"))
                                    .arg(ctx.model->ltscale(), 0, 'f', 3), QStringLiteral("info"));
                 return true;
             }
             bool ok = false;
             const double v = ctx.toks[1].toDouble(&ok);
             if (!ok || v <= 0.0) {
-                ctx.model->log(QStringLiteral("用法：ltscale <正数>（如 0.5 / 1 / 2）"), QStringLiteral("error"));
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：ltscale <正数>（如 0.5 / 1 / 2）")), QStringLiteral("error"));
                 return false;
             }
             ctx.model->setLtscale(v);
-            ctx.model->log(QStringLiteral("全局线型比例 LTSCALE = %1").arg(v, 0, 'f', 3), QStringLiteral("info"));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("全局线型比例 LTSCALE = %1")).arg(v, 0, 'f', 3), QStringLiteral("info"));
             return true;
         }));
     // layiso：隔离选中图元所属图层——冻结其余所有图层（冻结层零命中/零打印；layuniso 可逆）
@@ -4008,7 +4008,7 @@ void CommandRegistry::registerBuiltins() {
                 const Layer& l = m->layerAt(i);
                 if (!keep.contains(l.name) && m->setLayerFrozen(l.name, true)) ++n;
             }
-            m->log(QStringLiteral("已隔离 %1 个图层（冻结其余 %2 个）").arg(keep.size()).arg(n), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已隔离 %1 个图层（冻结其余 %2 个）")).arg(keep.size()).arg(n), QStringLiteral("info"));
             return true;
         }));
     // layuniso：解冻所有图层（解除 layiso 的隔离）
@@ -4020,7 +4020,7 @@ void CommandRegistry::registerBuiltins() {
                 const Layer& l = m->layerAt(i);
                 if (l.frozen && m->setLayerFrozen(l.name, false)) ++n;
             }
-            m->log(QStringLiteral("已解冻 %1 个图层").arg(n), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已解冻 %1 个图层")).arg(n), QStringLiteral("info"));
             return true;
         }));
     // laymch <目标层>：把选中图元改属目标图层（图层匹配变更，大图治理高频命令）
@@ -4028,18 +4028,18 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 2) {
-                m->log(QStringLiteral("用法：laymch <目标图层名>"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：laymch <目标图层名>")), QStringLiteral("error"));
                 return false;
             }
             const QString target = ctx.toks[1];
             if (!m->hasLayer(target)) {
-                m->log(QStringLiteral("目标图层 %1 不存在").arg(target), QStringLiteral("warn"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("目标图层 %1 不存在")).arg(target), QStringLiteral("warn"));
                 return false;
             }
             const std::vector<int> ids = m->selection();
-            if (ids.empty()) { m->log(QStringLiteral("没有选中任何图元"), QStringLiteral("warn")); return false; }
+            if (ids.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有选中任何图元")), QStringLiteral("warn")); return false; }
             const bool ok = m->setElementLayers(ids, target, /*adoptStyle=*/false);
-            m->log(QStringLiteral("已将 %1 个图元改属图层 %2").arg(ids.size()).arg(target), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已将 %1 个图元改属图层 %2")).arg(ids.size()).arg(target), QStringLiteral("info"));
             return ok;
         }));
 
@@ -4055,24 +4055,24 @@ void CommandRegistry::registerBuiltins() {
                 if (e && e->type == ElementType::Hatch) hids.push_back(id);
             }
             if (hids.empty()) {
-                m->log(QStringLiteral("请先选中至少一个剖面区域（填充）"), QStringLiteral("warn"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中至少一个剖面区域（填充）")), QStringLiteral("warn"));
                 return false;
             }
             if (ctx.toks.size() < 2) {
                 const Element* e = m->element(hids.front());
-                m->log(QStringLiteral("剖面区域 #%1：图案=%2 比例=%3 角度=%4° 关联=%5%6")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("剖面区域 #%1：图案=%2 比例=%3 角度=%4° 关联=%5%6"))
                         .arg(hids.front())
-                        .arg(e->hatchPattern.isEmpty() ? QStringLiteral("(按材料默认)") : e->hatchPattern)
+                        .arg(e->hatchPattern.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("(按材料默认)")) : e->hatchPattern)
                         .arg(e->hatchScale, 0, 'f', 3)
                         .arg(e->rotation, 0, 'f', 1)
-                        .arg(e->hatchAssociative ? QStringLiteral("开") : QStringLiteral("关"))
-                        .arg(e->hatchInvalid ? QStringLiteral("（边界已失效）") : QString()),
+                        .arg(e->hatchAssociative ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关")))
+                        .arg(e->hatchInvalid ? SketchCAD::I18n::t(QString::fromUtf8("（边界已失效）")) : QString()),
                         QStringLiteral("info"));
                 return true;
             }
             const QString opt = ctx.toks[1].toLower();
             auto usage = [&]() {
-                m->log(QStringLiteral("用法：hatchedit [scale <倍数> | pattern <名|none> | angle <度> | assoc on|off]（先选中剖面区域）"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：hatchedit [scale <倍数> | pattern <名|none> | angle <度> | assoc on|off]（先选中剖面区域）")),
                        QStringLiteral("error"));
                 return false;
             };
@@ -4083,7 +4083,7 @@ void CommandRegistry::registerBuiltins() {
             if (opt == "scale" || opt == "比例") {
                 if (ctx.toks.size() < 3) return usage();
                 bool ok = false; scale = ctx.toks[2].toDouble(&ok);
-                if (!ok || scale <= 0.0) { m->log(QStringLiteral("比例须为正数"), QStringLiteral("error")); return false; }
+                if (!ok || scale <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("比例须为正数")), QStringLiteral("error")); return false; }
             } else if (opt == "pattern" || opt == "pat" || opt == "图案") {
                 if (ctx.toks.size() < 3) return usage();
                 pat = ctx.toks[2]; setPat = true;
@@ -4091,14 +4091,14 @@ void CommandRegistry::registerBuiltins() {
             } else if (opt == "angle" || opt == "角度") {
                 if (ctx.toks.size() < 3) return usage();
                 bool ok = false; angle = ctx.toks[2].toDouble(&ok);
-                if (!ok) { m->log(QStringLiteral("角度须为数值"), QStringLiteral("error")); return false; }
+                if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("角度须为数值")), QStringLiteral("error")); return false; }
                 setAngle = true;
             } else if (opt == "assoc" || opt == "关联") {
                 if (ctx.toks.size() < 3) return usage();
                 const QString a = ctx.toks[2].toLower();
                 if (a == "on" || a == "1" || a == "开") assoc = 1;
                 else if (a == "off" || a == "0" || a == "关") assoc = 0;
-                else { m->log(QStringLiteral("关联开关只接受 on/off"), QStringLiteral("error")); return false; }
+                else { m->log(SketchCAD::I18n::t(QString::fromUtf8("关联开关只接受 on/off")), QStringLiteral("error")); return false; }
             } else return usage();
 
             // 单步撤销：一次 beginEdit 覆盖"改图案/比例/角度/关联"（全部就地改）
@@ -4115,7 +4115,7 @@ void CommandRegistry::registerBuiltins() {
                 if (setAngle) m->updateElementQuiet(id, [angle](Element& dst){ dst.rotation = angle; });
                 ++n;
             }
-            m->log(QStringLiteral("HATCHEDIT：已就地修改 %1 个剖面区域（单步撤销）").arg(n), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("HATCHEDIT：已就地修改 %1 个剖面区域（单步撤销）")).arg(n), QStringLiteral("info"));
             return n > 0;
         }));
 
@@ -4137,39 +4137,39 @@ void CommandRegistry::registerBuiltins() {
                                  .arg(d->style.arrowLen, 0, 'f', 2)
                                  .arg(d->style.standard() == DimensionStandard::ISO ? QStringLiteral("ISO 129-1") : QStringLiteral("GB/T 4458.4"));
                 }
-                m->log(QStringLiteral("标注样式表（* = 当前）：\n%1\n当前样式 = %2")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("标注样式表（* = 当前）：\n%1\n当前样式 = %2"))
                            .arg(lines.join(QLatin1Char('\n')), m->currentDimStyle()), QStringLiteral("info"));
                 return true;
             }
             const QString sub = ctx.toks[1].toLower();
             // dimstyle new <名> [gbt|iso] → 新建（可指定标准预设）
             if (sub == "new" || sub == "create") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle new <名> [gbt|iso]"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle new <名> [gbt|iso]")), QStringLiteral("error")); return false; }
                 dim::DimStyleEntry d;
                 d.name = ctx.toks[2];
                 if (ctx.toks.size() >= 4) {
                     const std::string std_ = ctx.toks[3].toLower().toStdString();
                     if (std_ == "iso")      d.style.stdConf = DimensionStandardConfig::isoDefault();
                     else if (std_ == "gbt") d.style.stdConf = DimensionStandardConfig::gbtDefault();
-                    else { m->log(QStringLiteral("标准只接受 gbt / iso"), QStringLiteral("error")); return false; }
+                    else { m->log(SketchCAD::I18n::t(QString::fromUtf8("标准只接受 gbt / iso")), QStringLiteral("error")); return false; }
                 }
                 return m->addDimStyle(d);
             }
             // dimstyle set <名> → 置当前（新建标注默认用当前样式）
             if (sub == "set" || sub == "current") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle set <名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle set <名>")), QStringLiteral("error")); return false; }
                 return m->setCurrentDimStyle(ctx.toks[2]);
             }
             // dimstyle rename <旧名> <新名> → 重命名（同步更新引用）
             if (sub == "rename") {
-                if (ctx.toks.size() < 4) { m->log(QStringLiteral("用法：dimstyle rename <旧名> <新名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle rename <旧名> <新名>")), QStringLiteral("error")); return false; }
                 return m->renameDimStyle(ctx.toks[2], ctx.toks[3]);
             }
             // dimstyle apply <样式名> [图元id...] → 把选中/指定标注改引用该样式
             if (sub == "apply") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle apply <样式名> [图元id...]"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle apply <样式名> [图元id...]")), QStringLiteral("error")); return false; }
                 const QString name = ctx.toks[2];
-                if (!m->hasDimStyle(name)) { m->log(QStringLiteral("标注样式 %1 不存在").arg(name), QStringLiteral("warn")); return false; }
+                if (!m->hasDimStyle(name)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 不存在")).arg(name), QStringLiteral("warn")); return false; }
                 std::vector<int> ids;
                 if (ctx.toks.size() >= 4) {
                     for (int i = 3; i < ctx.toks.size(); ++i) {
@@ -4182,8 +4182,8 @@ void CommandRegistry::registerBuiltins() {
                         if (e && (e->type == ElementType::Dimension || e->type == ElementType::MLeader)) ids.push_back(id);
                     }
                 }
-                if (ids.empty()) { m->log(QStringLiteral("没有可应用样式的标注（请先选中标注）"), QStringLiteral("warn")); return false; }
-                m->beginEdit(QStringLiteral("应用标注样式 ") + name);
+                if (ids.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有可应用样式的标注（请先选中标注）")), QStringLiteral("warn")); return false; }
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("应用标注样式 ")) + name);
                 int n = 0;
                 for (int id : ids) {
                     const Element* e = m->element(id);
@@ -4194,15 +4194,15 @@ void CommandRegistry::registerBuiltins() {
                     });
                     ++n;
                 }
-                m->log(QStringLiteral("已将 %1 个标注改用样式 %2（随该样式联动）").arg(n).arg(name), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已将 %1 个标注改用样式 %2（随该样式联动）")).arg(n).arg(name), QStringLiteral("info"));
                 return n > 0;
             }
             // dimstyle delete <名> → 删除（引用者回落当前样式）
             if (sub == "delete" || sub == "del" || sub == "remove") {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("用法：dimstyle delete <名>"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle delete <名>")), QStringLiteral("error")); return false; }
                 return m->removeDimStyle(ctx.toks[2]);
             }
-            m->log(QStringLiteral("用法：dimstyle [list | new <名> [gbt|iso] | set <名> | rename <旧> <新> | apply <名> [id...] | delete <名>]"), QStringLiteral("error"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimstyle [list | new <名> [gbt|iso] | set <名> | rename <旧> <新> | apply <名> [id...] | delete <名>]")), QStringLiteral("error"));
             return false;
         }));
 
@@ -4261,14 +4261,14 @@ void CommandRegistry::registerBuiltins() {
                             ver = cadfmt::DxfVersion::R2000;
                         else if (v == QStringLiteral("R12") || v == QStringLiteral("12"))
                             ver = cadfmt::DxfVersion::R12;
-                        else { m->log(QStringLiteral("dxfout：未知版本 %1（可用 R12 / 2000）").arg(v), QStringLiteral("error")); return false; }
+                        else { m->log(SketchCAD::I18n::t(QString::fromUtf8("dxfout：未知版本 %1（可用 R12 / 2000）")).arg(v), QStringLiteral("error")); return false; }
                     }
                 } else if (!t.startsWith(QStringLiteral("-")) && path.isEmpty()) {
                     path = t;
                 }
             }
             if (path.isEmpty()) {
-                m->log(QStringLiteral("用法：dxfout <路径.dxf> [-v R12|2000]"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dxfout <路径.dxf> [-v R12|2000]")), QStringLiteral("error"));
                 return false;
             }
             cadfmt::DxfExportOptions no;
@@ -4276,11 +4276,11 @@ void CommandRegistry::registerBuiltins() {
             no.version = ver;
             QString err;
             const QByteArray body = cadfmt::toDxf(m->elements(), &err, m->scaleRatio(), 4, &m->blockTable(), &no);
-            if (body.isEmpty()) { m->log(QStringLiteral("dxfout 失败：") + err, QStringLiteral("error")); return false; }
+            if (body.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("dxfout 失败：")) + err, QStringLiteral("error")); return false; }
             QFile f(path);
-            if (!f.open(QIODevice::WriteOnly)) { m->log(QStringLiteral("dxfout：无法写入 ") + path, QStringLiteral("error")); return false; }
+            if (!f.open(QIODevice::WriteOnly)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("dxfout：无法写入 ")) + path, QStringLiteral("error")); return false; }
             f.write(body); f.close();
-            m->log(QStringLiteral("已导出 DXF（%1）：%2（%3 字节）").arg(cadfmt::dxfVersionLabel(ver)).arg(path).arg(body.size()), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已导出 DXF（%1）：%2（%3 字节）")).arg(cadfmt::dxfVersionLabel(ver)).arg(path).arg(body.size()), QStringLiteral("info"));
             return true;
         }));
 
@@ -4303,7 +4303,7 @@ void CommandRegistry::registerBuiltins() {
         std::vector<int> bnd;
         for (int id : m->selection()) { const Element* e = m->element(id); if (e) bnd.push_back(id); }
         if (bnd.empty()) {
-            m->log(QStringLiteral("用法：hatch [scale <倍数> | angle <度> | pattern <名|none>]（先选中闭合边界图元：圆/矩形/闭合折线等）"),
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：hatch [scale <倍数> | angle <度> | pattern <名|none>]（先选中闭合边界图元：圆/矩形/闭合折线等）")),
                    QStringLiteral("error"));
             return false;
         }
@@ -4313,21 +4313,21 @@ void CommandRegistry::registerBuiltins() {
         for (int i = 1; i < t.size(); ++i) {
             const QString o = t[i].toLower();
             if (o == QStringLiteral("scale") || o == QStringLiteral("比例")) {
-                if (i + 1 >= t.size()) { m->log(QStringLiteral("scale 后须跟正数倍数"), QStringLiteral("error")); return false; }
+                if (i + 1 >= t.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("scale 后须跟正数倍数")), QStringLiteral("error")); return false; }
                 bool ok = false; scale = t[++i].toDouble(&ok);
-                if (!ok || scale <= 0.0) { m->log(QStringLiteral("倍数须为正数"), QStringLiteral("error")); return false; }
+                if (!ok || scale <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("倍数须为正数")), QStringLiteral("error")); return false; }
                 setScale = true;
             } else if (o == QStringLiteral("angle") || o == QStringLiteral("角度")) {
-                if (i + 1 >= t.size()) { m->log(QStringLiteral("angle 后须跟角度"), QStringLiteral("error")); return false; }
+                if (i + 1 >= t.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("angle 后须跟角度")), QStringLiteral("error")); return false; }
                 bool ok = false; angle = t[++i].toDouble(&ok);
-                if (!ok) { m->log(QStringLiteral("角度须为数值"), QStringLiteral("error")); return false; }
+                if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("角度须为数值")), QStringLiteral("error")); return false; }
                 setAngle = true;
             } else if (o == QStringLiteral("pattern") || o == QStringLiteral("pat") || o == QStringLiteral("图案")) {
-                if (i + 1 >= t.size()) { m->log(QStringLiteral("pattern 后须跟图案名或 none"), QStringLiteral("error")); return false; }
+                if (i + 1 >= t.size()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("pattern 后须跟图案名或 none")), QStringLiteral("error")); return false; }
                 pat = t[++i]; setPat = true;
                 if (pat.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0 || pat == QStringLiteral("-")) pat.clear();
             } else {
-                m->log(QStringLiteral("未知选项 %1（可用 scale/angle/pattern）").arg(o), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未知选项 %1（可用 scale/angle/pattern）")).arg(o), QStringLiteral("error"));
                 return false;
             }
         }
@@ -4335,9 +4335,9 @@ void CommandRegistry::registerBuiltins() {
         if (setAngle) st.angleDeg  = angle;
         if (setPat)   st.patNameOverride = pat;
         const int hid = m->createAssociativeHatch(bnd, st);   // 内部 addElement 自带单步撤销
-        if (hid < 0) { m->log(QStringLiteral("无法由所选图元生成关联填充（边界须闭合且可成环）"), QStringLiteral("error")); return false; }
+        if (hid < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无法由所选图元生成关联填充（边界须闭合且可成环）")), QStringLiteral("error")); return false; }
         cmdRememberArgs(ctx.cmd, t);
-        m->log(QStringLiteral("已创建剖面区域(填充) #%1，关联源 %2 个（修改边界自动随动）").arg(hid).arg((int)bnd.size()), QStringLiteral("info"));
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建剖面区域(填充) #%1，关联源 %2 个（修改边界自动随动）")).arg(hid).arg((int)bnd.size()), QStringLiteral("info"));
         return true;
     };
     registerExact("hatch",  std::make_shared<LambdaCommand>(hatchLambda));
@@ -4348,44 +4348,44 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
-            if (t.size() < 2) { m->log(QStringLiteral("用法：pedit <id> [close|open|width <线宽>|join <id...>|fit|spline]"), QStringLiteral("error")); return false; }
+            if (t.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：pedit <id> [close|open|width <线宽>|join <id...>|fit|spline]")), QStringLiteral("error")); return false; }
             bool ok = false; int id = t[1].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("图元 id 无效"), QStringLiteral("error")); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("图元 id 无效")), QStringLiteral("error")); return false; }
             const Element* e = m->element(id);
-            if (!e) { m->log(QStringLiteral("未找到图元 #%1").arg(id), QStringLiteral("warn")); return false; }
+            if (!e) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到图元 #%1")).arg(id), QStringLiteral("warn")); return false; }
             if (e->type != ElementType::Polyline && e->type != ElementType::Line && e->type != ElementType::Arc) {
-                m->log(QStringLiteral("pedit 仅支持多段线/直线/圆弧（#%1 是 %2）").arg(id).arg(e->typeName()), QStringLiteral("warn")); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("pedit 仅支持多段线/直线/圆弧（#%1 是 %2）")).arg(id).arg(e->typeName()), QStringLiteral("warn")); return false;
             }
             const QString sub = (t.size() >= 3) ? t[2].toLower() : QStringLiteral("close");
             if (sub == QStringLiteral("width") || sub == QStringLiteral("宽度")) {
-                if (t.size() < 4) { m->log(QStringLiteral("width 后须跟线宽(px)"), QStringLiteral("error")); return false; }
+                if (t.size() < 4) { m->log(SketchCAD::I18n::t(QString::fromUtf8("width 后须跟线宽(px)")), QStringLiteral("error")); return false; }
                 bool o2 = false; double w = t[3].toDouble(&o2);
-                if (!o2 || w < 0.0) { m->log(QStringLiteral("线宽须为非负数"), QStringLiteral("error")); return false; }
-                m->beginEdit(QStringLiteral("PE 线宽"));
+                if (!o2 || w < 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("线宽须为非负数")), QStringLiteral("error")); return false; }
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("PE 线宽")));
                 m->updateElementQuiet(id, [w](Element& d){ d.lineWidth = w; d.lineWidthAuto = false; });
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("已设置多段线 #%1 线宽 = %2px").arg(id).arg(w, 0, 'f', 2), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已设置多段线 #%1 线宽 = %2px")).arg(id).arg(w, 0, 'f', 2), QStringLiteral("info"));
                 return true;
             }
             if (sub == QStringLiteral("close") || sub == QStringLiteral("闭合")) {
-                m->beginEdit(QStringLiteral("PE 闭合"));
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("PE 闭合")));
                 m->updateElementQuiet(id, [](Element& d){ d.closed = true; });
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("多段线 #%1 已闭合").arg(id), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("多段线 #%1 已闭合")).arg(id), QStringLiteral("info"));
                 return true;
             }
             if (sub == QStringLiteral("open") || sub == QStringLiteral("打开")) {
-                m->beginEdit(QStringLiteral("PE 打开"));
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("PE 打开")));
                 m->updateElementQuiet(id, [](Element& d){ d.closed = false; });
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("多段线 #%1 已打开").arg(id), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("多段线 #%1 已打开")).arg(id), QStringLiteral("info"));
                 return true;
             }
             if (sub == QStringLiteral("join") || sub == QStringLiteral("合并")) {
                 std::vector<int> srcs; srcs.push_back(id);
                 for (int i = 3; i < t.size(); ++i) { bool o2 = false; int j = t[i].toInt(&o2); if (o2) srcs.push_back(j); }
                 const Element* base = m->element(id);
-                if (!base) { m->log(QStringLiteral("源图元已失效"), QStringLiteral("warn")); return false; }
+                if (!base) { m->log(SketchCAD::I18n::t(QString::fromUtf8("源图元已失效")), QStringLiteral("warn")); return false; }
                 std::vector<Vec3> pts; std::vector<bool> arc;
                 auto appendSeg = [&](const Element& s){
                     if (s.type == ElementType::Line) {
@@ -4405,25 +4405,25 @@ void CommandRegistry::registerBuiltins() {
                 for (size_t i = 1; i < srcs.size(); ++i) {
                     const Element* s = m->element(srcs[i]); if (!s) continue; appendSeg(*s); ++nJoined;
                 }
-                if (pts.size() < 2) { m->log(QStringLiteral("没有可合并的线段"), QStringLiteral("warn")); return false; }
-                m->beginEdit(QStringLiteral("PE 合并"));
+                if (pts.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有可合并的线段")), QStringLiteral("warn")); return false; }
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("PE 合并")));
                 Element pl = ElementFactory::createPolyline(pts, arc, base->closed, m);
                 pl.color = base->color; pl.lineWidth = base->lineWidth;
                 pl.lineWidthAuto = base->lineWidthAuto; pl.lineStyle = base->lineStyle;
                 const int newId = m->addElement(pl);
                 for (size_t i = 0; i < srcs.size(); ++i) m->removeElementQuiet(srcs[i]);
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("已合并 %1 段为 #%2").arg(nJoined + 1).arg(newId), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("已合并 %1 段为 #%2")).arg(nJoined + 1).arg(newId), QStringLiteral("info"));
                 return true;
             }
             if (sub == QStringLiteral("fit") || sub == QStringLiteral("spline") || sub == QStringLiteral("拟合") || sub == QStringLiteral("样条")) {
-                m->beginEdit(QStringLiteral("PE 曲线化"));
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("PE 曲线化")));
                 m->updateElementQuiet(id, [](Element& d){ d.lineStyle = LineStyle::DashDot; });
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("多段线 #%1 已标记为曲线特征（渲染仍以折线呈现）").arg(id), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("多段线 #%1 已标记为曲线特征（渲染仍以折线呈现）")).arg(id), QStringLiteral("info"));
                 return true;
             }
-            m->log(QStringLiteral("未知子命令 %1（可用 close/open/width/join/fit）").arg(sub), QStringLiteral("error"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("未知子命令 %1（可用 close/open/width/join/fit）")).arg(sub), QStringLiteral("error"));
             return false;
         }));
 
@@ -4432,17 +4432,17 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 3) {
-                m->log(QStringLiteral("用法：matchprop <源id> <目标id...>（把源图元图层/颜色/线宽/线型复制到目标）"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：matchprop <源id> <目标id...>（把源图元图层/颜色/线宽/线型复制到目标）")), QStringLiteral("error"));
                 return false;
             }
             bool ok = false; int src = ctx.toks[1].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("源 id 无效"), QStringLiteral("error")); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("源 id 无效")), QStringLiteral("error")); return false; }
             const Element* s = m->element(src);
-            if (!s) { m->log(QStringLiteral("未找到源图元 #%1").arg(src), QStringLiteral("warn")); return false; }
+            if (!s) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到源图元 #%1")).arg(src), QStringLiteral("warn")); return false; }
             std::vector<int> tgts;
             for (int i = 2; i < ctx.toks.size(); ++i) { bool o2 = false; int j = ctx.toks[i].toInt(&o2); if (o2) tgts.push_back(j); }
-            if (tgts.empty()) { m->log(QStringLiteral("未提供目标 id"), QStringLiteral("error")); return false; }
-            m->beginEdit(QStringLiteral("特性匹配"));
+            if (tgts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未提供目标 id")), QStringLiteral("error")); return false; }
+            m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("特性匹配")));
             int n = 0;
             for (int id : tgts) {
                 if (id == src) continue;
@@ -4454,7 +4454,7 @@ void CommandRegistry::registerBuiltins() {
                 ++n;
             }
             cmdRememberArgs(ctx.cmd, ctx.toks);
-            m->log(QStringLiteral("特性匹配：已将 #%1 的属性复制给 %2 个图元").arg(src).arg(n), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("特性匹配：已将 #%1 的属性复制给 %2 个图元")).arg(src).arg(n), QStringLiteral("info"));
             return true;
         }));
 
@@ -4467,7 +4467,7 @@ void CommandRegistry::registerBuiltins() {
                 ids.clear();
                 for (int i = 1; i < ctx.toks.size(); ++i) { bool ok; int id = ctx.toks[i].toInt(&ok); if (ok) ids.push_back(id); }
             }
-            if (ids.empty()) { m->log(QStringLiteral("用法：properties（先选中图元）或 properties <id...>"), QStringLiteral("error")); return false; }
+            if (ids.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：properties（先选中图元）或 properties <id...>")), QStringLiteral("error")); return false; }
             for (int id : ids) {
                 const Element* e = m->element(id); if (!e) continue;
                 QString info = QStringLiteral("#%1 %2  图层=%3 颜色=%4 线宽=%5%6 线型=%7")
@@ -4518,10 +4518,10 @@ void CommandRegistry::registerBuiltins() {
             }
             if (sub != QStringLiteral("all") && sub != QStringLiteral("layers") && sub != QStringLiteral("layer")
                 && sub != QStringLiteral("blocks") && sub != QStringLiteral("block") && sub != QStringLiteral("dimstyles")) {
-                m->log(QStringLiteral("用法：purge [all|layers|blocks|dimstyles]"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：purge [all|layers|blocks|dimstyles]")), QStringLiteral("error"));
                 return false;
             }
-            m->log(QStringLiteral("清理完成：图层 %1 / 块 %2 / 标注样式 %3").arg(nL).arg(nB).arg(nD), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("清理完成：图层 %1 / 块 %2 / 标注样式 %3")).arg(nL).arg(nB).arg(nD), QStringLiteral("info"));
             return true;
         }));
 
@@ -4548,10 +4548,10 @@ void CommandRegistry::registerBuiltins() {
                 const QString k = sig(*e);
                 if (seen.contains(k)) dup.push_back(id); else seen.append(k);
             }
-            if (dup.empty()) { m->log(QStringLiteral("未检测到重复图元"), QStringLiteral("info")); return true; }
+            if (dup.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未检测到重复图元")), QStringLiteral("info")); return true; }
             m->beginEdit(QStringLiteral("OVERKILL"));
             for (int id : dup) m->removeElementQuiet(id);
-            m->log(QStringLiteral("已删除 %1 个重复图元").arg((int)dup.size()), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已删除 %1 个重复图元")).arg((int)dup.size()), QStringLiteral("info"));
             return true;
         }));
 
@@ -4560,22 +4560,22 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
-            if (t.size() < 2) { m->log(QStringLiteral("用法：wblock <输出.dxf> [id...]（不指定 id 则导出当前选择集）"), QStringLiteral("error")); return false; }
+            if (t.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：wblock <输出.dxf> [id...]（不指定 id 则导出当前选择集）")), QStringLiteral("error")); return false; }
             const QString path = t[1];
             std::vector<int> ids;
             if (t.size() >= 3) { for (int i = 2; i < t.size(); ++i) { bool ok; int id = t[i].toInt(&ok); if (ok) ids.push_back(id); } }
             else ids = m->selection();
-            if (ids.empty()) { m->log(QStringLiteral("没有可导出的图元（请指定 id 或先选择）"), QStringLiteral("warn")); return false; }
+            if (ids.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("没有可导出的图元（请指定 id 或先选择）")), QStringLiteral("warn")); return false; }
             std::vector<Element> els;
             for (int id : ids) { const Element* e = m->element(id); if (e) els.push_back(*e); }
             QString err;
             QByteArray body = cadfmt::toDxf(els, &err, m->scaleRatio(), 4, &m->blockTable(), nullptr);
-            if (body.isEmpty()) { m->log(QStringLiteral("wblock 失败：") + err, QStringLiteral("error")); return false; }
+            if (body.isEmpty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("wblock 失败：")) + err, QStringLiteral("error")); return false; }
             QFile f(path);
-            if (!f.open(QIODevice::WriteOnly)) { m->log(QStringLiteral("wblock：无法写入 ") + path, QStringLiteral("error")); return false; }
+            if (!f.open(QIODevice::WriteOnly)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("wblock：无法写入 ")) + path, QStringLiteral("error")); return false; }
             f.write(body); f.close();
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("已写块到 %1（%2 个图元，%3 字节）").arg(path).arg((int)els.size()).arg(body.size()), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已写块到 %1（%2 个图元，%3 字节）")).arg(path).arg((int)els.size()).arg(body.size()), QStringLiteral("info"));
             return true;
         }));
 
@@ -4584,18 +4584,18 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
-            if (t.size() < 3) { m->log(QStringLiteral("用法：insert <块名> <x,y> [旋转度] [缩放X] [缩放Y]"), QStringLiteral("error")); return false; }
+            if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：insert <块名> <x,y> [旋转度] [缩放X] [缩放Y]")), QStringLiteral("error")); return false; }
             const QString name = t[1];
-            if (!m->hasBlock(name)) { m->log(QStringLiteral("块 %1 不存在（先用 block create 创建）").arg(name), QStringLiteral("warn")); return false; }
-            Vec3 pos; if (!ctx.tryParsePoint(t[2], pos)) { m->log(QStringLiteral("插入点坐标无效"), QStringLiteral("error")); return false; }
+            if (!m->hasBlock(name)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在（先用 block create 创建）")).arg(name), QStringLiteral("warn")); return false; }
+            Vec3 pos; if (!ctx.tryParsePoint(t[2], pos)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("插入点坐标无效")), QStringLiteral("error")); return false; }
             double rot = 0.0, sx = 1.0, sy = 1.0;
-            if (t.size() >= 4) { bool ok = false; rot = t[3].toDouble(&ok); if (!ok) { m->log(QStringLiteral("旋转角无效"), QStringLiteral("error")); return false; } }
-            if (t.size() >= 5) { bool ok = false; sx = t[4].toDouble(&ok); if (!ok || sx <= 0.0) { m->log(QStringLiteral("缩放X无效"), QStringLiteral("error")); return false; } }
-            if (t.size() >= 6) { bool ok = false; sy = t[5].toDouble(&ok); if (!ok || sy <= 0.0) { m->log(QStringLiteral("缩放Y无效"), QStringLiteral("error")); return false; } }
+            if (t.size() >= 4) { bool ok = false; rot = t[3].toDouble(&ok); if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("旋转角无效")), QStringLiteral("error")); return false; } }
+            if (t.size() >= 5) { bool ok = false; sx = t[4].toDouble(&ok); if (!ok || sx <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("缩放X无效")), QStringLiteral("error")); return false; } }
+            if (t.size() >= 6) { bool ok = false; sy = t[5].toDouble(&ok); if (!ok || sy <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("缩放Y无效")), QStringLiteral("error")); return false; } }
             const int id = m->insertBlock(name, pos, rot, sx, sy);   // 内部自带单步撤销
-            if (id < 0) { m->log(QStringLiteral("插入失败"), QStringLiteral("error")); return false; }
+            if (id < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("插入失败")), QStringLiteral("error")); return false; }
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("已插入块 #%1").arg(id), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已插入块 #%1")).arg(id), QStringLiteral("info"));
             return true;
         }));
 
@@ -4619,10 +4619,10 @@ void CommandRegistry::registerBuiltins() {
             if (ids.empty())
                 for (int s : m->selection()) ids.push_back(s);
             if (ids.empty()) {
-                m->log(QStringLiteral("xh：请先选中对象或给定图元 id（用法：xh [id ...]）"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("xh：请先选中对象或给定图元 id（用法：xh [id ...]）")), QStringLiteral("error"));
                 return false;
             }
-            m->beginEdit(QStringLiteral("序号球标"));   // 公开入口压一次撤销快照（整组可一次 Ctrl+Z）
+            m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("序号球标")));   // 公开入口压一次撤销快照（整组可一次 Ctrl+Z）
             int added = 0;
             for (int id : ids) {
                 const Element* e = m->element(id);
@@ -4639,10 +4639,10 @@ void CommandRegistry::registerBuiltins() {
                 ++added;
             }
             if (added == 0) {
-                m->log(QStringLiteral("xh：无有效对象，未生成球标"), QStringLiteral("warn"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("xh：无有效对象，未生成球标")), QStringLiteral("warn"));
                 return false;
             }
-            m->log(QString("xh：已生成 %1 个序号球标（明细表已刷新）").arg(added), QStringLiteral("info"));
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("xh：已生成 %1 个序号球标（明细表已刷新）"))).arg(added), QStringLiteral("info"));
             // 刷新明细表：Phase-1 数据已写入 bom_；BomTree 视图联动刷新见 docs 偏差说明（后续集成步骤）。
             return true;
         }));
@@ -4655,24 +4655,24 @@ void CommandRegistry::registerBuiltins() {
             int id = -1; QString content;
             if (t.size() >= 3) {
                 bool ok = false; id = t[1].toInt(&ok);
-                if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+                if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), QStringLiteral("error")); return false; }
                 content = t.mid(2).join(QChar(' '));
             } else {
                 for (int sel : m->selection()) {
                     const Element* e = m->element(sel);
                     if (e && (e->type == ElementType::Text || e->type == ElementType::MText)) { id = sel; break; }
                 }
-                if (t.size() < 2) { m->log(QStringLiteral("用法：ddedit <id> <新内容> 或选中文字后 ddedit <新内容>"), QStringLiteral("error")); return false; }
+                if (t.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：ddedit <id> <新内容> 或选中文字后 ddedit <新内容>")), QStringLiteral("error")); return false; }
                 content = t.mid(1).join(QChar(' '));
             }
             const Element* e = m->element(id);
             if (!e || (e->type != ElementType::Text && e->type != ElementType::MText)) {
-                m->log(QStringLiteral("目标 #%1 不是文字/多行文字").arg(id), QStringLiteral("warn")); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("目标 #%1 不是文字/多行文字")).arg(id), QStringLiteral("warn")); return false;
             }
             m->beginEdit(QStringLiteral("DDEDIT"));
             m->updateElementQuiet(id, [content](Element& d){ d.text = content; });
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("已修改文字 #%1：%2").arg(id).arg(content.left(20)), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已修改文字 #%1：%2")).arg(id).arg(content.left(20)), QStringLiteral("info"));
             return true;
         }));
 
@@ -4684,7 +4684,7 @@ void CommandRegistry::registerBuiltins() {
             int id = -1; QString valStr;
             if (t.size() >= 3) {
                 bool ok = false; id = t[1].toInt(&ok);
-                if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+                if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), QStringLiteral("error")); return false; }
                 valStr = t.mid(2).join(QChar(' '));
             } else {
                 for (int sel : m->selection()) {
@@ -4692,40 +4692,40 @@ void CommandRegistry::registerBuiltins() {
                     if (e && e->type == ElementType::Dimension) { id = sel; break; }
                 }
                 if (id < 0 || t.size() < 2) {
-                    m->log(QStringLiteral("用法：dimedit <标注id> <新值> 或选中标注后 dimedit <新值>"), QStringLiteral("error"));
-                    m->log(QStringLiteral("      数值驱动几何联动（对齐/水平/竖直/半径/直径/角度）；其余类型请用属性面板"), QStringLiteral("warn"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：dimedit <标注id> <新值> 或选中标注后 dimedit <新值>")), QStringLiteral("error"));
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("      数值驱动几何联动（对齐/水平/竖直/半径/直径/角度）；其余类型请用属性面板")), QStringLiteral("warn"));
                     return false;
                 }
                 valStr = t.mid(1).join(QChar(' '));
             }
             const Element* e = m->element(id);
             if (!e || e->type != ElementType::Dimension) {
-                m->log(QStringLiteral("目标 #%1 不是尺寸标注").arg(id), QStringLiteral("warn")); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("目标 #%1 不是尺寸标注")).arg(id), QStringLiteral("warn")); return false;
             }
             // 容忍 R20 / ⌀50 / 45° 等前后缀：提取首个数值
             static const QRegularExpression numRe(QStringLiteral("-?\\d+(?:\\.\\d+)?"));
             const auto mt = numRe.match(valStr);
             if (!mt.hasMatch()) {
-                m->log(QStringLiteral("无法从「%1」解析数值").arg(valStr), QStringLiteral("error")); return false;
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("无法从「%1」解析数值")).arg(valStr), QStringLiteral("error")); return false;
             }
             const double v = mt.captured(0).toDouble();
             const double oldV = geo::measureDimension(*e);
             if (!m->dimensionDriven()) {
                 // 尺寸驱动主开关关闭（需求 D-③）：仅覆盖显示文本，不改动任何图元几何
-                m->beginEdit(QStringLiteral("dimedit(仅显示)"));
+                m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("dimedit(仅显示)")));
                 m->updateElementQuiet(id, [valStr](Element& d) { d.text = valStr; });
                 cmdRememberArgs(ctx.cmd, t);
-                m->log(QStringLiteral("尺寸驱动已关闭：dimedit 仅更新标注显示文本 #%1 → %2（几何未改动）")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动已关闭：dimedit 仅更新标注显示文本 #%1 → %2（几何未改动）"))
                            .arg(id).arg(valStr), QStringLiteral("info"));
                 return true;
             }
             if (!m->driveDimension(id, v)) {
-                m->log(QStringLiteral("标注 #%1（%2）不支持尺寸驱动，支持：对齐/距离/水平/竖直/半径/直径/角度")
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("标注 #%1（%2）不支持尺寸驱动，支持：对齐/距离/水平/竖直/半径/直径/角度"))
                            .arg(id).arg(QString::fromUtf8(dimensionTypeName(e->dtype))), QStringLiteral("warn"));
                 return false;
             }
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("尺寸驱动 #%1：%2 → %3（关联几何与标注已联动更新）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动 #%1：%2 → %3（关联几何与标注已联动更新）"))
                        .arg(id).arg(oldV, 0, 'f', 2).arg(v, 0, 'f', 2), QStringLiteral("info"));
             return true;
         }));
@@ -4740,25 +4740,25 @@ void CommandRegistry::registerBuiltins() {
                     LineStyle ls = static_cast<LineStyle>(i);
                     lines << QStringLiteral("%1%2").arg(ls == m->defaultLineStyle() ? QStringLiteral("* ") : QString()).arg(QString::fromUtf8(lineStyleName(ls)));
                 }
-                m->log(QStringLiteral("线型表（* = 当前）：\n%1").arg(lines.join(QLatin1Char('\n'))), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("线型表（* = 当前）：\n%1")).arg(lines.join(QLatin1Char('\n'))), QStringLiteral("info"));
                 return true;
             }
             const QString sub = ctx.toks[1].toLower();
             if (sub == QStringLiteral("scale") || sub == QStringLiteral("比例")) {
-                if (ctx.toks.size() < 3) { m->log(QStringLiteral("scale 后须跟正数"), QStringLiteral("error")); return false; }
+                if (ctx.toks.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("scale 后须跟正数")), QStringLiteral("error")); return false; }
                 bool ok = false; double v = ctx.toks[2].toDouble(&ok);
-                if (!ok || v <= 0.0) { m->log(QStringLiteral("比例须为正数"), QStringLiteral("error")); return false; }
-                if (std::fabs(v - m->ltscale()) > 1e-9) { m->beginEdit(QStringLiteral("线型比例")); m->setLtscale(v); }
-                m->log(QStringLiteral("全局线型比例 LTSCALE = %1").arg(v, 0, 'f', 3), QStringLiteral("info"));
+                if (!ok || v <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("比例须为正数")), QStringLiteral("error")); return false; }
+                if (std::fabs(v - m->ltscale()) > 1e-9) { m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("线型比例"))); m->setLtscale(v); }
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("全局线型比例 LTSCALE = %1")).arg(v, 0, 'f', 3), QStringLiteral("info"));
                 return true;
             }
             if (sub == QStringLiteral("load") || sub == QStringLiteral("加载")) {
-                m->log(QStringLiteral("本程序内置全部线型，无需从外部 .lin 文件加载"), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("本程序内置全部线型，无需从外部 .lin 文件加载")), QStringLiteral("info"));
                 return true;
             }
             LineStyle ls = lineStyleByName(ctx.toks[1]);
-            if (ls != m->defaultLineStyle()) { m->beginEdit(QStringLiteral("线型")); m->setDefaultLineStyle(ls); }
-            m->log(QStringLiteral("当前线型 = %1").arg(QString::fromUtf8(lineStyleName(ls))), QStringLiteral("info"));
+            if (ls != m->defaultLineStyle()) { m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("线型"))); m->setDefaultLineStyle(ls); }
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("当前线型 = %1")).arg(QString::fromUtf8(lineStyleName(ls))), QStringLiteral("info"));
             return true;
         }));
 
@@ -4767,13 +4767,13 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
-            if (t.size() < 3) { m->log(QStringLiteral("用法：measure <id> <间距>"), QStringLiteral("error")); return false; }
+            if (t.size() < 3) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：measure <id> <间距>")), QStringLiteral("error")); return false; }
             bool ok = false; int id = t[1].toInt(&ok);
-            if (!ok) { m->log(QStringLiteral("id 无效"), QStringLiteral("error")); return false; }
+            if (!ok) { m->log(SketchCAD::I18n::t(QString::fromUtf8("id 无效")), QStringLiteral("error")); return false; }
             bool ok2 = false; double step = t[2].toDouble(&ok2);
-            if (!ok2 || step <= 0.0) { m->log(QStringLiteral("间距须为正数"), QStringLiteral("error")); return false; }
+            if (!ok2 || step <= 0.0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("间距须为正数")), QStringLiteral("error")); return false; }
             const Element* e = m->element(id);
-            if (!e) { m->log(QStringLiteral("未找到图元 #%1").arg(id), QStringLiteral("warn")); return false; }
+            if (!e) { m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到图元 #%1")).arg(id), QStringLiteral("warn")); return false; }
             std::vector<Vec3> pts;
             auto sampleSeg = [&](double ax, double ay, double bx, double by){
                 const double dx = bx - ax, dy = by - ay;
@@ -4800,17 +4800,17 @@ void CommandRegistry::registerBuiltins() {
                 if (e->type == ElementType::Line) seg = e->pts;
                 else if (e->type == ElementType::Polyline) { seg = e->pts; closed = e->closed; }
                 else if (e->type == ElementType::Arc) { if (e->pts.size() >= 1) seg.push_back(e->pts[0]); if (e->pts.size() >= 2) seg.push_back(e->pts[1]); }
-                else { m->log(QStringLiteral("measure 支持直线/多段线/圆弧/圆（#%1 是 %2）").arg(id).arg(e->typeName()), QStringLiteral("warn")); return false; }
+                else { m->log(SketchCAD::I18n::t(QString::fromUtf8("measure 支持直线/多段线/圆弧/圆（#%1 是 %2）")).arg(id).arg(e->typeName()), QStringLiteral("warn")); return false; }
                 for (size_t i = 0; i + 1 < seg.size(); ++i) sampleSeg(seg[i].x, seg[i].y, seg[i+1].x, seg[i+1].y);
                 if (closed && seg.size() >= 2) sampleSeg(seg.back().x, seg.back().y, seg.front().x, seg.front().y);
             }
-            if (pts.empty()) { m->log(QStringLiteral("该图元长度不足以按间距 %1 等分").arg(step, 0, 'f', 2), QStringLiteral("warn")); return false; }
+            if (pts.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("该图元长度不足以按间距 %1 等分")).arg(step, 0, 'f', 2), QStringLiteral("warn")); return false; }
             m->beginEdit(QStringLiteral("MEASURE"));
             std::vector<Element> ps;
             for (const auto& p : pts) { Element pe; pe.type = ElementType::Point; pe.pts = {p}; pe.name = QStringLiteral("测量点"); ps.push_back(pe); }
             m->addElementsQuiet(ps);
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("已沿 #%1 放置 %2 个测量点（间距 %3）").arg(id).arg((int)pts.size()).arg(step, 0, 'f', 2), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已沿 #%1 放置 %2 个测量点（间距 %3）")).arg(id).arg((int)pts.size()).arg(step, 0, 'f', 2), QStringLiteral("info"));
             return true;
         }));
 
@@ -4819,14 +4819,14 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             QStringList t = cmdArgsWithReuse(ctx.cmd, ctx.toks);
-            if (t.size() < 2) { m->log(QStringLiteral("用法：tol <x,y> [公差文本]"), QStringLiteral("error")); return false; }
-            Vec3 pos; if (!ctx.tryParsePoint(t[1], pos)) { m->log(QStringLiteral("坐标无效"), QStringLiteral("error")); return false; }
+            if (t.size() < 2) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tol <x,y> [公差文本]")), QStringLiteral("error")); return false; }
+            Vec3 pos; if (!ctx.tryParsePoint(t[1], pos)) { m->log(SketchCAD::I18n::t(QString::fromUtf8("坐标无效")), QStringLiteral("error")); return false; }
             const QString tol = (t.size() >= 3) ? t.mid(2).join(QChar(' ')) : QString();
             Element e = ElementFactory::createFcf(pos, 0, tol, {}, 7.0);
             const int id = m->addElement(e);   // 自带单步撤销
-            if (id < 0) { m->log(QStringLiteral("形位公差创建失败"), QStringLiteral("error")); return false; }
+            if (id < 0) { m->log(SketchCAD::I18n::t(QString::fromUtf8("形位公差创建失败")), QStringLiteral("error")); return false; }
             cmdRememberArgs(ctx.cmd, t);
-            m->log(QStringLiteral("已创建形位公差框格 #%1").arg(id), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建形位公差框格 #%1")).arg(id), QStringLiteral("info"));
             return true;
         }));
 
@@ -4835,7 +4835,7 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             m->emitModelChanged();
-            m->log(QStringLiteral("已重生成（REGEN）"), QStringLiteral("info"));
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已重生成（REGEN）")), QStringLiteral("info"));
             return true;
         }));
 
@@ -4854,22 +4854,22 @@ void CommandRegistry::registerBuiltins() {
             const StandardsDB& db = StandardsDB::instance();
             if (ctx.toks.size() == 1) {
                 const QStringList tables = db.allTables();
-                m->log(QStringLiteral("标准知识库（内嵌《机械制图手册（第四版）》%1 类国标表）：").arg(tables.size()),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("标准知识库（内嵌《机械制图手册（第四版）》%1 类国标表）：")).arg(tables.size()),
                        QStringLiteral("info"));
                 for (int i = 0; i < tables.size(); ++i)
                     m->log(QStringLiteral("  %1. %2").arg(i + 1).arg(tables[i]));
-                m->log(QStringLiteral("用法：standards <表名> [<键名>]  例：standards sheet_sizes A3"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：standards <表名> [<键名>]  例：standards sheet_sizes A3")));
                 return true;
             }
             const QString table = ctx.toks[1].toLower();
             const QJsonObject obj = db.tableObject(table);
             if (obj.isEmpty()) {
-                m->log(QStringLiteral("未知表：%1（可用表：%2）").arg(table, db.allTables().join(QChar(' '))),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未知表：%1（可用表：%2）")).arg(table, db.allTables().join(QChar(' '))),
                        QStringLiteral("error"));
                 return false;
             }
             if (ctx.toks.size() == 2) {
-                m->log(QStringLiteral("【%1】共 %2 项：").arg(table).arg(obj.size()), QStringLiteral("info"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("【%1】共 %2 项：")).arg(table).arg(obj.size()), QStringLiteral("info"));
                 for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
                     const QJsonValue v = it.value();
                     QString val;
@@ -4886,7 +4886,7 @@ void CommandRegistry::registerBuiltins() {
             if (v.isUndefined() || v.isNull()) {
                 QStringList keys;
                 for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) keys << it.key();
-                m->log(QStringLiteral("未找到键：%1（%2 可用键：%3）").arg(key, table, keys.join(QChar(' '))),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未找到键：%1（%2 可用键：%3）")).arg(key, table, keys.join(QChar(' '))),
                        QStringLiteral("error"));
                 return false;
             }
@@ -4907,18 +4907,18 @@ void CommandRegistry::registerBuiltins() {
         SketchModel* m = ctx.model;
         const QVector<ComplianceIssue> issues = ComplianceChecker::run(m);
         if (issues.isEmpty()) {
-            m->log(QStringLiteral("STDCHECK：未发现不合规项，图纸符合相关 GB/T 规范。"),
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("STDCHECK：未发现不合规项，图纸符合相关 GB/T 规范。")),
                    QStringLiteral("info"));
             ComplianceChecker::notifyComplianceReport(issues);
             return true;
         }
-        m->log(QStringLiteral("STDCHECK：发现 %1 个不合规项（7 类 GB/T 规范）：").arg(issues.size()),
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("STDCHECK：发现 %1 个不合规项（7 类 GB/T 规范）：")).arg(issues.size()),
                QStringLiteral("warn"));
         for (const ComplianceIssue& iss : issues) {
             const QString sev = (iss.severity == QStringLiteral("严重")) ? QStringLiteral("error")
                               : (iss.severity == QStringLiteral("提示")) ? QStringLiteral("info")
                               : QStringLiteral("warn");
-            m->log(QStringLiteral("  [#%1] %2 %3：%4（建议：%5）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("  [#%1] %2 %3：%4（建议：%5）"))
                        .arg(iss.elementId).arg(iss.ruleId).arg(iss.severity)
                        .arg(iss.message).arg(iss.fixHint),
                    sev);
@@ -4938,7 +4938,7 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 2) {
-                m->log(QStringLiteral("用法：sheetframe <A0|A1|A2|A3|A4> [portrait|landscape]"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：sheetframe <A0|A1|A2|A3|A4> [portrait|landscape]")),
                        QStringLiteral("error"));
                 return false;
             }
@@ -4954,7 +4954,7 @@ void CommandRegistry::registerBuiltins() {
             if (!ok) {
                 QStringList names;
                 for (const auto& f : kFmts) names << QString::fromLatin1(f.second).toUpper();
-                m->log(QStringLiteral("未知幅面：%1（可用：%2）").arg(ctx.toks[1], names.join(QChar(' '))),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("未知幅面：%1（可用：%2）")).arg(ctx.toks[1], names.join(QChar(' '))),
                        QStringLiteral("error"));
                 return false;
             }
@@ -4967,7 +4967,7 @@ void CommandRegistry::registerBuiltins() {
                 else if (o == QStringLiteral("landscape") || o == QStringLiteral("l") || o == QStringLiteral("横"))
                     landscape = true;
                 else {
-                    m->log(QStringLiteral("未知方向：%1（可用 portrait / landscape）").arg(ctx.toks[2]),
+                    m->log(SketchCAD::I18n::t(QString::fromUtf8("未知方向：%1（可用 portrait / landscape）")).arg(ctx.toks[2]),
                            QStringLiteral("error"));
                     return false;
                 }
@@ -4981,10 +4981,10 @@ void CommandRegistry::registerBuiltins() {
             opts.projection = ProjectionMethod::FirstAngle;  // 国标默认第一角画法
             applySheetFrameToModel(m, opts);
             const SheetSpec spec = opts.toSheetSpec();
-            m->log(QStringLiteral("已按 %1（%2×%3 mm，%4）重新生成图框（保留其他图层内容）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已按 %1（%2×%3 mm，%4）重新生成图框（保留其他图层内容）"))
                        .arg(spec.formatName())
                        .arg(spec.width, 0, 'f', 0).arg(spec.height, 0, 'f', 0)
-                       .arg(landscape ? QStringLiteral("横置") : QStringLiteral("竖置")),
+                       .arg(landscape ? SketchCAD::I18n::t(QString::fromUtf8("横置")) : SketchCAD::I18n::t(QString::fromUtf8("竖置"))),
                    QStringLiteral("info"));
             return true;
         }));
@@ -4999,7 +4999,7 @@ void CommandRegistry::registerBuiltins() {
         [](const CommandContext& ctx) {
             SketchModel* m = ctx.model;
             if (ctx.toks.size() < 2) {
-                m->log(QStringLiteral("用法：WELD <类型> [x,y] [k=.. s=.. l=.. e=.. n=..] [aux=.. supp=.. side=.. d=.. rot=..]"),
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("用法：WELD <类型> [x,y] [k=.. s=.. l=.. e=.. n=..] [aux=.. supp=.. side=.. d=.. rot=..]")),
                        QStringLiteral("error"));
                 return false;
             }
@@ -5050,11 +5050,11 @@ void CommandRegistry::registerBuiltins() {
 
             const std::vector<Element> parts = buildWeldSymbol(spec);
             if (parts.empty()) {
-                m->log(QStringLiteral("WELD：未生成任何图元（类型可能不支持）"), QStringLiteral("error"));
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("WELD：未生成任何图元（类型可能不支持）")), QStringLiteral("error"));
                 return false;
             }
             const std::vector<int> ids = m->addElementsQuiet(parts);
-            m->log(QStringLiteral("已生成焊缝符号：%1（%2 个图元，于 %3,%4）")
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("已生成焊缝符号：%1（%2 个图元，于 %3,%4）"))
                        .arg(weldTypeName(spec.type))
                        .arg(ids.size()).arg(spec.anchor.x, 0, 'f', 1).arg(spec.anchor.y, 0, 'f', 1),
                    QStringLiteral("info"));

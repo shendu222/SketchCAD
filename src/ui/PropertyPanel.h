@@ -23,6 +23,9 @@ public:
     // 多文档切换重绑：换绑活动文档，清掉旧文档的选中 id 并按新模型重建
     void setModel(SketchModel* m) { model_ = m; curId_ = -1; onModelChanged(); }
     void load(int id);
+    // 语言切换：重译表单静态标签（编号/类型/名称/图层/几何/文字等行标签）。
+    // 动态字段值（坐标/名称/文本）由 load()/onSelectionChanged 下次刷新时重算。
+    void retranslate();
 public slots:
     void onSelectionChanged(int id);
     void onModelChanged();

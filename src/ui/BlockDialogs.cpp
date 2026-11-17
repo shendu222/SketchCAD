@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "BlockDialogs.h"
 
 #include <QListWidget>
@@ -50,13 +51,13 @@ static void addPreviewEntities(QGraphicsScene* scene, SketchModel* model,
 InsertBlockDialog::InsertBlockDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model)
 {
-    setWindowTitle(QStringLiteral("插入块"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("插入块")));
     setMinimumSize(520, 420);
 
     auto* left = new QVBoxLayout;
     list_ = new QListWidget;
     list_->setMinimumWidth(150);
-    left->addWidget(new QLabel(QStringLiteral("块名：")));
+    left->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("块名："))));
     left->addWidget(list_);
 
     scene_ = new QGraphicsScene(this);
@@ -69,7 +70,7 @@ InsertBlockDialog::InsertBlockDialog(SketchModel* model, QWidget* parent)
     view_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     auto* right = new QVBoxLayout;
-    right->addWidget(new QLabel(QStringLiteral("预览：")));
+    right->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("预览："))));
     right->addWidget(view_);
 
     auto* top = new QHBoxLayout;
@@ -82,11 +83,11 @@ InsertBlockDialog::InsertBlockDialog(SketchModel* model, QWidget* parent)
     sbRot_ = new QDoubleSpinBox; sbRot_->setRange(-360, 360); sbRot_->setDecimals(1); sbRot_->setValue(0); sbRot_->setSuffix(QStringLiteral("°"));
     sbSx_  = new QDoubleSpinBox; sbSx_->setRange(0.001, 1e4); sbSx_->setDecimals(3); sbSx_->setValue(1);
     sbSy_  = new QDoubleSpinBox; sbSy_->setRange(0.001, 1e4); sbSy_->setDecimals(3); sbSy_->setValue(1);
-    form->addRow(QStringLiteral("插入点 X"), sbX_);
-    form->addRow(QStringLiteral("插入点 Y"), sbY_);
-    form->addRow(QStringLiteral("旋转角"),   sbRot_);
-    form->addRow(QStringLiteral("X 缩放"),   sbSx_);
-    form->addRow(QStringLiteral("Y 缩放"),   sbSy_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("插入点 X")), sbX_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("插入点 Y")), sbY_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("旋转角")),   sbRot_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("X 缩放")),   sbSx_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("Y 缩放")),   sbSy_);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(box, &QDialogButtonBox::accepted, this, &InsertBlockDialog::accept);
@@ -140,15 +141,15 @@ void InsertBlockDialog::fitPreview() {
 void InsertBlockDialog::accept() {
     const QString name = list_->currentItem() ? list_->currentItem()->text() : QString();
     if (name.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("插入块"),
-                            QStringLiteral("当前没有可用的块，请先创建块。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("插入块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("当前没有可用的块，请先创建块。")));
         return;
     }
     const Vec3 pos(sbX_->value(), sbY_->value(), 0.0);
     const int id = model_->insertBlock(name, pos, sbRot_->value(), sbSx_->value(), sbSy_->value());
     if (id < 0) {
-        QMessageBox::warning(this, QStringLiteral("插入块"),
-                            QStringLiteral("插入失败：块「%1」不存在或已被删除。").arg(name));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("插入块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("插入失败：块「%1」不存在或已被删除。")).arg(name));
         return;
     }
     insertedId_ = id;
@@ -169,23 +170,23 @@ void InsertBlockDialog::resizeEvent(QResizeEvent* e) {
 CreateBlockDialog::CreateBlockDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model)
 {
-    setWindowTitle(QStringLiteral("创建块"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("创建块")));
     setMinimumWidth(320);
 
     auto* nameLay = new QHBoxLayout;
     nameEdit_ = new QLineEdit;
-    nameEdit_->setPlaceholderText(QStringLiteral("块名（必填，须唯一）"));
-    nameLay->addWidget(new QLabel(QStringLiteral("块名：")));
+    nameEdit_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("块名（必填，须唯一）")));
+    nameLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("块名："))));
     nameLay->addWidget(nameEdit_);
 
     auto* form = new QFormLayout;
     sbX_ = new QDoubleSpinBox; sbX_->setRange(-1e7, 1e7); sbX_->setDecimals(2); sbX_->setValue(0);
     sbY_ = new QDoubleSpinBox; sbY_->setRange(-1e7, 1e7); sbY_->setDecimals(2); sbY_->setValue(0);
-    form->addRow(QStringLiteral("基点 X"), sbX_);
-    form->addRow(QStringLiteral("基点 Y"), sbY_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("基点 X")), sbX_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("基点 Y")), sbY_);
 
-    deleteRadio_ = new QRadioButton(QStringLiteral("删除原图元并放置块引用（BLOCK 语义）"));
-    keepRadio_   = new QRadioButton(QStringLiteral("仅建立块定义，保留原图元"));
+    deleteRadio_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("删除原图元并放置块引用（BLOCK 语义）")));
+    keepRadio_   = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("仅建立块定义，保留原图元")));
     deleteRadio_->setChecked(true);   // 默认：选择集直接变为一个块引用（可撤销）
     auto* modeBox = new QVBoxLayout;
     modeBox->addWidget(deleteRadio_);
@@ -198,7 +199,7 @@ CreateBlockDialog::CreateBlockDialog(SketchModel* model, QWidget* parent)
     auto* main = new QVBoxLayout(this);
     main->addLayout(nameLay);
     main->addLayout(form);
-    main->addWidget(new QLabel(QStringLiteral("创建后行为：")));
+    main->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("创建后行为："))));
     main->addLayout(modeBox);
     main->addWidget(box);
 }
@@ -216,18 +217,18 @@ bool CreateBlockDialog::deleteSource() const {
 void CreateBlockDialog::accept() {
     const QString name = blockName();
     if (name.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("创建块"),
-                            QStringLiteral("块名不能为空。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("创建块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("块名不能为空。")));
         return;
     }
     if (model_->hasBlock(name)) {
-        QMessageBox::warning(this, QStringLiteral("创建块"),
-                            QStringLiteral("块「%1」已存在，请换名或用「块管理器」重定义。").arg(name));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("创建块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("块「%1」已存在，请换名或用「块管理器」重定义。")).arg(name));
         return;
     }
     if (model_->selection().empty()) {
-        QMessageBox::warning(this, QStringLiteral("创建块"),
-                            QStringLiteral("请先选中要收进块的图元。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("创建块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("请先选中要收进块的图元。")));
         return;
     }
     // createBlockFromSelection：deleteSource 成功返回引用 id（>=0）；仅建定义成功返回 -1
@@ -242,17 +243,17 @@ void CreateBlockDialog::accept() {
 BlockManagerDialog::BlockManagerDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model)
 {
-    setWindowTitle(QStringLiteral("块管理器"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("块管理器")));
     setMinimumSize(420, 360);
 
     list_ = new QListWidget;
-    infoLabel_ = new QLabel(QStringLiteral("（未选择块）"));
+    infoLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("（未选择块）")));
     infoLabel_->setWordWrap(true);
 
-    renameBtn_   = new QPushButton(QStringLiteral("重命名..."));
-    deleteBtn_   = new QPushButton(QStringLiteral("删除"));
-    redefineBtn_ = new QPushButton(QStringLiteral("用当前选择重定义"));
-    auto* refreshBtn = new QPushButton(QStringLiteral("刷新"));
+    renameBtn_   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("重命名...")));
+    deleteBtn_   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
+    redefineBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("用当前选择重定义")));
+    auto* refreshBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("刷新")));
 
     auto* btnRow = new QHBoxLayout;
     btnRow->addWidget(renameBtn_);
@@ -261,7 +262,7 @@ BlockManagerDialog::BlockManagerDialog(SketchModel* model, QWidget* parent)
     btnRow->addWidget(refreshBtn);
 
     auto* left = new QVBoxLayout;
-    left->addWidget(new QLabel(QStringLiteral("已有块：")));
+    left->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("已有块："))));
     left->addWidget(list_);
 
     auto* right = new QVBoxLayout;
@@ -320,11 +321,11 @@ void BlockManagerDialog::onSelectionChanged() {
     redefineBtn_->setEnabled(has);
     if (!has) {
         infoLabel_->setText(list_->count() == 0
-                            ? QStringLiteral("（当前没有块。请先用「创建块」建立块定义。）")
-                            : QStringLiteral("（未选择块）"));
+                            ? SketchCAD::I18n::t(QString::fromUtf8("（当前没有块。请先用「创建块」建立块定义。）"))
+                            : SketchCAD::I18n::t(QString::fromUtf8("（未选择块）")));
         return;
     }
-    infoLabel_->setText(QStringLiteral("块「%1」\n图元数：%2\n属性定义：%3\n动态参数：%4")
+    infoLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("块「%1」\n图元数：%2\n属性定义：%3\n动态参数：%4"))
                         .arg(def->name)
                         .arg(def->entities.size())
                         .arg(def->attdefs.size())
@@ -335,15 +336,15 @@ void BlockManagerDialog::onRename() {
     const QString old = currentName();
     if (old.isEmpty()) return;
     bool ok = false;
-    const QString nn = QInputDialog::getText(this, QStringLiteral("重命名块"),
-                                            QStringLiteral("块「%1」的新名称：").arg(old),
+    const QString nn = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("重命名块")),
+                                            SketchCAD::I18n::t(QString::fromUtf8("块「%1」的新名称：")).arg(old),
                                             QLineEdit::Normal, old, &ok);
     if (!ok) return;
     const QString n = nn.trimmed();
-    if (n.isEmpty()) { QMessageBox::warning(this, QStringLiteral("重命名块"), QStringLiteral("名称不能为空。")); return; }
+    if (n.isEmpty()) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重命名块")), SketchCAD::I18n::t(QString::fromUtf8("名称不能为空。"))); return; }
     if (!model_->renameBlock(old, n)) {
-        QMessageBox::warning(this, QStringLiteral("重命名块"),
-                            QStringLiteral("重命名失败：新名称已存在或非法。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重命名块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("重命名失败：新名称已存在或非法。")));
         return;
     }
     rebuildList();
@@ -352,13 +353,13 @@ void BlockManagerDialog::onRename() {
 void BlockManagerDialog::onDelete() {
     const QString name = currentName();
     if (name.isEmpty()) return;
-    if (QMessageBox::question(this, QStringLiteral("删除块"),
-                              QStringLiteral("确定删除块「%1」？所有引用将退化为未定义（不绘制）。")
+    if (QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("删除块")),
+                              SketchCAD::I18n::t(QString::fromUtf8("确定删除块「%1」？所有引用将退化为未定义（不绘制）。"))
                                   .arg(name),
                               QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
         return;
     if (!model_->removeBlock(name)) {
-        QMessageBox::warning(this, QStringLiteral("删除块"), QStringLiteral("删除失败。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("删除块")), SketchCAD::I18n::t(QString::fromUtf8("删除失败。")));
         return;
     }
     rebuildList();
@@ -368,13 +369,13 @@ void BlockManagerDialog::onRedefine() {
     const QString name = currentName();
     if (name.isEmpty()) return;
     if (model_->selection().empty()) {
-        QMessageBox::warning(this, QStringLiteral("重定义块"),
-                            QStringLiteral("请先选中要收进块「%1」的新图元。").arg(name));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重定义块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("请先选中要收进块「%1」的新图元。")).arg(name));
         return;
     }
     if (!model_->redefineBlockFromSelection(name)) {
-        QMessageBox::warning(this, QStringLiteral("重定义块"),
-                            QStringLiteral("重定义失败，请检查选择集。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重定义块")),
+                            SketchCAD::I18n::t(QString::fromUtf8("重定义失败，请检查选择集。")));
         return;
     }
     rebuildList();
@@ -386,26 +387,26 @@ void BlockManagerDialog::onRedefine() {
 AttachXrefDialog::AttachXrefDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model)
 {
-    setWindowTitle(QStringLiteral("附加外部参照"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照")));
     setMinimumWidth(460);
 
     pathEdit_ = new QLineEdit;
-    pathEdit_->setPlaceholderText(QStringLiteral("参照图形文件（*.json / *.dxf / *.dwg）"));
-    auto* browseBtn = new QPushButton(QStringLiteral("浏览..."));
+    pathEdit_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("参照图形文件（*.json / *.dxf / *.dwg）")));
+    auto* browseBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("浏览...")));
 
     typeCombo_ = new QComboBox;
-    typeCombo_->addItem(QStringLiteral("完整路径"), (int)XrefPathType::FullPath);
-    typeCombo_->addItem(QStringLiteral("相对路径（相对本图所在目录）"), (int)XrefPathType::RelativePath);
-    typeCombo_->addItem(QStringLiteral("无路径（只记录文件名）"), (int)XrefPathType::NoPath);
+    typeCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("完整路径")), (int)XrefPathType::FullPath);
+    typeCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("相对路径（相对本图所在目录）")), (int)XrefPathType::RelativePath);
+    typeCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("无路径（只记录文件名）")), (int)XrefPathType::NoPath);
     typeCombo_->setCurrentIndex(0);
 
     // 未存盘的宿主图没有解析基准，"相对路径"会退化为文件名 —— 在此如实告知，
     // 不让对话框给出一个它兑现不了的承诺。
     if (model_ && model_->drawingDir().isEmpty()) {
-        typeCombo_->setItemText(1, QStringLiteral("相对路径（本图未存盘 → 退化为文件名）"));
+        typeCombo_->setItemText(1, SketchCAD::I18n::t(QString::fromUtf8("相对路径（本图未存盘 → 退化为文件名）")));
     }
 
-    infoLabel_ = new QLabel(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）"));
+    infoLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("插入点 (0,0)、比例 1.0、旋转 0°（默认值）")));
     infoLabel_->setWordWrap(true);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
@@ -417,12 +418,12 @@ AttachXrefDialog::AttachXrefDialog(SketchModel* model, QWidget* parent)
     row->addWidget(browseBtn);
 
     auto* form = new QFormLayout;
-    form->addRow(QStringLiteral("参照图形："), row);
-    form->addRow(QStringLiteral("路径类型："), typeCombo_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("参照图形：")), row);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("路径类型：")), typeCombo_);
 
     auto* main = new QVBoxLayout(this);
     main->addLayout(form);
-    main->addWidget(new QLabel(QStringLiteral("插入参数：")));
+    main->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("插入参数："))));
     main->addWidget(infoLabel_);
     main->addWidget(box);
 
@@ -433,8 +434,8 @@ AttachXrefDialog::AttachXrefDialog(SketchModel* model, QWidget* parent)
 }
 
 void AttachXrefDialog::onBrowse() {
-    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("选择参照图形"), QString(),
-        QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
+    const QString fn = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("选择参照图形")), QString(),
+        SketchCAD::I18n::t(QString::fromUtf8("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)")));
     if (fn.isEmpty()) return;
     pathEdit_->setText(fn);
 }
@@ -442,32 +443,30 @@ void AttachXrefDialog::onBrowse() {
 void AttachXrefDialog::onInputChanged() {
     const QString path = pathEdit_->text().trimmed();
     if (path.isEmpty()) {
-        infoLabel_->setText(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）"));
+        infoLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("插入点 (0,0)、比例 1.0、旋转 0°（默认值）")));
         return;
     }
     const QFileInfo fi(path);
     const bool missing = !fi.exists() || !fi.isFile();
     const XrefPathType pt = (XrefPathType)typeCombo_->currentData().toInt();
     const QString stored = xref::storedPath(fi.absoluteFilePath(), pt, model_ ? model_->drawingDir() : QString());
-    infoLabel_->setText(QStringLiteral("插入点 (0,0)、比例 1.0、旋转 0°（默认值）\n"
-                                       "参照块名：%1\n记录路径：%2%3")
+    infoLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("插入点 (0,0)、比例 1.0、旋转 0°（默认值）\n参照块名：%1\n记录路径：%2%3"))
                             .arg(xref::blockNameForPath(path), stored,
-                                 missing ? QStringLiteral("\n⚠ 该文件不存在或不是文件") : QString()));
+                                 missing ? SketchCAD::I18n::t(QString::fromUtf8("\n⚠ 该文件不存在或不是文件")) : QString()));
 }
 
 void AttachXrefDialog::accept() {
     const QString path = pathEdit_->text().trimmed();
     if (path.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("附加外部参照"),
-                            QStringLiteral("请选择参照图形文件。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("附加外部参照")),
+                            SketchCAD::I18n::t(QString::fromUtf8("请选择参照图形文件。")));
         return;
     }
     const XrefPathType pt = (XrefPathType)typeCombo_->currentData().toInt();
     const int id = model_->attachXref(path, pt);
     if (id < 0) {
-        QMessageBox::warning(this, QStringLiteral("附加外部参照"),
-                            QStringLiteral("附加失败，详见日志：可能是文件不存在、格式不支持、"
-                                           "该参照已附加，或块名被普通块占用。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("附加外部参照")),
+                            SketchCAD::I18n::t(QString::fromUtf8("附加失败，详见日志：可能是文件不存在、格式不支持、该参照已附加，或块名被普通块占用。")));
         return;
     }
     attachedId_ = id;

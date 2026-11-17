@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "core/PolylineOps.h"
 #include "core/Geometry.h"
 #include <algorithm>
@@ -13,7 +14,7 @@ static bool isPolylineTarget(SketchModel& m, int id) {
 
 bool setClosed(SketchModel& m, int id, bool close) {
     if (!isPolylineTarget(m, id)) {
-        m.log(QStringLiteral("目标不是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标不是折线")), "warn");
         return false;
     }
     const Element* pe = m.element(id);
@@ -34,26 +35,26 @@ bool setClosed(SketchModel& m, int id, bool close) {
             if ((int)out.arcFlags.size() > want) out.arcFlags.resize(want);
         }
     });
-    m.log(close ? QStringLiteral("折线已闭合") : QStringLiteral("折线已打开"));
+    m.log(close ? SketchCAD::I18n::t(QString::fromUtf8("折线已闭合")) : SketchCAD::I18n::t(QString::fromUtf8("折线已打开")));
     return true;
 }
 
 bool reverse(SketchModel& m, int id) {
     if (!isPolylineTarget(m, id)) {
-        m.log(QStringLiteral("目标不是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标不是折线")), "warn");
         return false;
     }
     m.updateElement(id, [](Element& out) {
         std::reverse(out.pts.begin(), out.pts.end());
         std::reverse(out.arcFlags.begin(), out.arcFlags.end());
     });
-    m.log(QStringLiteral("折线已反转"));
+    m.log(SketchCAD::I18n::t(QString::fromUtf8("折线已反转")));
     return true;
 }
 
 bool setWidth(SketchModel& m, int id, double w) {
     if (!isPolylineTarget(m, id)) {
-        m.log(QStringLiteral("目标不是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标不是折线")), "warn");
         return false;
     }
     if (w < 0) w = 0;
@@ -61,37 +62,37 @@ bool setWidth(SketchModel& m, int id, double w) {
         out.lineWidthAuto = false;   // 覆盖线型自动派生，使用手动线宽
         out.lineWidth = w;
     });
-    m.log(QString("折线线宽已设为 %1").arg(w, 0, 'f', 2));
+    m.log(QString(SketchCAD::I18n::t(QString::fromUtf8("折线线宽已设为 %1"))).arg(w, 0, 'f', 2));
     return true;
 }
 
 bool fit(SketchModel& m, int id) {
     if (!isPolylineTarget(m, id)) {
-        m.log(QStringLiteral("目标不是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标不是折线")), "warn");
         return false;
     }
     const Element* pe = m.element(id);
     if ((int)pe->pts.size() < 2) {
-        m.log(QStringLiteral("折线顶点不足，无法拟合"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("折线顶点不足，无法拟合")), "warn");
         return false;
     }
     m.updateElement(id, [](Element& out) { out.splineSubType = 1; });   // 1 = Fit
-    m.log(QStringLiteral("折线已拟合（平滑通过所有顶点）"));
+    m.log(SketchCAD::I18n::t(QString::fromUtf8("折线已拟合（平滑通过所有顶点）")));
     return true;
 }
 
 bool spline(SketchModel& m, int id) {
     if (!isPolylineTarget(m, id)) {
-        m.log(QStringLiteral("目标不是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标不是折线")), "warn");
         return false;
     }
     const Element* pe = m.element(id);
     if ((int)pe->pts.size() < 2) {
-        m.log(QStringLiteral("折线顶点不足，无法样条化"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("折线顶点不足，无法样条化")), "warn");
         return false;
     }
     m.updateElement(id, [](Element& out) { out.splineSubType = 2; });   // 2 = Spline
-    m.log(QStringLiteral("折线已样条化（顶点为控制点）"));
+    m.log(SketchCAD::I18n::t(QString::fromUtf8("折线已样条化（顶点为控制点）")));
     return true;
 }
 
@@ -131,7 +132,7 @@ static bool endpointsOf(const Element& s, Vec3& a, Vec3& b, std::vector<Vec3>& o
 
 bool join(SketchModel& m, int targetId, int sourceId, double tol) {
     if (!isPolylineTarget(m, targetId)) {
-        m.log(QStringLiteral("合并目标必须是折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("合并目标必须是折线")), "warn");
         return false;
     }
     if (targetId == sourceId) return false;
@@ -139,17 +140,17 @@ bool join(SketchModel& m, int targetId, int sourceId, double tol) {
     const Element* ps = m.element(sourceId);
     if (!pt || !ps) return false;
     if (pt->closed) {
-        m.log(QStringLiteral("目标折线已闭合，请先打开再合并"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("目标折线已闭合，请先打开再合并")), "warn");
         return false;
     }
     if (ps->type != ElementType::Line &&
         ps->type != ElementType::Arc &&
         ps->type != ElementType::Polyline) {
-        m.log(QStringLiteral("合并来源必须是直线/圆弧/折线"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("合并来源必须是直线/圆弧/折线")), "warn");
         return false;
     }
     if (ps->type == ElementType::Polyline && ps->closed) {
-        m.log(QStringLiteral("来源折线已闭合，无法合并"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("来源折线已闭合，无法合并")), "warn");
         return false;
     }
 
@@ -159,7 +160,7 @@ bool join(SketchModel& m, int targetId, int sourceId, double tol) {
     Vec3 sA, sB;
     std::vector<Vec3> sPts;
     if (!endpointsOf(*ps, sA, sB, sPts)) {
-        m.log(QStringLiteral("无法取得来源端点"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("无法取得来源端点")), "warn");
         return false;
     }
 
@@ -187,7 +188,7 @@ bool join(SketchModel& m, int targetId, int sourceId, double tol) {
     } else if (tStart.distTo(sB) <= tol) {
         tail = buildTailFromB(sPts);   // 共享点 sB 在 tStart，倒序后保留 A..(B前)
     } else {
-        m.log(QStringLiteral("两端点不重合，无法合并"), "warn");
+        m.log(SketchCAD::I18n::t(QString::fromUtf8("两端点不重合，无法合并")), "warn");
         return false;
     }
 
@@ -206,7 +207,7 @@ bool join(SketchModel& m, int targetId, int sourceId, double tol) {
         }
     });
     m.removeElement(sourceId);
-    m.log(QStringLiteral("已合并到折线"));
+    m.log(SketchCAD::I18n::t(QString::fromUtf8("已合并到折线")));
     return true;
 }
 

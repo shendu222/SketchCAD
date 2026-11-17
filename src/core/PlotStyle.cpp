@@ -1,4 +1,5 @@
 #include "PlotStyle.h"
+#include "core/I18n.h"
 #include <QStringList>
 #include <QColor>
 #include <QRegularExpression>
@@ -265,9 +266,9 @@ bool PlotStyleTable::fromCtb(const QString& text, PlotStyleTable* out, QString* 
 
         // ---- GRAYSCALE <v> [DITHER=0|1] ----
         if (kw == QLatin1String("GRAYSCALE")) {
-            if (tok.size() < 2) { setErr(QStringLiteral("GRAYSCALE 缺灰度值: ") + ln); continue; }
+            if (tok.size() < 2) { setErr(SketchCAD::I18n::t(QStringLiteral("GRAYSCALE 缺灰度值: ")) + ln); continue; }
             double g = 0.0;
-            if (!ctbToDouble(tok[1], &g)) { setErr(QStringLiteral("GRAYSCALE 灰度值非法: ") + tok[1]); continue; }
+            if (!ctbToDouble(tok[1], &g)) { setErr(SketchCAD::I18n::t(QStringLiteral("GRAYSCALE 灰度值非法: ")) + tok[1]); continue; }
             bool dith = false;
             for (int i = 2; i < tok.size(); ++i) {
                 if (tok[i].startsWith(QLatin1String("DITHER="), Qt::CaseInsensitive))
@@ -280,10 +281,10 @@ bool PlotStyleTable::fromCtb(const QString& text, PlotStyleTable* out, QString* 
         // ---- LAYER / COLOR / STYLE <target> [KEY=VAL ...] ----
         if (kw != QLatin1String("LAYER") && kw != QLatin1String("COLOR") &&
             kw != QLatin1String("STYLE")) {
-            setErr(QStringLiteral("未知关键字: ") + tok[0]);
+            setErr(SketchCAD::I18n::t(QStringLiteral("未知关键字: ")) + tok[0]);
             continue;
         }
-        if (tok.size() < 2) { setErr(kw + QStringLiteral(" 缺目标: ") + ln); continue; }
+        if (tok.size() < 2) { setErr(kw + SketchCAD::I18n::t(QStringLiteral(" 缺目标: ")) + ln); continue; }
 
         PlotStyleEntry e;
         // COLOR 的目标色即匹配键（#rrggbb 或 #aarrggbb）；LAYER/STYLE 的目标分别是名字/线型名
@@ -293,25 +294,25 @@ bool PlotStyleTable::fromCtb(const QString& text, PlotStyleTable* out, QString* 
         for (int i = 2; i < tok.size(); ++i) {
             const QString& t = tok[i];
             const int eq = t.indexOf(QLatin1Char('='));
-            if (eq <= 0) { setErr(QStringLiteral("参数应为 KEY=VAL: ") + t); lineBad = true; continue; }
+            if (eq <= 0) { setErr(SketchCAD::I18n::t(QStringLiteral("参数应为 KEY=VAL: ")) + t); lineBad = true; continue; }
             const QString k = t.left(eq).toUpper();
             const QString v = t.mid(eq + 1);
             if (k == QLatin1String("WIDTH")) {
                 double w = 0.0;
-                if (!ctbToDouble(v, &w) || w <= 0) { setErr(QStringLiteral("WIDTH 非法: ") + v); lineBad = true; continue; }
+                if (!ctbToDouble(v, &w) || w <= 0) { setErr(SketchCAD::I18n::t(QStringLiteral("WIDTH 非法: ")) + v); lineBad = true; continue; }
                 e.overrideWidth = true; e.widthMm = w;
             } else if (k == QLatin1String("GRAY")) {
                 double g = 0.0;
-                if (!ctbToDouble(v, &g) || g < 0.0 || g > 1.0) { setErr(QStringLiteral("GRAY 非法(需0..1): ") + v); lineBad = true; continue; }
+                if (!ctbToDouble(v, &g) || g < 0.0 || g > 1.0) { setErr(SketchCAD::I18n::t(QStringLiteral("GRAY 非法(需0..1): ")) + v); lineBad = true; continue; }
                 e.overrideGray = true; e.gray = g;
             } else if (k == QLatin1String("DITHER")) {
                 e.dither = (v.trimmed() != QLatin1String("0"));
             } else if (k == QLatin1String("COLOR")) {
                 QColor c(v);
-                if (!c.isValid()) { setErr(QStringLiteral("COLOR 非法: ") + v); lineBad = true; continue; }
+                if (!c.isValid()) { setErr(SketchCAD::I18n::t(QStringLiteral("COLOR 非法: ")) + v); lineBad = true; continue; }
                 e.overrideColor = true; e.color = c;
             } else {
-                setErr(QStringLiteral("未知参数: ") + t);
+                setErr(SketchCAD::I18n::t(QStringLiteral("未知参数: ")) + t);
                 lineBad = true;
             }
         }
@@ -321,11 +322,11 @@ bool PlotStyleTable::fromCtb(const QString& text, PlotStyleTable* out, QString* 
             out->setLayerStyle(target, e);
         } else if (kw == QLatin1String("COLOR")) {
             QColor key(target);
-            if (!key.isValid()) { setErr(QStringLiteral("COLOR 匹配键非法: ") + target); continue; }
+            if (!key.isValid()) { setErr(SketchCAD::I18n::t(QStringLiteral("COLOR 匹配键非法: ")) + target); continue; }
             out->setColorStyle(key, e);
         } else { // STYLE
             LineStyle ls;
-            if (!plotStyleFromName(target, &ls)) { setErr(QStringLiteral("未知线型: ") + target); continue; }
+            if (!plotStyleFromName(target, &ls)) { setErr(SketchCAD::I18n::t(QStringLiteral("未知线型: ")) + target); continue; }
             out->setStyleStyle(ls, e);
         }
     }

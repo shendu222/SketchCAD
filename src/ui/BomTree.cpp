@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "BomTree.h"
 #include "core/SketchModel.h"
 #include "core/Element.h"
@@ -10,7 +11,7 @@
 namespace SketchCAD {
 
 BomTree::BomTree(SketchModel* m, QWidget* p) : QTreeWidget(p), model_(m) {
-    setHeaderLabel(QStringLiteral("模型浏览器"));
+    setHeaderLabel(SketchCAD::I18n::t(QString::fromUtf8("模型浏览器")));
     setColumnCount(1);
     setDragEnabled(true);
     setAcceptDrops(true);
@@ -22,11 +23,11 @@ BomTree::BomTree(SketchModel* m, QWidget* p) : QTreeWidget(p), model_(m) {
 
 void BomTree::refresh() {
     clear();
-    auto* root = new QTreeWidgetItem(this, QStringList{QStringLiteral("草图模型")});
+    auto* root = new QTreeWidgetItem(this, QStringList{SketchCAD::I18n::t(QString::fromUtf8("草图模型"))});
     root->setExpanded(true);
     QMap<QString, QTreeWidgetItem*> groups;
     for (const auto& e : model_->elements()) {
-        const QString g = e.typeName();
+        const QString g = SketchCAD::I18n::t(e.typeName());
         if (!groups.contains(g)) {
             auto* gi = new QTreeWidgetItem(root, QStringList{g});
             gi->setExpanded(true);
@@ -57,21 +58,21 @@ void BomTree::contextMenuEvent(QContextMenuEvent* e) {
     int id = it->data(0, Qt::UserRole).toInt();
     QMenu menu(this);
     if (id >= 0) {
-        menu.addAction(QStringLiteral("选中"), [=] { model_->setSelected(id); });
-        menu.addAction(QStringLiteral("添加到选区"), [=] { model_->addToSelection(id); });
-        menu.addAction(QStringLiteral("从选区移除"), [=] { model_->deselectEntity(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("选中")), [=] { model_->setSelected(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("添加到选区")), [=] { model_->addToSelection(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("从选区移除")), [=] { model_->deselectEntity(id); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("选择轮廓"), [=] { model_->selectContour(id); });
-        menu.addAction(QStringLiteral("选择相交"), [=] { model_->selectIntersected(id); });
-        menu.addAction(QStringLiteral("选择同图层"), [=] { model_->selectLayerOf(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("选择轮廓")), [=] { model_->selectContour(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("选择相交")), [=] { model_->selectIntersected(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("选择同图层")), [=] { model_->selectLayerOf(id); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("复制并粘贴"), [=] {
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("复制并粘贴")), [=] {
             model_->setSelected(id); model_->copySelected(); model_->paste();
         });
-        menu.addAction(QStringLiteral("删除"), [=] { model_->removeElement(id); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("删除")), [=] { model_->removeElement(id); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("移到末尾"), [=] { model_->reorderElement(id, -1); });
-        menu.addAction(QStringLiteral("移到开头"), [=] {
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("移到末尾")), [=] { model_->reorderElement(id, -1); });
+        menu.addAction(SketchCAD::I18n::t(QString::fromUtf8("移到开头")), [=] {
             int first = model_->elements().empty() ? -1 : model_->elements().front().id;
             model_->reorderElement(id, first);
         });

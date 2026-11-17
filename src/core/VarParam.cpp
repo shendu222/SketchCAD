@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "VarParam.h"
 #include <cmath>
 #include <limits>
@@ -69,7 +70,7 @@ private:
             if (c == QLatin1Char('*')) {
                 out = out * rhs;
             } else {
-                if (rhs == 0.0) return fail(err, QStringLiteral("表达式除零（除数绝对值为 0）"));
+                if (rhs == 0.0) return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式除零（除数绝对值为 0）")));
                 out = out / rhs;
             }
         }
@@ -78,11 +79,11 @@ private:
 
     bool parseFactor(double& out, QString* err) {
         skipWs();
-        if (pos_ >= s_.size()) return fail(err, QStringLiteral("表达式意外结束（缺少运算数）"));
+        if (pos_ >= s_.size()) return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式意外结束（缺少运算数）")));
         const QChar c = s_.at(pos_);
         if (c == QLatin1Char('-') || c == QLatin1Char('+')) {
             if (++depth_ > maxDepth_)
-                return fail(err, QStringLiteral("表达式嵌套/连续一元号过深"));
+                return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式嵌套/连续一元号过深")));
             ++pos_;
             double v = 0.0;
             const bool ok = parseFactor(v, err);
@@ -96,11 +97,11 @@ private:
 
     bool parsePrimary(double& out, QString* err) {
         skipWs();
-        if (pos_ >= s_.size()) return fail(err, QStringLiteral("表达式意外结束（缺少运算数）"));
+        if (pos_ >= s_.size()) return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式意外结束（缺少运算数）")));
         const QChar c = s_.at(pos_);
         if (c == QLatin1Char('(')) {
             if (++depth_ > maxDepth_)
-                return fail(err, QStringLiteral("表达式括号嵌套过深"));
+                return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式括号嵌套过深")));
             ++pos_;
             double v = 0.0;
             const bool ok = parseExpr(v, err);
@@ -108,7 +109,7 @@ private:
             if (!ok) return false;
             skipWs();
             if (pos_ >= s_.size() || s_.at(pos_) != QLatin1Char(')'))
-                return fail(err, QStringLiteral("表达式缺少右括号"));
+                return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式缺少右括号")));
             ++pos_;
             out = v;
             return true;
@@ -117,7 +118,7 @@ private:
             (c == QLatin1Char('.') && pos_ + 1 < s_.size() && isAsciiDigit(s_.at(pos_ + 1))))
             return parseNumber(out, err);
         if (isIdentStart(c)) return parseIdent(out, err);
-        return fail(err, QStringLiteral("表达式语法错误：无法识别的字符「%1」").arg(c));
+        return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式语法错误：无法识别的字符「%1」")).arg(c));
     }
 
     bool parseNumber(double& out, QString* err) {
@@ -138,7 +139,7 @@ private:
                 ++pos_;
             }
         }
-        if (!any) return fail(err, QStringLiteral("表达式数字格式错误"));
+        if (!any) return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式数字格式错误")));
         out = ip + fp / scale;
         return true;
     }
@@ -153,10 +154,10 @@ private:
             out = 0.0;   // 收集模式：值无意义
             return true;
         }
-        if (!resolve_) return fail(err, QStringLiteral("表达式引用未定义变量「%1」").arg(name));
+        if (!resolve_) return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式引用未定义变量「%1」")).arg(name));
         double v = 0.0;
         if (!(*resolve_)(name, v))
-            return fail(err, QStringLiteral("表达式引用未定义变量「%1」").arg(name));
+            return fail(err, SketchCAD::I18n::t(QString::fromUtf8("表达式引用未定义变量「%1」")).arg(name));
         out = v;
         return true;
     }

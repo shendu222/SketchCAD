@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/AiAssistantPanel.h"
 
 #include <QTextEdit>
@@ -16,7 +17,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent) : QWidget(parent) {
     root->setContentsMargins(6, 6, 6, 6);
     root->setSpacing(6);
 
-    statusLabel_ = new QLabel(QStringLiteral("AI 助手（自然语言操作）"), this);
+    statusLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("AI 助手（自然语言操作）")), this);
     statusLabel_->setStyleSheet(QStringLiteral("color: gray;"));
     root->addWidget(statusLabel_);
 
@@ -28,9 +29,9 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent) : QWidget(parent) {
     // 输入行：文本框 + 发送 / 停止
     auto* inRow = new QHBoxLayout();
     input_ = new QLineEdit(this);
-    input_->setPlaceholderText(QStringLiteral("用自然语言下指令，例如：画一个圆心(0,0)半径50的圆"));
-    sendBtn_ = new QPushButton(QStringLiteral("发送"), this);
-    stopBtn_ = new QPushButton(QStringLiteral("停止"), this);
+    input_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("用自然语言下指令，例如：画一个圆心(0,0)半径50的圆")));
+    sendBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("发送")), this);
+    stopBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("停止")), this);
     stopBtn_->setEnabled(false);
     inRow->addWidget(input_, 1);
     inRow->addWidget(sendBtn_);
@@ -45,8 +46,8 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent) : QWidget(parent) {
     ap->setContentsMargins(6, 4, 6, 4);
     approvalLabel_ = new QLabel(this);
     approvalLabel_->setWordWrap(true);
-    approveBtn_ = new QPushButton(QStringLiteral("执行"), this);
-    cancelBtn_  = new QPushButton(QStringLiteral("取消"), this);
+    approveBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("执行")), this);
+    cancelBtn_  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("取消")), this);
     ap->addWidget(approvalLabel_, 1);
     ap->addWidget(approveBtn_);
     ap->addWidget(cancelBtn_);
@@ -86,7 +87,7 @@ void AiAssistantPanel::setAssistantMessage(const QString& text) {
 }
 
 void AiAssistantPanel::showApproval(const QString& commandLine) {
-    approvalLabel_->setText(QStringLiteral("⚠ 该操作会修改图纸，请确认：") + commandLine);
+    approvalLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("⚠ 该操作会修改图纸，请确认：")) + commandLine);
     approvalBar_->setVisible(true);
     awaitingApproval_ = true;
     setBusy(true);
@@ -94,19 +95,19 @@ void AiAssistantPanel::showApproval(const QString& commandLine) {
 
 void AiAssistantPanel::appendCommandResult(const QString& line, bool ok) {
     chatView_->moveCursor(QTextCursor::End);
-    chatView_->insertPlainText(QStringLiteral("\n⮕ ") + line +
-                               (ok ? QStringLiteral("  ✓") : QStringLiteral("  ✗ 失败")) +
-                               QStringLiteral("\n"));
+    const QString okMark = QStringLiteral("  ✓");
+    const QString failMark = SketchCAD::I18n::t(QString::fromUtf8("  ✗ 失败"));
+    chatView_->insertPlainText(QStringLiteral("\n⮕ ") + line + (ok ? okMark : failMark) + QStringLiteral("\n"));
 }
 
 void AiAssistantPanel::onFinished(bool ok, const QString& error) {
     Q_UNUSED(ok);
     if (!error.isEmpty()) {
         chatView_->moveCursor(QTextCursor::End);
-        chatView_->insertPlainText(QStringLiteral("\n（错误：") + error + QStringLiteral("）\n"));
+        chatView_->insertPlainText(QStringLiteral("\n") + SketchCAD::I18n::t(QString::fromUtf8("（错误：")) + error + SketchCAD::I18n::t(QString::fromUtf8("）")) + QStringLiteral("\n"));
     }
     chatView_->moveCursor(QTextCursor::End);
-    chatView_->insertPlainText(QStringLiteral("\n— — — — —\n"));
+    chatView_->insertPlainText(QStringLiteral("\n") + SketchCAD::I18n::t(QString::fromUtf8("— — — — —")) + QStringLiteral("\n"));
     approvalBar_->setVisible(false);
     awaitingApproval_ = false;
     gotDelta_ = false;
@@ -117,9 +118,9 @@ void AiAssistantPanel::onSend() {
     const QString t = input_->text().trimmed();
     if (t.isEmpty() || busy_) return;
     if (awaitingApproval_) return;   // 审批未完成前不接受新指令
-    appendLine(QStringLiteral("你"), t);
+    appendLine(SketchCAD::I18n::t(QString::fromUtf8("你")), t);
     chatView_->moveCursor(QTextCursor::End);
-    chatView_->insertPlainText(QStringLiteral("助手："));
+    chatView_->insertPlainText(SketchCAD::I18n::t(QString::fromUtf8("助手：")));
     input_->clear();
     gotDelta_ = false;
     emit userMessage(t);
@@ -141,15 +142,15 @@ void AiAssistantPanel::onCancel() {
 
 void AiAssistantPanel::appendLine(const QString& who, const QString& text) {
     chatView_->moveCursor(QTextCursor::End);
-    chatView_->insertPlainText(QStringLiteral("\n") + who + QStringLiteral("：") + text + QStringLiteral("\n"));
+    chatView_->insertPlainText(QStringLiteral("\n") + SketchCAD::I18n::t(who) + SketchCAD::I18n::t(QString::fromUtf8("：")) + text + QStringLiteral("\n"));
 }
 
 void AiAssistantPanel::setBusy(bool busy) {
     busy_ = busy;
     sendBtn_->setEnabled(!busy);
     stopBtn_->setEnabled(busy);
-    if (busy) statusLabel_->setText(QStringLiteral("AI 正在处理…"));
-    else      statusLabel_->setText(QStringLiteral("AI 助手（自然语言操作）"));
+    if (busy) statusLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("AI 正在处理…")));
+    else      statusLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("AI 助手（自然语言操作）")));
 }
 
 } // namespace SketchCAD

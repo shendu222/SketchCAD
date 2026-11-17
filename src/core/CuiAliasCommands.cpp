@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Commands.h"
 #include "AliasTable.h"
 #include "CuiManager.h"
@@ -14,13 +15,13 @@ void registerAliasCommands(CommandRegistry& reg) {
     reg.registerExact("alias", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 3) {
-                ctx.model->log(QStringLiteral("用法：alias <别名> <完整命令>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：alias <别名> <完整命令>")), "warn");
                 return false;
             }
             QString a = ctx.toks[1].toLower();
             QString c = ctx.toks[2].toLower();
             AliasTable::instance().setAlias(a, c);
-            ctx.model->log(QStringLiteral("已设置别名：%1 → %2").arg(a, c));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已设置别名：%1 → %2")).arg(a, c));
             return true;
         }));
 
@@ -29,12 +30,12 @@ void registerAliasCommands(CommandRegistry& reg) {
         [](const CommandContext& ctx) {
             QString path = AliasTable::instance().filePath();
             if (path.isEmpty()) {
-                ctx.model->log(QStringLiteral("未载入过别名文件，改为注入默认别名"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("未载入过别名文件，改为注入默认别名")), "warn");
                 AliasTable::instance().clear();
                 auto d = AliasTable::defaultAliases();
                 for (auto it = d.begin(); it != d.end(); ++it)
                     AliasTable::instance().setAlias(it.key(), it.value());
-                ctx.model->log(QStringLiteral("已载入 %1 条默认别名").arg(d.size()));
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已载入 %1 条默认别名")).arg(d.size()));
                 return true;
             }
             QString err;
@@ -42,7 +43,7 @@ void registerAliasCommands(CommandRegistry& reg) {
                 ctx.model->log(err, "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已重新加载别名文件：%1（%2 条）")
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已重新加载别名文件：%1（%2 条）"))
                                .arg(path).arg(AliasTable::instance().map().size()));
             return true;
         }));
@@ -51,7 +52,7 @@ void registerAliasCommands(CommandRegistry& reg) {
     reg.registerExact("aliasload", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：aliasload <文件>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：aliasload <文件>")), "warn");
                 return false;
             }
             QString path = ctx.toks.mid(1).join(QChar(' '));
@@ -60,7 +61,7 @@ void registerAliasCommands(CommandRegistry& reg) {
                 ctx.model->log(err, "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已加载别名文件：%1（%2 条）")
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已加载别名文件：%1（%2 条）"))
                                .arg(path).arg(AliasTable::instance().map().size()));
             return true;
         }));
@@ -74,7 +75,7 @@ void registerAliasCommands(CommandRegistry& reg) {
                 ctx.model->log(err, "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已保存别名文件：%1").arg(AliasTable::instance().filePath()));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已保存别名文件：%1")).arg(AliasTable::instance().filePath()));
             return true;
         }));
 
@@ -82,8 +83,8 @@ void registerAliasCommands(CommandRegistry& reg) {
     reg.registerExact("aliaslist", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             const auto& m = AliasTable::instance().map();
-            if (m.isEmpty()) { ctx.model->log(QStringLiteral("当前没有别名")); return true; }
-            ctx.model->log(QStringLiteral("命令别名（%1 条）：").arg(m.size()));
+            if (m.isEmpty()) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("当前没有别名"))); return true; }
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("命令别名（%1 条）：")).arg(m.size()));
             for (auto it = m.begin(); it != m.end(); ++it)
                 ctx.model->log(QStringLiteral("  %1 = %2").arg(it.key(), it.value()));
             return true;
@@ -98,7 +99,7 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("cuiload", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：cuiload <文件>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：cuiload <文件>")), "warn");
                 return false;
             }
             QString path = ctx.toks.mid(1).join(QChar(' '));
@@ -107,7 +108,7 @@ void registerCuiCommands(CommandRegistry& reg) {
                 ctx.model->log(err, "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已加载界面配置：%1（工具条 %2 / 工作空间 %3）")
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已加载界面配置：%1（工具条 %2 / 工作空间 %3）"))
                                .arg(path)
                                .arg(CuiManager::instance().toolbarIds().size())
                                .arg(CuiManager::instance().workspaceIds().size()));
@@ -124,7 +125,7 @@ void registerCuiCommands(CommandRegistry& reg) {
                 ctx.model->log(err, "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已保存界面配置：%1").arg(CuiManager::instance().filePath()));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已保存界面配置：%1")).arg(CuiManager::instance().filePath()));
             return true;
         }));
 
@@ -132,7 +133,7 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("wsnew", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：wsnew <id> [标题]"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：wsnew <id> [标题]")), "warn");
                 return false;
             }
             QString id = ctx.toks[1].toLower();
@@ -142,7 +143,7 @@ void registerCuiCommands(CommandRegistry& reg) {
                 if (!tbs.contains(t)) tbs << t;
             CuiManager::instance().addWorkspace(id, title, tbs,
                                                CuiManager::instance().builtinMenus());
-            ctx.model->log(QStringLiteral("已新建工作空间：%1（%2 个工具条可见）").arg(title).arg(tbs.size()));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已新建工作空间：%1（%2 个工具条可见）")).arg(title).arg(tbs.size()));
             return true;
         }));
 
@@ -150,16 +151,16 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("wsload", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：wsload <id>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：wsload <id>")), "warn");
                 return false;
             }
             QString id = ctx.toks[1].toLower();
             if (!CuiManager::instance().hasWorkspace(id)) {
-                ctx.model->log(QStringLiteral("工作空间不存在：%1").arg(id), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("工作空间不存在：%1")).arg(id), "warn");
                 return false;
             }
             CuiManager::instance().setCurrentWorkspace(id);
-            ctx.model->log(QStringLiteral("已切换到工作空间：%1")
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已切换到工作空间：%1"))
                                .arg(CuiManager::instance().workspace(id)->title));
             CuiManager::instance().requestRefresh();
             return true;
@@ -169,15 +170,15 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("wslist", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             QStringList ids = CuiManager::instance().workspaceIds();
-            if (ids.isEmpty()) { ctx.model->log(QStringLiteral("当前没有工作空间")); return true; }
+            if (ids.isEmpty()) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("当前没有工作空间"))); return true; }
             QString cur = CuiManager::instance().currentWorkspace();
-            ctx.model->log(QStringLiteral("工作空间（%1 个，当前：%2）：")
-                               .arg(ids.size()).arg(cur.isEmpty() ? QStringLiteral("（默认/全显）") : cur));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("工作空间（%1 个，当前：%2）："))
+                               .arg(ids.size()).arg(cur.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("（默认/全显）")) : cur));
             QStringList titles = CuiManager::instance().workspaceTitles();
             for (int i = 0; i < ids.size(); ++i)
                 ctx.model->log(QStringLiteral("  %1 = %2%3")
                                    .arg(ids[i], titles[i],
-                                        ids[i] == cur ? QStringLiteral("  [当前]") : QString()));
+                                        ids[i] == cur ? SketchCAD::I18n::t(QString::fromUtf8("  [当前]")) : QString()));
             return true;
         }));
 
@@ -185,15 +186,15 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("wsdel", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：wsdel <id>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：wsdel <id>")), "warn");
                 return false;
             }
             QString id = ctx.toks[1].toLower();
             if (!CuiManager::instance().removeWorkspace(id)) {
-                ctx.model->log(QStringLiteral("工作空间不存在：%1").arg(id), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("工作空间不存在：%1")).arg(id), "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已删除工作空间：%1").arg(id));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已删除工作空间：%1")).arg(id));
             CuiManager::instance().requestRefresh();
             return true;
         }));
@@ -202,17 +203,17 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("tbnew", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：tbnew <id> [标题]"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tbnew <id> [标题]")), "warn");
                 return false;
             }
             QString id = ctx.toks[1].toLower();
             QString title = ctx.toks.size() > 2 ? ctx.toks.mid(2).join(QChar(' ')) : id;
             if (CuiManager::instance().hasToolbar(id)) {
-                ctx.model->log(QStringLiteral("工具条已存在：%1").arg(id), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("工具条已存在：%1")).arg(id), "warn");
                 return false;
             }
             CuiManager::instance().addToolbar(id, title);
-            ctx.model->log(QStringLiteral("已新建工具条：%1").arg(title));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已新建工具条：%1")).arg(title));
             CuiManager::instance().requestRefresh();
             return true;
         }));
@@ -221,7 +222,7 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("tbadd", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 3) {
-                ctx.model->log(QStringLiteral("用法：tbadd <工具条> <命令> [文字] [图标]"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tbadd <工具条> <命令> [文字] [图标]")), "warn");
                 return false;
             }
             QString tb = ctx.toks[1].toLower();
@@ -231,7 +232,7 @@ void registerCuiCommands(CommandRegistry& reg) {
             b.icon = ctx.toks.size() > 4 ? ctx.toks[4] : QString();
             if (!CuiManager::instance().hasToolbar(tb)) CuiManager::instance().addToolbar(tb, tb);
             CuiManager::instance().addButton(tb, b);
-            ctx.model->log(QStringLiteral("已向工具条 %1 添加按钮：%2").arg(tb, b.command));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已向工具条 %1 添加按钮：%2")).arg(tb, b.command));
             CuiManager::instance().requestRefresh();
             return true;
         }));
@@ -240,15 +241,15 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("tbdel", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 2) {
-                ctx.model->log(QStringLiteral("用法：tbdel <工具条>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tbdel <工具条>")), "warn");
                 return false;
             }
             QString tb = ctx.toks[1].toLower();
             if (!CuiManager::instance().removeToolbar(tb)) {
-                ctx.model->log(QStringLiteral("工具条不存在：%1").arg(tb), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("工具条不存在：%1")).arg(tb), "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已删除工具条：%1").arg(tb));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已删除工具条：%1")).arg(tb));
             CuiManager::instance().requestRefresh();
             return true;
         }));
@@ -257,17 +258,17 @@ void registerCuiCommands(CommandRegistry& reg) {
     reg.registerExact("tbrm", std::make_shared<LambdaCommand>(
         [](const CommandContext& ctx) {
             if (ctx.toks.size() < 3) {
-                ctx.model->log(QStringLiteral("用法：tbrm <工具条> <序号>"), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：tbrm <工具条> <序号>")), "warn");
                 return false;
             }
             QString tb = ctx.toks[1].toLower();
             bool ok = false;
             int idx = ctx.toks[2].toInt(&ok);
             if (!ok || !CuiManager::instance().removeButton(tb, idx)) {
-                ctx.model->log(QStringLiteral("删除按钮失败（工具条：%1，序号：%2）").arg(tb, ctx.toks[2]), "warn");
+                ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("删除按钮失败（工具条：%1，序号：%2）")).arg(tb, ctx.toks[2]), "warn");
                 return false;
             }
-            ctx.model->log(QStringLiteral("已从工具条 %1 删除第 %2 个按钮").arg(tb).arg(idx));
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已从工具条 %1 删除第 %2 个按钮")).arg(tb).arg(idx));
             CuiManager::instance().requestRefresh();
             return true;
         }));

@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QGroupBox>
 
 namespace SketchCAD {
 
@@ -23,6 +24,9 @@ class LayerPanel : public QWidget {
     Q_OBJECT
 public:
     explicit LayerPanel(SketchModel* model, QWidget* parent = nullptr);
+
+    // 语言切换：重译面板静态文本（组标题/行标签/按钮/提示）。
+    void retranslate();
 
     // 多文档切换重绑：断开旧模型的连接 → 换绑 → 重新连接 → 按新模型重建。
     // （本面板在构造期自连接模型信号，与其余面板"由 ModelMediator 统一订阅"不同，
@@ -50,6 +54,10 @@ private:
     SketchModel* model_;
     QList<QMetaObject::Connection> modelConns_;   // 自连接的模型信号（setModel 迁移用）
     QListWidget*  list_;
+    QGroupBox*    styleGroup_;          // 「图层样式」组框
+    QLabel*       colorLabel_;          // 「颜色：」行标签
+    QLabel*       lineStyleLabel_;      // 「线型：」行标签
+    QLabel*       lineWidthLabel_;      // 「线宽：」行标签
     QPushButton*  colorBtn_;
     QComboBox*    lineStyleCombo_;
     QComboBox*    lineWidthCombo_;

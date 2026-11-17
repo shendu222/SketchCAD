@@ -112,6 +112,7 @@ set(CORE_SOURCES
     src/core/SpatialIndex.cpp
     src/core/AppSettings.cpp   # 全局设置（自动保存间隔/磁盘阈值，HKCU\Software\SketchCAD）
     src/core/I18n.cpp          # 界面语言单一入口（语言解析 + QTranslator 装载，自测直测）
+    src/core/I18nDict.cpp      # 生成式中文 UI→英文词典（tools/i18n/build_i18n.py 产出，勿手改）
     src/core/AutoSave.cpp      # 自动保存核心（定时+操作计数双触发，原子落盘，可恢复）
     src/core/RecentFiles.cpp   # 最近文件 MRU（路径+时间+pin，复用 AppSettings 存储，可离线直测）
     src/core/Diagnostics.cpp   # 诊断：Qt 日志滚动落盘 + Windows 崩溃 mini-dump + 会话标记
@@ -332,6 +333,8 @@ add_executable(SketchSelfTest
     src/ui/PrintEngine.cpp
     src/ui/DocTab.cpp               # 多文档会话核心（仅依赖 core，供 t_multidoc 离线直测）
     src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
+    src/ui/ElementPanel.cpp         # 图元类型条目 retranslate（语言切换即时刷新），供 t_i18nEnglishCoverage
+    src/ui/StatusBar.cpp            # 状态栏开关按钮 retranslate（语言切换即时刷新），供 t_i18nEnglishCoverage
     src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
     src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
     # ---- DEL 键端到端交互自测（t_deleteKeyInteraction）：真实 GraphicsView + 真实 QKeyEvent ----

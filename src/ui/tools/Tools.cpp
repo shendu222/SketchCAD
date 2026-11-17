@@ -4,6 +4,7 @@
 // 每个工具类的 prompt() / onPress() / onRightButton() 取代了
 // GraphicsView 中对应的 if-else 分支。逻辑保持完全一致，
 // 仅从过程式分派改为多态分派。
+#include "core/I18n.h"
 #include "ui/tools/Tools.h"
 #include "ui/GraphicsView.h"
 #include "core/SketchModel.h"
@@ -54,7 +55,7 @@ bool SelectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
                 ctx.breakCycle();
             } else if (ids.size() > 1) {
                 ctx.model->setSelection(ids);
-                ctx.model->log(QString("编组「%1」整体选中：%2 个对象（Ctrl+点击可穿透编组单选）")
+                ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("编组「%1」整体选中：%2 个对象（Ctrl+点击可穿透编组单选）")))
                                    .arg(ctx.model->element(hit)->groupName).arg(ids.size()));
                 ctx.breakCycle();
             } else {
@@ -129,7 +130,7 @@ bool PickSelectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     (void)w;   // 命中判定经 ctx.hitTest(屏幕坐标)，世界坐标入参在本动作中不消费
     const int hit = ctx.hitTest(e->position().toPoint());
     if (hit < 0) {
-        ctx.model->log(QStringLiteral("未命中任何图元"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("未命中任何图元")), "warn");
         return true;
     }
     switch (action_) {
@@ -175,7 +176,7 @@ bool SmartDimTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
         ctx.resetPending();
         return true;
     }
-    ctx.model->log(QStringLiteral("智能标注：请先选中一条直线或一个圆"), "warn");
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("智能标注：请先选中一条直线或一个圆")), "warn");
     return true;
 }
 
@@ -272,7 +273,7 @@ bool PointCollectTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
     (void)e;
     ctx.setDrawing(true);
     ctx.addPendingPt(ctx.snapWorld(w));
-    ctx.model->log(QString("已拾取点 %1: (%2, %3)")
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已拾取点 %1: (%2, %3)")))
                        .arg(ctx.pendingPtCount())
                        .arg(w.x, 0, 'f', 2)
                        .arg(w.y, 0, 'f', 2));

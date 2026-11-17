@@ -15,6 +15,8 @@ public:
     CommandLine(SketchModel* m, CommandInterpreter* ci, QWidget* parent = nullptr);
     // 多文档切换重绑：换绑活动文档；历史由解释器层互换（DocTab 会话态），此处重置浏览游标
     void setModel(SketchModel* m);
+    // 语言切换：重译默认占位提示
+    void retranslate();
 public slots:
     // 重复上一成功执行的命令（空输入回车/空格、空闲态右键三入口共用；保持历史游标同步）
     void repeatLastCommand();

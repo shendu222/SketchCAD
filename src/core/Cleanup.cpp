@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "Cleanup.h"
 #include "SketchModel.h"
 #include "Geometry.h"
@@ -372,7 +373,7 @@ CleanupStats runCleanup(SketchModel* model, const CleanupOptions& opt, bool dryR
     // ---- 落盘 ----
     if (!dryRun) {
         if (!changes.empty()) {
-            model->beginEdit(QStringLiteral("图形清理"));
+            model->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("图形清理")));
             modify::applyChanges(model, changes, QString());
         }
         for (const auto& b : blocksToPurge) model->removeBlock(b);

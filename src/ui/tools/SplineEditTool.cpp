@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/SplineEditTool.h"
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
@@ -38,7 +39,7 @@ bool SplineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     if (id_ == "spline_from_polyline") {
         const Element* src = pickPolylineLike(ctx, vp);
         if (!src) {
-            ctx.model->log(QStringLiteral("请选择折线、多边形或矩形"), "warn");
+            ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择折线、多边形或矩形")), "warn");
             return true;
         }
         fromPolyline(ctx, *src);
@@ -47,7 +48,7 @@ bool SplineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
 
     const Element* eptr = pickSpline(ctx, vp);
     if (!eptr) {
-        ctx.model->log(QStringLiteral("请选择样条曲线"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择样条曲线")), "warn");
         return true;
     }
 
@@ -104,7 +105,7 @@ void SplineEditTool::fromPolyline(ToolContext& ctx, const Element& src) {
     // 取点逻辑下沉到 spline::polylineControlPoints（UI / CLI / 自测共用）
     const std::vector<Vec3> pts = spline::polylineControlPoints(src);
     if (pts.size() < 2) {
-        ctx.model->log(QStringLiteral("源图元顶点数不足，无法转样条"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("源图元顶点数不足，无法转样条")), "warn");
         return;
     }
 
@@ -116,7 +117,7 @@ void SplineEditTool::fromPolyline(ToolContext& ctx, const Element& src) {
     const auto ids = ctx.model->replaceElement(src.id, {spline}, QStringLiteral("折线转样条"));
     if (!ids.empty()) {
         ctx.model->setSelected(ids.front());
-        ctx.model->log(QString("已将 #%1 转换为样条 #%2（%3 个控制点）")
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将 #%1 转换为样条 #%2（%3 个控制点）")))
                            .arg(src.id).arg(ids.front()).arg((int)pts.size()));
     }
 }
@@ -128,7 +129,7 @@ void SplineEditTool::appendPoint(ToolContext& ctx, const Element& e, const Vec3&
         if (atFront) out.pts.insert(out.pts.begin(), p);
         else         out.pts.push_back(p);
     });
-    ctx.model->log(QString("已%1样条 #%2 的控制点").arg(atFront ? QStringLiteral("前端追加") : QStringLiteral("后端追加")).arg(e.id));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已%1样条 #%2 的控制点"))).arg(atFront ? SketchCAD::I18n::t(QString::fromUtf8("前端追加")) : SketchCAD::I18n::t(QString::fromUtf8("后端追加"))).arg(e.id));
 }
 
 void SplineEditTool::insertPoint(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -146,13 +147,13 @@ void SplineEditTool::insertPoint(ToolContext& ctx, const Element& e, const Vec3&
     ctx.model->updateElement(e.id, [&](Element& out) {
         out.pts.insert(out.pts.begin() + bestSeg + 1, bestProj);
     });
-    ctx.model->log(QString("已在样条 #%1 第 %2 段插入控制点").arg(e.id).arg(bestSeg + 1));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在样条 #%1 第 %2 段插入控制点"))).arg(e.id).arg(bestSeg + 1));
 }
 
 void SplineEditTool::removePoint(ToolContext& ctx, const Element& e, const Vec3& p) {
     if (e.pts.size() <= 2) {
         ctx.model->removeElement(e.id);
-        ctx.model->log(QString("样条 #%1 控制点过少，已删除").arg(e.id));
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("样条 #%1 控制点过少，已删除"))).arg(e.id));
         return;
     }
     const int idx = nearestControlPoint(e, p);
@@ -160,7 +161,7 @@ void SplineEditTool::removePoint(ToolContext& ctx, const Element& e, const Vec3&
     ctx.model->updateElement(e.id, [&](Element& out) {
         out.pts.erase(out.pts.begin() + idx);
     });
-    ctx.model->log(QString("已删除样条 #%1 的控制点 %2").arg(e.id).arg(idx));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除样条 #%1 的控制点 %2"))).arg(e.id).arg(idx));
 }
 
 void SplineEditTool::removeBetween(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -170,12 +171,12 @@ void SplineEditTool::removeBetween(ToolContext& ctx, const Element& e, const Vec
     if (firstId_ < 0) {
         firstId_ = e.id;
         firstIdx_ = idx;
-        ctx.model->log(QString("已选择样条 #%1 控制点 %2").arg(e.id).arg(idx));
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选择样条 #%1 控制点 %2"))).arg(e.id).arg(idx));
         return;
     }
 
     if (firstId_ != e.id) {
-        ctx.model->log(QStringLiteral("请选择同一根样条上的两个控制点"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择同一根样条上的两个控制点")), "warn");
         firstId_ = -1; firstIdx_ = -1;
         return;
     }
@@ -183,7 +184,7 @@ void SplineEditTool::removeBetween(ToolContext& ctx, const Element& e, const Vec
     int a = firstIdx_, b = idx;
     if (a > b) std::swap(a, b);
     if (b - a <= 1) {
-        ctx.model->log(QStringLiteral("两个控制点相邻，无需删除中间段"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("两个控制点相邻，无需删除中间段")), "warn");
         firstId_ = -1; firstIdx_ = -1;
         return;
     }
@@ -195,7 +196,7 @@ void SplineEditTool::removeBetween(ToolContext& ctx, const Element& e, const Vec
         for (int i = b; i < (int)out.pts.size(); ++i) nv.push_back(out.pts[i]);
         out.pts = std::move(nv);
     });
-    ctx.model->log(QString("已删除样条 #%1 控制点 %2 到 %3 之间的部分")
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除样条 #%1 控制点 %2 到 %3 之间的部分")))
                        .arg(e.id).arg(a).arg(b));
     firstId_ = -1;
     firstIdx_ = -1;
@@ -206,7 +207,7 @@ void SplineEditTool::explode(ToolContext& ctx, const Element& e) {
     // 插值类样条按节点弦分段；抛物线/双曲线等圆锥类按曲线采样离散，形状不丢失。
     const auto segs = spline::explodeToLines(e.pts, e.splineSubType);
     if (segs.empty()) {
-        ctx.model->log(QString("样条 #%1 无法分解为线段（点数不足）").arg(e.id), "warn");
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("样条 #%1 无法分解为线段（点数不足）"))).arg(e.id), "warn");
         return;
     }
 
@@ -221,7 +222,7 @@ void SplineEditTool::explode(ToolContext& ctx, const Element& e) {
 
     const auto ids = ctx.model->replaceElement(e.id, lines, QStringLiteral("样条分解为线段"));
     if (!ids.empty()) {
-        ctx.model->log(QString("已将样条 #%1 分解为 %2 条线段（#%3 ~ #%4）")
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将样条 #%1 分解为 %2 条线段（#%3 ~ #%4）")))
                            .arg(e.id).arg((int)ids.size())
                            .arg(ids.front()).arg(ids.back()));
     }

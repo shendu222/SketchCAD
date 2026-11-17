@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/FreehandLineTool.h"
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
@@ -71,7 +72,7 @@ void FreehandLineTool::finish(ToolContext& ctx) {
     el.closed = false;
     const int id = ctx.model->addElement(el);
     ctx.model->setSelected(id);
-    ctx.model->log(QString("已创建自由手绘线 #%1（%2 个采样点）").arg(id).arg((int)el.pts.size()));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建自由手绘线 #%1（%2 个采样点）"))).arg(id).arg((int)el.pts.size()));
 }
 
 } // namespace SketchCAD

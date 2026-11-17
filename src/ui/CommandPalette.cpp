@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "CommandPalette.h"
 #include "core/CommandInterpreter.h"
 #include "core/AliasTable.h"
@@ -51,14 +52,14 @@ QVector<PaletteEntry> CommandPaletteDialog::buildEntries() {
 CommandPaletteDialog::CommandPaletteDialog(CommandInterpreter* interp,
                                            AppSettings* settings, QWidget* parent)
     : QDialog(parent), interp_(interp), settings_(settings) {
-    setWindowTitle(tr("命令面板"));
+    setWindowTitle(SketchCAD::I18n::t(tr("命令面板")));
     setModal(true);
     resize(520, 420);
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     edit_ = new QLineEdit(this);
-    edit_->setPlaceholderText(tr("输入命令名 / 中文名 / 别名过滤（↑↓ 选择，Enter 执行，Esc 关闭）"));
+    edit_->setPlaceholderText(SketchCAD::I18n::t(tr("输入命令名 / 中文名 / 别名过滤（↑↓ 选择，Enter 执行，Esc 关闭）")));
     edit_->installEventFilter(this);
     lay->addWidget(edit_);
 
@@ -67,7 +68,7 @@ CommandPaletteDialog::CommandPaletteDialog(CommandInterpreter* interp,
     lay->addWidget(list_, 1);
 
     auto* hint = new QLabel(
-        tr("Enter 执行 · Ctrl+Shift+P 再次呼出 · 最近使用自动置顶"), this);
+        SketchCAD::I18n::t(tr("Enter 执行 · Ctrl+Shift+P 再次呼出 · 最近使用自动置顶")), this);
     hint->setStyleSheet(QStringLiteral("color: palette(mid); font-size: 11px;"));
     lay->addWidget(hint);
 

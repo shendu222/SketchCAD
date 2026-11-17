@@ -36,6 +36,9 @@ public:
     void setLastAutosave(const QDateTime& t);
     // 自动保存是否已关闭（间隔=0）→ 标签显示「自动保存:关」
     void setAutosaveEnabled(bool on);
+    // 语言切换：重译构造时固化的静态文本（就绪/平面/图元/比例/自动保存/开关组按钮）。
+    // 动态值（坐标/命令/选项）由各自 setter 在下次刷新时重算，无需在此处理。
+    void retranslate();
 signals:
     void toggleRequested(Toggle key, bool on); // 用户点击开关 → MainWindow 回写模型
     void manualSaveRequested();                // 用户点击「上次自动保存」标签

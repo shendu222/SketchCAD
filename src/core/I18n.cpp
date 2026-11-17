@@ -1,4 +1,5 @@
 #include "I18n.h"
+#include "I18nDict.h"
 
 #include <QCoreApplication>
 #include <QLocale>
@@ -11,6 +12,55 @@ namespace {
 // 单一翻译器实例：卸旧装新共用一份，避免多实例叠加导致译文错乱。
 QTranslator* g_translator = nullptr;
 QString g_activeLang = QStringLiteral("zh-CN");
+
+const QChar kCjkMin = QChar(0x3400);
+const QChar kCjkMax = QChar(0x9fff);
+
+inline bool isCjk(const QChar c) {
+    return c >= kCjkMin && c <= kCjkMax;
+}
+
+bool hasCjk(const QString& s) {
+    for (const QChar c : s)
+        if (isCjk(c)) return true;
+    return false;
+}
+
+// 术语级最长匹配清洗：把任意文本里残留的中文 UI 词替换为英文。
+// 精确词典未命中时用它兜底，覆盖运行时拼接、数字/占位符已代入的模板、
+// 以及「英文模板 + 中文术语实参」这类混合串。
+QString scrubByTerms(const QString& text) {
+    if (!hasCjk(text)) return text;                 // 纯英文/ASCII 直接返回
+    const auto& terms = Runtime::termMap();
+    const int maxLen = Runtime::maxTermLength();
+    QString out;
+    out.reserve(text.size() * 2);
+    int i = 0;
+    const int n = text.size();
+    while (i < n) {
+        if (!isCjk(text.at(i))) { out.append(text.at(i)); ++i; continue; }
+        bool hit = false;
+        const int room = qMin(maxLen, n - i);
+        for (int len = room; len >= 1; --len) {
+            auto it = terms.constFind(text.mid(i, len));
+            if (it == terms.constEnd()) continue;
+            const QString& en = it.value();
+            if (!en.isEmpty()) {
+                // 词间留空格；紧邻 ASCII 标点时由后置规整统一收紧
+                if (!out.isEmpty() && !out.at(out.size() - 1).isSpace())
+                    out.append(QLatin1Char(' '));
+                out.append(en);
+                if (!out.isEmpty() && !out.at(out.size() - 1).isSpace())
+                    out.append(QLatin1Char(' '));
+            }
+            i += len;
+            hit = true;
+            break;
+        }
+        if (!hit) { out.append(text.at(i)); ++i; }   // 用户数据里的生僻汉字：保留
+    }
+    return out.simplified();
+}
 } // namespace
 
 QString resolveLanguage(const QString& setting) {
@@ -55,6 +105,33 @@ bool installTranslator(const QString& resolvedLang) {
     }
     QCoreApplication::installTranslator(g_translator);
     return true;
+}
+
+QString t(const QString& zhText) {
+    if (g_activeLang != QLatin1String("en")) return zhText;   // 源语言：逐字不变
+    if (zhText.isEmpty() || !hasCjk(zhText)) return zhText;   // 已译英文 / ASCII 直通
+    const auto& dict = Runtime::exactMap();
+    auto it = dict.constFind(zhText);
+    if (it != dict.constEnd()) return it.value();
+    return scrubByTerms(zhText);
+}
+
+QString tUtf8(const char* zhUtf8) {
+    if (!zhUtf8) return QString();
+    return t(QString::fromUtf8(zhUtf8));
+}
+
+QStringList dictionaryKeys() {
+    return Runtime::exactMap().keys();
+}
+
+QString termScrub(const QString& text) {
+    if (g_activeLang != QLatin1String("en")) return text;
+    return scrubByTerms(text);
+}
+
+void setRuntimeLanguageForTest(const QString& resolvedLang) {
+    g_activeLang = resolveLanguage(resolvedLang);
 }
 
 } // namespace I18n

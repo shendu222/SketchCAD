@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/GdtAnnotationDialog.h"
 #include "core/Gdt.h"              // 纯逻辑 helper + createFcf + FcfSymbol
 #include "core/SurfaceRoughness.h" // buildRoughnessSymbol：粗糙度符号生成
@@ -24,7 +25,7 @@ namespace SketchCAD {
 
 GdtAnnotationDialog::GdtAnnotationDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("GD&T 标注面板 — 粗糙度 / 几何公差"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("GD&T 标注面板 — 粗糙度 / 几何公差")));
     resize(520, 560);
 
     auto* tabs = new QTabWidget(this);
@@ -34,22 +35,22 @@ GdtAnnotationDialog::GdtAnnotationDialog(SketchModel* model, QWidget* parent)
     auto* rLay = new QVBoxLayout(roughPage);
     auto* rTop = new QHBoxLayout();
     cbRoughType_ = new QComboBox(roughPage);
-    cbRoughType_->addItem(QStringLiteral("Ra（轮廓算术平均偏差）"));
-    cbRoughType_->addItem(QStringLiteral("Rz（轮廓最大高度）"));
+    cbRoughType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("Ra（轮廓算术平均偏差）")));
+    cbRoughType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("Rz（轮廓最大高度）")));
     leRough_ = new QLineEdit(roughPage);
-    leRough_->setPlaceholderText(QStringLiteral("输入数值，如 1.6 → 自动匹配标准值"));
-    rTop->addWidget(new QLabel(QStringLiteral("类型："), roughPage));
+    leRough_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("输入数值，如 1.6 → 自动匹配标准值")));
+    rTop->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("类型：")), roughPage));
     rTop->addWidget(cbRoughType_, 1);
-    rTop->addWidget(new QLabel(QStringLiteral("值："), roughPage));
+    rTop->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("值：")), roughPage));
     rTop->addWidget(leRough_, 1);
     rLay->addLayout(rTop);
 
-    rLay->addWidget(new QLabel(QStringLiteral("标准系列（点击即赋值 / 输入即实时高亮最近值）："), roughPage));
+    rLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("标准系列（点击即赋值 / 输入即实时高亮最近值）：")), roughPage));
     listRough_ = new QListWidget(roughPage);
     rLay->addWidget(listRough_, 1);
 
     auto* rBtn = new QHBoxLayout();
-    auto* btnRoughPlace = new QPushButton(QStringLiteral("放置到图纸"), roughPage);
+    auto* btnRoughPlace = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("放置到图纸")), roughPage);
     btnRoughPlace->setEnabled(model_ != nullptr);
     rBtn->addStretch(1);
     rBtn->addWidget(btnRoughPlace);
@@ -62,22 +63,22 @@ GdtAnnotationDialog::GdtAnnotationDialog(SketchModel* model, QWidget* parent)
     cbGeoFeature_ = new QComboBox(geoPage);
     cbGeoFeature_->addItems(geoTolFeatures());
     leGeoValue_ = new QLineEdit(geoPage);
-    leGeoValue_->setPlaceholderText(QStringLiteral("公差值，如 0.02"));
+    leGeoValue_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("公差值，如 0.02")));
     leGeoDatum_ = new QLineEdit(geoPage);
-    leGeoDatum_->setPlaceholderText(QStringLiteral("基准（可空，多基准空格分隔，如 A B）"));
-    gForm->addRow(QStringLiteral("特征："), cbGeoFeature_);
-    gForm->addRow(QStringLiteral("公差值："), leGeoValue_);
-    gForm->addRow(QStringLiteral("基准："), leGeoDatum_);
+    leGeoDatum_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("基准（可空，多基准空格分隔，如 A B）")));
+    gForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("特征：")), cbGeoFeature_);
+    gForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("公差值：")), leGeoValue_);
+    gForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("基准：")), leGeoDatum_);
     gLay->addLayout(gForm);
 
     lblGeoSym_ = new QLabel(geoPage);
     gLay->addWidget(lblGeoSym_);
 
-    gLay->addWidget(new QLabel(QStringLiteral("标准选项（随特征即时刷新）："), geoPage));
+    gLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("标准选项（随特征即时刷新）：")), geoPage));
     listGeo_ = new QListWidget(geoPage);
     gLay->addWidget(listGeo_, 1);
 
-    gLay->addWidget(new QLabel(QStringLiteral("修饰符（勾选即纳入框格）："), geoPage));
+    gLay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("修饰符（勾选即纳入框格）：")), geoPage));
     listMod_ = new QListWidget(geoPage);
     listMod_->setMaximumHeight(110);
     for (const QString& m : geoTolModifiers()) {
@@ -88,17 +89,17 @@ GdtAnnotationDialog::GdtAnnotationDialog(SketchModel* model, QWidget* parent)
     gLay->addWidget(listMod_);
 
     auto* gBtn = new QHBoxLayout();
-    auto* btnGeoPlace = new QPushButton(QStringLiteral("放置到图纸"), geoPage);
+    auto* btnGeoPlace = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("放置到图纸")), geoPage);
     btnGeoPlace->setEnabled(model_ != nullptr);
     gBtn->addStretch(1);
     gBtn->addWidget(btnGeoPlace);
     gLay->addLayout(gBtn);
 
-    tabs->addTab(roughPage, QStringLiteral("粗糙度"));
-    tabs->addTab(geoPage, QStringLiteral("几何公差"));
+    tabs->addTab(roughPage, SketchCAD::I18n::t(QString::fromUtf8("粗糙度")));
+    tabs->addTab(geoPage, SketchCAD::I18n::t(QString::fromUtf8("几何公差")));
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Close, Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Close)->setText(QStringLiteral("关闭"));
+    box->button(QDialogButtonBox::Close)->setText(SketchCAD::I18n::t(QString::fromUtf8("关闭")));
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* root = new QVBoxLayout(this);
@@ -167,19 +168,19 @@ void GdtAnnotationDialog::onRoughPlace() {
     if (t.startsWith(QStringLiteral("Ra"), Qt::CaseInsensitive)) t = t.mid(2);
     else if (t.startsWith(QStringLiteral("Rz"), Qt::CaseInsensitive)) t = t.mid(2);
     bool ok = false; const double v = t.trimmed().toDouble(&ok);
-    if (!ok) { QMessageBox::warning(this, QStringLiteral("GD&T 标注"),
-                                   QStringLiteral("请输入有效数值（如 1.6）")); return; }
+    if (!ok) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("GD&T 标注")),
+                                   SketchCAD::I18n::t(QString::fromUtf8("请输入有效数值（如 1.6）"))); return; }
     const QString nearest = nearestRoughnessValue(v, rz);
-    if (nearest.isEmpty()) { QMessageBox::warning(this, QStringLiteral("GD&T 标注"),
-                                                 QStringLiteral("无可用标准值")); return; }
+    if (nearest.isEmpty()) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("GD&T 标注")),
+                                                 SketchCAD::I18n::t(QString::fromUtf8("无可用标准值"))); return; }
     RoughnessSpec spec;
     spec.anchor = Vec3(60.0, 60.0, 0.0);
     spec.value = (rz ? QStringLiteral("Rz ") : QStringLiteral("Ra ")) + nearest;
     spec.removeMaterial = true;
     spec.textHeight = 3.5;
-    model_->beginEdit(QStringLiteral("粗糙度标注"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("粗糙度标注")));
     model_->addElementsQuiet(buildRoughnessSymbol(spec));
-    model_->log(QStringLiteral("已放置粗糙度符号 %1").arg(spec.value), QStringLiteral("info"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已放置粗糙度符号 %1")).arg(spec.value), QStringLiteral("info"));
 }
 
 // ----------------------------- 几何公差 -----------------------------
@@ -192,13 +193,13 @@ void GdtAnnotationDialog::refreshGeoOptions() {
     const QString symName = (sym >= 0 && fcfSymbolValid(sym))
                                 ? QString::fromUtf8(fcfSymbolName((FcfSymbol)sym))
                                 : QStringLiteral("（当前符号集未收录）");
-    lblGeoSym_->setText(QStringLiteral("框格符号：%1").arg(symName));
+    lblGeoSym_->setText(SketchCAD::I18n::t(QString::fromUtf8("框格符号：%1")).arg(symName));
 
     listGeo_->clear();
-    listGeo_->addItem(QStringLiteral("类别：") + (category.isEmpty() ? QStringLiteral("（未知）") : category));
-    listGeo_->addItem(QStringLiteral("特征：") + feature);
-    listGeo_->addItem(QStringLiteral("可用修饰符：") + geoTolModifiers().join(QStringLiteral(" / ")));
-    listGeo_->addItem(QStringLiteral("预览："));
+    listGeo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("类别：")) + (category.isEmpty() ? QStringLiteral("（未知）") : category));
+    listGeo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("特征：")) + feature);
+    listGeo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("可用修饰符：")) + geoTolModifiers().join(QStringLiteral(" / ")));
+    listGeo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("预览：")));
     updateGeoPreview();
 }
 
@@ -212,7 +213,7 @@ void GdtAnnotationDialog::updateGeoPreview() {
     for (int i = 0; i < listMod_->count(); ++i)
         if (listMod_->item(i)->checkState() == Qt::Checked)
             mods += (mods.isEmpty() ? QString() : QStringLiteral(" ")) + listMod_->item(i)->text();
-    listGeo_->item(3)->setText(QStringLiteral("预览：") +
+    listGeo_->item(3)->setText(SketchCAD::I18n::t(QString::fromUtf8("预览：")) +
                                 composeGeoTolText(feature, value, datums, mods));
 }
 
@@ -225,8 +226,8 @@ void GdtAnnotationDialog::onGeoPlace() {
     const QString feature = cbGeoFeature_->currentText();
     const int sym = geoTolSymbolForFeature(feature);
     if (sym < 0 || !fcfSymbolValid(sym)) {
-        QMessageBox::warning(this, QStringLiteral("GD&T 标注"),
-            QStringLiteral("当前符号集未收录「%1」，已禁用放置；可用命令 tol 以文本创建框格。").arg(feature));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("GD&T 标注")),
+            SketchCAD::I18n::t(QString::fromUtf8("当前符号集未收录「%1」，已禁用放置；可用命令 tol 以文本创建框格。")).arg(feature));
         return;
     }
     const QString value = leGeoValue_->text().trimmed();
@@ -238,13 +239,13 @@ void GdtAnnotationDialog::onGeoPlace() {
         if (listMod_->item(i)->checkState() == Qt::Checked)
             mods += (mods.isEmpty() ? QString() : QStringLiteral(" ")) + listMod_->item(i)->text();
     const Element e = ElementFactory::createFcf(Vec3(60.0, 60.0, 0.0), sym, value, datumVec, 7.0, mods);
-    model_->beginEdit(QStringLiteral("几何公差标注"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("几何公差标注")));
     const int id = model_->addElement(e);
     if (id >= 0)
-        model_->log(QStringLiteral("已放置形位公差框格 #%1：%2").arg(id)
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已放置形位公差框格 #%1：%2")).arg(id)
                        .arg(composeGeoTolText(feature, value, datums, mods)), QStringLiteral("info"));
     else
-        model_->log(QStringLiteral("几何公差创建失败"), QStringLiteral("error"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("几何公差创建失败")), QStringLiteral("error"));
 }
 
 } // namespace SketchCAD

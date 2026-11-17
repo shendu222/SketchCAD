@@ -1,4 +1,5 @@
 #include "CommandCatalog.h"
+#include "core/I18n.h"
 #include <QHash>
 #include <algorithm>
 
@@ -17,20 +18,25 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     // ⚠️ 用 add() 逐条构建，而不是一条巨型聚合初始化：
     //    MinGW GCC 13.1 (cc1plus) 处理约 47+ 条非平凡类型嵌套花括号初始化
     //    会静默崩溃（EXIT=1 零诊断）；逐条 add 是独立表达式，彻底绕开。
-    static const QVector<CommandInfo> table = [] {
+    // 语言切换后重建（中文源串保持不变，只在组装时做显示层翻译）。
+    static QVector<CommandInfo> table;
+    static QString tableLang;
+    const QString lang = SketchCAD::I18n::activeLanguage();
+    if (!table.isEmpty() && tableLang == lang) return table;
+    table = [] {
         QVector<CommandInfo> t;
         auto add = [&t](const char* name, const char* zh, const char* cat,
                         const char* sum, const char* usage, const char* params,
                         const char* ex, std::initializer_list<const char*> rel,
                         const char* sc) {
             CommandInfo ci;
-            ci.name = QString::fromUtf8(name);
-            ci.zhName = QString::fromUtf8(zh);
-            ci.category = QString::fromUtf8(cat);
-            ci.summary = QString::fromUtf8(sum);
-            ci.usage = QString::fromUtf8(usage);
-            ci.params = QString::fromUtf8(params);
-            ci.example = QString::fromUtf8(ex);
+            ci.name = QString::fromUtf8(name);       // 命令 id 恒 ASCII，绝不翻译
+            ci.zhName = SketchCAD::I18n::tUtf8(zh);
+            ci.category = SketchCAD::I18n::tUtf8(cat);
+            ci.summary = SketchCAD::I18n::tUtf8(sum);
+            ci.usage = SketchCAD::I18n::tUtf8(usage);
+            ci.params = SketchCAD::I18n::tUtf8(params);
+            ci.example = SketchCAD::I18n::tUtf8(ex);
             for (const char* r : rel) ci.related << QString::fromUtf8(r);
             ci.shortcut = QString::fromUtf8(sc);
             t.append(ci);
@@ -176,6 +182,7 @@ const QVector<CommandInfo>& CommandCatalog::entries() {
     add("checkcompliance", "合规检查(AI)", "工具", "与 stdcheck 相同的工程制图合规检查，供 AI 助手 checkCompliance 经 runSketchCommand 调用", "checkcompliance", "AI 工具派发 runSketchCommand(\"checkcompliance\") 经 CommandInterpreter 触发同一检查逻辑", "checkcompliance", { "stdcheck" }, "");
         return t;
     }();
+    tableLang = lang;
     return table;
 }
 

@@ -222,6 +222,11 @@ private:
 
     void buildMenu();
     void rebuildMenusForLanguage();           // 语言切换即刻生效：卸旧菜单 → buildMenu 重跑 tr()
+    // 语言切换的整体刷新：重建菜单栏 + 工具栏 + Dock 标题 + 参数栏/状态栏/命令行标签。
+    // installTranslator 会广播 QEvent::LanguageChange，changeEvent 收到后调这里，
+    // 使所有常驻 UI 文本立即按新语言重新求值，无需重启。
+    void retranslateUi();
+    void changeEvent(QEvent* event) override;  // 捕获 LanguageChange → retranslateUi
     // ---- P1~P9 功能菜单与准入（FeatureMenu 目录驱动）----
     // 菜单注册：buildMenu 内由 featureCatalog() 生成「扩展工具」顶层菜单
     // （9 个 P 分组子菜单），QAction 集中登记到 featureActs_；

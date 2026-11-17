@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "CrashRecoveryDialog.h"
 
 #include <QVBoxLayout>
@@ -15,14 +16,13 @@ namespace SketchCAD {
 CrashRecoveryDialog::CrashRecoveryDialog(const QVector<AutoSave::Snapshot>& snaps,
                                          QWidget* parent)
     : QDialog(parent), snaps_(snaps) {
-    setWindowTitle(QStringLiteral("图纸恢复"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("图纸恢复")));
     setMinimumSize(640, 380);
 
     auto* lay = new QVBoxLayout(this);
 
     lbHint_ = new QLabel(
-        QStringLiteral("检测到上次异常退出留下的自动保存快照。\n"
-                       "选择一份恢复到其原图纸位置，或丢弃（丢弃不可撤销）。"),
+        SketchCAD::I18n::t(QString::fromUtf8("检测到上次异常退出留下的自动保存快照。\n选择一份恢复到其原图纸位置，或丢弃（丢弃不可撤销）。")),
         this);
     lbHint_->setWordWrap(true);
     lay->addWidget(lbHint_);
@@ -30,7 +30,7 @@ CrashRecoveryDialog::CrashRecoveryDialog(const QVector<AutoSave::Snapshot>& snap
     table_ = new QTableWidget(this);
     table_->setColumnCount(3);
     table_->setHorizontalHeaderLabels(
-        {QStringLiteral("保存时间"), QStringLiteral("原图纸路径"), QStringLiteral("大小")});
+        {SketchCAD::I18n::t(QString::fromUtf8("保存时间")), SketchCAD::I18n::t(QString::fromUtf8("原图纸路径")), SketchCAD::I18n::t(QString::fromUtf8("大小"))});
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -55,9 +55,9 @@ CrashRecoveryDialog::CrashRecoveryDialog(const QVector<AutoSave::Snapshot>& snap
 
     auto* btns = new QHBoxLayout;
     btns->addStretch();
-    btnRecover_ = new QPushButton(QStringLiteral("恢复所选"), this);
-    btnDiscard_ = new QPushButton(QStringLiteral("丢弃所选"), this);
-    QPushButton* btnAll = new QPushButton(QStringLiteral("全部丢弃"), this);
+    btnRecover_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("恢复所选")), this);
+    btnDiscard_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("丢弃所选")), this);
+    QPushButton* btnAll = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("全部丢弃")), this);
     btns->addWidget(btnRecover_);
     btns->addWidget(btnDiscard_);
     btns->addWidget(btnAll);
@@ -97,8 +97,8 @@ void CrashRecoveryDialog::onDiscard() {
     const auto s = selectedSnapshot();
     if (s.fullPath.isEmpty()) return;
     const auto a = QMessageBox::question(
-        this, QStringLiteral("确认丢弃"),
-        QStringLiteral("确定丢弃该自动保存快照？\n此操作不可撤销。"),
+        this, SketchCAD::I18n::t(QString::fromUtf8("确认丢弃")),
+        SketchCAD::I18n::t(QString::fromUtf8("确定丢弃该自动保存快照？\n此操作不可撤销。")),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (a != QMessageBox::Yes) return;
     emit discardRequested(s);
@@ -107,8 +107,8 @@ void CrashRecoveryDialog::onDiscard() {
 void CrashRecoveryDialog::onDiscardAll() {
     if (snaps_.isEmpty()) return;
     const auto a = QMessageBox::question(
-        this, QStringLiteral("确认全部丢弃"),
-        QStringLiteral("确定丢弃全部 %1 份自动保存快照？\n此操作不可撤销。").arg(snaps_.size()),
+        this, SketchCAD::I18n::t(QString::fromUtf8("确认全部丢弃")),
+        SketchCAD::I18n::t(QString::fromUtf8("确定丢弃全部 %1 份自动保存快照？\n此操作不可撤销。")).arg(snaps_.size()),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (a != QMessageBox::Yes) return;
     emit discardAllRequested();

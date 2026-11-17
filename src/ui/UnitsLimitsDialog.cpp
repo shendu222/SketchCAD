@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "UnitsLimitsDialog.h"
 #include "core/SketchModel.h"
 #include <QComboBox>
@@ -14,7 +15,7 @@ namespace SketchCAD {
 
 UnitsLimitsDialog::UnitsLimitsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("单位与图纸界限 (UNITS / LIMITS)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("单位与图纸界限 (UNITS / LIMITS)")));
     const UnitsMeta  u = model ? model->units()  : UnitsMeta();
     const LimitsMeta l = model ? model->limits() : LimitsMeta();
 
@@ -38,16 +39,16 @@ UnitsLimitsDialog::UnitsLimitsDialog(SketchModel* model, QWidget* parent)
     sbAnglePrec_->setSuffix(QStringLiteral(" 位"));
 
     auto* unitForm = new QFormLayout;
-    unitForm->addRow(QStringLiteral("长度单位（显示/输入）："), cbLength_);
-    unitForm->addRow(QStringLiteral("角度单位（显示/输入）："), cbAngle_);
-    unitForm->addRow(QStringLiteral("长度精度："), sbLengthPrec_);
-    unitForm->addRow(QStringLiteral("角度精度："), sbAnglePrec_);
+    unitForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("长度单位（显示/输入）：")), cbLength_);
+    unitForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("角度单位（显示/输入）：")), cbAngle_);
+    unitForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("长度精度：")), sbLengthPrec_);
+    unitForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("角度精度：")), sbAnglePrec_);
 
-    auto* unitBox = new QGroupBox(QStringLiteral("单位"), this);
+    auto* unitBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("单位")), this);
     unitBox->setLayout(unitForm);
 
     // ---- 界限区（坐标恒为模型 mm，与单位设置无关）----
-    ckCheckOn_ = new QCheckBox(QStringLiteral("开启越界检查（新增图元出界时告警，不拦截）"), this);
+    ckCheckOn_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("开启越界检查（新增图元出界时告警，不拦截）")), this);
     ckCheckOn_->setChecked(l.checkOn);
 
     auto mk = [this](double v) {
@@ -59,13 +60,13 @@ UnitsLimitsDialog::UnitsLimitsDialog(SketchModel* model, QWidget* parent)
     sbX1_ = mk(l.x1); sbY1_ = mk(l.y1); sbX2_ = mk(l.x2); sbY2_ = mk(l.y2);
 
     auto* limForm = new QFormLayout;
-    limForm->addRow(QStringLiteral("左下 X："), sbX1_);
-    limForm->addRow(QStringLiteral("左下 Y："), sbY1_);
-    limForm->addRow(QStringLiteral("右上 X："), sbX2_);
-    limForm->addRow(QStringLiteral("右上 Y："), sbY2_);
+    limForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("左下 X：")), sbX1_);
+    limForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("左下 Y：")), sbY1_);
+    limForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("右上 X：")), sbX2_);
+    limForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("右上 Y：")), sbY2_);
     limForm->addRow(QString(), ckCheckOn_);
 
-    auto* limBox = new QGroupBox(QStringLiteral("图纸界限（LIMITS，模型 mm）"), this);
+    auto* limBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("图纸界限（LIMITS，模型 mm）")), this);
     limBox->setLayout(limForm);
 
     // ---- 预览（示例：长度 1234.5mm / 角度 45° 按当前口径的显示效果）----
@@ -109,7 +110,7 @@ LimitsMeta UnitsLimitsDialog::collectLimits() const {
 
 void UnitsLimitsDialog::updatePreview() {
     const UnitsMeta u = collectUnits();
-    lbPreview_->setText(QStringLiteral("预览：长度 %1 ／ 角度 %2")
+    lbPreview_->setText(SketchCAD::I18n::t(QString::fromUtf8("预览：长度 %1 ／ 角度 %2"))
                         .arg(formatLengthWithUnit(1234.5, u),
                              formatAngleDeg(45.0, u)));
 }

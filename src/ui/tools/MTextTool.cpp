@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/MTextTool.h"
 #include "ui/MTextDialog.h"
 #include "ui/GraphicsView.h"   // GraphicsView 完整类型（作为对话框 parent 的 QWidget*）
@@ -28,10 +29,10 @@ bool MTextTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     Element el = dlg.buildElement(anchor);
     const int id = ctx.model->addElement(el);   // 触发 rebuild()，预览项在那里被销毁
     ctx.model->setSelected(id);
-    ctx.model->log(QStringLiteral("已创建多行文字 #%1（%2 行，样式 %3）")
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已创建多行文字 #%1（%2 行，样式 %3）"))
                       .arg(id)
                       .arg(el.text.split('\n').size())
-                      .arg(el.styleName.isEmpty() ? QStringLiteral("默认") : el.styleName));
+                      .arg(el.styleName.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("默认")) : el.styleName));
     // 创建完成后回到选择工具（MTEXT 为单次放置型）
     ctx.model->setActiveTool(QStringLiteral("select"));
     return true;

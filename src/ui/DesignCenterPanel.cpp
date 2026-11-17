@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "DesignCenterPanel.h"
 
 #include <QFileDialog>
@@ -26,22 +27,20 @@ DesignCenterPanel::DesignCenterPanel(SketchModel* model, QWidget* parent)
     : QWidget(parent), model_(model)
 {
     auto* top = new QHBoxLayout;
-    auto* title = new QLabel(QStringLiteral("<b>设计中心</b>（符号库）"));
-    loadBtn_ = new QPushButton(QStringLiteral("加载外部块库..."));
+    auto* title = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("<b>设计中心</b>（符号库）")));
+    loadBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("加载外部块库...")));
     top->addWidget(title);
     top->addStretch(1);
     top->addWidget(loadBtn_);
 
     tree_ = new QTreeWidget;
     tree_->setColumnCount(2);
-    tree_->setHeaderLabels({ QStringLiteral("名称"), QStringLiteral("图元数") });
+    tree_->setHeaderLabels({ SketchCAD::I18n::t(QString::fromUtf8("名称")), SketchCAD::I18n::t(QString::fromUtf8("图元数")) });
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     tree_->setRootIsDecorated(true);
     tree_->setAlternatingRowColors(true);
 
-    info_ = new QLabel(QStringLiteral(
-        "双击块 → 在视图中心插入。「当前图块表」随本图块表实时刷新；"
-        "「外部文件块表」来自 SketchCAD 存档(.json) / DXF(.dxf)。"));
+    info_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("双击块 → 在视图中心插入。「当前图块表」随本图块表实时刷新；「外部文件块表」来自 SketchCAD 存档(.json) / DXF(.dxf)。")));
     info_->setWordWrap(true);
 
     auto* lay = new QVBoxLayout(this);
@@ -67,7 +66,7 @@ void DesignCenterPanel::refresh() {
     tree_->clear();
 
     // ---- 当前图块表 ----
-    auto* cur = new QTreeWidgetItem(tree_, { QStringLiteral("当前图块表"), QString() });
+    auto* cur = new QTreeWidgetItem(tree_, { SketchCAD::I18n::t(QString::fromUtf8("当前图块表")), QString() });
     cur->setData(0, kRoleKind, 0);
     cur->setFirstColumnSpanned(true);
     if (model_) {
@@ -75,7 +74,7 @@ void DesignCenterPanel::refresh() {
             auto* it = new QTreeWidgetItem(cur, { d.name, QString::number((int)d.entities.size()) });
             it->setData(0, kRoleKind, 0);
             it->setData(0, kRoleName, d.name);
-            if (d.isXref) it->setToolTip(0, QStringLiteral("外部参照（Xref）"));
+            if (d.isXref) it->setToolTip(0, SketchCAD::I18n::t(QString::fromUtf8("外部参照（Xref）")));
         }
     }
     cur->setExpanded(true);
@@ -102,8 +101,8 @@ void DesignCenterPanel::refresh() {
 
 void DesignCenterPanel::onLoadExternal() {
     const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("加载外部块库"), QString(),
-        QStringLiteral("块库文件 (*.json *.dxf);;SketchCAD 存档 (*.json);;DXF 图纸 (*.dxf);;所有文件 (*)"));
+        this, SketchCAD::I18n::t(QString::fromUtf8("加载外部块库")), QString(),
+        SketchCAD::I18n::t(QString::fromUtf8("块库文件 (*.json *.dxf);;SketchCAD 存档 (*.json);;DXF 图纸 (*.dxf);;所有文件 (*)")));
     if (path.isEmpty()) return;
     addExternalFile(path);
 }
@@ -114,13 +113,13 @@ void DesignCenterPanel::addExternalFile(const QString& path) {
     if (suffix == "json")      defs = cadfmt::blockTableFromJson(path);
     else if (suffix == "dxf")  defs = cadfmt::blockTableFromDxf(path);
     else {
-        QMessageBox::warning(this, QStringLiteral("加载外部块库"),
-                             QStringLiteral("仅支持 .json（SketchCAD 存档）与 .dxf 图纸的块表。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("加载外部块库")),
+                             SketchCAD::I18n::t(QString::fromUtf8("仅支持 .json（SketchCAD 存档）与 .dxf 图纸的块表。")));
         return;
     }
     if (defs.empty()) {
-        QMessageBox::information(this, QStringLiteral("加载外部块库"),
-                                 QStringLiteral("未能从「%1」读取到任何块定义。").arg(QFileInfo(path).fileName()));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("加载外部块库")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("未能从「%1」读取到任何块定义。")).arg(QFileInfo(path).fileName()));
         return;
     }
     // 剔除匿名块（* 前缀，导入器已过滤，此处再兜一层）

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/StandardsBrowserDialog.h"
 #include "core/standards/StandardsDB.h" // 只读浏览数据源（与命令/LLM 工具共用单例）
 
@@ -27,14 +28,14 @@ static QString valueToText(const QJsonValue& v) {
 
 StandardsBrowserDialog::StandardsBrowserDialog(QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle(tr("标准知识库"));
+    setWindowTitle(SketchCAD::I18n::t(tr("标准知识库")));
     resize(780, 540);
 
     const StandardsDB& db = StandardsDB::instance();
 
     auto* root = new QVBoxLayout(this);
     const int n = db.allTables().size();
-    srcLabel_ = new QLabel(tr("机械制图国标数据（内嵌《机械制图手册（第四版）》）：共 %1 类表，只读浏览。").arg(n));
+    srcLabel_ = new QLabel(SketchCAD::I18n::t(tr("机械制图国标数据（内嵌《机械制图手册（第四版）》）：共 %1 类表，只读浏览。")).arg(n));
     root->addWidget(srcLabel_);
 
     auto* split = new QHBoxLayout();
@@ -45,11 +46,11 @@ StandardsBrowserDialog::StandardsBrowserDialog(QWidget* parent)
 
     auto* right = new QVBoxLayout();
     filter_ = new QLineEdit();
-    filter_->setPlaceholderText(tr("过滤当前表的键名 / 值"));
+    filter_->setPlaceholderText(SketchCAD::I18n::t(tr("过滤当前表的键名 / 值")));
     right->addWidget(filter_);
 
     table_ = new QTableWidget(0, 2);
-    table_->setHorizontalHeaderLabels({ tr("键"), tr("值") });
+    table_->setHorizontalHeaderLabels({ SketchCAD::I18n::t(tr("键")), SketchCAD::I18n::t(tr("值")) });
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);

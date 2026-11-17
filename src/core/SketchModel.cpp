@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "SketchModel.h"
 #include "Geometry.h"
 #include "ConstraintSolver.h"
@@ -541,7 +542,7 @@ qint64 SketchModel::maxDeltaEntryBytes() const {
 }
 
 int SketchModel::addElement(const Element& e) {
-    pushMemento(QStringLiteral("添加") + e.name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("添加")) + e.name);
     Element ne = e;
     ne.id = nextId_++;
     checkElementLimits(ne);   // LIMITS checkOn 开启时对新增图元做越界告警（不拦截，仅提示）
@@ -553,7 +554,7 @@ int SketchModel::addElement(const Element& e) {
 bool SketchModel::removeElement(int id) {
     auto it = find(id);
     if (it == elems_.end()) return false;
-    pushMemento(QStringLiteral("删除") + it->name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除")) + it->name);
     elems_.erase(it);
     auto sit = std::find(selectedIds_.begin(), selectedIds_.end(), id);
     if (sit != selectedIds_.end()) selectedIds_.erase(sit);
@@ -570,7 +571,7 @@ bool SketchModel::removeElement(int id) {
 bool SketchModel::updateElement(int id, std::function<void(Element&)> fn) {
     auto it = find(id);
     if (it == elems_.end()) return false;
-    pushMemento(QStringLiteral("编辑") + it->name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("编辑")) + it->name);
     fn(*it);
     emit modelChanged();
     emit elementUpdated(id);
@@ -578,7 +579,7 @@ bool SketchModel::updateElement(int id, std::function<void(Element&)> fn) {
 }
 
 void SketchModel::beginEdit(const QString& label) {
-    pushMemento(label.isEmpty() ? QStringLiteral("编辑") : label);
+    pushMemento(label.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("编辑")) : label);
 }
 
 bool SketchModel::updateElementQuiet(int id, std::function<void(Element&)> fn) {
@@ -681,7 +682,7 @@ std::vector<int> SketchModel::replaceElement(int id, const std::vector<Element>&
     std::vector<int> ids;
     auto it = find(id);
     if (it == elems_.end()) return ids;
-    pushMemento(label.isEmpty() ? QStringLiteral("剪切") : label);
+    pushMemento(label.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("剪切")) : label);
     size_t pos = (size_t)(it - elems_.begin());
     elems_.erase(it);
     // 插回原位置，保持图层顺序（z 序）不跳动
@@ -715,7 +716,7 @@ bool SketchModel::updateElementLinked(int id, std::function<void(Element&)> fn) 
     // 修改前快照整个图元列表，用于约束检测（需求：关联图元联动原则）
     auto beforeElems = elems_;
 
-    pushMemento(QStringLiteral("编辑(联动)") + it->name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("编辑(联动)")) + it->name);
     fn(*it);
 
     // 修改后取新控制点位置，逐个比较：移动了的控制点需要传播到相连图元
@@ -745,7 +746,7 @@ bool SketchModel::updateElementLinked(int id, std::function<void(Element&)> fn) 
     if (!constraints_.empty()) {
         const auto rep = ConstraintSolverFacade::instance().solveAll(*this);
         if (!rep.failures.empty())
-            log(QStringLiteral("几何约束：%1 条未满足，可用 constraint list / check 定位")
+            log(SketchCAD::I18n::t(QString::fromUtf8("几何约束：%1 条未满足，可用 constraint list / check 定位"))
                     .arg(rep.failures.size()), QStringLiteral("warn"));
     }
 
@@ -836,7 +837,7 @@ bool SketchModel::driveDimension(int dimId, double value) {
 
     // ---- 统一执行：一次快照、一次 modelChanged ----
     const auto beforeElems = elems_;   // 修改前快照：隐式约束恢复检测（solveAfterChange）用
-    pushMemento(QStringLiteral("驱动尺寸"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("驱动尺寸")));
     std::vector<int> touched;          // 受影响图元集合：联动传播/约束修复/填充随动/域同步共用
     touched.push_back(dimId);
 
@@ -940,7 +941,7 @@ bool SketchModel::driveDimension(int dimId, double value) {
         if (!constraints_.empty()) {
             const auto rep = ConstraintSolverFacade::instance().solveAll(*this);
             if (!rep.failures.empty())
-                log(QStringLiteral("尺寸驱动：%1 条约束未满足，可用 constraint list / check 定位")
+                log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动：%1 条约束未满足，可用 constraint list / check 定位"))
                         .arg(rep.failures.size()), QStringLiteral("warn"));
         }
     }
@@ -1025,7 +1026,7 @@ void SketchModel::selectAll() {
     std::vector<int> ids;
     for (const auto& e : elems_) if (e.visible) ids.push_back(e.id);
     setSelection(ids);
-    log(QStringLiteral("已全选 %1 个图元").arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已全选 %1 个图元")).arg(ids.size()));
 }
 
 void SketchModel::selectWindow(const QRectF& rect, bool additive) {
@@ -1039,8 +1040,8 @@ void SketchModel::selectWindow(const QRectF& rect, bool additive) {
         if (r.intersects(boundsOf(e).adjusted(-eps, -eps, eps, eps))) ids.push_back(e.id);
     }
     if (additive) addToSelection(ids); else setSelection(ids);
-    log(QStringLiteral("框选完成：选中 %1 个图元%2")
-            .arg(ids.size()).arg(additive ? QStringLiteral("（已并入选区）") : QString()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("框选完成：选中 %1 个图元%2"))
+            .arg(ids.size()).arg(additive ? SketchCAD::I18n::t(QString::fromUtf8("（已并入选区）")) : QString()));
 }
 
 void SketchModel::deselectWindow(const QRectF& rect) {
@@ -1053,7 +1054,7 @@ void SketchModel::deselectWindow(const QRectF& rect) {
         if (!r.intersects(boundsOf(*e).adjusted(-eps, -eps, eps, eps))) keep.push_back(id);
     }
     if ((int)keep.size() != (int)selectedIds_.size()) setSelection(keep);
-    log(QStringLiteral("框取消完成：剩余选中 %1 个图元").arg(keep.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("框取消完成：剩余选中 %1 个图元")).arg(keep.size()));
 }
 
 void SketchModel::selectEntity(int id) {
@@ -1066,7 +1067,7 @@ void SketchModel::deselectEntity(int id) {
     selectedIds_.erase(it);
     selectedId_ = selectedIds_.empty() ? -1 : selectedIds_.back();
     emit selectionChanged(selectedId_);
-    log(QStringLiteral("已取消选择图元 #%1").arg(id));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已取消选择图元 #%1")).arg(id));
 }
 
 std::vector<int> SketchModel::collectContourIds(int seedId) const {
@@ -1099,17 +1100,17 @@ std::vector<int> SketchModel::collectContourIds(int seedId) const {
 
 void SketchModel::selectContour(int seedId) {
     const Element* seed = element(seedId);
-    if (!seed || !seed->visible) { log(QStringLiteral("选择轮廓：无效的种子图元"), "warn"); return; }
+    if (!seed || !seed->visible) { log(SketchCAD::I18n::t(QString::fromUtf8("选择轮廓：无效的种子图元")), "warn"); return; }
     const std::vector<int> result = collectContourIds(seedId);
     setSelection(result);
-    log(QStringLiteral("已选择轮廓：%1 个相连图元").arg(result.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已选择轮廓：%1 个相连图元")).arg(result.size()));
 }
 
 void SketchModel::toggleContour(int seedId) {
     // (取消)选择轮廓：轮廓内图元已全部选中 → 整条移除；否则整条选中。
     // 与 LibreCAD 的 (De-)Select Contour 语义一致，一个菜单项同时承担选/取消。
     const Element* seed = element(seedId);
-    if (!seed || !seed->visible) { log(QStringLiteral("选择轮廓：无效的种子图元"), "warn"); return; }
+    if (!seed || !seed->visible) { log(SketchCAD::I18n::t(QString::fromUtf8("选择轮廓：无效的种子图元")), "warn"); return; }
     const std::vector<int> ids = collectContourIds(seedId);
     const bool allSelected = !ids.empty() &&
         std::all_of(ids.begin(), ids.end(), [this](int id) { return isSelected(id); });
@@ -1118,16 +1119,16 @@ void SketchModel::toggleContour(int seedId) {
         for (int id : selectedIds_)
             if (std::find(ids.begin(), ids.end(), id) == ids.end()) keep.push_back(id);
         setSelection(keep);
-        log(QStringLiteral("已取消轮廓：%1 个相连图元").arg(ids.size()));
+        log(SketchCAD::I18n::t(QString::fromUtf8("已取消轮廓：%1 个相连图元")).arg(ids.size()));
     } else {
         setSelection(ids);
-        log(QStringLiteral("已选择轮廓：%1 个相连图元").arg(ids.size()));
+        log(SketchCAD::I18n::t(QString::fromUtf8("已选择轮廓：%1 个相连图元")).arg(ids.size()));
     }
 }
 
 void SketchModel::selectIntersected(int seedId) {
     const Element* seed = element(seedId);
-    if (!seed || !seed->visible) { log(QStringLiteral("选择相交：无效的种子图元"), "warn"); return; }
+    if (!seed || !seed->visible) { log(SketchCAD::I18n::t(QString::fromUtf8("选择相交：无效的种子图元")), "warn"); return; }
     std::vector<int> ids;
     for (const auto& e : elems_) {
         if (!e.visible) continue;
@@ -1136,7 +1137,7 @@ void SketchModel::selectIntersected(int seedId) {
         if (!geo::intersectElements(*seed, e).empty()) ids.push_back(e.id);
     }
     if (!ids.empty()) addToSelection(ids);   // 默认并入当前选区
-    log(QStringLiteral("已选择 %1 个与种子图元相交的图元").arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已选择 %1 个与种子图元相交的图元")).arg(ids.size()));
 }
 
 void SketchModel::deselectIntersected(int seedId) {
@@ -1150,7 +1151,7 @@ void SketchModel::deselectIntersected(int seedId) {
         if (geo::intersectElements(*seed, *e).empty()) keep.push_back(id);
     }
     setSelection(keep);
-    log(QStringLiteral("已取消 %1 个与种子图元相交的图元").arg((int)selectedIds_.size() - (int)keep.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已取消 %1 个与种子图元相交的图元")).arg((int)selectedIds_.size() - (int)keep.size()));
 }
 
 void SketchModel::selectLayer(const QString& layer) {
@@ -1158,12 +1159,12 @@ void SketchModel::selectLayer(const QString& layer) {
     for (const auto& e : elems_)
         if (e.visible && e.layer == layer) ids.push_back(e.id);
     setSelection(ids);
-    log(QStringLiteral("已选择图层 %1 上的 %2 个图元").arg(layer).arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已选择图层 %1 上的 %2 个图元")).arg(layer).arg(ids.size()));
 }
 
 void SketchModel::selectLayerOf(int seedId) {
     const Element* seed = element(seedId);
-    if (!seed) { log(QStringLiteral("选择图层：无效的种子图元"), "warn"); return; }
+    if (!seed) { log(SketchCAD::I18n::t(QString::fromUtf8("选择图层：无效的种子图元")), "warn"); return; }
     selectLayer(seed->layer);
 }
 
@@ -1171,7 +1172,7 @@ void SketchModel::toggleLayerOf(int seedId) {
     // (取消)选择图层：种子所在图层的全部可见图元已全选中 → 整层移除；否则整层选中。
     // 与 LibreCAD 的 (De-)Select Layer 语义一致。
     const Element* seed = element(seedId);
-    if (!seed) { log(QStringLiteral("选择图层：无效的种子图元"), "warn"); return; }
+    if (!seed) { log(SketchCAD::I18n::t(QString::fromUtf8("选择图层：无效的种子图元")), "warn"); return; }
     std::vector<int> ids;
     for (const auto& e : elems_)
         if (e.visible && e.layer == seed->layer) ids.push_back(e.id);
@@ -1189,14 +1190,14 @@ void SketchModel::deselectLayer(const QString& layer) {
     }
     const int removed = (int)selectedIds_.size() - (int)keep.size();
     setSelection(keep);
-    log(QStringLiteral("已取消图层 %1 上的 %2 个图元").arg(layer).arg(removed));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已取消图层 %1 上的 %2 个图元")).arg(layer).arg(removed));
 }
 
 void SketchModel::invertSelection() {
     std::vector<int> ids;
     for (const auto& e : elems_) if (e.visible && !isSelected(e.id)) ids.push_back(e.id);
     setSelection(ids);
-    log(QStringLiteral("已反选：%1 个图元").arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已反选：%1 个图元")).arg(ids.size()));
 }
 
 // ---- 累加选择：按相同线型 / 相同颜色，保留已有选择 ----
@@ -1204,9 +1205,9 @@ void SketchModel::addSelectionByStyle(LineStyle ls) {
     std::vector<int> add;
     for (const auto& e : elems_)
         if (e.visible && e.lineStyle == ls) add.push_back(e.id);
-    if (add.empty()) { log(QStringLiteral("没有线型为「%1」的图元可累加选择").arg(lineStyleName(ls)), "warn"); return; }
+    if (add.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("没有线型为「%1」的图元可累加选择")).arg(lineStyleName(ls)), "warn"); return; }
     addToSelection(add);   // 追加且去重：已选中的保留、不清除，满足"累加选择"
-    log(QStringLiteral("已按线型「%1」累加选择 %2 个图元（含原有选区）").arg(lineStyleName(ls)).arg(selection().size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已按线型「%1」累加选择 %2 个图元（含原有选区）")).arg(lineStyleName(ls)).arg(selection().size()));
 }
 
 void SketchModel::addSelectionByColor(const QColor& c) {
@@ -1214,9 +1215,9 @@ void SketchModel::addSelectionByColor(const QColor& c) {
     std::vector<int> add;
     for (const auto& e : elems_)
         if (e.visible && (e.color.rgb() == key)) add.push_back(e.id);
-    if (add.empty()) { log(QStringLiteral("没有该颜色的图元可累加选择"), "warn"); return; }
+    if (add.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("没有该颜色的图元可累加选择")), "warn"); return; }
     addToSelection(add);   // 追加且去重：保留原有选择
-    log(QStringLiteral("已按颜色累加选择，当前共 %1 个图元被选中").arg(selection().size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已按颜色累加选择，当前共 %1 个图元被选中")).arg(selection().size()));
 }
 
 // ============================================================
@@ -1285,7 +1286,7 @@ int SketchModel::smartDimension() {
     if (!g.valid) return -1;
     const int id = addElement(el);
     setSelected(id);
-    log(QString("已智能创建%1 #%2 = %3（%4）")
+    log(QString(SketchCAD::I18n::t(QString::fromUtf8("已智能创建%1 #%2 = %3（%4）")))
             .arg(el.name).arg(id).arg(g.label)
             .arg(dimensionStandardName(dimensionStandard_)));
     return id;
@@ -1294,7 +1295,7 @@ int SketchModel::smartDimension() {
 void SketchModel::setCurrentLayer(const QString& name) {
     const QString n = name.trimmed();
     if (!hasLayer(n)) {
-        log(QStringLiteral("切换活动图层失败：图层 %1 不存在").arg(n), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("切换活动图层失败：图层 %1 不存在")).arg(n), "warn");
         return;
     }
     if (currentLayer_ == n) return;          // 相同则短路，避免无意义重绘与信号
@@ -1551,16 +1552,16 @@ Layer* SketchModel::findLayer(const QString& name) {
 bool SketchModel::addLayer(const QString& name, const QColor& color,
                            double lineWidth, LineStyle ls) {
     const QString n = name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("新建图层失败：名称不能为空"), "warn"); return false; }
-    if (findLayer(n)) { log(QStringLiteral("新建图层失败：图层 %1 已存在").arg(n), "warn"); return false; }
-    beginEdit(QStringLiteral("新建图层 ") + n);
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("新建图层失败：名称不能为空")), "warn"); return false; }
+    if (findLayer(n)) { log(SketchCAD::I18n::t(QString::fromUtf8("新建图层失败：图层 %1 已存在")).arg(n), "warn"); return false; }
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("新建图层 ")) + n);
     Layer l(n);
     if (color.isValid()) l.color = color;
     l.lineWidth = lineWidth > 0 ? lineWidth : 1.0;
     l.lineStyle = ls;
     layers_.push_back(l);
     emit layersChanged();
-    log(QStringLiteral("已新建图层：%1").arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已新建图层：%1")).arg(n));
     return true;
 }
 
@@ -1573,13 +1574,13 @@ bool SketchModel::ensureLayer(const QString& name) {
 
 bool SketchModel::renameLayer(const QString& oldName, const QString& newName) {
     const QString on = oldName.trimmed(), nn = newName.trimmed();
-    if (on == QStringLiteral("0")) { log(QStringLiteral("默认层 0 不可改名"), "warn"); return false; }
+    if (on == QStringLiteral("0")) { log(SketchCAD::I18n::t(QString::fromUtf8("默认层 0 不可改名")), "warn"); return false; }
     if (on.isEmpty() || nn.isEmpty()) return false;
     Layer* ol = findLayer(on);
     if (!ol) return false;
-    if (findLayer(nn) && nn != on) { log(QStringLiteral("改名失败：图层 %1 已存在").arg(nn), "warn"); return false; }
+    if (findLayer(nn) && nn != on) { log(SketchCAD::I18n::t(QString::fromUtf8("改名失败：图层 %1 已存在")).arg(nn), "warn"); return false; }
     // 先压快照（记录旧名），再改图层名与图元归属：撤销时图层名与图元一起回退
-    beginEdit(QStringLiteral("重命名图层 ") + on);
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("重命名图层 ")) + on);
     ol->name = nn;
     // 同步图元归属：只改 e.layer == on 的图元
     for (auto& e : elems_) if (e.layer == on) e.layer = nn;
@@ -1588,17 +1589,17 @@ bool SketchModel::renameLayer(const QString& oldName, const QString& newName) {
         emit currentLayerChanged(nn);
     }
     emit layersChanged(); emit modelChanged();
-    log(QStringLiteral("图层 %1 已改名为 %2").arg(on).arg(nn));
+    log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 已改名为 %2")).arg(on).arg(nn));
     return true;
 }
 
 bool SketchModel::removeLayer(const QString& name) {
     const QString n = name.trimmed();
-    if (n == QStringLiteral("0")) { log(QStringLiteral("默认层 0 不可删除"), "warn"); return false; }
+    if (n == QStringLiteral("0")) { log(SketchCAD::I18n::t(QString::fromUtf8("默认层 0 不可删除")), "warn"); return false; }
     auto it = std::find_if(layers_.begin(), layers_.end(),
                            [&](const Layer& l) { return l.name == n; });
     if (it == layers_.end()) return false;
-    beginEdit(QStringLiteral("删除图层 ") + n);
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("删除图层 ")) + n);
     for (auto& e : elems_) if (e.layer == n) e.layer = QStringLiteral("0");   // 回落默认层
     layers_.erase(it);
     if (currentLayer_ == n) {                       // 删除的恰是当前活动层 → 回落默认层
@@ -1606,18 +1607,18 @@ bool SketchModel::removeLayer(const QString& name) {
         emit currentLayerChanged(currentLayer_);
     }
     emit layersChanged(); emit modelChanged();
-    log(QStringLiteral("已删除图层：%1（其图元回落到层 0）").arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已删除图层：%1（其图元回落到层 0）")).arg(n));
     return true;
 }
 
 bool SketchModel::setLayerStyle(const QString& name, const QColor* color,
                                 const double* lineWidth, const LineStyle* ls) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     // 没有任何字段要改，直接返回
     if (!color && !lineWidth && !ls) return true;
     // 单层操作也要可撤销：先压快照（记录旧图层定义），再改
-    beginEdit(QStringLiteral("修改图层样式 ") + name);
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改图层样式 ")) + name);
     if (color)     l->color = *color;
     if (lineWidth) l->lineWidth = *lineWidth > 0 ? *lineWidth : l->lineWidth;
     if (ls)        l->lineStyle = *ls;
@@ -1625,13 +1626,13 @@ bool SketchModel::setLayerStyle(const QString& name, const QColor* color,
     //   只有此后经 ElementFactory::create → applyActiveLayer 新建的图元才会快照本层最新属性。
     //   若用户希望把图层当前样式套用到本层图元，可显式调用 applyLayerStyleToElements。
     emit layersChanged(); emit modelChanged();   // modelChanged 触发重绘（图层定义已变）
-    log(QStringLiteral("已修改图层 %1 的样式（已有图元属性保持不变）").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已修改图层 %1 的样式（已有图元属性保持不变）")).arg(name));
     return true;
 }
 
 bool SketchModel::setLayerVisible(const QString& name, bool visible) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     if (l->visible == visible) return true;
     // 先压快照（记录旧 visible），再改图层定义与图元：撤销时图层定义与图元一起回退
     beginEdit((visible ? QStringLiteral("显示图层 ") : QStringLiteral("隐藏图层 ")) + name);
@@ -1639,42 +1640,42 @@ bool SketchModel::setLayerVisible(const QString& name, bool visible) {
     // 批量翻转本层图元的 visible：只遍历 e.layer == name，其他层不动
     for (auto& e : elems_) if (e.layer == name) e.visible = visible;
     emit layersChanged(); emit modelChanged();   // modelChanged 触发重绘（GraphicsView 读 e.visible）
-    log(QStringLiteral("%1图层 %2").arg(visible ? "已显示" : "已隐藏").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("%1图层 %2")).arg(visible ? SketchCAD::I18n::t(QString::fromUtf8("已显示")) : SketchCAD::I18n::t(QString::fromUtf8("已隐藏"))).arg(name));
     return true;
 }
 
 bool SketchModel::setLayerLocked(const QString& name, bool locked) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     beginEdit((locked ? QStringLiteral("锁定图层 ") : QStringLiteral("解锁图层 ")) + name);
     l->locked = locked;
     emit layersChanged();
-    log(QStringLiteral("%1图层 %2").arg(locked ? "已锁定" : "已解锁").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("%1图层 %2")).arg(locked ? SketchCAD::I18n::t(QString::fromUtf8("已锁定")) : SketchCAD::I18n::t(QString::fromUtf8("已解锁"))).arg(name));
     return true;
 }
 
 // 把图层样式套用到该层全部图元（批量改属性，仅影响本层），返回受影响图元数
 int SketchModel::applyLayerStyleToElements(const QString& name) {
     const Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return 0; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return 0; }
     int n = 0;
     for (const auto& e : elems_) if (e.layer == name) ++n;
-    if (n == 0) { log(QStringLiteral("图层 %1 暂无图元").arg(name), "info"); return 0; }
-    beginEdit(QStringLiteral("应用图层样式 ") + name);
+    if (n == 0) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 暂无图元")).arg(name), "info"); return 0; }
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("应用图层样式 ")) + name);
     for (auto& e : elems_) if (e.layer == name) l->applyTo(e);
     emit layersChanged(); emit modelChanged();
-    log(QStringLiteral("已将图层 %1 的样式套用到 %2 个图元").arg(name).arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已将图层 %1 的样式套用到 %2 个图元")).arg(name).arg(n));
     return n;
 }
 
 // 把当前选择集移入指定图层；adoptStyle=true 时图元同步采用该层样式
 int SketchModel::assignSelectionToLayer(const QString& name, bool adoptStyle) {
     const Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return 0; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return 0; }
     std::vector<int> ids;
     for (int id : selectedIds_) if (element(id)) ids.push_back(id);
-    if (ids.empty()) { log(QStringLiteral("没有选中任何图元可移入图层 %1").arg(name), "warn"); return 0; }
-    beginEdit(QStringLiteral("移入图层 ") + name);
+    if (ids.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("没有选中任何图元可移入图层 %1")).arg(name), "warn"); return 0; }
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("移入图层 ")) + name);
     for (int id : ids) {
         auto it = find(id);
         if (it == elems_.end()) continue;
@@ -1682,7 +1683,7 @@ int SketchModel::assignSelectionToLayer(const QString& name, bool adoptStyle) {
         if (adoptStyle) l->applyTo(*it);
     }
     emit layersChanged(); emit modelChanged(); emit selectionChanged(selectedId_);
-    log(QStringLiteral("已将 %1 个选中图元移入图层 %2").arg(ids.size()).arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已将 %1 个选中图元移入图层 %2")).arg(ids.size()).arg(name));
     return (int)ids.size();
 }
 
@@ -1692,11 +1693,11 @@ bool SketchModel::setElementLayer(int id, const QString& name, bool adoptStyle) 
 
 bool SketchModel::setElementLayers(const std::vector<int>& ids, const QString& name, bool adoptStyle) {
     const Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     std::vector<int> valid;
     for (int id : ids) if (element(id)) valid.push_back(id);
     if (valid.empty()) return false;
-    beginEdit(QStringLiteral("移入图层 ") + name);
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("移入图层 ")) + name);
     for (int id : valid) {
         auto it = find(id);
         if (it == elems_.end()) continue;
@@ -1755,36 +1756,36 @@ void SketchModel::setLayersFromJson(const QJsonArray& arr) {
 // ============================================================================
 bool SketchModel::setLayerFrozen(const QString& name, bool frozen) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     if (l->frozen == frozen) return true;
     beginEdit((frozen ? QStringLiteral("冻结图层 ") : QStringLiteral("解冻图层 ")) + name);
     l->frozen = frozen;
     // 冻结改变命中/重算/打印语义 → 触发重绘（GraphicsView 经 elementPickable 排除冻结层）
     emit layersChanged(); emit modelChanged();
-    log(QStringLiteral("%1图层 %2").arg(frozen ? "已冻结" : "已解冻").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("%1图层 %2")).arg(frozen ? SketchCAD::I18n::t(QString::fromUtf8("已冻结")) : SketchCAD::I18n::t(QString::fromUtf8("已解冻"))).arg(name));
     return true;
 }
 
 bool SketchModel::setLayerPlot(const QString& name, bool plot) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     if (l->plot == plot) return true;
     beginEdit((plot ? QStringLiteral("开启图层打印 ") : QStringLiteral("关闭图层打印 ")) + name);
     l->plot = plot;
     emit layersChanged(); emit modelChanged();   // 打印开关影响出图，触发重绘预览
-    log(QStringLiteral("图层 %1 打印已%2").arg(name).arg(plot ? "开启" : "关闭"));
+    log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 打印已%2")).arg(name).arg(plot ? SketchCAD::I18n::t(QString::fromUtf8("开启")) : SketchCAD::I18n::t(QString::fromUtf8("关闭"))));
     return true;
 }
 
 bool SketchModel::setLayerAlpha(const QString& name, double alpha) {
     Layer* l = findLayer(name.trimmed());
-    if (!l) { log(QStringLiteral("图层 %1 不存在").arg(name), "warn"); return false; }
+    if (!l) { log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 不存在")).arg(name), "warn"); return false; }
     const double a = std::clamp(alpha, 0.0, 1.0);
     if (std::fabs(l->alpha - a) < 1e-6) return true;
-    beginEdit(QStringLiteral("设置图层透明度 ") + name);
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("设置图层透明度 ")) + name);
     l->alpha = a;
     emit layersChanged(); emit modelChanged();   // 透明度影响渲染，触发重绘
-    log(QStringLiteral("图层 %1 透明度 = %2").arg(name).arg(a, 0, 'f', 2));
+    log(SketchCAD::I18n::t(QString::fromUtf8("图层 %1 透明度 = %2")).arg(name).arg(a, 0, 'f', 2));
     return true;
 }
 
@@ -1860,21 +1861,21 @@ BlockDef* SketchModel::findBlockDef(const QString& name) {
 
 bool SketchModel::addBlockDef(const BlockDef& def) {
     const QString n = def.name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
-    if (hasBlock(n)) { log(QStringLiteral("块 %1 已存在").arg(n), "warn"); return false; }
-    pushMemento(QStringLiteral("新建块 ") + n);
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("块名不能为空")), "warn"); return false; }
+    if (hasBlock(n)) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已存在")).arg(n), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("新建块 ")) + n);
     BlockDef d = def; d.name = n;
     blocks_.push_back(std::move(d));
     emit blocksChanged();
-    log(QStringLiteral("已创建块定义 %1（块内 %2 个图元 / 属性 %3 / 动态参数 %4）")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已创建块定义 %1（块内 %2 个图元 / 属性 %3 / 动态参数 %4）"))
             .arg(n).arg(def.entities.size()).arg(def.attdefs.size()).arg(def.dynParams.size()));
     return true;
 }
 
 bool SketchModel::addBlockDefQuiet(const BlockDef& def) {
     const QString n = def.name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
-    if (hasBlock(n)) { log(QStringLiteral("块 %1 已存在").arg(n), "warn"); return false; }
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("块名不能为空")), "warn"); return false; }
+    if (hasBlock(n)) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已存在")).arg(n), "warn"); return false; }
     BlockDef d = def; d.name = n;
     blocks_.push_back(std::move(d));
     emit blocksChanged();     // 引用重绘；不压栈（撤销由外层 beginEdit 统一负责）
@@ -1883,14 +1884,14 @@ bool SketchModel::addBlockDefQuiet(const BlockDef& def) {
 
 bool SketchModel::redefineBlock(const BlockDef& def) {
     const QString n = def.name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return false; }
-    pushMemento(QStringLiteral("重定义块 ") + n);
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("块名不能为空")), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重定义块 ")) + n);
     BlockDef d = def; d.name = n;
     if (BlockDef* ex = findBlockDef(n)) *ex = std::move(d);
     else                                blocks_.push_back(std::move(d));
     emit blocksChanged();
     emit modelChanged();     // 引用几何随之变化，必须重绘
-    log(QStringLiteral("已重定义块 %1，%2 个引用同步更新")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已重定义块 %1，%2 个引用同步更新"))
             .arg(n).arg(countBlockRefs(elems_, n)));
     return true;
 }
@@ -1898,52 +1899,52 @@ bool SketchModel::redefineBlock(const BlockDef& def) {
 bool SketchModel::removeBlock(const QString& name) {
     auto it = std::find_if(blocks_.begin(), blocks_.end(),
                            [&](const BlockDef& d) { return d.name == name; });
-    if (it == blocks_.end()) { log(QStringLiteral("块 %1 不存在").arg(name), "warn"); return false; }
+    if (it == blocks_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(name), "warn"); return false; }
     const int refs = countBlockRefs(elems_, name);
-    pushMemento(QStringLiteral("删除块 ") + name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除块 ")) + name);
     blocks_.erase(it);
     emit blocksChanged();
     emit modelChanged();
     log(refs > 0
-            ? QStringLiteral("已删除块 %1；%2 个引用因块定义缺失而暂不绘制（可撤销恢复）").arg(name).arg(refs)
-            : QStringLiteral("已删除块 %1").arg(name));
+            ? SketchCAD::I18n::t(QString::fromUtf8("已删除块 %1；%2 个引用因块定义缺失而暂不绘制（可撤销恢复）")).arg(name).arg(refs)
+            : SketchCAD::I18n::t(QString::fromUtf8("已删除块 %1")).arg(name));
     return true;
 }
 
 bool SketchModel::renameBlock(const QString& oldName, const QString& newName) {
     BlockDef* d = findBlockDef(oldName);
-    if (!d) { log(QStringLiteral("块 %1 不存在").arg(oldName), "warn"); return false; }
+    if (!d) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(oldName), "warn"); return false; }
     const QString nn = newName.trimmed();
-    if (nn.isEmpty()) { log(QStringLiteral("新块名不能为空"), "warn"); return false; }
+    if (nn.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("新块名不能为空")), "warn"); return false; }
     if (nn == oldName) return true;
-    if (hasBlock(nn)) { log(QStringLiteral("块 %1 已存在").arg(nn), "warn"); return false; }
-    pushMemento(QStringLiteral("重命名块 ") + oldName);
+    if (hasBlock(nn)) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已存在")).arg(nn), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重命名块 ")) + oldName);
     d->name = nn;
     int cnt = 0;
     for (auto& e : elems_)
         if (e.type == ElementType::BlockRef && e.blockName == oldName) { e.blockName = nn; ++cnt; }
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("块 %1 已改名为 %2（%3 个引用同步）").arg(oldName).arg(nn).arg(cnt));
+    log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已改名为 %2（%3 个引用同步）")).arg(oldName).arg(nn).arg(cnt));
     return true;
 }
 
 int SketchModel::createBlockFromSelection(const QString& name, const Vec3& basePt,
                                           bool deleteSource, const QString& description) {
     const QString n = name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("块名不能为空"), "warn"); return -1; }
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("块名不能为空")), "warn"); return -1; }
     if (hasBlock(n)) {
-        log(QStringLiteral("块 %1 已存在（如需更新块内几何请用「重定义块」）").arg(n), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 已存在（如需更新块内几何请用「重定义块」）")).arg(n), "warn");
         return -1;
     }
-    if (selectedIds_.empty()) { log(QStringLiteral("请先选择要收进块的图元"), "warn"); return -1; }
+    if (selectedIds_.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("请先选择要收进块的图元")), "warn"); return -1; }
 
     std::vector<Element> srcs;
     srcs.reserve(selectedIds_.size());
     for (int id : selectedIds_) if (const Element* e = element(id)) srcs.push_back(*e);
-    if (srcs.empty()) { log(QStringLiteral("选中图元为空"), "warn"); return -1; }
+    if (srcs.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("选中图元为空")), "warn"); return -1; }
 
-    pushMemento(QStringLiteral("创建块 ") + n);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("创建块 ")) + n);
     BlockDef def = block::makeDefFromEntities(n, basePt, srcs, description);
     blocks_.push_back(def);
 
@@ -1959,29 +1960,29 @@ int SketchModel::createBlockFromSelection(const QString& name, const Vec3& baseP
     }
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("已创建块 %1：块内 %2 个图元%3")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已创建块 %1：块内 %2 个图元%3"))
             .arg(n).arg(srcs.size())
-            .arg(deleteSource ? QStringLiteral("，原图元已替换为块引用")
-                              : QStringLiteral("（原图元保留）")));
+            .arg(deleteSource ? SketchCAD::I18n::t(QString::fromUtf8("，原图元已替换为块引用"))
+                              : SketchCAD::I18n::t(QString::fromUtf8("（原图元保留）"))));
     return refId;
 }
 
 bool SketchModel::redefineBlockFromSelection(const QString& name) {
     BlockDef* d = findBlockDef(name);
-    if (!d) { log(QStringLiteral("块 %1 不存在，无法重定义").arg(name), "warn"); return false; }
-    if (selectedIds_.empty()) { log(QStringLiteral("请先选择作为新块内几何的图元"), "warn"); return false; }
+    if (!d) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在，无法重定义")).arg(name), "warn"); return false; }
+    if (selectedIds_.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("请先选择作为新块内几何的图元")), "warn"); return false; }
     std::vector<Element> srcs;
     srcs.reserve(selectedIds_.size());
     for (int id : selectedIds_) if (const Element* e = element(id)) srcs.push_back(*e);
-    if (srcs.empty()) { log(QStringLiteral("选中图元为空"), "warn"); return false; }
+    if (srcs.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("选中图元为空")), "warn"); return false; }
 
-    pushMemento(QStringLiteral("重定义块 ") + name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重定义块 ")) + name);
     d->entities = std::move(srcs);
     for (auto& e : d->entities) e.id = 0;
     // 属性定义 / 动态参数定义保持不变；其中"影响图元索引"若越界在展开时被安全忽略
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("已重定义块 %1：%2 个引用同步更新")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已重定义块 %1：%2 个引用同步更新"))
             .arg(name).arg(countBlockRefs(elems_, name)));
     return true;
 }
@@ -1989,14 +1990,14 @@ bool SketchModel::redefineBlockFromSelection(const QString& name) {
 int SketchModel::insertBlock(const QString& name, const Vec3& pos,
                              double rotationDeg, double sx, double sy) {
     const BlockDef* d = findBlockDef(name);
-    if (!d) { log(QStringLiteral("块 %1 不存在").arg(name), "warn"); return -1; }
-    pushMemento(QStringLiteral("插入块 ") + name);
+    if (!d) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在")).arg(name), "warn"); return -1; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("插入块 ")) + name);
     Element ref = block::makeRef(*d, pos, rotationDeg, sx, sy);
     auto ids = addElementsQuiet({ref});
     if (ids.empty()) return -1;
     setSelected(ids.front());
     emit modelChanged();
-    log(QStringLiteral("已插入块 %1 @(%2,%3) 旋转 %4° 缩放 %5×%6")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已插入块 %1 @(%2,%3) 旋转 %4° 缩放 %5×%6"))
             .arg(name).arg(pos.x, 0, 'f', 2).arg(pos.y, 0, 'f', 2)
             .arg(rotationDeg, 0, 'f', 1).arg(sx, 0, 'f', 2).arg(sy, 0, 'f', 2));
     return ids.front();
@@ -2009,53 +2010,53 @@ std::vector<Element> SketchModel::expandBlockRef(const Element& ref) const {
 std::vector<int> SketchModel::explodeBlockRef(int refId) {
     auto it = find(refId);
     if (it == elems_.end() || it->type != ElementType::BlockRef) {
-        log(QStringLiteral("分解失败：图元 #%1 不是块引用").arg(refId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("分解失败：图元 #%1 不是块引用")).arg(refId), "warn");
         return {};
     }
     const QString bn = it->blockName;
     auto subs = expandBlockRef(*it);
     if (subs.empty()) {
-        log(QStringLiteral("分解失败：块 %1 未定义或为空").arg(bn), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("分解失败：块 %1 未定义或为空")).arg(bn), "warn");
         return {};
     }
-    pushMemento(QStringLiteral("分解块 ") + bn);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("分解块 ")) + bn);
     removeElementQuiet(refId);
     auto ids = addElementsQuiet(subs);
     setSelection(ids);
     emit modelChanged();
-    log(QStringLiteral("已分解块 %1 为 %2 个独立图元").arg(bn).arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已分解块 %1 为 %2 个独立图元")).arg(bn).arg(ids.size()));
     return ids;
 }
 
 bool SketchModel::setBlockAttribute(int refId, const QString& tag, const QString& value) {
     auto it = find(refId);
     if (it == elems_.end() || it->type != ElementType::BlockRef) {
-        log(QStringLiteral("属性编辑失败：图元 #%1 不是块引用").arg(refId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("属性编辑失败：图元 #%1 不是块引用")).arg(refId), "warn");
         return false;
     }
     // 常量属性拒绝修改（与 AutoCAD ATTDEF 常量语义一致）
     if (const BlockDef* d = findBlockDef(it->blockName)) {
         for (const auto& ad : d->attdefs)
             if (ad.tag == tag && ad.constant) {
-                log(QStringLiteral("属性 %1 为常量属性，不可修改").arg(tag), "warn");
+                log(SketchCAD::I18n::t(QString::fromUtf8("属性 %1 为常量属性，不可修改")).arg(tag), "warn");
                 return false;
             }
     }
-    pushMemento(QStringLiteral("修改块属性 ") + tag);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改块属性 ")) + tag);
     it = find(refId);   // pushMemento 不改变 elems_，但重新定位更稳妥
     bool found = false;
     for (auto& a : it->blockAttrs) if (a.tag == tag) { a.value = value; found = true; break; }
     if (!found) it->blockAttrs.push_back(BlockAttrValue{tag, value});
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("块 #%1 属性 %2 = %3").arg(refId).arg(tag).arg(value));
+    log(SketchCAD::I18n::t(QString::fromUtf8("块 #%1 属性 %2 = %3")).arg(refId).arg(tag).arg(value));
     return true;
 }
 
 bool SketchModel::setBlockDynValue(int refId, const QString& name, double value) {
     auto it = find(refId);
     if (it == elems_.end() || it->type != ElementType::BlockRef) {
-        log(QStringLiteral("动态参数设置失败：图元 #%1 不是块引用").arg(refId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("动态参数设置失败：图元 #%1 不是块引用")).arg(refId), "warn");
         return false;
     }
     // 值域钳制（若该参数声明了范围）
@@ -2067,21 +2068,21 @@ bool SketchModel::setBlockDynValue(int refId, const QString& name, double value)
             break;
         }
     }
-    pushMemento(QStringLiteral("设置动态参数 ") + name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("设置动态参数 ")) + name);
     it = find(refId);
     bool found = false;
     for (auto& dv : it->dynValues) if (dv.name == name) { dv.value = value; found = true; break; }
     if (!found) it->dynValues.push_back(BlockDynValue{name, value, QString()});
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("块 #%1 动态参数 %2 = %3").arg(refId).arg(name).arg(value, 0, 'f', 3));
+    log(SketchCAD::I18n::t(QString::fromUtf8("块 #%1 动态参数 %2 = %3")).arg(refId).arg(name).arg(value, 0, 'f', 3));
     return true;
 }
 
 bool SketchModel::setBlockDynState(int refId, const QString& name, const QString& state) {
     auto it = find(refId);
     if (it == elems_.end() || it->type != ElementType::BlockRef) {
-        log(QStringLiteral("可见性状态设置失败：图元 #%1 不是块引用").arg(refId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("可见性状态设置失败：图元 #%1 不是块引用")).arg(refId), "warn");
         return false;
     }
     // 状态必须已在该可见性参数中声明
@@ -2094,17 +2095,17 @@ bool SketchModel::setBlockDynState(int refId, const QString& name, const QString
         }
     }
     if (!declared) {
-        log(QStringLiteral("可见性参数 %1 未声明状态「%2」").arg(name, state), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("可见性参数 %1 未声明状态「%2」")).arg(name, state), "warn");
         return false;
     }
-    pushMemento(QStringLiteral("切换可见性状态 ") + state);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("切换可见性状态 ")) + state);
     it = find(refId);
     bool found = false;
     for (auto& dv : it->dynValues) if (dv.name == name) { dv.state = state; found = true; break; }
     if (!found) it->dynValues.push_back(BlockDynValue{name, 0.0, state});
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("块 #%1 可见性 %2 = %3").arg(refId).arg(name).arg(state));
+    log(SketchCAD::I18n::t(QString::fromUtf8("块 #%1 可见性 %2 = %3")).arg(refId).arg(name).arg(state));
     return true;
 }
 
@@ -2139,15 +2140,15 @@ std::vector<Element> SketchModel::getBlockEntities(const QString& name) const {
 bool SketchModel::redefineBlockEntities(const QString& name, const std::vector<Element>& ents) {
     const QString n = name.trimmed();
     BlockDef* d = findBlockDef(n);
-    if (!d) { log(QStringLiteral("块 %1 不存在，无法在位编辑").arg(n), "warn"); return false; }
-    pushMemento(QStringLiteral("在位编辑块 ") + n);
+    if (!d) { log(SketchCAD::I18n::t(QString::fromUtf8("块 %1 不存在，无法在位编辑")).arg(n), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("在位编辑块 ")) + n);
     d->entities = ents;
     // 块内图元 id 归零：展开时重算，避免与顶层图元 id 冲突（attdefs/dynParams/basePoint
     // 等定义字段保持不变 —— 这正是"保留动态块参数/属性定义"的语义保证）。
     for (auto& e : d->entities) e.id = 0;
     emit blocksChanged();
     emit modelChanged();   // 引用几何随之变化，必须重绘
-    log(QStringLiteral("已在位编辑块 %1：%2 个引用同步更新，块内 %3 个图元")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已在位编辑块 %1：%2 个引用同步更新，块内 %3 个图元"))
             .arg(n).arg(countBlockRefs(elems_, n)).arg(d->entities.size()));
     return true;
 }
@@ -2226,26 +2227,26 @@ bool rebuildHatchLoops(const std::vector<const Element*>& srcs,
 bool SketchModel::associateHatchBoundary(int hatchId, const std::vector<int>& srcIds) {
     auto it = find(hatchId);
     if (it == elems_.end() || it->type != ElementType::Hatch) {
-        log(QStringLiteral("关联填充失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：图元 #%1 不是剖面区域")).arg(hatchId), "warn");
         return false;
     }
     if (srcIds.empty()) {
-        log(QStringLiteral("关联填充失败：未指定边界图元"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：未指定边界图元")), "warn");
         return false;
     }
     // 先按当前边界试解析一次：不成环则拒绝（避免登记一个永远失效的关联）
     std::vector<const Element*> srcs;
     for (int sid : srcIds) {
         const Element* se = element(sid);
-        if (!se) { log(QStringLiteral("关联填充失败：边界图元 #%1 不存在").arg(sid), "warn"); return false; }
+        if (!se) { log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：边界图元 #%1 不存在")).arg(sid), "warn"); return false; }
         srcs.push_back(se);
     }
     std::vector<Vec3> outer; std::vector<std::vector<Vec3>> holes;
     if (!rebuildHatchLoops(srcs, outer, holes)) {
-        log(QStringLiteral("关联填充失败：所选边界当前不构成闭合区域"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：所选边界当前不构成闭合区域")), "warn");
         return false;
     }
-    pushMemento(QStringLiteral("关联填充边界 ") + it->name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("关联填充边界 ")) + it->name);
     it = find(hatchId);
     it->hatchSrcIds     = srcIds;
     it->hatchAssociative = true;
@@ -2254,26 +2255,26 @@ bool SketchModel::associateHatchBoundary(int hatchId, const std::vector<int>& sr
     it->holes = holes;
     emit modelChanged();
     emit elementUpdated(hatchId);
-    log(QStringLiteral("剖面区域 #%1 已关联 %2 个边界图元（随边界自动更新）")
+    log(SketchCAD::I18n::t(QString::fromUtf8("剖面区域 #%1 已关联 %2 个边界图元（随边界自动更新）"))
             .arg(hatchId).arg((int)srcIds.size()));
     return true;
 }
 
 int SketchModel::createAssociativeHatch(const std::vector<int>& srcIds, const SectionStyle& style) {
     if (srcIds.empty()) {
-        log(QStringLiteral("关联填充失败：未指定边界图元"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：未指定边界图元")), "warn");
         return -1;
     }
     std::vector<const Element*> srcs;
     for (int sid : srcIds) {
         const Element* se = element(sid);
-        if (!se) { log(QStringLiteral("关联填充失败：边界图元 #%1 不存在").arg(sid), "warn"); return -1; }
+        if (!se) { log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：边界图元 #%1 不存在")).arg(sid), "warn"); return -1; }
         srcs.push_back(se);
     }
     // 先按当前边界试解析：不成环则拒绝（不产生"一出生就失效"的填充）
     std::vector<Vec3> outer; std::vector<std::vector<Vec3>> holes;
     if (!rebuildHatchLoops(srcs, outer, holes)) {
-        log(QStringLiteral("关联填充失败：所选边界当前不构成闭合区域"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("关联填充失败：所选边界当前不构成闭合区域")), "warn");
         return -1;
     }
     // 组装 Hatch（就地字段语义：pts=外环，holes=内孔，rotation/radius/material/exempt 沿用 style）
@@ -2288,7 +2289,7 @@ int SketchModel::createAssociativeHatch(const std::vector<int>& srcIds, const Se
     // addElement 自带一次撤销快照（"新建图元"），此处不再额外 pushMemento，避免双步撤销。
     const int id = addElement(h);
     if (id > 0) {
-        log(QStringLiteral("已创建关联填充 #%1（来源 %2 个边界图元，随边界自动更新）")
+        log(SketchCAD::I18n::t(QString::fromUtf8("已创建关联填充 #%1（来源 %2 个边界图元，随边界自动更新）"))
                 .arg(id).arg((int)srcIds.size()));
     }
     return id;
@@ -2297,18 +2298,18 @@ int SketchModel::createAssociativeHatch(const std::vector<int>& srcIds, const Se
 bool SketchModel::detachHatchBoundary(int hatchId) {
     auto it = find(hatchId);
     if (it == elems_.end() || it->type != ElementType::Hatch) {
-        log(QStringLiteral("断开关联失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("断开关联失败：图元 #%1 不是剖面区域")).arg(hatchId), "warn");
         return false;
     }
     if (!it->hatchAssociative && it->hatchSrcIds.empty()) return true;   // 已断开
-    pushMemento(QStringLiteral("断开填充关联 ") + it->name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("断开填充关联 ")) + it->name);
     it = find(hatchId);
     it->hatchAssociative = false;
     // 保留 hatchSrcIds：关联开关是"可逆切换"——off 时 refreshHatchBoundaries 跳过本填充
     // （= 静态填充，边界再变也不随动），再 on 即可恢复随动，无需重新登记边界。
     emit modelChanged();
     emit elementUpdated(hatchId);
-    log(QStringLiteral("剖面区域 #%1 已断开边界关联（回到静态填充）").arg(hatchId));
+    log(SketchCAD::I18n::t(QString::fromUtf8("剖面区域 #%1 已断开边界关联（回到静态填充）")).arg(hatchId));
     return true;
 }
 
@@ -2338,14 +2339,14 @@ int SketchModel::refreshHatchBoundaries(const std::vector<int>& changedIds) {
             h.holes = holes;
             if (h.hatchInvalid) {          // 从失效恢复
                 h.hatchInvalid = false;
-                log(QStringLiteral("剖面区域 #%1 边界已恢复，随动更新").arg(h.id));
+                log(SketchCAD::I18n::t(QString::fromUtf8("剖面区域 #%1 边界已恢复，随动更新")).arg(h.id));
             }
             emit elementUpdated(h.id);
         } else {
             // 边界消失/不再成环 → 标记失效（保留最后几何，交由提示与 hatchedit 处理）
             if (!h.hatchInvalid) {
                 h.hatchInvalid = true;
-                log(QStringLiteral("剖面区域 #%1 的边界已消失或不成闭合区域，填充已标记失效（可用 HATCHEDIT 解除关联或重填）")
+                log(SketchCAD::I18n::t(QString::fromUtf8("剖面区域 #%1 的边界已消失或不成闭合区域，填充已标记失效（可用 HATCHEDIT 解除关联或重填）"))
                         .arg(h.id), "warn");
             }
             ++invalidated;
@@ -2451,7 +2452,7 @@ bool SketchModel::setHatchPatternOverride(int hatchId, const QString& patName, d
                                           int triStateAssoc) {
     auto it = find(hatchId);
     if (it == elems_.end() || it->type != ElementType::Hatch) {
-        log(QStringLiteral("HATCHEDIT 失败：图元 #%1 不是剖面区域").arg(hatchId), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("HATCHEDIT 失败：图元 #%1 不是剖面区域")).arg(hatchId), "warn");
         return false;
     }
     const double sc = (scale > 1e-6) ? scale : ((it->hatchScale > 1e-6) ? it->hatchScale : 1.0);
@@ -2483,64 +2484,64 @@ const TextStyle* SketchModel::findTextStyle(const QString& name) const {
 }
 
 bool SketchModel::addTextStyle(const TextStyle& s) {
-    if (s.name.trimmed().isEmpty()) { log(QStringLiteral("文字样式：名称为空，已忽略"), "warn"); return false; }
-    if (hasTextStyle(s.name)) { log(QStringLiteral("文字样式已存在：%1").arg(s.name), "warn"); return false; }
-    pushMemento(QStringLiteral("新建文字样式 ") + s.name);
+    if (s.name.trimmed().isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式：名称为空，已忽略")), "warn"); return false; }
+    if (hasTextStyle(s.name)) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式已存在：%1")).arg(s.name), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("新建文字样式 ")) + s.name);
     textStyles_.push_back(s);
     emit textStylesChanged(); emit modelChanged();
-    log(QStringLiteral("已新建文字样式：%1").arg(s.name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已新建文字样式：%1")).arg(s.name));
     return true;
 }
 
 bool SketchModel::renameTextStyle(const QString& oldName, const QString& newName) {
     if (oldName == newName) return true;
-    if (newName.trimmed().isEmpty()) { log(QStringLiteral("文字样式：新名称为空，已忽略"), "warn"); return false; }
-    if (hasTextStyle(newName)) { log(QStringLiteral("文字样式已存在：%1").arg(newName), "warn"); return false; }
+    if (newName.trimmed().isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式：新名称为空，已忽略")), "warn"); return false; }
+    if (hasTextStyle(newName)) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式已存在：%1")).arg(newName), "warn"); return false; }
     auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
                            [&](const TextStyle& s) { return s.name == oldName; });
-    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(oldName), "warn"); return false; }
-    pushMemento(QStringLiteral("重命名文字样式 ") + oldName);
+    if (it == textStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式不存在：%1")).arg(oldName), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重命名文字样式 ")) + oldName);
     // 同步更新所有引用该样式的图元（Text/MText 的 styleName 字段）
     for (auto& e : elems_) if (e.styleName == oldName) e.styleName = newName;
     it->name = newName;
     emit textStylesChanged(); emit modelChanged();
-    log(QStringLiteral("已重命名文字样式：%1 → %2").arg(oldName).arg(newName));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已重命名文字样式：%1 → %2")).arg(oldName).arg(newName));
     return true;
 }
 
 bool SketchModel::updateTextStyle(const TextStyle& s) {
-    if (s.name.trimmed().isEmpty()) { log(QStringLiteral("文字样式：名称为空，已忽略"), "warn"); return false; }
+    if (s.name.trimmed().isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式：名称为空，已忽略")), "warn"); return false; }
     auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
                           [&](const TextStyle& x) { return x.name == s.name; });
     // 改名：目标名与现有某条不同样式冲突则拒绝
-    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(s.name), "warn"); return false; }
-    pushMemento(QStringLiteral("修改文字样式 ") + s.name);
+    if (it == textStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式不存在：%1")).arg(s.name), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改文字样式 ")) + s.name);
     *it = s;
     emit textStylesChanged(); emit modelChanged();
-    log(QStringLiteral("已更新文字样式：%1").arg(s.name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已更新文字样式：%1")).arg(s.name));
     return true;
 }
 
 bool SketchModel::removeTextStyle(const QString& name) {
     auto it = std::find_if(textStyles_.begin(), textStyles_.end(),
                            [&](const TextStyle& s) { return s.name == name; });
-    if (it == textStyles_.end()) { log(QStringLiteral("文字样式不存在：%1").arg(name), "warn"); return false; }
-    if (textStyles_.size() <= 1) { log(QStringLiteral("至少需保留一个文字样式，已忽略删除"), "warn"); return false; }
-    pushMemento(QStringLiteral("删除文字样式 ") + name);
+    if (it == textStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("文字样式不存在：%1")).arg(name), "warn"); return false; }
+    if (textStyles_.size() <= 1) { log(SketchCAD::I18n::t(QString::fromUtf8("至少需保留一个文字样式，已忽略删除")), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除文字样式 ")) + name);
     // 解除所有图元对该样式的引用（回退默认样式）
     for (auto& e : elems_) if (e.styleName == name) e.styleName.clear();
     textStyles_.erase(it);
     emit textStylesChanged(); emit modelChanged();
-    log(QStringLiteral("已删除文字样式：%1（引用该样式的文字回退默认）").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已删除文字样式：%1（引用该样式的文字回退默认）")).arg(name));
     return true;
 }
 
 int SketchModel::applyStyleToElements(const QString& styleName, const std::vector<int>& ids) {
     if (!styleName.isEmpty() && !hasTextStyle(styleName)) {
-        log(QStringLiteral("文字样式不存在：%1").arg(styleName), "warn"); return 0;
+        log(SketchCAD::I18n::t(QString::fromUtf8("文字样式不存在：%1")).arg(styleName), "warn"); return 0;
     }
-    beginEdit(styleName.isEmpty() ? QStringLiteral("清除文字样式关联")
-                                  : QStringLiteral("应用文字样式 ") + styleName);
+    beginEdit(styleName.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("清除文字样式关联"))
+                                  : SketchCAD::I18n::t(QString::fromUtf8("应用文字样式 ")) + styleName);
     int n = 0;
     for (int id : ids) {
         Element* e = const_cast<Element*>(element(id));
@@ -2550,7 +2551,7 @@ int SketchModel::applyStyleToElements(const QString& styleName, const std::vecto
         ++n;
     }
     emit textStylesChanged(); emit modelChanged();
-    log(QStringLiteral("已将文字样式「%1」应用到 %2 个文字对象").arg(styleName.isEmpty() ? QStringLiteral("(默认)") : styleName).arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已将文字样式「%1」应用到 %2 个文字对象")).arg(styleName.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("(默认)")) : styleName).arg(n));
     return n;
 }
 
@@ -2640,7 +2641,7 @@ bool isXrefBlockRef(const SketchModel* m, const Element& e) {
 bool SketchModel::createGroup(const QString& name, const std::vector<int>& ids) {
     const QString nm = name.trimmed();
     if (nm.isEmpty() || ids.empty()) {
-        log(QStringLiteral("创建编组失败：编组名或对象为空"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("创建编组失败：编组名或对象为空")), "warn");
         return false;
     }
     // Xref 边界守卫：剔除 Xref 块引用（不中断其余成员的编组）
@@ -2654,13 +2655,13 @@ bool SketchModel::createGroup(const QString& name, const std::vector<int>& ids) 
         ok.push_back(id);
     }
     if (ok.empty()) {
-        log(QStringLiteral("创建编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("创建编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组")), "warn");
         return false;
     }
     if (xrefN > 0)
-        log(QStringLiteral("已跳过 %1 个外部参照（Xref 不参与本图编组）").arg(xrefN), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("已跳过 %1 个外部参照（Xref 不参与本图编组）")).arg(xrefN), "warn");
     // 允许重名 = 向既有编组添加成员（与「添加到编组」语义统一），无需拒绝
-    beginEdit(QStringLiteral("创建编组 %1").arg(nm));
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("创建编组 %1")).arg(nm));
     QSet<int> want;
     for (int id : ok) want.insert(id);
     for (auto& e : elems_) {
@@ -2668,7 +2669,7 @@ bool SketchModel::createGroup(const QString& name, const std::vector<int>& ids) 
         e.groupName = nm;
         want.remove(e.id);
     }
-    log(QStringLiteral("已创建编组「%1」（%2 个对象）").arg(nm).arg(ok.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已创建编组「%1」（%2 个对象）")).arg(nm).arg(ok.size()));
     return true;
 }
 
@@ -2683,10 +2684,10 @@ int SketchModel::addToGroup(const QString& name, const std::vector<int>& ids) {
         if (e && !isXrefBlockRef(this, *e)) ok.push_back(id);
     }
     if (ok.empty()) {
-        log(QStringLiteral("添加到编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("添加到编组失败：所选对象均为外部参照（Xref），禁止跨参照边界编组")), "warn");
         return 0;
     }
-    beginEdit(QStringLiteral("添加到编组 %1").arg(nm));
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("添加到编组 %1")).arg(nm));
     QSet<int> want;
     for (int id : ok) want.insert(id);
     int n = 0;
@@ -2695,13 +2696,13 @@ int SketchModel::addToGroup(const QString& name, const std::vector<int>& ids) {
         e.groupName = nm;
         ++n;
     }
-    if (n > 0) log(QStringLiteral("已将 %1 个对象加入编组「%2」").arg(n).arg(nm));
+    if (n > 0) log(SketchCAD::I18n::t(QString::fromUtf8("已将 %1 个对象加入编组「%2」")).arg(n).arg(nm));
     return n;
 }
 
 int SketchModel::removeFromGroup(const std::vector<int>& ids) {
     if (ids.empty()) return 0;
-    beginEdit(QStringLiteral("从编组移除"));
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("从编组移除")));
     QSet<int> want;
     for (int id : ids) want.insert(id);
     int n = 0;
@@ -2710,35 +2711,35 @@ int SketchModel::removeFromGroup(const std::vector<int>& ids) {
         e.groupName.clear();
         ++n;
     }
-    if (n > 0) log(QStringLiteral("已将 %1 个对象移出编组").arg(n));
+    if (n > 0) log(SketchCAD::I18n::t(QString::fromUtf8("已将 %1 个对象移出编组")).arg(n));
     return n;
 }
 
 int SketchModel::ungroup(const QString& name) {
     if (name.isEmpty()) return 0;
-    beginEdit(QStringLiteral("解散编组 %1").arg(name));
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("解散编组 %1")).arg(name));
     int n = 0;
     for (auto& e : elems_) {
         if (e.groupName != name) continue;
         e.groupName.clear();
         ++n;
     }
-    log(n > 0 ? QStringLiteral("已解散编组「%1」（%2 个对象保留）").arg(name).arg(n)
-              : QStringLiteral("编组「%1」不存在").arg(name), n > 0 ? "info" : "warn");
+    log(n > 0 ? SketchCAD::I18n::t(QString::fromUtf8("已解散编组「%1」（%2 个对象保留）")).arg(name).arg(n)
+              : SketchCAD::I18n::t(QString::fromUtf8("编组「%1」不存在")).arg(name), n > 0 ? "info" : "warn");
     return n;
 }
 
 bool SketchModel::renameGroup(const QString& oldName, const QString& newName) {
     const QString nm = newName.trimmed();
     if (oldName.isEmpty() || nm.isEmpty() || nm == oldName) return false;
-    beginEdit(QStringLiteral("重命名编组 %1 → %2").arg(oldName, nm));
+    beginEdit(SketchCAD::I18n::t(QString::fromUtf8("重命名编组 %1 → %2")).arg(oldName, nm));
     int n = 0;
     for (auto& e : elems_) {
         if (e.groupName != oldName) continue;
         e.groupName = nm;
         ++n;
     }
-    log(QStringLiteral("已重命名编组：%1 → %2（%3 个对象）").arg(oldName, nm).arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已重命名编组：%1 → %2（%3 个对象）")).arg(oldName, nm).arg(n));
     return true;
 }
 
@@ -2796,7 +2797,7 @@ void SketchModel::applySelectionDelta(const std::vector<int>& hits, QSelectActio
 bool SketchModel::saveFilter(const FilterDef& f) {
     const QString nm = f.name.trimmed();
     if (nm.isEmpty() || f.conds.empty()) return false;
-    pushMemento(QStringLiteral("保存过滤器 ") + nm);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("保存过滤器 ")) + nm);
     for (auto& sf : savedFilters_) {
         if (sf.name == nm) { sf = f; sf.name = nm; return true; }   // 重名覆盖
     }
@@ -2808,7 +2809,7 @@ bool SketchModel::saveFilter(const FilterDef& f) {
 bool SketchModel::deleteFilter(const QString& name) {
     for (auto it = savedFilters_.begin(); it != savedFilters_.end(); ++it) {
         if (it->name == name) {
-            pushMemento(QStringLiteral("删除过滤器 ") + name);
+            pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除过滤器 ")) + name);
             savedFilters_.erase(it);
             return true;
         }
@@ -2837,7 +2838,7 @@ void SketchModel::setActivePickFilter(const FilterDef& f) {
     if (activePickFilter_.conds.empty()) {
         // 空条件 = 清除（幂等），不打扰日志
     } else {
-        log(QStringLiteral("FILTER 预选器已设置（%1 条件）：作用于下一次拾取/框选/栏选，随后自动清除")
+        log(SketchCAD::I18n::t(QString::fromUtf8("FILTER 预选器已设置（%1 条件）：作用于下一次拾取/框选/栏选，随后自动清除"))
                 .arg(activePickFilter_.conds.size()));
     }
 }
@@ -2856,7 +2857,7 @@ std::vector<int> SketchModel::applyPickFilterOnce(const std::vector<int>& candid
             kept.push_back(id);
     }
     activePickFilter_ = FilterDef{};   // 用后即清：「作用于随后一次」
-    log(QStringLiteral("FILTER 预选器生效：候选 %1 个 → 命中 %2 个（预选器已自动清除）")
+    log(SketchCAD::I18n::t(QString::fromUtf8("FILTER 预选器生效：候选 %1 个 → 命中 %2 个（预选器已自动清除）"))
             .arg(candidates.size()).arg(kept.size()),
         kept.empty() ? QStringLiteral("warn") : QStringLiteral("info"));
     return kept;
@@ -2879,7 +2880,7 @@ std::vector<int> SketchModel::applyPickFilterOnce(const std::vector<int>& candid
 
 void SketchModel::setUnits(const UnitsMeta& u) {
     if (u == units_) return;                       // 相同不发信号、也不入栈（幂等）
-    pushMemento(QStringLiteral("修改单位"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改单位")));
     units_ = u;
     emit unitsChanged();
 }
@@ -2887,7 +2888,7 @@ void SketchModel::setUnits(const UnitsMeta& u) {
 void SketchModel::setLimits(const LimitsMeta& l) {
     const LimitsMeta v = l.isValid() ? l : LimitsMeta();   // 非法范围回落默认 A3
     if (v == limits_) return;
-    pushMemento(QStringLiteral("修改图纸界限"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改图纸界限")));
     limits_ = v;
     emit limitsChanged();
 }
@@ -3033,14 +3034,14 @@ void SketchModel::setBomFromJson(const QJsonArray& a) {
 
 void SketchModel::setSnapConfig(const snap::SnapConfig& c) {
     if (c == snapConfig_) return;                 // 相同不发信号、也不入栈（幂等）
-    pushMemento(QStringLiteral("修改捕捉设置"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改捕捉设置")));
     snapConfig_ = c;
     emit snapConfigChanged();
 }
 
 void SketchModel::setTrackConfig(const snap::TrackConfig& c) {
     if (c == trackConfig_) return;               // 相同不发信号、也不入栈（幂等）
-    pushMemento(QStringLiteral("修改追踪设置"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改追踪设置")));
     trackConfig_ = c;
     emit trackConfigChanged();
 }
@@ -3124,7 +3125,7 @@ double SketchModel::param(const QString& name) const {
 void SketchModel::setParam(const QString& name, double val) {
     // 与几何编辑同语义：压一次快照，使整组参数修改可一次 Ctrl+Z 撤回
     if (params_.find(name) == params_.end() || params_[name] != val) {
-        beginEdit(QStringLiteral("参数 %1").arg(name));
+        beginEdit(SketchCAD::I18n::t(QString::fromUtf8("参数 %1")).arg(name));
         params_[name] = val;
         emit paramsChanged();
     }
@@ -3210,10 +3211,10 @@ QString SketchModel::drawingDir() const {
 int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
                             const Vec3& insertPt, double rotationDeg, double sx, double sy) {
     const QString raw = filePath.trimmed();
-    if (raw.isEmpty()) { log(QStringLiteral("附加外部参照失败：文件路径为空"), "warn"); return -1; }
+    if (raw.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照失败：文件路径为空")), "warn"); return -1; }
     const QFileInfo fi(raw);
     if (!fi.exists() || !fi.isFile()) {
-        log(QStringLiteral("附加外部参照失败：文件不存在 %1").arg(raw), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照失败：文件不存在 %1")).arg(raw), "warn");
         return -1;
     }
     const QString abs = fi.absoluteFilePath();
@@ -3224,8 +3225,8 @@ int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
     if (hasBlock(bname)) {
         const BlockDef* ex = findBlockDef(bname);
         log(ex && ex->isXref
-                ? QStringLiteral("外部参照 %1 已附加（如需更换请先「分离」）").arg(bname)
-                : QStringLiteral("附加外部参照失败：块名 %1 已被普通块占用").arg(bname),
+                ? SketchCAD::I18n::t(QString::fromUtf8("外部参照 %1 已附加（如需更换请先「分离」）")).arg(bname)
+                : SketchCAD::I18n::t(QString::fromUtf8("附加外部参照失败：块名 %1 已被普通块占用")).arg(bname),
             "warn");
         return -1;
     }
@@ -3233,12 +3234,12 @@ int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
     XrefSource src;
     QString err;
     if (!xref::readSource(abs, src, &err)) {
-        log(QStringLiteral("附加外部参照失败：%1").arg(err), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照失败：%1")).arg(err), "warn");
         return -1;
     }
 
     const QString stored = xref::storedPath(abs, pathType, drawingDir());
-    pushMemento(QStringLiteral("附加外部参照 ") + bname);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照 ")) + bname);
 
     // 依赖引入：源图自带、本图尚缺的定义一律标为「嵌套参照」（不可直接分离、可级联清理）。
     // 依赖之间也可能互相引用（A→B→C），用队列迭代到不再新增为止；已经在表里的跳过，
@@ -3285,15 +3286,15 @@ int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
     const Element ref = block::makeRef(blocks_.back(), insertPt, rotationDeg, sx, sy);
     auto ids = addElementsQuiet({ref});
     if (ids.empty()) {
-        log(QStringLiteral("附加外部参照失败：无法放置参照实例"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("附加外部参照失败：无法放置参照实例")), "warn");
         return -1;
     }
     setSelected(ids.front());
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("已附加外部参照 %1 ← %2（%3，%4 个图元%5），插入点 (%6,%7) 旋转 %8° 缩放 %9×%10")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已附加外部参照 %1 ← %2（%3，%4 个图元%5），插入点 (%6,%7) 旋转 %8° 缩放 %9×%10"))
             .arg(bname).arg(stored).arg(src.formatName).arg(def.entities.size())
-            .arg(nested > 0 ? QStringLiteral("，引入 %1 个嵌套参照").arg(nested) : QString())
+            .arg(nested > 0 ? SketchCAD::I18n::t(QString::fromUtf8("，引入 %1 个嵌套参照")).arg(nested) : QString())
             .arg(insertPt.x, 0, 'f', 2).arg(insertPt.y, 0, 'f', 2)
             .arg(rotationDeg, 0, 'f', 1).arg(sx, 0, 'f', 2).arg(sy, 0, 'f', 2));
     return ids.front();
@@ -3301,15 +3302,15 @@ int SketchModel::attachXref(const QString& filePath, XrefPathType pathType,
 
 bool SketchModel::detachXref(const QString& blockName) {
     const QString n = blockName.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("分离外部参照失败：块名不能为空"), "warn"); return false; }
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("分离外部参照失败：块名不能为空")), "warn"); return false; }
     const BlockDef* d = findBlockDef(n);
-    if (!d) { log(QStringLiteral("分离外部参照失败：块 %1 不存在").arg(n), "warn"); return false; }
+    if (!d) { log(SketchCAD::I18n::t(QString::fromUtf8("分离外部参照失败：块 %1 不存在")).arg(n), "warn"); return false; }
     if (!d->isXref) {
-        log(QStringLiteral("分离失败：%1 不是外部参照（普通块请用「块管理器」删除）").arg(n), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("分离失败：%1 不是外部参照（普通块请用「块管理器」删除）")).arg(n), "warn");
         return false;
     }
     if (d->xrefNested) {
-        log(QStringLiteral("分离失败：%1 是嵌套参照，只能在直接附加它的宿主图中分离").arg(n), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("分离失败：%1 是嵌套参照，只能在直接附加它的宿主图中分离")).arg(n), "warn");
         return false;
     }
 
@@ -3322,7 +3323,7 @@ bool SketchModel::detachXref(const QString& blockName) {
         for (const auto& e : b.entities)
             if (e.type == ElementType::BlockRef && e.blockName == n) ++inDefs;
 
-    pushMemento(QStringLiteral("分离外部参照 ") + n);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("分离外部参照 ")) + n);
     for (int id : victims) removeElementQuiet(id);
     auto it = std::find_if(blocks_.begin(), blocks_.end(),
                            [&](const BlockDef& b) { return b.name == n; });
@@ -3357,12 +3358,12 @@ bool SketchModel::detachXref(const QString& blockName) {
 
     emit blocksChanged();
     emit modelChanged();
-    log(QStringLiteral("已分离外部参照 %1：删除 %2 个参照实例%3%4")
+    log(SketchCAD::I18n::t(QString::fromUtf8("已分离外部参照 %1：删除 %2 个参照实例%3%4"))
             .arg(n).arg(victims.size())
             .arg(inDefs > 0
-                     ? QStringLiteral("（另有 %1 处嵌套引用因定义缺失不再绘制）").arg(inDefs)
+                     ? SketchCAD::I18n::t(QString::fromUtf8("（另有 %1 处嵌套引用因定义缺失不再绘制）")).arg(inDefs)
                      : QString())
-            .arg(cascaded > 0 ? QStringLiteral("，级联清理 %1 个嵌套参照").arg(cascaded) : QString()));
+            .arg(cascaded > 0 ? SketchCAD::I18n::t(QString::fromUtf8("，级联清理 %1 个嵌套参照")).arg(cascaded) : QString()));
     return true;
 }
 
@@ -3429,13 +3430,18 @@ void SketchModel::setLineParamCount(int v) {
     lp_.count = v; emit lineParamsChanged();
 }
 
-void SketchModel::log(const QString& m, const QString& t) { emit logAppended(m, t); }
+// 统一反馈出口兜底：绝大多数命令行反馈/错误/状态已在字面量处包装过
+// I18n::t()，这里再清洗一次，覆盖「运行时拼接 + 中文术语实参」等动态组合。
+// 中文模式恒等返回；已是英文的消息（无汉字）直接透传，不会二次翻译。
+void SketchModel::log(const QString& m, const QString& t) {
+    emit logAppended(SketchCAD::I18n::t(m), t);
+}
 void SketchModel::setStatusCommand(const QString& c) { emit statusCommandChanged(c); }
 
 // 说明：命名过滤器表随快照回退，但它**没有专用变更信号**（既有 saveFilter/deleteFilter
 // 也从不发信号，过滤器管理界面在打开时读取），故此处不额外广播，与既有行为一致。
 void SketchModel::undo() {
-    if (undoStack_.empty()) { log(QStringLiteral("无可撤销操作"), "warn"); return; }
+    if (undoStack_.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("无可撤销操作")), "warn"); return; }
     if (!deltaUndoEnabled_) {
         // 全量模式（既有行为，逐字节保留）：当前态存入 redo，回退到栈顶整张 Memento
         Memento m = std::move(undoStack_.back().snap);
@@ -3444,7 +3450,7 @@ void SketchModel::undo() {
         redoStack_.push_back(std::move(rs));
         trimRedoStackToLimit();
         restoreFromMemento(std::move(m));
-        log(QStringLiteral("已撤销: ") + m.label);
+        log(SketchCAD::I18n::t(QString::fromUtf8("已撤销: ")) + m.label);
         return;
     }
     // 差量模式：栈顶条目的出向差量 delta(E_{n-1}→E_n)（未封印则此刻封印）就是本次
@@ -3464,16 +3470,16 @@ void SketchModel::undo() {
         pendingBase_ = Memento{};
         redoStack_.push_back(std::move(rs));
         trimRedoStackToLimit();
-        log(QStringLiteral("已撤销: ") + undoneLabel);
+        log(SketchCAD::I18n::t(QString::fromUtf8("已撤销: ")) + undoneLabel);
         return;
     }
     unsealedStep_ = false;
     pendingBase_ = Memento{};
-    log(QStringLiteral("无可撤销操作"), "warn");
+    log(SketchCAD::I18n::t(QString::fromUtf8("无可撤销操作")), "warn");
 }
 
 void SketchModel::redo() {
-    if (redoStack_.empty()) { log(QStringLiteral("无可重做操作"), "warn"); return; }
+    if (redoStack_.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("无可重做操作")), "warn"); return; }
     if (!deltaUndoEnabled_) {
         Memento m = std::move(redoStack_.back().snap);
         redoStack_.pop_back();
@@ -3481,7 +3487,7 @@ void SketchModel::redo() {
         undoStack_.push_back(std::move(us));
         trimUndoStackToLimit();
         restoreFromMemento(std::move(m));
-        log(QStringLiteral("已重做: ") + m.label);
+        log(SketchCAD::I18n::t(QString::fromUtf8("已重做: ")) + m.label);
         return;
     }
     // 差量模式：redo 栈顶 = 刚被撤销的条目，其出向差量 delta(E_{n-1}→E_n) 描述被撤销
@@ -3498,19 +3504,19 @@ void SketchModel::redo() {
     trimUndoStackToLimit();
     unsealedStep_ = false;
     pendingBase_ = Memento{};
-    log(QStringLiteral("已重做: ") + redoneLabel);
+    log(SketchCAD::I18n::t(QString::fromUtf8("已重做: ")) + redoneLabel);
 }
 
 void SketchModel::copySelected() {
     auto s = selected();
-    if (s) { clipboard_ = *s; hasClip_ = true; log(QStringLiteral("已复制: ") + s->name); }
-    else log(QStringLiteral("无可复制的选中图元"), "warn");
+    if (s) { clipboard_ = *s; hasClip_ = true; log(SketchCAD::I18n::t(QString::fromUtf8("已复制: ")) + s->name); }
+    else log(SketchCAD::I18n::t(QString::fromUtf8("无可复制的选中图元")), "warn");
 }
 void SketchModel::paste() {
-    if (!hasClip_) { log(QStringLiteral("剪贴板为空"), "warn"); return; }
+    if (!hasClip_) { log(SketchCAD::I18n::t(QString::fromUtf8("剪贴板为空")), "warn"); return; }
     Element e = clipboard_; e.id = 0; e.name += QStringLiteral("_副本");
     int id = addElement(e); setSelected(id);
-    log(QStringLiteral("已粘贴: ") + e.name);
+    log(SketchCAD::I18n::t(QString::fromUtf8("已粘贴: ")) + e.name);
 }
 void SketchModel::deleteSelected() {
     // 只删除当前真实存在的选中图元：多选集合优先，回退主选择。
@@ -3523,16 +3529,16 @@ void SketchModel::deleteSelected() {
         ids.push_back(selectedId_);
     if (ids.empty()) {
         if (!selectedIds_.empty() || selectedId_ >= 0) clearSelection();
-        log(QStringLiteral("未选中要删除的图元"), "warn");
+        log(SketchCAD::I18n::t(QString::fromUtf8("未选中要删除的图元")), "warn");
         return;
     }
     // 原子单步撤销：整批删除压入同一个 memento，Ctrl+Z 一次恢复全部选中图元。
-    pushMemento(QStringLiteral("删除选中图元"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除选中图元")));
     for (int id : ids) removeElementQuiet(id);
     refreshHatchBoundaries(ids);   // 边界联动：与删除同属一个撤销步，不单独压栈
     // 删除后选择集必须清空，避免高亮残留或下一次 Del 误删未选中图元。
     if (!selectedIds_.empty() || selectedId_ >= 0) clearSelection();
-    log(QStringLiteral("已删除 %1 个选中图元").arg(ids.size()));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已删除 %1 个选中图元")).arg(ids.size()));
 }
 void SketchModel::reorderElement(int id, int beforeId) {
     auto it = find(id);
@@ -3555,7 +3561,7 @@ void SketchModel::clear() {
                                 // 读档路径在 clear 之后按 "sheet" 键/图框推断重设）
     trackPoints_.clear();       // 临时追踪点属瞬态会话状态，新建/清空图纸时一并丢弃
     if (elems_.empty()) return;
-    pushMemento(QStringLiteral("清空"));
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("清空")));
     elems_.clear(); selectedIds_.clear(); selectedId_ = -1;
     layers_.clear(); layers_.push_back(Layer(QStringLiteral("0")));   // 新建图纸只留默认层
     blocks_.clear();                                                  // 新建图纸不保留块定义
@@ -3619,14 +3625,14 @@ dim::Style SketchModel::dimStyleFor(const Element& e) const {
 
 bool SketchModel::addDimStyle(const dim::DimStyleEntry& e) {
     const QString n = e.name.trimmed();
-    if (n.isEmpty()) { log(QStringLiteral("标注样式名不能为空"), "warn"); return false; }
-    if (hasDimStyle(n)) { log(QStringLiteral("标注样式 %1 已存在").arg(n), "warn"); return false; }
-    pushMemento(QStringLiteral("新建标注样式 ") + n);
+    if (n.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式名不能为空")), "warn"); return false; }
+    if (hasDimStyle(n)) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 已存在")).arg(n), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("新建标注样式 ")) + n);
     dim::DimStyleEntry d = e; d.name = n;
     dimStyles_.push_back(std::move(d));
     emit dimStylesChanged();
     emit modelChanged();          // 引用它的标注需重绘
-    log(QStringLiteral("已创建标注样式 %1").arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已创建标注样式 %1")).arg(n));
     return true;
 }
 
@@ -3634,24 +3640,24 @@ bool SketchModel::updateDimStyle(const dim::DimStyleEntry& e) {
     const QString n = e.name.trimmed();
     auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
                            [&](const dim::DimStyleEntry& d) { return d.name == n; });
-    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(n), "warn"); return false; }
-    pushMemento(QStringLiteral("修改标注样式 ") + n);
+    if (it == dimStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 不存在")).arg(n), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改标注样式 ")) + n);
     it->style = e.style;
     emit dimStylesChanged();
     emit modelChanged();
-    log(QStringLiteral("已更新标注样式 %1（引用它的标注已联动）").arg(n));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已更新标注样式 %1（引用它的标注已联动）")).arg(n));
     return true;
 }
 
 bool SketchModel::renameDimStyle(const QString& oldName, const QString& newName) {
     auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
                            [&](const dim::DimStyleEntry& d) { return d.name == oldName; });
-    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(oldName), "warn"); return false; }
+    if (it == dimStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 不存在")).arg(oldName), "warn"); return false; }
     const QString nn = newName.trimmed();
-    if (nn.isEmpty()) { log(QStringLiteral("新标注样式名不能为空"), "warn"); return false; }
+    if (nn.isEmpty()) { log(SketchCAD::I18n::t(QString::fromUtf8("新标注样式名不能为空")), "warn"); return false; }
     if (nn == oldName) return true;
-    if (hasDimStyle(nn)) { log(QStringLiteral("标注样式 %1 已存在").arg(nn), "warn"); return false; }
-    pushMemento(QStringLiteral("重命名标注样式 ") + oldName);
+    if (hasDimStyle(nn)) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 已存在")).arg(nn), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重命名标注样式 ")) + oldName);
     it->name = nn;
     if (currentDimStyle_ == oldName) currentDimStyle_ = nn;
     int cnt = 0;
@@ -3659,16 +3665,16 @@ bool SketchModel::renameDimStyle(const QString& oldName, const QString& newName)
         if (el.dimStyleName == oldName) { el.dimStyleName = nn; ++cnt; }
     emit dimStylesChanged();
     emit modelChanged();
-    log(QStringLiteral("标注样式 %1 已改名为 %2（%3 个标注同步）").arg(oldName).arg(nn).arg(cnt));
+    log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 已改名为 %2（%3 个标注同步）")).arg(oldName).arg(nn).arg(cnt));
     return true;
 }
 
 bool SketchModel::removeDimStyle(const QString& name) {
     auto it = std::find_if(dimStyles_.begin(), dimStyles_.end(),
                            [&](const dim::DimStyleEntry& d) { return d.name == name; });
-    if (it == dimStyles_.end()) { log(QStringLiteral("标注样式 %1 不存在").arg(name), "warn"); return false; }
-    if (dimStyles_.size() == 1) { log(QStringLiteral("标注样式表至少保留一条"), "warn"); return false; }
-    pushMemento(QStringLiteral("删除标注样式 ") + name);
+    if (it == dimStyles_.end()) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 不存在")).arg(name), "warn"); return false; }
+    if (dimStyles_.size() == 1) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式表至少保留一条")), "warn"); return false; }
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除标注样式 ")) + name);
     dimStyles_.erase(it);
     if (currentDimStyle_ == name) currentDimStyle_ = dimStyles_.front().name;
     int cnt = 0;
@@ -3676,17 +3682,17 @@ bool SketchModel::removeDimStyle(const QString& name) {
         if (el.dimStyleName == name) { el.dimStyleName.clear(); ++cnt; }   // 回落当前样式
     emit dimStylesChanged();
     emit modelChanged();
-    log(QStringLiteral("已删除标注样式 %1；%2 个标注回落当前样式").arg(name).arg(cnt));
+    log(SketchCAD::I18n::t(QString::fromUtf8("已删除标注样式 %1；%2 个标注回落当前样式")).arg(name).arg(cnt));
     return true;
 }
 
 bool SketchModel::setCurrentDimStyle(const QString& name) {
-    if (!hasDimStyle(name)) { log(QStringLiteral("标注样式 %1 不存在").arg(name), "warn"); return false; }
+    if (!hasDimStyle(name)) { log(SketchCAD::I18n::t(QString::fromUtf8("标注样式 %1 不存在")).arg(name), "warn"); return false; }
     if (currentDimStyle_ == name) return true;
     currentDimStyle_ = name;
     emit dimStylesChanged();
     emit modelChanged();     // 空 dimStyleName 的标注解析到新当前样式 → 全图联动
-    log(QStringLiteral("当前标注样式 = %1").arg(name));
+    log(SketchCAD::I18n::t(QString::fromUtf8("当前标注样式 = %1")).arg(name));
     return true;
 }
 
@@ -3731,7 +3737,7 @@ void SketchModel::setDimStylesFromJson(const QJsonObject& o) {
 std::vector<int> SketchModel::quickDimSelected(const QString& mode) {
     std::vector<int> created;
     const auto& sel = selection();
-    if (sel.empty()) { log(QStringLiteral("qdim: 请先框选一组平行线或圆阵列"), QStringLiteral("warn")); return created; }
+    if (sel.empty()) { log(SketchCAD::I18n::t(QString::fromUtf8("qdim: 请先框选一组平行线或圆阵列")), QStringLiteral("warn")); return created; }
 
     // 1) 从选择集提取锚点（圆/弧→圆心；其余→首末点中点），去重
     struct AP { Vec3 p; int srcId; };
@@ -3752,7 +3758,7 @@ std::vector<int> SketchModel::quickDimSelected(const QString& mode) {
         for (const auto& q : pts) if (q.p.distTo(p) < 1e-6) { dup = true; break; }
         if (!dup) pts.push_back({p, id});
     }
-    if (pts.size() < 2) { log(QStringLiteral("qdim: 选择集中可标注的有效几何不足 2 个"), QStringLiteral("warn")); return created; }
+    if (pts.size() < 2) { log(SketchCAD::I18n::t(QString::fromUtf8("qdim: 选择集中可标注的有效几何不足 2 个")), QStringLiteral("warn")); return created; }
 
     // 2) 按主轴（bbox 较长轴）排序
     double minx = 1e18, miny = 1e18, maxx = -1e18, maxy = -1e18;
@@ -3787,8 +3793,8 @@ std::vector<int> SketchModel::quickDimSelected(const QString& mode) {
         const int id = addElement(e);
         if (id >= 0) created.push_back(id);
     }
-    log(QStringLiteral("qdim: 已生成 %1 个%2标注（%3 个锚点）")
-            .arg(created.size()).arg(cont ? QStringLiteral("连续") : QStringLiteral("基线"))
+    log(SketchCAD::I18n::t(QString::fromUtf8("qdim: 已生成 %1 个%2标注（%3 个锚点）"))
+            .arg(created.size()).arg(cont ? SketchCAD::I18n::t(QString::fromUtf8("连续")) : SketchCAD::I18n::t(QString::fromUtf8("基线")))
             .arg(pts.size()), QStringLiteral("info"));
     return created;
 }
@@ -3814,7 +3820,7 @@ const PlotLayoutDef* SketchModel::findLayout(const QString& name) const {
 // 当前页签还停在新布局"的错位。
 bool SketchModel::addLayout(const QString& name, const PrintSettings& settings) {
     if (name.trimmed().isEmpty() || findLayout(name)) return false;
-    pushMemento(QStringLiteral("新建布局 ") + name);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("新建布局 ")) + name);
     PlotLayoutDef def;
     def.name = name;
     def.settings = settings;
@@ -3826,7 +3832,7 @@ bool SketchModel::addLayout(const QString& name, const PrintSettings& settings) 
 bool SketchModel::removeLayout(const QString& name) {
     for (auto it = layouts_.begin(); it != layouts_.end(); ++it) {
         if (it->name == name) {
-            pushMemento(QStringLiteral("删除布局 ") + name);
+            pushMemento(SketchCAD::I18n::t(QString::fromUtf8("删除布局 ")) + name);
             layouts_.erase(it);
             if (currentLayout_ == name) currentLayout_.clear();   // 回落模型空间
             emit layoutsChanged();
@@ -3843,7 +3849,7 @@ bool SketchModel::renameLayout(const QString& oldName, const QString& newName) {
         if (l.name == oldName) { def = &l; break; }
     if (!def) return false;
     if (newName != oldName && findLayout(newName)) return false;  // 重名拒绝
-    pushMemento(QStringLiteral("重命名布局 ") + oldName);
+    pushMemento(SketchCAD::I18n::t(QString::fromUtf8("重命名布局 ")) + oldName);
     def->name = newName;
     if (currentLayout_ == oldName) currentLayout_ = newName;
     emit layoutsChanged();
@@ -3853,7 +3859,7 @@ bool SketchModel::renameLayout(const QString& oldName, const QString& newName) {
 bool SketchModel::updateLayout(const QString& name, const PrintSettings& settings) {
     for (auto& l : layouts_) {
         if (l.name == name) {
-            pushMemento(QStringLiteral("修改布局 ") + name);
+            pushMemento(SketchCAD::I18n::t(QString::fromUtf8("修改布局 ")) + name);
             l.settings = settings;
             emit layoutsChanged();
             return true;
@@ -3955,7 +3961,7 @@ void SketchModel::setScaleRatio(double r, bool allowUndo) {
     const Vec3 c(hasContent ? box.center().x() : 0.0,
                 hasContent ? box.center().y() : 0.0, 0.0);
 
-    if (allowUndo) beginEdit(QStringLiteral("修改比例 %1").arg(scaleLabel()));
+    if (allowUndo) beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改比例 %1")).arg(scaleLabel()));
     for (auto& e : elems_) {
         if (e.layer == QStringLiteral("图框") || e.layer == QStringLiteral("标题栏")) continue;
         for (auto& p : e.pts) {

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ConstraintSolver.h"
 #include "Geometry.h"
 #include "Snap.h"
@@ -619,7 +620,7 @@ QString ConstraintSolver::addConstraint(SketchModel& m, ConstraintType type,
         return {};
     }
     m.addConstraintRecord(r);
-    m.beginEdit(QStringLiteral("添加几何约束"));
+    m.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("添加几何约束")));
     // 垂直/角度约束在两端"恰好平行"时退化：夹角残差在平行处梯度为零，LM 无法决定旋转方向。
     // 求解前给被动直线一个极小初始转角（≈3°）打破对称性；最终仍收敛到目标角，用户无感。
     if ((type == ConstraintType::Perpendicular || type == ConstraintType::Angle) &&
@@ -811,7 +812,7 @@ QString ConstraintSolver::linkDimension(SketchModel& m, int dimId, const QString
         }
     }
     m.setConstraints(recs);
-    m.beginEdit(QStringLiteral("关联尺寸标注"));
+    m.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("关联尺寸标注")));
     solveAllNumeric(m);
     // 标注状态回写 + 数值/文本刷新
     m.updateElementQuiet(dimId, [&](Element& e){
@@ -843,7 +844,7 @@ QString ConstraintSolver::setDimensionValue(SketchModel& m, int dimId, double va
     const double target = dimValueToConstraintValue(dim->dtype, value);
     for (auto& r : recs) if (r.driverId == dimId) r.value = target;
     m.setConstraints(recs);
-    m.beginEdit(QStringLiteral("修改标注值"));
+    m.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改标注值")));
     solveAllNumeric(m);
     syncDimensionValues(m);
     return {};
@@ -880,7 +881,7 @@ QString ConstraintSolver::driveParameter(SketchModel& m, const QString& param, d
     }
     if (!changed) return QStringLiteral("参数 %1 未关联到任何标注").arg(param);
     m.setConstraints(recs);
-    m.beginEdit(QStringLiteral("参数驱动"));
+    m.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("参数驱动")));
     solveAllNumeric(m);
     syncDimensionValues(m);
     return {};

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ConstraintBar.h"
 #include "core/ConstraintSolver.h"
 #include "core/ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
@@ -15,7 +16,7 @@ ConstraintBar::ConstraintBar(SketchModel* m, QWidget* parent)
     v->setContentsMargins(6, 6, 6, 6);
     v->setSpacing(6);
 
-    headerLabel_ = new QLabel(QStringLiteral("约束栏（选中对象的约束）"));
+    headerLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("约束栏（选中对象的约束）")));
     headerLabel_->setStyleSheet(QStringLiteral("font-weight:bold;"));
     bannerLabel_ = new QLabel();
     bannerLabel_->setWordWrap(true);
@@ -25,8 +26,8 @@ ConstraintBar::ConstraintBar(SketchModel* m, QWidget* parent)
     list_ = new QListWidget();
     list_->setAlternatingRowColors(true);
 
-    locateBtn_ = new QPushButton(QStringLiteral("定位"));
-    deleteBtn_ = new QPushButton(QStringLiteral("删除"));
+    locateBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("定位")));
+    deleteBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
     auto* h = new QHBoxLayout();
     h->addWidget(locateBtn_);
     h->addWidget(deleteBtn_);
@@ -61,17 +62,17 @@ void ConstraintBar::refresh() {
             for (int i : ConstraintSolver::constraintsInvolving(*model_, id))
                 if (std::find(idxs.begin(), idxs.end(), i) == idxs.end())
                     idxs.push_back(i);
-        headerLabel_->setText(QStringLiteral("约束栏（选中 #%1 的约束，共 %2 条）")
+        headerLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("约束栏（选中 #%1 的约束，共 %2 条）"))
                                  .arg(selIds.first()).arg(idxs.size()));
     } else {
         for (int i = 0; i < (int)recs.size(); ++i) idxs.push_back(i);
-        headerLabel_->setText(QStringLiteral("约束栏（全部约束，共 %1 条）").arg(recs.size()));
+        headerLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("约束栏（全部约束，共 %1 条）")).arg(recs.size()));
     }
 
     for (int i : idxs) {
         if (i < 0 || i >= (int)recs.size()) continue;
         const auto& r = recs[i];
-        const QString type = QString::fromUtf8(constraintTypeName(r.type));
+        const QString type = SketchCAD::I18n::t(QString::fromUtf8(constraintTypeName(r.type)));
         QString parts = QStringLiteral("#%1").arg(r.idA);
         if (r.idB >= 0) parts += QStringLiteral(" ↔ #%1").arg(r.idB);
         if (r.axisId >= 0) parts += QStringLiteral(" ⟂轴#%1").arg(r.axisId);
@@ -81,7 +82,7 @@ void ConstraintBar::refresh() {
             const QString unit = (r.type == ConstraintType::Angle) ? QStringLiteral("°") : QString();
             parts += QStringLiteral(" = %1%2").arg(r.value, 0, 'f', 2).arg(unit);
         }
-        const QString stat = r.satisfied ? QStringLiteral("满足") : QStringLiteral("未满足");
+        const QString stat = r.satisfied ? SketchCAD::I18n::t(QString::fromUtf8("满足")) : SketchCAD::I18n::t(QString::fromUtf8("未满足"));
         auto* item = new QListWidgetItem(QStringLiteral("%1  %2  [%3]").arg(type, parts, stat));
         item->setData(Qt::UserRole, i);            // 约束表下标（删除用）
         item->setData(Qt::UserRole + 1, r.idA);   // 主相关图元 id（定位用）
@@ -95,7 +96,7 @@ void ConstraintBar::refresh() {
         diag.state == ConstraintDiagnosis::OverConstrained ||
         diag.state == ConstraintDiagnosis::Conflicting) {
         QStringList s; for (int id : diag.overconstrainedIds) s << QString::number(id);
-        bannerLabel_->setText(QStringLiteral("⚠ %1（图元 #%2）")
+        bannerLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("⚠ %1（图元 #%2）"))
                                  .arg(diag.stateText()).arg(s.join(" #")));
         bannerLabel_->show();
     }

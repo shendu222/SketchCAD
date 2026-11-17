@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "MacroScript.h"
 #include "Commands.h"
 #include "CommandInterpreter.h"
@@ -103,17 +104,17 @@ ScriptRunResult ScriptRunner::runText(SketchModel* m, CommandInterpreter* interp
                                    const QString& logTag) {
     ScriptRunResult res;
     if (!interp) {
-        m->log(QStringLiteral("[%1] 内部错误：命令解释器为空").arg(logTag), "error");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("[%1] 内部错误：命令解释器为空")).arg(logTag), "error");
         res.stoppedEarly = true;
         return res;
     }
     if (MacroRecorder::playbackActive()) {
-        m->log(QStringLiteral("[%1] 拒绝嵌套执行：已有脚本正在运行").arg(logTag), "error");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("[%1] 拒绝嵌套执行：已有脚本正在运行")).arg(logTag), "error");
         res.stoppedEarly = true;
         return res;
     }
     if (MacroRecorder::instance().isRecording()) {
-        m->log(QStringLiteral("[%1] 拒绝执行：宏录制进行中（先 macrostop）").arg(logTag), "error");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("[%1] 拒绝执行：宏录制进行中（先 macrostop）")).arg(logTag), "error");
         res.stoppedEarly = true;
         return res;
     }
@@ -138,20 +139,20 @@ ScriptRunResult ScriptRunner::runText(SketchModel* m, CommandInterpreter* interp
         }
         ++res.failed;
         res.failedLineNo << (i + 1);
-        m->log(QString("[%1:%2] 执行失败：%3").arg(logTag).arg(i + 1).arg(line), "error");
+        m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("[%1:%2] 执行失败：%3"))).arg(logTag).arg(i + 1).arg(line), "error");
         if (mode == StopMode::StopOnError) {
             res.stoppedEarly = true;
-            m->log(QString("[%1] 中断于第 %2 行（STOP 模式）：已执行 %3，失败 %4")
+            m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("[%1] 中断于第 %2 行（STOP 模式）：已执行 %3，失败 %4")))
                        .arg(logTag).arg(i + 1).arg(res.executed).arg(res.failed), "warn");
             return res;
         }
     }
 
-    m->log(QString("[%1] 脚本执行完成：共 %2 条，成功 %3，失败 %4%5")
+    m->log(QString(SketchCAD::I18n::t(QString::fromUtf8("[%1] 脚本执行完成：共 %2 条，成功 %3，失败 %4%5")))
                .arg(logTag).arg(res.totalLines).arg(res.executed).arg(res.failed)
                .arg(res.failedLineNo.isEmpty()
                         ? QString()
-                        : QStringLiteral("（失败行：%1）").arg(
+                        : SketchCAD::I18n::t(QString::fromUtf8("（失败行：%1）")).arg(
                               [&] {
                                   QStringList ns;
                                   for (int n : res.failedLineNo) ns << QString::number(n);
@@ -222,7 +223,7 @@ bool runScriptCommand(const CommandContext& ctx, int fixedContinue, const QStrin
     }
     CommandInterpreter* interp = ctx.interp;
     if (!interp) {
-        m->log(QStringLiteral("内部错误：命令解释器不可用"), "error");
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("内部错误：命令解释器不可用")), "error");
         return false;
     }
     const ScriptRunner::StopMode mode =
@@ -243,13 +244,13 @@ namespace macrocmd {
 bool cmdMacroRec(const CommandContext& ctx) {
     const PathArgs pa = parsePathArgs(ctx.toks);
     if (!MacroRecorder::instance().start(pa.path)) {
-        ctx.model->log(QStringLiteral("macrorec：无法开始录制（已在录制中或脚本回放进行中）"), "error");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("macrorec：无法开始录制（已在录制中或脚本回放进行中）")), "error");
         return false;
     }
     ctx.model->log(
         pa.path.isEmpty()
-            ? QStringLiteral("宏录制开始：此后执行的命令将逐条记录（macrostop 结束，macrosave 保存，macroshow 查看）")
-            : QStringLiteral("宏录制开始（自动保存到 %1）：macrostop 结束并落盘").arg(pa.path),
+            ? SketchCAD::I18n::t(QString::fromUtf8("宏录制开始：此后执行的命令将逐条记录（macrostop 结束，macrosave 保存，macroshow 查看）"))
+            : SketchCAD::I18n::t(QString::fromUtf8("宏录制开始（自动保存到 %1）：macrostop 结束并落盘")).arg(pa.path),
         "info");
     return true;
 }
@@ -260,7 +261,7 @@ bool cmdMacroStop(const CommandContext& ctx) {
         ctx.model->log(QStringLiteral("macrostop：%1").arg(err), "error");
         return false;
     }
-    ctx.model->log(QStringLiteral("宏录制已停止：共 %1 条命令（macrosave 保存 / macroshow 查看）")
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("宏录制已停止：共 %1 条命令（macrosave 保存 / macroshow 查看）"))
                        .arg(MacroRecorder::instance().lines().size()), "info");
     return true;
 }
@@ -268,11 +269,11 @@ bool cmdMacroStop(const CommandContext& ctx) {
 bool cmdMacroSave(const CommandContext& ctx) {
     const PathArgs pa = parsePathArgs(ctx.toks);
     if (pa.path.isEmpty()) {
-        ctx.model->log(QStringLiteral("用法：macrosave <文件>（路径含空格用双引号包裹）"), "error");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("用法：macrosave <文件>（路径含空格用双引号包裹）")), "error");
         return false;
     }
     if (MacroRecorder::instance().lines().isEmpty()) {
-        ctx.model->log(QStringLiteral("macrosave：没有可保存的录制内容"), "error");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("macrosave：没有可保存的录制内容")), "error");
         return false;
     }
     QString err;
@@ -280,7 +281,7 @@ bool cmdMacroSave(const CommandContext& ctx) {
         ctx.model->log(QStringLiteral("macrosave：%1").arg(err), "error");
         return false;
     }
-    ctx.model->log(QStringLiteral("宏已保存：%1（共 %2 条命令）")
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("宏已保存：%1（共 %2 条命令）"))
                        .arg(pa.path).arg(MacroRecorder::instance().lines().size()), "info");
     return true;
 }
@@ -288,10 +289,10 @@ bool cmdMacroSave(const CommandContext& ctx) {
 bool cmdMacroShow(const CommandContext& ctx) {
     const QStringList& ls = MacroRecorder::instance().lines();
     if (ls.isEmpty()) {
-        ctx.model->log(QStringLiteral("macroshow：录制缓冲为空"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("macroshow：录制缓冲为空")), "warn");
         return true;
     }
-    ctx.model->log(QStringLiteral("已录制 %1 条命令：").arg(ls.size()), "info");
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已录制 %1 条命令：")).arg(ls.size()), "info");
     for (int i = 0; i < ls.size(); ++i)
         ctx.model->log(QString("  %1: %2").arg(i + 1).arg(ls[i]), "info");
     return true;

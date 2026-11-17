@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "FilterDialog.h"
 #include "core/SketchModel.h"
 #include "core/QSelect.h"
@@ -19,31 +20,31 @@ namespace SketchCAD {
 
 FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("过滤器 (FILTER)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("过滤器 (FILTER)")));
     resize(680, 480);
 
     // ---- 已保存过滤器列表 ----
     savedList_ = new QListWidget(this);
     connect(savedList_, &QListWidget::currentRowChanged, this, [this](int) { onSavedSelected(); });
 
-    auto* bDelete = new QPushButton(QStringLiteral("删除"), this);
+    auto* bDelete = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")), this);
     connect(bDelete, &QPushButton::clicked, this, &FilterDialog::onDelete);
 
     auto* savedBox = new QVBoxLayout;
-    savedBox->addWidget(new QLabel(QStringLiteral("已保存过滤器："), this));
+    savedBox->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("已保存过滤器：")), this));
     savedBox->addWidget(savedList_, 1);
     savedBox->addWidget(bDelete);
 
     // ---- 条件表：特性 / 运算符 / 值 ----
     condTable_ = new QTableWidget(0, 3, this);
-    condTable_->setHorizontalHeaderLabels({ QStringLiteral("特性"), QStringLiteral("运算符"), QStringLiteral("值") });
+    condTable_->setHorizontalHeaderLabels({ SketchCAD::I18n::t(QString::fromUtf8("特性")), SketchCAD::I18n::t(QString::fromUtf8("运算符")), SketchCAD::I18n::t(QString::fromUtf8("值")) });
     condTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     condTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     condTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
     condTable_->verticalHeader()->setVisible(false);
 
-    auto* bAdd = new QPushButton(QStringLiteral("添加条件"), this);
-    auto* bRemove = new QPushButton(QStringLiteral("删除条件"), this);
+    auto* bAdd = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("添加条件")), this);
+    auto* bRemove = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除条件")), this);
     connect(bAdd, &QPushButton::clicked, this, &FilterDialog::addRow);
     connect(bRemove, &QPushButton::clicked, this, &FilterDialog::removeRow);
     auto* condBtns = new QHBoxLayout;
@@ -54,23 +55,23 @@ FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
     // 条件行的值列随特性联动：用 cellChanged 不行（值列是可编辑框），改为在
     // addRow 时给每行建立「特性列切换 → 重填本行值列候选」的连接（见 createRow 逻辑内联）。
     cbMatch_ = new QComboBox(this);
-    cbMatch_->addItem(QStringLiteral("全部满足（AND）"), true);
-    cbMatch_->addItem(QStringLiteral("任一满足（OR）"), false);
+    cbMatch_->addItem(SketchCAD::I18n::t(QString::fromUtf8("全部满足（AND）")), true);
+    cbMatch_->addItem(SketchCAD::I18n::t(QString::fromUtf8("任一满足（OR）")), false);
 
     cbAction_ = new QComboBox(this);
-    cbAction_->addItem(QStringLiteral("替换当前选择集"), int(QSelectAction::Replace));
-    cbAction_->addItem(QStringLiteral("追加到当前选择集"), int(QSelectAction::Append));
-    cbAction_->addItem(QStringLiteral("从当前选择集排除"), int(QSelectAction::Exclude));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("替换当前选择集")), int(QSelectAction::Replace));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("追加到当前选择集")), int(QSelectAction::Append));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("从当前选择集排除")), int(QSelectAction::Exclude));
 
     edName_ = new QLineEdit(this);
-    edName_->setPlaceholderText(QStringLiteral("输入名称后可保存复用"));
+    edName_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("输入名称后可保存复用")));
 
-    auto* bSave = new QPushButton(QStringLiteral("保存过滤器"), this);
+    auto* bSave = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("保存过滤器")), this);
     connect(bSave, &QPushButton::clicked, this, &FilterDialog::onSave);
 
-    auto* bApply = new QPushButton(QStringLiteral("应用"), this);
-    auto* bArm   = new QPushButton(QStringLiteral("设为预选器（下一次拾取生效）"), this);
-    auto* bClose = new QPushButton(QStringLiteral("关闭"), this);
+    auto* bApply = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("应用")), this);
+    auto* bArm   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("设为预选器（下一次拾取生效）")), this);
+    auto* bClose = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), this);
     connect(bApply, &QPushButton::clicked, this, &FilterDialog::apply);
     connect(bArm,   &QPushButton::clicked, this, &FilterDialog::armFilter);
     connect(bClose, &QPushButton::clicked, this, &QDialog::reject);
@@ -81,7 +82,7 @@ FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
 
     auto* right = new QVBoxLayout;
     auto* matchForm = new QFormLayout;
-    matchForm->addRow(QStringLiteral("组合方式："), cbMatch_);
+    matchForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("组合方式：")), cbMatch_);
     right->addLayout(matchForm);
     right->addWidget(condTable_, 1);
     right->addLayout(condBtns);
@@ -90,7 +91,7 @@ FilterDialog::FilterDialog(SketchModel* model, QWidget* parent)
     saveRow->addWidget(bSave);
     right->addLayout(saveRow);
     auto* actRow = new QFormLayout;
-    actRow->addRow(QStringLiteral("应用方式："), cbAction_);
+    actRow->addRow(SketchCAD::I18n::t(QString::fromUtf8("应用方式：")), cbAction_);
     right->addLayout(actRow);
     auto* applyRow = new QHBoxLayout;
     applyRow->addStretch(1);
@@ -206,7 +207,7 @@ void FilterDialog::loadFilter(const FilterDef& f) {
 void FilterDialog::refreshSaved() {
     savedList_->clear();
     for (const auto& f : model_->savedFilters())
-        savedList_->addItem(QStringLiteral("%1（%2 条件）").arg(f.name).arg(f.conds.size()));
+        savedList_->addItem(SketchCAD::I18n::t(QString::fromUtf8("%1（%2 条件）")).arg(f.name).arg(f.conds.size()));
 }
 
 void FilterDialog::onSavedSelected() {
@@ -220,11 +221,11 @@ void FilterDialog::onSavedSelected() {
 void FilterDialog::onSave() {
     FilterDef f = currentFilter();
     if (f.conds.empty()) {
-        QMessageBox::information(this, QStringLiteral("保存过滤器"), QStringLiteral("请先添加至少一条有效条件（特性不为「不限」）。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("保存过滤器")), SketchCAD::I18n::t(QString::fromUtf8("请先添加至少一条有效条件（特性不为「不限」）。")));
         return;
     }
     if (f.name.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("保存过滤器"), QStringLiteral("请输入过滤器名称。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("保存过滤器")), SketchCAD::I18n::t(QString::fromUtf8("请输入过滤器名称。")));
         return;
     }
     model_->saveFilter(f);
@@ -246,7 +247,7 @@ void FilterDialog::onDelete() {
 void FilterDialog::apply() {
     FilterDef f = currentFilter();
     if (f.conds.empty()) {
-        QMessageBox::information(this, QStringLiteral("应用过滤器"), QStringLiteral("请先添加至少一条有效条件（特性不为「不限」）。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("应用过滤器")), SketchCAD::I18n::t(QString::fromUtf8("请先添加至少一条有效条件（特性不为「不限」）。")));
         return;
     }
     const std::vector<int> hits = qselect(model_, f, nullptr);   // 过滤器作用于整个图形
@@ -255,15 +256,15 @@ void FilterDialog::apply() {
     const QString actName = (act == QSelectAction::Replace) ? QStringLiteral("替换")
                           : (act == QSelectAction::Append)  ? QStringLiteral("追加")
                                                             : QStringLiteral("排除");
-    model_->log(QStringLiteral("过滤器「%1」：命中 %2 个对象（%3 选择集）")
-                    .arg(f.name.isEmpty() ? QStringLiteral("(未命名)") : f.name)
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("过滤器「%1」：命中 %2 个对象（%3 选择集）"))
+                    .arg(f.name.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("(未命名)")) : f.name)
                     .arg(hits.size()).arg(actName));
 }
 
 void FilterDialog::armFilter() {
     FilterDef f = currentFilter();
     if (f.conds.empty()) {
-        QMessageBox::information(this, QStringLiteral("设为预选器"), QStringLiteral("请先添加至少一条有效条件（特性不为「不限」）。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("设为预选器")), SketchCAD::I18n::t(QString::fromUtf8("请先添加至少一条有效条件（特性不为「不限」）。")));
         return;
     }
     model_->setActivePickFilter(f);   // 瞬态预选器：下一次拾取/框选/栏选生效后自动清除

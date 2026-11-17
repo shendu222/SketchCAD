@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "SectionDialog.h"
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -55,7 +56,7 @@ SectionDialog::SectionDialog(QWidget* parent)
 
 SectionDialog::SectionDialog(const Result& init, QWidget* parent)
     : QDialog(parent), res_(init) {
-    setWindowTitle(QStringLiteral("剖面填充（GB/T 4457.5-2013）"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("剖面填充（GB/T 4457.5-2013）")));
     setModal(true);
 
     auto* form = new QFormLayout();
@@ -83,7 +84,7 @@ SectionDialog::SectionDialog(const Result& init, QWidget* parent)
     sbSpacing_->setSuffix(QStringLiteral(" mm"));
     sbSpacing_->setValue(init.style.spacingMm);
 
-    cbAuto_ = new QCheckBox(QStringLiteral("自动区分相邻区域（方向相反 / 间隔不等，4.7）"), this);
+    cbAuto_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("自动区分相邻区域（方向相反 / 间隔不等，4.7）")), this);
     cbAuto_->setChecked(init.autoDistinguish);
 
     // 实时预览：把当前材料/角度/间距的图案画进缩略图，让用户在确定前就看到效果。
@@ -92,11 +93,11 @@ SectionDialog::SectionDialog(const Result& init, QWidget* parent)
     previewLabel_->setFrameShape(QFrame::StyledPanel);
     previewLabel_->setAlignment(Qt::AlignCenter);
 
-    form->addRow(QStringLiteral("材料类别"), cbMaterial_);
-    form->addRow(QStringLiteral("图案预览"), previewLabel_);
-    form->addRow(QStringLiteral("豁免类别"), cbExempt_);
-    form->addRow(QStringLiteral("剖面线角度"), sbAngle_);
-    form->addRow(QStringLiteral("剖面线间距"), sbSpacing_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("材料类别")), cbMaterial_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图案预览")), previewLabel_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("豁免类别")), cbExempt_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("剖面线角度")), sbAngle_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("剖面线间距")), sbSpacing_);
 
     // 任一参数变化 → 重绘预览（所见即所得）
     connect(cbMaterial_, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -106,9 +107,7 @@ SectionDialog::SectionDialog(const Result& init, QWidget* parent)
     connect(sbSpacing_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { updatePreview(); });
 
-    auto* tip = new QLabel(QStringLiteral(
-        "提示：GB/T 4457.5 规定同一零件剖面线间隔相等、方向相同，一般与主要轮廓成 45°；\n"
-        "装配图中相邻零件剖面线方向应相反或间隔不等。"), this);
+    auto* tip = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("提示：GB/T 4457.5 规定同一零件剖面线间隔相等、方向相同，一般与主要轮廓成 45°；\n装配图中相邻零件剖面线方向应相反或间隔不等。")), this);
     tip->setWordWrap(true);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);

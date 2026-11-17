@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/WeldTool.h"
 #include "core/SketchModel.h"   // beginEdit / addElementsQuiet / setActiveTool / pendingWeldSpec / log
 #include <vector>
@@ -49,9 +50,9 @@ bool WeldTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) {
     spec.anchor = a;
 
     // 带撤销落盘（单一入口 beginEdit + addElementsQuiet）
-    ctx.model->beginEdit(QStringLiteral("放置焊缝符号"));
+    ctx.model->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("放置焊缝符号")));
     ctx.model->addElementsQuiet(buildWeldSymbol(spec));
-    ctx.model->log(QStringLiteral("已放置焊缝符号：%1").arg(weldTypeName(spec.type)),
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已放置焊缝符号：%1")).arg(weldTypeName(spec.type)),
                    QStringLiteral("info"));
 
     // 清理交互态：清 ghost、清暂存、回选择工具

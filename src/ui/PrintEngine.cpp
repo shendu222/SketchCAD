@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PrintEngine.h"
 #include "ElementPath.h"    // ElementPath::rawBounds（静态、视图无关、无头复用）
 #include "core/TextMetrics.h"  // 文字度量单一数据源：取景与屏幕/打印三处同源
@@ -274,7 +275,7 @@ bool PrintEngine::exportPdf(SketchModel* model, const PrintSettings& s, const QS
     pdf.setPageSize(s.pageSize);
     pdf.setPageOrientation(s.orientation);
     pdf.setPageMargins(s.marginsMm, QPageLayout::Millimeter);
-    pdf.setTitle(QStringLiteral("SketchCAD 打印输出"));
+    pdf.setTitle(SketchCAD::I18n::t(QString::fromUtf8("SketchCAD 打印输出")));
     return render(model, &pdf, s);
 }
 
@@ -319,7 +320,7 @@ int PrintEngine::exportPagesPdf(SketchModel* model, const QList<PublishPage>& pa
     if (!model || pages.isEmpty()) return 0;
     QPdfWriter pdf(filePath);
     pdf.setResolution(300);
-    pdf.setTitle(title.isEmpty() ? QStringLiteral("SketchCAD 发布输出") : title);
+    pdf.setTitle(title.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("SketchCAD 发布输出")) : title);
     QPainter p;
     bool first = true;
     int done = 0;

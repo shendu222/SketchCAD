@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/StandardsPanel.h"
 
 #include <QListWidget>
@@ -17,7 +18,7 @@ StandardsPanel::StandardsPanel(SketchModel* model, QWidget* parent)
     auto* vl = new QVBoxLayout(this);
     vl->setContentsMargins(6, 6, 6, 6);
 
-    summaryLabel_ = new QLabel(QStringLiteral("尚未运行合规检查（执行 STDCHECK 后更新）。"));
+    summaryLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("尚未运行合规检查（执行 STDCHECK 后更新）。")));
     summaryLabel_->setWordWrap(true);
     vl->addWidget(summaryLabel_);
 
@@ -27,7 +28,7 @@ StandardsPanel::StandardsPanel(SketchModel* model, QWidget* parent)
     connect(list_, &QListWidget::itemDoubleClicked, this, &StandardsPanel::onItemDoubleClicked);
     vl->addWidget(list_);
 
-    runBtn_ = new QPushButton(QStringLiteral("运行合规检查 (STDCHECK)"));
+    runBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("运行合规检查 (STDCHECK)")));
     connect(runBtn_, &QPushButton::clicked, this, &StandardsPanel::onRunCheck);
     vl->addWidget(runBtn_);
 
@@ -51,20 +52,22 @@ void StandardsPanel::setIssues(const QVector<ComplianceIssue>& issues) {
 void StandardsPanel::refresh() {
     list_->clear();
     if (issues_.isEmpty()) {
-        summaryLabel_->setText(QStringLiteral("未发现不合规项（执行 STDCHECK 后更新）。"));
+        summaryLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("未发现不合规项（执行 STDCHECK 后更新）。")));
         return;
     }
-    summaryLabel_->setText(QStringLiteral("发现 %1 个不合规项（双击可跳转到图元）：").arg(issues_.size()));
+    summaryLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("发现 %1 个不合规项（双击可跳转到图元）：")).arg(issues_.size()));
     for (int i = 0; i < issues_.size(); ++i) {
         const ComplianceIssue& iss = issues_[i];
-        const QString label = QStringLiteral("[%1] #%2 %3：%4")
-                                  .arg(iss.severity)
-                                  .arg(iss.elementId)
-                                  .arg(iss.ruleId)
-                                  .arg(iss.message);
+        // 构造显示文本：severity/message/fixHint 三者在运行时按当前语言重译（含中文术语清洗兜底）
+        QString label = QStringLiteral("[%1] #%2 %3：%4")
+                            .arg(iss.severity)
+                            .arg(iss.elementId)
+                            .arg(iss.ruleId)
+                            .arg(iss.message);
+        label = SketchCAD::I18n::t(label);
         auto* item = new QListWidgetItem(label, list_);
         item->setData(Qt::UserRole, i);   // 记录原始 issue 下标，双击时取回
-        item->setToolTip(iss.fixHint);
+        item->setToolTip(SketchCAD::I18n::t(iss.fixHint));
         list_->addItem(item);
     }
 }

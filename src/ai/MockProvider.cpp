@@ -1,4 +1,5 @@
 #include "ai/MockProvider.h"
+#include "core/I18n.h"
 
 #include <QRegularExpression>
 #include <QJsonObject>
@@ -19,7 +20,7 @@ void MockProvider::chat(const QVector<LlmMessage>& messages,
                         std::function<void(const QString&)> onDone) {
     // 第二回合：已产生工具结果 → 收尾文本（不再触发工具）
     if (hasToolResult(messages)) {
-        onDelta(QStringLiteral("已为你执行命令，可在画布查看结果。"));
+        onDelta(SketchCAD::I18n::t(QStringLiteral("已为你执行命令，可在画布查看结果。")));
         onToolCalls({});
         onDone("");
         return;
@@ -39,7 +40,7 @@ void MockProvider::chat(const QVector<LlmMessage>& messages,
         const QString y = m.captured(2);
         const QString r = m.captured(3);
         const QString line = QStringLiteral("circle %1,%2 %3").arg(x, y, r);
-        onDelta(QStringLiteral("正在执行命令：") + line);
+        onDelta(SketchCAD::I18n::t(QStringLiteral("正在执行命令：")) + line);
         LlmToolCall tc;
         tc.id = QStringLiteral("call_mock_1");
         tc.name = QStringLiteral("runSketchCommand");
@@ -50,7 +51,7 @@ void MockProvider::chat(const QVector<LlmMessage>& messages,
     }
 
     // 未识别意图：纯文本回复（不触发工具）
-    onDelta(QStringLiteral("（离线模拟）暂未理解该指令。可尝试：“画一个圆心(0,0)半径50的圆”。"));
+    onDelta(SketchCAD::I18n::t(QStringLiteral("（离线模拟）暂未理解该指令。可尝试：“画一个圆心(0,0)半径50的圆”。")));
     onToolCalls({});
     onDone("");
 }

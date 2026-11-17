@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "TitleBlockForm.h"
 #include "core/SketchModel.h"
 #include "core/Element.h"
@@ -14,7 +15,7 @@
 namespace SketchCAD {
 
 TitleBlockForm::TitleBlockForm(SketchModel* model, QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("填写标题栏"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("填写标题栏")));
     resize(420, 460);
 
     // 收集当前图纸中的标题栏栏目（name 以 "tb:field:" 开头）。
@@ -44,12 +45,12 @@ TitleBlockForm::TitleBlockForm(SketchModel* model, QWidget* parent) : QDialog(pa
 
     auto* root = new QVBoxLayout(this);
     if (rows.isEmpty()) {
-        root->addWidget(new QLabel(QStringLiteral("当前图纸未检测到标准标题栏。\n请先通过「文件 - 新建」生成含标题栏的图纸。"), this));
+        root->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("当前图纸未检测到标准标题栏。\n请先通过「文件 - 新建」生成含标题栏的图纸。")), this));
     } else {
         auto* form = new QFormLayout();
         for (auto& r : rows) {
             auto* le = new QLineEdit(r.value, this);
-            le->setPlaceholderText(QStringLiteral("请输入%1").arg(r.label));
+            le->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("请输入%1")).arg(r.label));
             r.edit = le;
             form->addRow(r.label, le);
         }
@@ -63,8 +64,8 @@ TitleBlockForm::TitleBlockForm(SketchModel* model, QWidget* parent) : QDialog(pa
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                     Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, [this, model, rows]() mutable {
         for (const auto& r : rows) {
             const QString v = r.edit->text();

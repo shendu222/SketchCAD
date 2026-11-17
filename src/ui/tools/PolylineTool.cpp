@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/PolylineTool.h"
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
@@ -72,9 +73,9 @@ void PolylineTool::finish(ToolContext& ctx, bool closed) {
     Element el = ElementFactory::createPolyline(pts_, flags, closed, ctx.model);
     const int id = ctx.model->addElement(el);
     ctx.model->setSelected(id);
-    ctx.model->log(QString("已创建折线 #%1（节点 %2，%3）")
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建折线 #%1（节点 %2，%3）")))
                        .arg(id).arg((int)pts_.size())
-                       .arg(closed ? QStringLiteral("闭合") : QStringLiteral("开放")));
+                       .arg(closed ? SketchCAD::I18n::t(QString::fromUtf8("闭合")) : SketchCAD::I18n::t(QString::fromUtf8("开放"))));
     pts_.clear();
     drawing_ = false;
     ctx.setDrawing(false);

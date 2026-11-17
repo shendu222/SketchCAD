@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "BearingViewsDialog.h"
 #include "core/SketchModel.h"
 #include <QVBoxLayout>
@@ -12,7 +13,7 @@ namespace SketchCAD {
 
 BearingViewsDialog::BearingViewsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("绘制轴承座三面图"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("绘制轴承座三面图")));
     resize(380, 600);
     buildUi();
 }
@@ -21,8 +22,7 @@ void BearingViewsDialog::buildUi() {
     auto* root = new QVBoxLayout(this);
 
     root->addWidget(new QLabel(
-        QStringLiteral("轴承座三面图（底板 + 支承板 + 圆筒；左视图全剖）。单位：毫米（mm）。\n"
-                       "默认：Ø130 / Ø96 / Ø30，圆筒长 100，底板 240×160×20，总高 180。"), this));
+        SketchCAD::I18n::t(QString::fromUtf8("轴承座三面图（底板 + 支承板 + 圆筒；左视图全剖）。单位：毫米（mm）。\n默认：Ø130 / Ø96 / Ø30，圆筒长 100，底板 240×160×20，总高 180。")), this));
 
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight);
@@ -50,24 +50,24 @@ void BearingViewsDialog::buildUi() {
     auto* sbSlotWd  = makeDouble(p_.footSlotWd,    4.0,  500.0, " mm");
     auto* sbSlotDp  = makeDouble(p_.footSlotDepth, 6.0,  500.0, " mm");
 
-    form->addRow(QStringLiteral("圆筒外径 Ø"),   sbBossD);
-    form->addRow(QStringLiteral("轴承孔 Ø"),     sbRingD);
-    form->addRow(QStringLiteral("台阶孔 Ø"),     sbBoreD);
-    form->addRow(QStringLiteral("圆筒轴向长"),   sbBossLen);
-    form->addRow(QStringLiteral("底板长度"),     sbBaseL);
-    form->addRow(QStringLiteral("底板宽度"),     sbBaseW);
-    form->addRow(QStringLiteral("底板厚度"),     sbBaseThk);
-    form->addRow(QStringLiteral("总高"),         sbOverall);
-    form->addRow(QStringLiteral("支承板底宽"),   sbWebBot);
-    form->addRow(QStringLiteral("地脚槽宽度"),   sbSlotWd);
-    form->addRow(QStringLiteral("地脚槽深度"),   sbSlotDp);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("圆筒外径 Ø")),   sbBossD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("轴承孔 Ø")),     sbRingD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("台阶孔 Ø")),     sbBoreD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("圆筒轴向长")),   sbBossLen);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("底板长度")),     sbBaseL);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("底板宽度")),     sbBaseW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("底板厚度")),     sbBaseThk);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("总高")),         sbOverall);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("支承板底宽")),   sbWebBot);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("地脚槽宽度")),   sbSlotWd);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("地脚槽深度")),   sbSlotDp);
 
     root->addLayout(form);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, [this, sbBossD, sbRingD, sbBoreD,
             sbBossLen, sbBaseL, sbBaseW, sbBaseThk, sbOverall, sbWebBot, sbSlotWd, sbSlotDp]() {
         BearingParams p;
@@ -84,9 +84,9 @@ void BearingViewsDialog::buildUi() {
         p.footSlotDepth = sbSlotDp->value();
 
         const auto r = buildBearingViews(p, model_);
-        model_->beginEdit(QStringLiteral("绘制轴承座三面图"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制轴承座三面图")));
         model_->addElementsQuiet(r.elems);
-        model_->log(QStringLiteral("已生成轴承座三面图：%1 个图元，比例 %2（左视图全剖）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成轴承座三面图：%1 个图元，比例 %2（左视图全剖）"))
                         .arg(r.elems.size()).arg(r.scaleLabel));
         accept();
     });

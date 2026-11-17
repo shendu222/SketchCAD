@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "DbConfigDialog.h"
 #include "core/DrawingDb.h"
 
@@ -21,15 +22,15 @@ namespace SketchCAD {
 
 DbConfigDialog::DbConfigDialog(QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle(tr("数据库配置"));
+    setWindowTitle(SketchCAD::I18n::t(tr("数据库配置")));
     setMinimumWidth(440);
 
     auto* mainLayout = new QVBoxLayout(this);
 
     // ---- 数据库类型 ----
     driverCombo_ = new QComboBox(this);
-    driverCombo_->addItem(tr("SQLite（文件型，零配置）"), QStringLiteral("QSQLITE"));
-    driverCombo_->addItem(tr("MySQL（服务器型）"), QStringLiteral("QMYSQL"));
+    driverCombo_->addItem(SketchCAD::I18n::t(tr("SQLite（文件型，零配置）")), QStringLiteral("QSQLITE"));
+    driverCombo_->addItem(SketchCAD::I18n::t(tr("MySQL（服务器型）")), QStringLiteral("QMYSQL"));
     // 当前 Qt 构建可能缺失 QMYSQL 插件：禁用该选项并给出提示，避免误选后拿到硬编码驱动错误。
     const bool mysqlOk = QSqlDatabase::isDriverAvailable(QStringLiteral("QMYSQL"));
     if (!mysqlOk) {
@@ -42,54 +43,54 @@ DbConfigDialog::DbConfigDialog(QWidget* parent)
     }
     connect(driverCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &DbConfigDialog::onDriverChanged);
-    mainLayout->addWidget(new QLabel(tr("数据库类型：")));
+    mainLayout->addWidget(new QLabel(SketchCAD::I18n::t(tr("数据库类型："))));
     mainLayout->addWidget(driverCombo_);
     if (!mysqlOk) {
-        auto* note = new QLabel(tr(
+        auto* note = new QLabel(SketchCAD::I18n::t(tr(
             "⚠ MySQL 驱动不可用：当前环境缺少 Qt 的 QMYSQL 插件（qsqlmysql.dll 与 libmysql.dll）。\n"
             "已禁用 MySQL 连接，数据库功能默认使用内置 SQLite，可正常工作。\n"
-            "如需启用 MySQL，请将 qsqlmysql.dll 放入程序目录的 sqldrivers/ 子目录并配置 libmysql.dll 路径后重启。"), this);
+            "如需启用 MySQL，请将 qsqlmysql.dll 放入程序目录的 sqldrivers/ 子目录并配置 libmysql.dll 路径后重启。")), this);
         note->setWordWrap(true);
         note->setStyleSheet(QStringLiteral("color: #c8761a;"));
         mainLayout->addWidget(note);
     }
 
     // ---- SQLite 设置 ----
-    sqliteGroup_ = new QGroupBox(tr("SQLite 设置"), this);
+    sqliteGroup_ = new QGroupBox(SketchCAD::I18n::t(tr("SQLite 设置")), this);
     auto* sf = new QFormLayout(sqliteGroup_);
     pathEdit_ = new QLineEdit(sqliteGroup_);
-    pathEdit_->setPlaceholderText(tr("留空则使用默认：~/SketchCAD/sketchcad_drawings.db"));
-    auto* browseBtn = new QPushButton(tr("浏览..."), sqliteGroup_);
+    pathEdit_->setPlaceholderText(SketchCAD::I18n::t(tr("留空则使用默认：~/SketchCAD/sketchcad_drawings.db")));
+    auto* browseBtn = new QPushButton(SketchCAD::I18n::t(tr("浏览...")), sqliteGroup_);
     connect(browseBtn, &QPushButton::clicked, this, &DbConfigDialog::onBrowse);
     auto* pathRow = new QHBoxLayout;
     pathRow->addWidget(pathEdit_);
     pathRow->addWidget(browseBtn);
-    sf->addRow(tr("数据库文件："), pathRow);
+    sf->addRow(SketchCAD::I18n::t(tr("数据库文件：")), pathRow);
     mainLayout->addWidget(sqliteGroup_);
 
     // ---- MySQL 设置 ----
-    mysqlGroup_ = new QGroupBox(tr("MySQL 设置"), this);
+    mysqlGroup_ = new QGroupBox(SketchCAD::I18n::t(tr("MySQL 设置")), this);
     auto* mf = new QFormLayout(mysqlGroup_);
     hostEdit_ = new QLineEdit(mysqlGroup_);
-    hostEdit_->setPlaceholderText(tr("数据库服务器地址，留空则 localhost"));
+    hostEdit_->setPlaceholderText(SketchCAD::I18n::t(tr("数据库服务器地址，留空则 localhost")));
     portEdit_ = new QLineEdit(mysqlGroup_);
     portEdit_->setFixedWidth(90);
     portEdit_->setText(QStringLiteral("3306"));
     mysqlDbEdit_ = new QLineEdit(mysqlGroup_);
-    mysqlDbEdit_->setPlaceholderText(tr("数据库名，如 sketchcad"));
+    mysqlDbEdit_->setPlaceholderText(SketchCAD::I18n::t(tr("数据库名，如 sketchcad")));
     userEdit_ = new QLineEdit(mysqlGroup_);
-    userEdit_->setPlaceholderText(tr("登录用户名，如 root"));
+    userEdit_->setPlaceholderText(SketchCAD::I18n::t(tr("登录用户名，如 root")));
     passEdit_ = new QLineEdit(mysqlGroup_);
     passEdit_->setEchoMode(QLineEdit::Password);
-    mf->addRow(tr("主机："), hostEdit_);
-    mf->addRow(tr("端口："), portEdit_);
-    mf->addRow(tr("数据库名："), mysqlDbEdit_);
-    mf->addRow(tr("用户名："), userEdit_);
-    mf->addRow(tr("密码："), passEdit_);
+    mf->addRow(SketchCAD::I18n::t(tr("主机：")), hostEdit_);
+    mf->addRow(SketchCAD::I18n::t(tr("端口：")), portEdit_);
+    mf->addRow(SketchCAD::I18n::t(tr("数据库名：")), mysqlDbEdit_);
+    mf->addRow(SketchCAD::I18n::t(tr("用户名：")), userEdit_);
+    mf->addRow(SketchCAD::I18n::t(tr("密码：")), passEdit_);
     mainLayout->addWidget(mysqlGroup_);
 
     // ---- 测试连接 ----
-    auto* testBtn = new QPushButton(tr("测试连接"), this);
+    auto* testBtn = new QPushButton(SketchCAD::I18n::t(tr("测试连接")), this);
     connect(testBtn, &QPushButton::clicked, this, &DbConfigDialog::onTest);
     mainLayout->addWidget(testBtn);
 
@@ -128,8 +129,8 @@ void DbConfigDialog::onDriverChanged(int index) {
 
 void DbConfigDialog::onBrowse() {
     const QString cur = pathEdit_->text().isEmpty() ? QDir::homePath() : pathEdit_->text();
-    const QString path = QFileDialog::getSaveFileName(this, tr("选择 SQLite 数据库文件"),
-        cur, tr("SQLite 数据库 (*.db *.sqlite);;所有文件 (*.*)"));
+    const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(tr("选择 SQLite 数据库文件")),
+        cur, SketchCAD::I18n::t(tr("SQLite 数据库 (*.db *.sqlite);;所有文件 (*.*)")));
     if (!path.isEmpty()) pathEdit_->setText(path);
 }
 
@@ -137,8 +138,8 @@ void DbConfigDialog::onTest() {
     const QString driver = driverCombo_->currentData().toString();
     // 防御：驱动缺失时直接提示，不再走会报硬编码错误的测试路径。
     if (!QSqlDatabase::isDriverAvailable(driver)) {
-        QMessageBox::warning(this, tr("测试连接"),
-            tr("当前 Qt 构建未包含该数据库驱动（%1）。\n请改用内置的 SQLite，或将对应驱动插件放入程序目录的 sqldrivers/ 子目录后重启。").arg(driver));
+        QMessageBox::warning(this, SketchCAD::I18n::t(tr("测试连接")),
+            SketchCAD::I18n::t(tr("当前 Qt 构建未包含该数据库驱动（%1）。\n请改用内置的 SQLite，或将对应驱动插件放入程序目录的 sqldrivers/ 子目录后重启。")).arg(driver));
         return;
     }
     const QString dbPath = pathEdit_->text().trimmed();
@@ -150,9 +151,9 @@ void DbConfigDialog::onTest() {
 
     const QString err = DrawingDb::testConnection(driver, dbPath, host, port, dbName, user, pass);
     if (err.isEmpty())
-        QMessageBox::information(this, tr("测试连接"), tr("连接成功。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(tr("测试连接")), SketchCAD::I18n::t(tr("连接成功。")));
     else
-        QMessageBox::warning(this, tr("测试连接"), tr("连接失败：\n%1").arg(err));
+        QMessageBox::warning(this, SketchCAD::I18n::t(tr("测试连接")), SketchCAD::I18n::t(tr("连接失败：\n%1")).arg(err));
 }
 
 void DbConfigDialog::onAccepted() {

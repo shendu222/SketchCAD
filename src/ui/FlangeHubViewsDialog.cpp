@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "FlangeHubViewsDialog.h"
 #include "core/SketchModel.h"
 #include <QVBoxLayout>
@@ -13,7 +14,7 @@ namespace SketchCAD {
 
 FlangeHubViewsDialog::FlangeHubViewsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("绘制法兰盘轮毂视图"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("绘制法兰盘轮毂视图")));
     resize(380, 680);
     buildUi();
 }
@@ -22,10 +23,7 @@ void FlangeHubViewsDialog::buildUi() {
     auto* root = new QVBoxLayout(this);
 
     root->addWidget(new QLabel(
-        QStringLiteral("阶梯回转体（法兰盘 + 轮毂 + 中心孔）参数化视图。\n"
-                       "主视图全剖 A—A，左视图为圆形投影。单位：毫米（mm）。\n"
-                       "默认：法兰 Ø80 / 轮毂 Ø60 / 沉孔 Ø41 / 通孔 Ø33 / 总长 136，\n"
-                       "3-Ø11.5 均布 + 2-Ø10 定位孔。"), this));
+        SketchCAD::I18n::t(QString::fromUtf8("阶梯回转体（法兰盘 + 轮毂 + 中心孔）参数化视图。\n主视图全剖 A—A，左视图为圆形投影。单位：毫米（mm）。\n默认：法兰 Ø80 / 轮毂 Ø60 / 沉孔 Ø41 / 通孔 Ø33 / 总长 136，\n3-Ø11.5 均布 + 2-Ø10 定位孔。")), this));
 
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight);
@@ -77,39 +75,39 @@ void FlangeHubViewsDialog::buildUi() {
 
     // ---- 标注 ----
     auto* edRoughBore = new QLineEdit(p_.roughBore, this);
-    edRoughBore->setPlaceholderText(QStringLiteral("空 = 不标"));
+    edRoughBore->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("空 = 不标")));
     auto* edRoughFace = new QLineEdit(p_.roughFace, this);
-    edRoughFace->setPlaceholderText(QStringLiteral("空 = 不标"));
+    edRoughFace->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("空 = 不标")));
     auto* edBoreTol   = new QLineEdit(p_.boreTol, this);
-    edBoreTol->setPlaceholderText(QStringLiteral("空 = 不注公差"));
+    edBoreTol->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("空 = 不注公差")));
 
-    form->addRow(QStringLiteral("法兰外径 Ø"),    sbFlangeD);
-    form->addRow(QStringLiteral("轮毂外径 Ø"),    sbHubD);
-    form->addRow(QStringLiteral("左端沉孔径 Ø"),  sbCboreD);
-    form->addRow(QStringLiteral("中心通孔 Ø"),    sbBoreD);
-    form->addRow(QStringLiteral("沉孔深"),        sbCboreDepth);
-    form->addRow(QStringLiteral("法兰厚度"),      sbFlangeT);
-    form->addRow(QStringLiteral("零件总长"),      sbTotalL);
-    form->addRow(QStringLiteral("轮毂左端倒角 C"), sbChamfer);
-    form->addRow(QStringLiteral("根部圆角 R"),    sbFilletR);
-    form->addRow(QStringLiteral("螺栓孔数量"),    sbBoltCount);
-    form->addRow(QStringLiteral("螺栓孔径 Ø"),    sbBoltD);
-    form->addRow(QStringLiteral("螺栓分布圆 Ø"),  sbBoltBCD);
-    form->addRow(QStringLiteral("首孔起始角"),    sbBoltAng);
-    form->addRow(QStringLiteral("定位孔数量"),    sbLocCount);
-    form->addRow(QStringLiteral("定位孔径 Ø"),    sbLocD);
-    form->addRow(QStringLiteral("定位分布圆 Ø"),  sbLocBCD);
-    form->addRow(QStringLiteral("定位首孔角"),    sbLocAng);
-    form->addRow(QStringLiteral("中心孔面粗糙度"), edRoughBore);
-    form->addRow(QStringLiteral("法兰外圆粗糙度"), edRoughFace);
-    form->addRow(QStringLiteral("中心孔公差"),    edBoreTol);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("法兰外径 Ø")),    sbFlangeD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("轮毂外径 Ø")),    sbHubD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("左端沉孔径 Ø")),  sbCboreD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心通孔 Ø")),    sbBoreD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("沉孔深")),        sbCboreDepth);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("法兰厚度")),      sbFlangeT);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("零件总长")),      sbTotalL);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("轮毂左端倒角 C")), sbChamfer);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("根部圆角 R")),    sbFilletR);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓孔数量")),    sbBoltCount);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓孔径 Ø")),    sbBoltD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓分布圆 Ø")),  sbBoltBCD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("首孔起始角")),    sbBoltAng);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("定位孔数量")),    sbLocCount);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("定位孔径 Ø")),    sbLocD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("定位分布圆 Ø")),  sbLocBCD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("定位首孔角")),    sbLocAng);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心孔面粗糙度")), edRoughBore);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("法兰外圆粗糙度")), edRoughFace);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心孔公差")),    edBoreTol);
 
     root->addLayout(form);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this,
             [this, sbFlangeD, sbHubD, sbCboreD, sbBoreD, sbCboreDepth, sbFlangeT,
              sbTotalL, sbChamfer, sbFilletR, sbBoltCount, sbBoltD, sbBoltBCD, sbBoltAng,
@@ -138,9 +136,9 @@ void FlangeHubViewsDialog::buildUi() {
         p.boreTol      = edBoreTol->text().trimmed();
 
         const auto r = buildFlangeHubViews(p, model_);
-        model_->beginEdit(QStringLiteral("绘制法兰盘轮毂视图"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制法兰盘轮毂视图")));
         model_->addElementsQuiet(r.elems);
-        model_->log(QStringLiteral("已生成法兰盘轮毂视图：%1 个图元，比例 %2（主视图全剖 A—A + 左视图）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成法兰盘轮毂视图：%1 个图元，比例 %2（主视图全剖 A—A + 左视图）"))
                         .arg(r.elems.size()).arg(r.scaleLabel));
         accept();
     });

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "SnapSettingsDialog.h"
 #include "core/SketchModel.h"
 #include <QCheckBox>
@@ -13,7 +14,7 @@ namespace SketchCAD {
 
 SnapSettingsDialog::SnapSettingsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("捕捉设置 (OSNAP / 追踪)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("捕捉设置 (OSNAP / 追踪)")));
 
     // ---- 14 种捕捉模式的独立开关（数据源 = snap::snapFieldDefs，与快捷键/覆盖菜单一致）----
     const snap::SnapConfig cur = model ? model->snapConfig() : snap::SnapConfig();
@@ -24,13 +25,13 @@ SnapSettingsDialog::SnapSettingsDialog(SketchModel* model, QWidget* parent)
         checks_.push_back(ck);
         form->addRow(ck);
     }
-    auto* box = new QGroupBox(QStringLiteral("捕捉模式（独立启用/禁用）"), this);
+    auto* box = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("捕捉模式（独立启用/禁用）")), this);
     box->setLayout(form);
 
     // ---- 便捷操作：全开 / 全关 / 恢复默认 ----
-    auto* allOn  = new QPushButton(QStringLiteral("全部开启"), this);
-    auto* allOff = new QPushButton(QStringLiteral("全部关闭"), this);
-    auto* def    = new QPushButton(QStringLiteral("恢复默认"), this);
+    auto* allOn  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("全部开启")), this);
+    auto* allOff = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("全部关闭")), this);
+    auto* def    = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("恢复默认")), this);
     auto* bar    = new QHBoxLayout;   bar->addWidget(allOn); bar->addWidget(allOff); bar->addWidget(def);
 
     connect(allOn,  &QPushButton::clicked, this, [this]() { for (auto* c : checks_) c->setChecked(true); });
@@ -44,10 +45,10 @@ SnapSettingsDialog::SnapSettingsDialog(SketchModel* model, QWidget* parent)
     // ---- 追踪配置（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     const snap::TrackConfig tc = model ? model->trackConfig() : snap::TrackConfig();
     auto* tform = new QFormLayout;
-    trackPolar_ = new QCheckBox(QStringLiteral("极轴追踪 (POLAR)"), this);
+    trackPolar_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("极轴追踪 (POLAR)")), this);
     trackPolar_->setChecked(tc.polar);
     tform->addRow(trackPolar_);
-    trackOtrack_ = new QCheckBox(QStringLiteral("对象捕捉追踪 (OTRACK，依赖对象捕捉获取锚点)"), this);
+    trackOtrack_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("对象捕捉追踪 (OTRACK，依赖对象捕捉获取锚点)")), this);
     trackOtrack_->setChecked(tc.objectTrack);
     tform->addRow(trackOtrack_);
     trackInc_ = new QDoubleSpinBox(this);
@@ -56,17 +57,17 @@ SnapSettingsDialog::SnapSettingsDialog(SketchModel* model, QWidget* parent)
     trackInc_->setSingleStep(5.0);
     trackInc_->setSuffix(QStringLiteral("°"));
     trackInc_->setValue(tc.polarIncrement);
-    tform->addRow(QStringLiteral("极轴增量角"), trackInc_);
-    trackRelative_ = new QCheckBox(QStringLiteral("极轴角相对上一段方向（否则用绝对 0/90/180/270 基准）"), this);
+    tform->addRow(SketchCAD::I18n::t(QString::fromUtf8("极轴增量角")), trackInc_);
+    trackRelative_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("极轴角相对上一段方向（否则用绝对 0/90/180/270 基准）")), this);
     trackRelative_->setChecked(tc.polarRelative);
     tform->addRow(trackRelative_);
-    auto* tbox = new QGroupBox(QStringLiteral("追踪（极轴 / 对象捕捉追踪）"), this);
+    auto* tbox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("追踪（极轴 / 对象捕捉追踪）")), this);
     tbox->setLayout(tform);
 
-    tkClearBtn_ = new QPushButton(QStringLiteral("清除全部临时追踪点 (TK)"), this);
+    tkClearBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("清除全部临时追踪点 (TK)")), this);
     connect(tkClearBtn_, &QPushButton::clicked, this, [this]() {
         if (model_) model_->clearTrackPoints();
-        if (model_) model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
+        if (model_) model_->log(SketchCAD::I18n::t(QString::fromUtf8("已清除全部临时追踪点 (TK)")));
     });
 
     // ---- 确认 / 取消 ----

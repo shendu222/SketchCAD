@@ -2,6 +2,7 @@
 //
 // 序列化只复用 elementToJson / blockDefToJson 两套既有实现（与存档同源），
 // 本文件自身不出现任何字段级读写——字段增减只改 Element.cpp / Block.cpp 一处。
+#include "core/I18n.h"
 #include "Clipboard.h"
 #include "Modify.h"
 #include "SketchModel.h"
@@ -53,10 +54,10 @@ QJsonObject toJson(const Payload& p) {
 bool fromJson(const QJsonObject& o, Payload* out, QString* err) {
     if (!out) return false;
     auto fail = [&](const QString& m) { if (err) *err = m; return false; };
-    if (o.isEmpty())          return fail(QStringLiteral("剪贴板内容为空"));
-    if (!o.contains("v"))     return fail(QStringLiteral("缺少版本号（非本应用内容）"));
+    if (o.isEmpty())          return fail(SketchCAD::I18n::t(QString::fromUtf8("剪贴板内容为空")));
+    if (!o.contains("v"))     return fail(SketchCAD::I18n::t(QString::fromUtf8("缺少版本号（非本应用内容）")));
     const int v = o.value("v").toInt(-1);
-    if (v != kVersion)        return fail(QStringLiteral("版本不支持（v=%1，当前 v=%2）").arg(v).arg(kVersion));
+    if (v != kVersion)        return fail(SketchCAD::I18n::t(QString::fromUtf8("版本不支持（v=%1，当前 v=%2）")).arg(v).arg(kVersion));
 
     Payload p;
     p.base = baseFromJson(o.value("base").toObject());

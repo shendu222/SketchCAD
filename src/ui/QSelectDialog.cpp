@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "QSelectDialog.h"
 #include "core/SketchModel.h"
 #include "core/QSelect.h"
@@ -11,19 +12,19 @@ namespace SketchCAD {
 
 QSelectDialog::QSelectDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("快速选择 (QSELECT)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("快速选择 (QSELECT)")));
     resize(460, 280);
 
     cbScope_ = new QComboBox(this);
-    cbScope_->addItem(QStringLiteral("整个图形"), 0);
-    cbScope_->addItem(QStringLiteral("当前选择集内"), 1);
+    cbScope_->addItem(SketchCAD::I18n::t(QString::fromUtf8("整个图形")), 0);
+    cbScope_->addItem(SketchCAD::I18n::t(QString::fromUtf8("当前选择集内")), 1);
 
     // 对象类型下拉：不限 + 全部图元类型（与 elementTypeName 同源，枚举只增不改）
     cbType_ = new QComboBox(this);
-    cbType_->addItem(QStringLiteral("不限"), QString());
+    cbType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("不限")), QString());
     for (int t = 0; t <= int(ElementType::Table); ++t) {
         const ElementType et = (ElementType)t;
-        cbType_->addItem(QString::fromUtf8(elementTypeName(et)),
+        cbType_->addItem(SketchCAD::I18n::t(QString::fromUtf8(elementTypeName(et))),
                          QString::fromUtf8(elementTypeName(et)));
     }
 
@@ -42,9 +43,9 @@ QSelectDialog::QSelectDialog(SketchModel* model, QWidget* parent)
     cbValue_->setEditable(true);
 
     cbAction_ = new QComboBox(this);
-    cbAction_->addItem(QStringLiteral("替换当前选择集"), int(QSelectAction::Replace));
-    cbAction_->addItem(QStringLiteral("追加到当前选择集"), int(QSelectAction::Append));
-    cbAction_->addItem(QStringLiteral("从当前选择集排除"), int(QSelectAction::Exclude));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("替换当前选择集")), int(QSelectAction::Replace));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("追加到当前选择集")), int(QSelectAction::Append));
+    cbAction_->addItem(SketchCAD::I18n::t(QString::fromUtf8("从当前选择集排除")), int(QSelectAction::Exclude));
 
     connect(cbProp_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &QSelectDialog::refreshValues);
@@ -52,20 +53,19 @@ QSelectDialog::QSelectDialog(SketchModel* model, QWidget* parent)
             this, &QSelectDialog::refreshValues);
 
     auto* form = new QFormLayout;
-    form->addRow(QStringLiteral("应用范围："), cbScope_);
-    form->addRow(QStringLiteral("对象类型："), cbType_);
-    form->addRow(QStringLiteral("特性："),     cbProp_);
-    form->addRow(QStringLiteral("运算符："),   cbOp_);
-    form->addRow(QStringLiteral("值："),       cbValue_);
-    form->addRow(QStringLiteral("应用方式："), cbAction_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("应用范围：")), cbScope_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("对象类型：")), cbType_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("特性：")),     cbProp_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("运算符：")),   cbOp_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("值：")),       cbValue_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("应用方式：")), cbAction_);
 
     auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(btns, &QDialogButtonBox::accepted, this, &QSelectDialog::apply);
     connect(btns, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* tip = new QLabel(
-        QStringLiteral("筛选范围可选整个图形或当前选择集；结果以 替换/追加/排除 三种方式\n"
-                       "落地到选择集，与点击选择/框选共用同一选择集状态。"), this);
+        SketchCAD::I18n::t(QString::fromUtf8("筛选范围可选整个图形或当前选择集；结果以 替换/追加/排除 三种方式\n落地到选择集，与点击选择/框选共用同一选择集状态。")), this);
     tip->setWordWrap(true);
 
     auto* v = new QVBoxLayout(this);
@@ -120,7 +120,7 @@ void QSelectDialog::apply() {
     const QString actName = (act == QSelectAction::Replace) ? QStringLiteral("替换")
                           : (act == QSelectAction::Append)  ? QStringLiteral("追加")
                                                             : QStringLiteral("排除");
-    model_->log(QStringLiteral("快速选择：命中 %1 个对象（%2 选择集）").arg(hits.size()).arg(actName));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("快速选择：命中 %1 个对象（%2 选择集）")).arg(hits.size()).arg(actName));
     accept();
 }
 

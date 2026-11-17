@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "StyleManagerDialog.h"
 #include "core/SketchModel.h"
 #include "core/TextStyle.h"
@@ -19,7 +20,7 @@ namespace SketchCAD {
 
 StyleManagerDialog::StyleManagerDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("文字样式管理器 (STYLE)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("文字样式管理器 (STYLE)")));
     resize(640, 420);
 
     list_ = new QListWidget(this);
@@ -28,11 +29,11 @@ StyleManagerDialog::StyleManagerDialog(SketchModel* model, QWidget* parent)
     sbHeight_ = new QDoubleSpinBox(this);
     sbWidth_ = new QDoubleSpinBox(this);
     sbOblique_ = new QDoubleSpinBox(this);
-    ckBold_ = new QCheckBox(QStringLiteral("粗体"));
-    ckItalic_ = new QCheckBox(QStringLiteral("斜体"));
+    ckBold_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("粗体")));
+    ckItalic_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("斜体")));
 
     // 系统字体族
-    cbFont_->addItem(QStringLiteral("（默认/系统）"), QString());
+    cbFont_->addItem(SketchCAD::I18n::t(QString::fromUtf8("（默认/系统）")), QString());
     const QStringList fam = QFontDatabase::families();
     for (const QString& f : fam) cbFont_->addItem(f, f);
 
@@ -43,23 +44,23 @@ StyleManagerDialog::StyleManagerDialog(SketchModel* model, QWidget* parent)
     sbOblique_->setValue(0.0); sbOblique_->setDecimals(1);
 
     auto* form = new QFormLayout;
-    form->addRow(QStringLiteral("样式名："), edName_);
-    form->addRow(QStringLiteral("字体："), cbFont_);
-    form->addRow(QStringLiteral("字高："), sbHeight_);
-    form->addRow(QStringLiteral("宽度因子："), sbWidth_);
-    form->addRow(QStringLiteral("倾斜角："), sbOblique_);
-    form->addRow(QStringLiteral("字形："), [this]() -> QWidget* {
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("样式名：")), edName_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("字体：")), cbFont_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("字高：")), sbHeight_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("宽度因子：")), sbWidth_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("倾斜角：")), sbOblique_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("字形：")), [this]() -> QWidget* {
         auto* w = new QWidget(this);
         auto* h = new QHBoxLayout(w); h->setContentsMargins(0,0,0,0);
         h->addWidget(ckBold_); h->addWidget(ckItalic_);
         return w;
     }());
 
-    auto* bNew = new QPushButton(QStringLiteral("新建"));
-    auto* bDel = new QPushButton(QStringLiteral("删除"));
-    auto* bSave = new QPushButton(QStringLiteral("保存修改"));
-    auto* bApplySel = new QPushButton(QStringLiteral("应用到选中文字"));
-    auto* bApplyAll = new QPushButton(QStringLiteral("应用到全部文字"));
+    auto* bNew = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("新建")));
+    auto* bDel = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
+    auto* bSave = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("保存修改")));
+    auto* bApplySel = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("应用到选中文字")));
+    auto* bApplyAll = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("应用到全部文字")));
     connect(bNew, &QPushButton::clicked, this, &StyleManagerDialog::onNew);
     connect(bDel, &QPushButton::clicked, this, &StyleManagerDialog::onDelete);
     connect(bSave, &QPushButton::clicked, this, &StyleManagerDialog::onSave);
@@ -83,7 +84,7 @@ StyleManagerDialog::StyleManagerDialog(SketchModel* model, QWidget* parent)
 
     auto* v = new QVBoxLayout(this);
     v->addLayout(h);
-    v->addWidget(new QLabel(QStringLiteral("提示：修改字体/字高/宽度因子后，所有引用该样式的文字会同步更新。")));
+    v->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("提示：修改字体/字高/宽度因子后，所有引用该样式的文字会同步更新。"))));
 
     connect(list_, &QListWidget::currentItemChanged, this, [this]() { onSelectionChanged(); });
     refreshList();
@@ -129,14 +130,14 @@ TextStyle StyleManagerDialog::currentFromForm() const {
 
 void StyleManagerDialog::onNew() {
     bool ok = false;
-    const QString nm = QInputDialog::getText(this, QStringLiteral("新建文字样式"),
-                                            QStringLiteral("样式名："), QLineEdit::Normal,
-                                            QStringLiteral("样式") + QString::number(model_->textStyleCount() + 1), &ok);
+    const QString nm = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("新建文字样式")),
+                                            SketchCAD::I18n::t(QString::fromUtf8("样式名：")), QLineEdit::Normal,
+                                            SketchCAD::I18n::t(QString::fromUtf8("样式")) + QString::number(model_->textStyleCount() + 1), &ok);
     if (!ok || nm.trimmed().isEmpty()) return;
     TextStyle s = currentFromForm();
     s.name = nm.trimmed();
     if (!model_->addTextStyle(s)) {
-        QMessageBox::warning(this, QStringLiteral("新建失败"), QStringLiteral("样式名为空或已存在。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("新建失败")), SketchCAD::I18n::t(QString::fromUtf8("样式名为空或已存在。")));
         return;
     }
     refreshList();
@@ -148,7 +149,7 @@ void StyleManagerDialog::onNew() {
 void StyleManagerDialog::onDelete() {
     if (curName_.isEmpty()) return;
     if (model_->textStyleCount() <= 1) {
-        QMessageBox::warning(this, QStringLiteral("无法删除"), QStringLiteral("至少需保留一个文字样式。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("无法删除")), SketchCAD::I18n::t(QString::fromUtf8("至少需保留一个文字样式。")));
         return;
     }
     model_->removeTextStyle(curName_);
@@ -158,16 +159,16 @@ void StyleManagerDialog::onDelete() {
 
 void StyleManagerDialog::onSave() {
     TextStyle s = currentFromForm();
-    if (s.name.isEmpty()) { QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("样式名不能为空。")); return; }
+    if (s.name.isEmpty()) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("保存失败")), SketchCAD::I18n::t(QString::fromUtf8("样式名不能为空。"))); return; }
     // 改名：先 rename 再 update（update 按 name 查找，改名后需两步）
     if (!curName_.isEmpty() && curName_ != s.name) {
         if (!model_->renameTextStyle(curName_, s.name)) {
-            QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("样式名与现有样式冲突。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("保存失败")), SketchCAD::I18n::t(QString::fromUtf8("样式名与现有样式冲突。")));
             return;
         }
     }
     if (!model_->updateTextStyle(s)) {
-        QMessageBox::warning(this, QStringLiteral("保存失败"), QStringLiteral("样式不存在。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("保存失败")), SketchCAD::I18n::t(QString::fromUtf8("样式不存在。")));
         return;
     }
     curName_ = s.name;
@@ -178,9 +179,9 @@ void StyleManagerDialog::onApplySelected() {
     if (curName_.isEmpty()) return;
     const std::vector<int> ids = model_->selection();
     const int n = model_->applyStyleToElements(curName_, ids);
-    QMessageBox::information(this, QStringLiteral("应用结果"),
-        ids.empty() ? QStringLiteral("当前没有选中的文字对象，请先在绘图区选中文字。")
-                    : QStringLiteral("已将样式「%1」应用到 %2 个选中文字对象。").arg(curName_).arg(n));
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("应用结果")),
+        ids.empty() ? SketchCAD::I18n::t(QString::fromUtf8("当前没有选中的文字对象，请先在绘图区选中文字。"))
+                    : SketchCAD::I18n::t(QString::fromUtf8("已将样式「%1」应用到 %2 个选中文字对象。")).arg(curName_).arg(n));
 }
 
 void StyleManagerDialog::onApplyAll() {
@@ -189,8 +190,8 @@ void StyleManagerDialog::onApplyAll() {
     for (const auto& e : model_->elements())
         if (e.type == ElementType::Text || e.type == ElementType::MText) ids.push_back(e.id);
     const int n = model_->applyStyleToElements(curName_, ids);
-    QMessageBox::information(this, QStringLiteral("应用结果"),
-        QStringLiteral("已将样式「%1」应用到全部 %2 个文字对象。").arg(curName_).arg(n));
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("应用结果")),
+        SketchCAD::I18n::t(QString::fromUtf8("已将样式「%1」应用到全部 %2 个文字对象。")).arg(curName_).arg(n));
 }
 
 } // namespace SketchCAD

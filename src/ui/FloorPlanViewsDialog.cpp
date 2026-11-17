@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "FloorPlanViewsDialog.h"
 #include "core/SketchModel.h"
 #include <QVBoxLayout>
@@ -13,7 +14,7 @@ namespace SketchCAD {
 
 FloorPlanViewsDialog::FloorPlanViewsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("绘制户型平面图"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("绘制户型平面图")));
     resize(400, 720);
     buildUi();
 }
@@ -22,10 +23,7 @@ void FloorPlanViewsDialog::buildUi() {
     auto* root = new QVBoxLayout(this);
 
     root->addWidget(new QLabel(
-        QStringLiteral("参数化户型平面图（建筑装修专业，默认 C户型 101M² 三房两厅两卫）。\n"
-                       "墙体（剪力墙涂黑 + 双线内墙）、门（开启弧）、窗、家具图块、\n"
-                       "房间标注、四周建筑尺寸链与右侧图签全部可由参数控制。\n"
-                       "单位：毫米（mm），默认比例 1:50，A3 横放。"), this));
+        SketchCAD::I18n::t(QString::fromUtf8("参数化户型平面图（建筑装修专业，默认 C户型 101M² 三房两厅两卫）。\n墙体（剪力墙涂黑 + 双线内墙）、门（开启弧）、窗、家具图块、\n房间标注、四周建筑尺寸链与右侧图签全部可由参数控制。\n单位：毫米（mm），默认比例 1:50，A3 横放。")), this));
 
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight);
@@ -66,14 +64,14 @@ void FloorPlanViewsDialog::buildUi() {
     auto* sbDimBand = makeDouble(p_.dimBand, 10.0, 60.0, " mm");
 
     // ---- 比例与开关 ----
-    auto* ckAuto    = new QCheckBox(QStringLiteral("自动选取标准比例"), this);
+    auto* ckAuto    = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("自动选取标准比例")), this);
     ckAuto->setChecked(p_.autoScale);
     auto* sbManual  = makeDouble(p_.manualScale, 1.0, 2000.0, "", 10.0);
-    auto* ckFurn    = new QCheckBox(QStringLiteral("绘制家具图块"), this);
+    auto* ckFurn    = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("绘制家具图块")), this);
     ckFurn->setChecked(p_.showFurniture);
-    auto* ckDims    = new QCheckBox(QStringLiteral("绘制四周尺寸链"), this);
+    auto* ckDims    = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("绘制四周尺寸链")), this);
     ckDims->setChecked(p_.showDims);
-    auto* ckLabels  = new QCheckBox(QStringLiteral("绘制房间名标注"), this);
+    auto* ckLabels  = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("绘制房间名标注")), this);
     ckLabels->setChecked(p_.showLabels);
 
     // ---- 图签文本 ----
@@ -85,40 +83,40 @@ void FloorPlanViewsDialog::buildUi() {
     auto* edDwgName = new QLineEdit(p_.drawingName, this);
     auto* edScale   = new QLineEdit(p_.drawScale, this);
 
-    form->addRow(QStringLiteral("总开间（宽）"), sbOuterW);
-    form->addRow(QStringLiteral("总进深（高）"), sbOuterH);
-    form->addRow(QStringLiteral("剪力墙厚"),    sbShearT);
-    form->addRow(QStringLiteral("内隔墙厚"),    sbPartT);
-    form->addRow(QStringLiteral("房门宽"),      sbDoorW);
-    form->addRow(QStringLiteral("卫生间门宽"),  sbBathW);
-    form->addRow(QStringLiteral("推拉门宽"),    sbSlideW);
-    form->addRow(QStringLiteral("房间名字高"),  sbLabelH);
-    form->addRow(QStringLiteral("尺寸数字字高"), sbDimH);
-    form->addRow(QStringLiteral("图签字高"),    sbTitleH);
-    form->addRow(QStringLiteral("图纸宽"),      sbSheetW);
-    form->addRow(QStringLiteral("图纸高"),      sbSheetH);
-    form->addRow(QStringLiteral("图框边距"),    sbMargin);
-    form->addRow(QStringLiteral("图签宽"),      sbTbW);
-    form->addRow(QStringLiteral("尺寸链带宽"),  sbDimBand);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("总开间（宽）")), sbOuterW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("总进深（高）")), sbOuterH);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("剪力墙厚")),    sbShearT);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("内隔墙厚")),    sbPartT);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("房门宽")),      sbDoorW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("卫生间门宽")),  sbBathW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("推拉门宽")),    sbSlideW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("房间名字高")),  sbLabelH);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("尺寸数字字高")), sbDimH);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图签字高")),    sbTitleH);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图纸宽")),      sbSheetW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图纸高")),      sbSheetH);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图框边距")),    sbMargin);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图签宽")),      sbTbW);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("尺寸链带宽")),  sbDimBand);
     form->addRow(QString(), ckAuto);
-    form->addRow(QStringLiteral("手动比例 1:"), sbManual);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("手动比例 1:")), sbManual);
     form->addRow(QString(), ckFurn);
     form->addRow(QString(), ckDims);
     form->addRow(QString(), ckLabels);
-    form->addRow(QStringLiteral("设计单位（标识）"), edCompany);
-    form->addRow(QStringLiteral("设计单位全称"),    edCompFull);
-    form->addRow(QStringLiteral("工程地址"),        edSite);
-    form->addRow(QStringLiteral("项目名称"),        edClient);
-    form->addRow(QStringLiteral("工程名称"),        edProject);
-    form->addRow(QStringLiteral("图纸名称"),        edDwgName);
-    form->addRow(QStringLiteral("比例标注"),        edScale);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("设计单位（标识）")), edCompany);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("设计单位全称")),    edCompFull);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("工程地址")),        edSite);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("项目名称")),        edClient);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("工程名称")),        edProject);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("图纸名称")),        edDwgName);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("比例标注")),        edScale);
 
     root->addLayout(form);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this,
             [this, sbOuterW, sbOuterH, sbShearT, sbPartT, sbDoorW, sbBathW, sbSlideW,
              sbLabelH, sbDimH, sbTitleH, sbSheetW, sbSheetH, sbMargin, sbTbW, sbDimBand,
@@ -146,10 +144,9 @@ void FloorPlanViewsDialog::buildUi() {
         p.drawScale = edScale->text().trimmed();
 
         const auto r = buildFloorPlanViews(p, model_);
-        model_->beginEdit(QStringLiteral("绘制户型平面图"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制户型平面图")));
         model_->addElementsQuiet(r.elems);
-        model_->log(QStringLiteral("已生成户型平面图：%1 个图元，比例 %2"
-                                   "（墙体/门窗/家具/标注/图签）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成户型平面图：%1 个图元，比例 %2（墙体/门窗/家具/标注/图签）"))
                         .arg(r.elems.size()).arg(r.scaleLabel));
         accept();
     });

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ai/NlAssistant.h"
 
 #include "core/CommandInterpreter.h"
@@ -331,10 +332,10 @@ QString NlAssistant::runQueryTool(const QString& name, const QJsonObject& args) 
     if (name == QStringLiteral("listElements")) {
         if (!model_) return QStringLiteral("（无图纸）");
         QStringList parts;
-        parts.append(QStringLiteral("共 %1 个图元。").arg(model_->elementCount()));
+        parts.append(SketchCAD::I18n::t(QString::fromUtf8("共 %1 个图元。")).arg(model_->elementCount()));
         QMap<QString, int> cnt;
         for (const Element& e : model_->elements())
-            cnt[QString::fromUtf8(elementTypeName(e.type))] += 1;
+            cnt[SketchCAD::I18n::t(QString::fromUtf8(elementTypeName(e.type)))] += 1;
         QStringList detail;
         for (auto it = cnt.begin(); it != cnt.end(); ++it)
             detail.append(QStringLiteral("%1×%2").arg(it.key()).arg(it.value()));
@@ -508,7 +509,7 @@ QString NlAssistant::queryStandardRule(const QString& rule) const {
         for (const QString& key : keys) {
             const QJsonValue v = db.query(table, key);
             if (v.isUndefined() || v.isNull()) {
-                lines.append(QStringLiteral("  StandardsDB.query(%1, %2) = （该键未收录）").arg(table, key));
+                lines.append(SketchCAD::I18n::t(QString::fromUtf8("  StandardsDB.query(%1, %2) = （该键未收录）")).arg(table, key));
             } else {
                 lines.append(QStringLiteral("  StandardsDB.query(%1, %2) = %3")
                                  .arg(table, key, db.queryString(table, key)));
@@ -537,9 +538,8 @@ QString NlAssistant::complianceReport(const QString& focus) const {
     const QVector<RuleMeta> metas = buildRuleMetas();
 
     QStringList lines;
-    lines.append(QStringLiteral("合规检查结果（ComplianceChecker::run，7 类 GB/T 规则；"
-                                "纯读，不修改图纸、不执行任何命令）："));
-    lines.append(QStringLiteral("共发现 %1 个不合规项。").arg(all.size()));
+    lines.append(SketchCAD::I18n::t(QString::fromUtf8("合规检查结果（ComplianceChecker::run，7 类 GB/T 规则；纯读，不修改图纸、不执行任何命令）：")));
+    lines.append(SketchCAD::I18n::t(QString::fromUtf8("共发现 %1 个不合规项。")).arg(all.size()));
 
     int r1Count = 0;
     for (const ComplianceIssue& iss : all)
@@ -556,23 +556,23 @@ QString NlAssistant::complianceReport(const QString& focus) const {
         QVector<ComplianceIssue> mine;
         for (const ComplianceIssue& iss : all)
             if (iss.ruleId == id) mine.append(iss);
-        lines.append(QStringLiteral("[%1] %2：%3（%4 项）")
-                         .arg(id, zh, mine.isEmpty() ? QStringLiteral("合规") : QStringLiteral("不合规"))
+        lines.append(SketchCAD::I18n::t(QString::fromUtf8("[%1] %2：%3（%4 项）"))
+                         .arg(id, zh, mine.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("合规")) : SketchCAD::I18n::t(QString::fromUtf8("不合规")))
                          .arg(mine.size()));
         for (const ComplianceIssue& iss : mine)
-            lines.append(QStringLiteral("  - #%1 %2：%3（建议：%4）")
+            lines.append(SketchCAD::I18n::t(QString::fromUtf8("  - #%1 %2：%3（建议：%4）"))
                              .arg(QString::number(iss.elementId))
                              .arg(iss.severity, iss.message, iss.fixHint));
     }
 
     // 明确结论：无论模型是否传 focus，线宽这一高频问题都给出可直接引用的判定。
-    lines.append(QStringLiteral("结论：当前图纸线宽%1（R1_line_width_ratio，%2 项）。")
-                     .arg(r1Count == 0 ? QStringLiteral("合规") : QStringLiteral("不合规"))
+    lines.append(SketchCAD::I18n::t(QString::fromUtf8("结论：当前图纸线宽%1（R1_line_width_ratio，%2 项）。"))
+                     .arg(r1Count == 0 ? SketchCAD::I18n::t(QString::fromUtf8("合规")) : SketchCAD::I18n::t(QString::fromUtf8("不合规")))
                      .arg(r1Count));
     if (f.isEmpty())
-        lines.append(QStringLiteral("总体：%1").arg(all.isEmpty()
-                         ? QStringLiteral("全部 7 条规则均合规。")
-                         : QStringLiteral("存在 %1 个不合规项，按上述建议修正。").arg(all.size())));
+        lines.append(SketchCAD::I18n::t(QString::fromUtf8("总体：%1")).arg(all.isEmpty()
+                         ? SketchCAD::I18n::t(QString::fromUtf8("全部 7 条规则均合规。"))
+                         : SketchCAD::I18n::t(QString::fromUtf8("存在 %1 个不合规项，按上述建议修正。")).arg(all.size())));
     return lines.join(QLatin1Char('\n'));
 }
 

@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ArrayDialog.h"
 
 #include <QTabWidget>
@@ -13,7 +14,7 @@ namespace SketchCAD {
 
 ArrayDialog::ArrayDialog(Mode initial, const Vec3& defaultCenter, QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle(QStringLiteral("阵列复制"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("阵列复制")));
     res_.center = defaultCenter;
 
     auto* vbox = new QVBoxLayout(this);
@@ -32,12 +33,12 @@ ArrayDialog::ArrayDialog(Mode initial, const Vec3& defaultCenter, QWidget* paren
     sbColSp_ = new QDoubleSpinBox(this);
     sbColSp_->setRange(0.01, 1e6); sbColSp_->setDecimals(2);
     sbColSp_->setValue(20.0); sbColSp_->setSuffix(QStringLiteral(" mm"));
-    rectForm->addRow(QStringLiteral("行数"), sbRows_);
-    rectForm->addRow(QStringLiteral("列数"), sbCols_);
-    rectForm->addRow(QStringLiteral("行间距"), sbRowSp_);
-    rectForm->addRow(QStringLiteral("列间距"), sbColSp_);
-    rectForm->addRow(new QLabel(QStringLiteral("说明：以原图元为 (0,0)，向右/向上阵列；原图元保留。")));
-    tabs_->addTab(rectPage, QStringLiteral("矩形阵列"));
+    rectForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("行数")), sbRows_);
+    rectForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("列数")), sbCols_);
+    rectForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("行间距")), sbRowSp_);
+    rectForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("列间距")), sbColSp_);
+    rectForm->addRow(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("说明：以原图元为 (0,0)，向右/向上阵列；原图元保留。"))));
+    tabs_->addTab(rectPage, SketchCAD::I18n::t(QString::fromUtf8("矩形阵列")));
 
     // ---------- 环形阵列页 ----------
     auto* polarPage = new QWidget(this);
@@ -53,19 +54,19 @@ ArrayDialog::ArrayDialog(Mode initial, const Vec3& defaultCenter, QWidget* paren
     sbCenterY_ = new QDoubleSpinBox(this);
     sbCenterY_->setRange(-1e6, 1e6); sbCenterY_->setDecimals(2);
     sbCenterY_->setValue(defaultCenter.y); sbCenterY_->setSuffix(QStringLiteral(" mm"));
-    polarForm->addRow(QStringLiteral("阵列个数"), sbCount_);
-    polarForm->addRow(QStringLiteral("角度范围"), sbAngle_);
+    polarForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("阵列个数")), sbCount_);
+    polarForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("角度范围")), sbAngle_);
 
     // ---- 中心点指定方式：手动输入 / 视图拾取（两种模式可自由切换、保持一致）----
-    auto* modeBox = new QGroupBox(QStringLiteral("中心点指定方式"));
+    auto* modeBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("中心点指定方式")));
     auto* modeLayout = new QVBoxLayout(modeBox);
     modeGroup_ = new QButtonGroup(this);
-    rbManual_ = new QRadioButton(QStringLiteral("手动输入坐标 (X, Y)"));
-    rbPick_   = new QRadioButton(QStringLiteral("在视图中拾取中心点"));
+    rbManual_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("手动输入坐标 (X, Y)")));
+    rbPick_   = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("在视图中拾取中心点")));
     modeGroup_->addButton(rbManual_);
     modeGroup_->addButton(rbPick_);
     rbManual_->setChecked(true);                 // 默认手动输入
-    pickBtn_ = new QPushButton(QStringLiteral("拾取中心点"));
+    pickBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("拾取中心点")));
     pickBtn_->setEnabled(false);                 // 默认手动模式：禁用拾取按钮
     modeLayout->addWidget(rbManual_);
     modeLayout->addWidget(rbPick_);
@@ -84,10 +85,10 @@ ArrayDialog::ArrayDialog(Mode initial, const Vec3& defaultCenter, QWidget* paren
     connect(pickBtn_,   &QPushButton::clicked, this, [this] { emit requestCanvasPick(); });
 
     polarForm->addRow(modeBox);
-    polarForm->addRow(QStringLiteral("中心点 X"), sbCenterX_);
-    polarForm->addRow(QStringLiteral("中心点 Y"), sbCenterY_);
-    polarForm->addRow(new QLabel(QStringLiteral("说明：绕中心点均匀旋转复制；原图元保留。")));
-    tabs_->addTab(polarPage, QStringLiteral("环形阵列"));
+    polarForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心点 X")), sbCenterX_);
+    polarForm->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心点 Y")), sbCenterY_);
+    polarForm->addRow(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("说明：绕中心点均匀旋转复制；原图元保留。"))));
+    tabs_->addTab(polarPage, SketchCAD::I18n::t(QString::fromUtf8("环形阵列")));
 
     tabs_->setCurrentIndex(initial == Polar ? 1 : 0);
     vbox->addWidget(tabs_);
@@ -105,13 +106,13 @@ void ArrayDialog::accept() {
         const int cnt = sbCount_->value();
         const double ang = sbAngle_->value();
         if (cnt < 2) {
-            QMessageBox::warning(this, QStringLiteral("参数错误"),
-                                 QStringLiteral("环形阵列个数至少为 2。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("参数错误")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("环形阵列个数至少为 2。")));
             return;
         }
         if (ang <= 0.0 || ang > 360.0) {
-            QMessageBox::warning(this, QStringLiteral("参数错误"),
-                                 QStringLiteral("角度范围需为 0°~360° 之间的正值。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("参数错误")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("角度范围需为 0°~360° 之间的正值。")));
             return;
         }
         res_.mode          = Polar;
@@ -122,8 +123,8 @@ void ArrayDialog::accept() {
         const int r = sbRows_->value();
         const int c = sbCols_->value();
         if (r < 1 || c < 1) {
-            QMessageBox::warning(this, QStringLiteral("参数错误"),
-                                 QStringLiteral("行数 / 列数至少为 1。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("参数错误")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("行数 / 列数至少为 1。")));
             return;
         }
         res_.mode        = Rectangular;

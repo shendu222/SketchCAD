@@ -209,17 +209,17 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     pluginManager_ = new PluginManager(model_, interp_, this);
     connect(pluginManager_, &PluginManager::pluginLoaded, this,
             [this](const QString& name, const QString&) {
-                model_->log(QStringLiteral("插件已加载：%1").arg(name), QStringLiteral("plugin"));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("插件已加载：%1")).arg(name), QStringLiteral("plugin"));
                 refreshPluginMenu();
             });
     connect(pluginManager_, &PluginManager::pluginUnloaded, this,
             [this](const QString& name, const QString&) {
-                model_->log(QStringLiteral("插件已卸载：%1").arg(name), QStringLiteral("plugin"));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("插件已卸载：%1")).arg(name), QStringLiteral("plugin"));
                 refreshPluginMenu();
             });
     connect(pluginManager_, &PluginManager::pluginError, this,
             [this](const QString& path, const QString& msg) {
-                model_->log(QStringLiteral("插件加载失败 [%1]：%2").arg(path).arg(msg),
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("插件加载失败 [%1]：%2")).arg(path).arg(msg),
                             QStringLiteral("error"));
                 refreshPluginMenu();
             });
@@ -234,7 +234,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     statusBar_ = new StatusBar();
     setStatusBar(statusBar_);
     // 数据库状态标签（启动静默连接后回显；未连接则降级为纯文件存储）
-    dbStatusLabel_ = new QLabel(QStringLiteral("数据库: 未连接（使用文件）"), statusBar_);
+    dbStatusLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("数据库: 未连接（使用文件）")), statusBar_);
     dbStatusLabel_->setContentsMargins(6, 0, 6, 0);
     statusBar_->addPermanentWidget(dbStatusLabel_);
 
@@ -253,7 +253,7 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     statusBar_->setCount(0);
     statusBar_->setPlaneInfo(planeName(model_->plane()));
     statusBar_->setDrawScale(model_->scaleLabel());
-    model_->log(QStringLiteral("我是慎独 草图模块已启动 (C++17 / Qt6)"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("我是慎独 草图模块已启动 (C++17 / Qt6)")));
 
     // ---- 输入约束（正交 ORTHO / 栅格吸附 SNAP）：三入口之「状态栏按钮」与「快捷键」----
     // 单一状态源在 SketchModel：按钮点击、F8/F9 快捷键、命令行 ortho/snap 三者都只调
@@ -262,23 +262,25 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     {
         auto makeToggle = [this](const QString& text, const QString& tip, const QKeySequence& key,
                                  auto getter, auto setter, QToolButton** btnSlot) {
+            const QString textT = SketchCAD::I18n::t(text);   // 显示/日志统一走翻译（语言切换不重建，重译见 retranslateUi）
+            const QString tipT  = SketchCAD::I18n::t(tip);
             auto* btn = new QToolButton(statusBar_);
-            btn->setText(text);
+            btn->setText(textT);
             btn->setCheckable(true);
-            btn->setToolTip(tip + QStringLiteral("（快捷键 %1）").arg(key.toString()));
+            btn->setToolTip(tipT + SketchCAD::I18n::t(QString::fromUtf8("（快捷键 %1）")).arg(key.toString()));
             btn->setChecked((model_->*getter)());
-            connect(btn, &QToolButton::toggled, this, [this, setter, text](bool on) {
+            connect(btn, &QToolButton::toggled, this, [this, setter, textT](bool on) {
                 (model_->*setter)(on);
-                model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
+                model_->log(QStringLiteral("%1：%2").arg(textT).arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))));
             });
             // 模型信号 → 按钮勾选态的连接在 hookActiveDoc 登记（随活动文档换绑）
             // 全局快捷键（应用级，画布有焦点时同样生效）
             auto* sc = new QShortcut(key, this);
             sc->setContext(Qt::ApplicationShortcut);
-            connect(sc, &QShortcut::activated, this, [this, getter, setter, text]() {
+            connect(sc, &QShortcut::activated, this, [this, getter, setter, textT]() {
                 const bool on = !(model_->*getter)();
                 (model_->*setter)(on);
-                model_->log(QStringLiteral("%1：%2").arg(text).arg(on ? QStringLiteral("开") : QStringLiteral("关")));
+                model_->log(QStringLiteral("%1：%2").arg(textT).arg(on ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))));
             });
             statusBar_->addWidget(btn);
             *btnSlot = btn;
@@ -380,8 +382,8 @@ void MainWindow::setupAutoSave() {
     statusBar_->setAutosaveEnabled(autoSave_->intervalMinutes() > 0);
     connect(statusBar_, &StatusBar::manualSaveRequested, this, [this]{
         if (!autoSave_ || autoSave_->intervalMinutes() <= 0) {
-            QMessageBox::information(this, QStringLiteral("自动保存"),
-                QStringLiteral("自动保存当前处于关闭状态。\n可在「文件 → 自动保存设置...」中开启。"));
+            QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("自动保存")),
+                SketchCAD::I18n::t(QString::fromUtf8("自动保存当前处于关闭状态。\n可在「文件 → 自动保存设置...」中开启。")));
             return;
         }
         autoSave_->saveNow();   // saved / saveFailed 信号已接，统一回写状态栏
@@ -390,15 +392,15 @@ void MainWindow::setupAutoSave() {
     // 每次保存成功：状态栏刷新时间 + 日志留痕
     connect(autoSave_, &SketchCAD::AutoSave::saved, this, [this](const QString& p){
         statusBar_->setLastAutosave(autoSave_->lastSaved());
-        model_->log(QStringLiteral("已自动保存：%1").arg(QFileInfo(p).fileName()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已自动保存：%1")).arg(QFileInfo(p).fileName()));
     });
 
     // 保存失败：明确对话框 + 日志（禁止静默失败）
     connect(autoSave_, &SketchCAD::AutoSave::saveFailed, this, [this](const QString& reason){
-        model_->log(QStringLiteral("自动保存失败：%1").arg(reason), QStringLiteral("error"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("自动保存失败：%1")).arg(reason), QStringLiteral("error"));
         SketchCAD::Diagnostics::writeLog(QStringLiteral("自动保存失败：%1").arg(reason), "error");
-        QMessageBox::warning(this, QStringLiteral("自动保存失败"),
-            QStringLiteral("自动保存失败：\n%1\n\n图纸仍在内存中，请尽快手动「文件 → 保存...」。").arg(reason));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("自动保存失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("自动保存失败：\n%1\n\n图纸仍在内存中，请尽快手动「文件 → 保存...」。")).arg(reason));
     });
 
     // 磁盘余量提前告警（< 阈值，默认 100MB）
@@ -408,7 +410,7 @@ void MainWindow::setupAutoSave() {
                             .arg(free / 1024 / 1024).arg(thr);
         model_->log(msg, QStringLiteral("error"));
         SketchCAD::Diagnostics::writeLog(msg, "warning");
-        QMessageBox::warning(this, QStringLiteral("磁盘空间不足"), msg);
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("磁盘空间不足")), msg);
     });
 
     // 模型变化 = 一次「用户操作」→ 累计到阈值触发一次保存
@@ -445,27 +447,26 @@ void MainWindow::onAutoSaveRecovered(const SketchCAD::AutoSave::Snapshot& s) {
     // 原路径缺失或已被占用（同路径已有图纸）→ 不静默覆盖，先问用户
     QString target = origin;
     if (target.isEmpty() || target == QStringLiteral("(未保存)")) {
-        target = QFileDialog::getSaveFileName(this, QStringLiteral("恢复为"),
-            QString(), QStringLiteral("草图文件 (*.json)"));
+        target = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("恢复为")),
+            QString(), SketchCAD::I18n::t(QString::fromUtf8("草图文件 (*.json)")));
         if (target.isEmpty()) return;   // 用户取消 → 快照保留
     } else if (QFile::exists(target)) {
-        const auto a = QMessageBox::question(this, QStringLiteral("原文件已存在"),
-            QStringLiteral("原图纸已存在：\n%1\n\n"
-                           "「是」= 用快照覆盖它；「否」= 另存为新文件；「取消」= 不恢复。").arg(target),
+        const auto a = QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("原文件已存在")),
+            SketchCAD::I18n::t(QString::fromUtf8("原图纸已存在：\n%1\n\n「是」= 用快照覆盖它；「否」= 另存为新文件；「取消」= 不恢复。")).arg(target),
             QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Cancel);
         if (a == QMessageBox::Cancel) return;
         if (a == QMessageBox::No) {
-            target = QFileDialog::getSaveFileName(this, QStringLiteral("另存为"),
-                target, QStringLiteral("草图文件 (*.json)"));
+            target = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("另存为")),
+                target, SketchCAD::I18n::t(QString::fromUtf8("草图文件 (*.json)")));
             if (target.isEmpty()) return;
         }
     }
 
     QString err;
     if (!SketchCAD::AutoSave::restoreSnapshot(s.fullPath, target, &err)) {
-        model_->log(QStringLiteral("恢复失败：%1").arg(err), QStringLiteral("error"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("恢复失败：%1")).arg(err), QStringLiteral("error"));
         SketchCAD::Diagnostics::writeLog(QStringLiteral("恢复失败：%1").arg(err), "error");
-        QMessageBox::critical(this, QStringLiteral("恢复失败"), err);
+        QMessageBox::critical(this, SketchCAD::I18n::t(QString::fromUtf8("恢复失败")), err);
         return;
     }
 
@@ -478,17 +479,17 @@ void MainWindow::onAutoSaveRecovered(const SketchCAD::AutoSave::Snapshot& s) {
     // 恢复成功后删掉这份快照（避免下次启动重复提示）
     SketchCAD::AutoSave::discardSnapshot(s.fullPath);
 
-    model_->log(QStringLiteral("已从自动保存恢复：%1").arg(target));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已从自动保存恢复：%1")).arg(target));
     SketchCAD::Diagnostics::writeLog(QStringLiteral("已从自动保存恢复：%1").arg(target), "info");
-    QMessageBox::information(this, QStringLiteral("恢复完成"),
-        QStringLiteral("已恢复自动保存的内容：\n%1").arg(target));
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("恢复完成")),
+        SketchCAD::I18n::t(QString::fromUtf8("已恢复自动保存的内容：\n%1")).arg(target));
 }
 
 void MainWindow::onAutoSaveDiscarded(const SketchCAD::AutoSave::Snapshot& s) {
     if (SketchCAD::AutoSave::discardSnapshot(s.fullPath))
-        model_->log(QStringLiteral("已丢弃自动保存快照：%1").arg(s.file));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已丢弃自动保存快照：%1")).arg(s.file));
     else
-        model_->log(QStringLiteral("丢弃快照失败：%1").arg(s.file), QStringLiteral("error"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("丢弃快照失败：%1")).arg(s.file), QStringLiteral("error"));
 }
 
 void MainWindow::onAutoSaveDiscardAll() {
@@ -496,7 +497,7 @@ void MainWindow::onAutoSaveDiscardAll() {
     int n = 0;
     for (const auto& s : snaps)
         if (SketchCAD::AutoSave::discardSnapshot(s.fullPath)) ++n;
-    model_->log(QStringLiteral("已丢弃 %1 份自动保存快照").arg(n));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已丢弃 %1 份自动保存快照")).arg(n));
 }
 
 // ---- 崩溃可复现诊断包 ----
@@ -522,24 +523,17 @@ void MainWindow::maybeShowPrivacyNotice() {
     // 首启动一次性明示（用户任务要求）。自测不写注册表 → 直接跳过。
     if (!appSettings_ || !s_recentPersistEnabled) return;
     if (appSettings_->firstRunNoticeShown()) return;
-    QMessageBox::information(this, QStringLiteral("隐私说明"),
-        QStringLiteral("SketchCAD 尊重您的隐私：\n\n"
-                       "· 默认不上传任何数据，没有任何后台网络请求；\n"
-                       "· 「导出诊断包」只在您主动点击时生成一个本机 ZIP 文件，\n"
-                       "  是否发送完全由您决定；\n"
-                       "· 匿名遥测默认关闭，可在「选项 → 隐私」中开启或关闭。"));
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("隐私说明")),
+        SketchCAD::I18n::t(QString::fromUtf8("SketchCAD 尊重您的隐私：\n\n· 默认不上传任何数据，没有任何后台网络请求；\n· 「导出诊断包」只在您主动点击时生成一个本机 ZIP 文件，\n  是否发送完全由您决定；\n· 匿名遥测默认关闭，可在「选项 → 隐私」中开启或关闭。")));
     appSettings_->setFirstRunNoticeShown(true);
 }
 
 void MainWindow::showAbnormalExitNotice() {
     if (!SketchCAD::Diagnostics::lastSessionAbnormal()) return;
     SketchCAD::Diagnostics::acknowledgeAbnormalSession();   // 只提示一次
-    model_->log(QStringLiteral("检测到上次异常退出"), QStringLiteral("warning"));
-    const auto ret = QMessageBox::question(this, QStringLiteral("上次异常退出"),
-        QStringLiteral("检测到上次运行未正常退出（可能发生崩溃或被强制结束）。\n\n"
-                       "是否导出诊断包？包内包含日志、崩溃转储与环境信息（不含图纸内容），\n"
-                       "只生成本机 ZIP 文件，不会自动发送。\n\n"
-                       "「Yes」= 导出诊断包；「No」= 查看日志目录；「Cancel」= 忽略。"),
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("检测到上次异常退出")), QStringLiteral("warning"));
+    const auto ret = QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("上次异常退出")),
+        SketchCAD::I18n::t(QString::fromUtf8("检测到上次运行未正常退出（可能发生崩溃或被强制结束）。\n\n是否导出诊断包？包内包含日志、崩溃转储与环境信息（不含图纸内容），\n只生成本机 ZIP 文件，不会自动发送。\n\n「Yes」= 导出诊断包；「No」= 查看日志目录；「Cancel」= 忽略。")),
         QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
     if (ret == QMessageBox::Yes) {
         exportDiagnosticBundle();
@@ -579,10 +573,10 @@ void MainWindow::openAutoSaveOptions() {
     statusBar_->setAutosaveEnabled(autoSave_->intervalMinutes() > 0);
     statusBar_->setLastAutosave(autoSave_->lastSaved());
 
-    model_->log(QStringLiteral("自动保存间隔：%1")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("自动保存间隔：%1"))
         .arg(autoSave_->intervalMinutes() > 0
-                 ? QStringLiteral("%1 分钟").arg(autoSave_->intervalMinutes())
-                 : QStringLiteral("关闭")));
+                 ? SketchCAD::I18n::t(QString::fromUtf8("%1 分钟")).arg(autoSave_->intervalMinutes())
+                 : SketchCAD::I18n::t(QString::fromUtf8("关闭"))));
 }
 
 // ==================== 应用级配置持久化（AppSettings + 选项对话框） ====================
@@ -726,10 +720,12 @@ void MainWindow::applySettingLive(const QString& key, const QVariant& v) {
         // 遥测总开关即时生效（默认 false；与 Telemetry 静态状态同步）
         Telemetry::setEnabled(v.toBool());
     } else if (key == QLatin1String(kLanguage)) {
-        // 界面语言切换即刻生效：重装翻译器 + 重建菜单栏（buildMenu 内 tr() 重新求值）。
-        // 对话框类（选项/新建图纸等）下次打开自然使用新语言，无需驻留重建。
+        // 界面语言切换即刻生效：重装翻译器 + 整体重译常驻 UI（菜单/工具条/Dock 标题/
+        // 参数栏/状态栏/命令行/数据库状态），全部按新语言重新求值，无需重启。
+        // 注：installTranslator 在切回 zh-CN 时走 removeTranslator 路径、不广播
+        // LanguageChange，故这里显式调 retranslateUi（changeEvent 仅作额外兜底）。
         SketchCAD::I18n::installTranslator(SketchCAD::I18n::resolveLanguage(v.toString()));
-        rebuildMenusForLanguage();
+        retranslateUi();
     } else if (key == QLatin1String(kTheme)) {
         // 内置亮/暗主题：即时重绘（GraphicsView 订阅 ThemeManager::themeChanged 自刷新画布）。
         // 持久化由 AppSettings 负责，这里只把值灌进 ThemeManager 的视觉层。
@@ -766,7 +762,7 @@ void MainWindow::saveAppSettingsOnClose() {
         const QString msg = QStringLiteral("应用配置写入失败：%1\n窗口位置、面板布局等本次改动可能无法在下一次启动时恢复。")
                                 .arg(appSettings_->lastError());
         SketchCAD::Diagnostics::writeLog(msg, "error");
-        QMessageBox::warning(this, QStringLiteral("配置写入失败"), msg);
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("配置写入失败")), msg);
     }
 }
 
@@ -778,7 +774,7 @@ void MainWindow::openOptionsDialog() {
     dlg.exec();
     // 应用/取消的写失败提示由对话框负责；此处仅补日志留痕
     if (appSettings_->lastWriteFailed())
-        model_->log(QStringLiteral("配置写入失败：%1").arg(appSettings_->lastError()),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("配置写入失败：%1")).arg(appSettings_->lastError()),
                     QStringLiteral("error"));
 }
 
@@ -796,15 +792,15 @@ void MainWindow::initAiAssistant() {
     aiCtx_ = new AppContextProvider(model_, this);
     aiCtx_->setSelectionProvider([this]() -> QString {
         if (!model_) return QString();
-        if (!model_->hasSelection()) return QStringLiteral("当前没有选中对象。");
+        if (!model_->hasSelection()) return SketchCAD::I18n::t(QString::fromUtf8("当前没有选中对象。"));
         const auto& ids = model_->selection();
         QStringList types;
         for (int id : ids) {
             const Element* e = model_->element(id);
-            if (e) types << QString::fromUtf8(elementTypeName(e->type));
+            if (e) types << SketchCAD::I18n::t(QString::fromUtf8(elementTypeName(e->type)));
         }
-        return QStringLiteral("已选中 %1 个对象：%2")
-            .arg((int)ids.size()).arg(types.join(QStringLiteral("、")));
+        return SketchCAD::I18n::t(QString::fromUtf8("已选中 %1 个对象：%2"))
+            .arg((int)ids.size()).arg(types.join(SketchCAD::I18n::t(QString::fromUtf8("、"))));
     });
     aiCtx_->setLayersProvider([this]() -> QString {
         if (!model_) return QString();
@@ -859,8 +855,8 @@ void MainWindow::initAiAssistant() {
     // 命令执行留痕进主日志面板（与菜单 / 命令行同源可见，便于追溯与排错）
     connect(aiAssistant_, &NlAssistant::commandExecuted, this,
             [this](const QString& line, bool ok) {
-        model_->log(QStringLiteral("AI 助手执行：%1（%2）")
-                        .arg(line, ok ? QStringLiteral("成功") : QStringLiteral("失败")),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("AI 助手执行：%1（%2）"))
+                        .arg(line, ok ? SketchCAD::I18n::t(QString::fromUtf8("成功")) : SketchCAD::I18n::t(QString::fromUtf8("失败"))),
                     ok ? QStringLiteral("info") : QStringLiteral("warn"));
     });
 
@@ -924,9 +920,9 @@ void MainWindow::warnDwgConverterMissing(bool isRead, const QString& ver, const 
     }
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
-    box.setWindowTitle(isRead ? QStringLiteral("无法打开 DWG") : QStringLiteral("DWG 写出说明"));
+    box.setWindowTitle(isRead ? SketchCAD::I18n::t(QString::fromUtf8("无法打开 DWG")) : SketchCAD::I18n::t(QString::fromUtf8("DWG 写出说明")));
     box.setText(text);
-    box.setInformativeText(QStringLiteral("点击「查看帮助」获取转换组件的下载与安装说明。"));
+    box.setInformativeText(SketchCAD::I18n::t(QString::fromUtf8("点击「查看帮助」获取转换组件的下载与安装说明。")));
     QPushButton* helpBtn = box.addButton(QStringLiteral("查看帮助"), QMessageBox::ActionRole);
     box.addButton(QStringLiteral("确定"), QMessageBox::AcceptRole);
     box.exec();
@@ -949,7 +945,7 @@ void MainWindow::rebuildRecentMenu() {
     recentMenu_->clear();
     const int maxN = appSettings_ ? appSettings_->recentFileCount() : 10;
     if (!recent_ || recent_->count() == 0 || maxN <= 0) {
-        QAction* a = recentMenu_->addAction(tr("（空）"));
+        QAction* a = recentMenu_->addAction(SketchCAD::I18n::t(tr("（空）")));
         a->setEnabled(false);
         return;
     }
@@ -966,14 +962,14 @@ void MainWindow::rebuildRecentMenu() {
         QAction* a = recentMenu_->addAction(text);
         a->setData(p);                 // 右键菜单按 path 定位条目
         a->setStatusTip(p);
-        a->setToolTip(missing ? QStringLiteral("%1\n路径不存在，点击可从列表中移除。").arg(p) : p);
+        a->setToolTip(missing ? SketchCAD::I18n::t(QString::fromUtf8("%1\n路径不存在，点击可从列表中移除。")).arg(p) : p);
         if (missing) {
             QFont f = a->font();
             f.setItalic(true);
             a->setFont(f);             // 灰显提示：缺失项点击不再尝试打开，而是从列表移除
             connect(a, &QAction::triggered, this, [this, p] {
                 if (recent_) recent_->remove(p);   // changed → 菜单重建
-                model_->log(QStringLiteral("最近列表：已移除缺失项 %1").arg(p));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("最近列表：已移除缺失项 %1")).arg(p));
             });
         } else {
             connect(a, &QAction::triggered, this, [this, p] { openDocInteractive(p); });
@@ -981,7 +977,7 @@ void MainWindow::rebuildRecentMenu() {
         ++shown;
     }
     recentMenu_->addSeparator();
-    recentMenu_->addAction(tr("清除最近文件历史"), this, [this] {
+    recentMenu_->addAction(SketchCAD::I18n::t(tr("清除最近文件历史")), this, [this] {
         if (recent_) recent_->clear();   // changed → 菜单重建
         else rebuildRecentMenu();
     });
@@ -1001,8 +997,8 @@ void MainWindow::closeEvent(QCloseEvent* e) {
     for (int i = 0; i < docs_->count(); ++i)
         if (docs_->isDirty(i)) dirtyIdx << i;
     if (!dirtyIdx.isEmpty()) {
-        const auto ret = QMessageBox::question(this, QStringLiteral("退出"),
-            QStringLiteral("有 %1 张图纸存在未保存的修改。是否全部保存？")
+        const auto ret = QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("退出")),
+            SketchCAD::I18n::t(QString::fromUtf8("有 %1 张图纸存在未保存的修改。是否全部保存？"))
                 .arg(dirtyIdx.size()),
             QMessageBox::SaveAll | QMessageBox::Discard | QMessageBox::Cancel,
             QMessageBox::SaveAll);
@@ -1119,6 +1115,93 @@ void MainWindow::rebuildMenusForLanguage() {
     applyWorkspaceVisibility();   // 重建会把动作可见性重置为「全显」，按当前工作空间收敛
 }
 
+// 语言切换的整体刷新：重建菜单栏 + 工具栏 + Dock 标题 + 参数栏/状态栏/命令行标签。
+// installTranslator 会向所有顶层 widget 广播 QEvent::LanguageChange，changeEvent 收到后
+// 调这里，使全部常驻 UI 文本立即按新语言重新求值，无需重启。
+void MainWindow::retranslateUi() {
+    // 1) 菜单栏：整体重建（buildMenu 内 tr()/I18n::t() 重新求值）
+    rebuildMenusForLanguage();
+
+    // 2) 内置工具条：卸载旧的 + 清空共享容器 + 重跑 buildToolbar。
+    //    buildToolbar 原本只跑一次（构造时），重建必须先把它累积的容器清空，
+    //    否则动作/分组会翻倍累积、快捷键重复注册。
+    if (toolbar_)  { removeToolBar(toolbar_);  toolbar_->deleteLater();  toolbar_  = nullptr; }
+    if (toolbar2_) { removeToolBar(toolbar2_); toolbar2_->deleteLater(); toolbar2_ = nullptr; }
+    toolActions_.clear();
+    drawGroups_.clear();
+    editGroups_.clear();
+    dimActs_.clear();
+    widthActs_.clear();
+    colorActs_.clear();
+    buildToolbar();
+
+    // 3) Dock 面板标题（buildDocks 里用 I18n::t 固化，此处重设）
+    struct { QDockWidget* dock; const char* zh; } docks[] = {
+        { bomDock_,          "BOM 树" },
+        { elemDock_,         "图元面板" },
+        { propDock_,         "属性面板" },
+        { logDock_,          "执行信息" },
+        { cmdDock_,          "命令行" },
+        { layerDock_,        "图层" },
+        { constraintDock_,   "约束栏" },
+        { standardsDock_,    "合规检查" },
+        { designDock_,       "设计中心" },
+        { aiDock_,           "AI 助手" },
+    };
+    for (const auto& d : docks)
+        if (d.dock) d.dock->setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8(d.zh)));
+
+    // 4) 参数输入条静态标签（角度/长度/间隔/条数/线型/提示），动态项由 updateParamBarForTool 重算
+    if (lblAngle_)   lblAngle_->setText(SketchCAD::I18n::t(QString::fromUtf8("角度")));
+    if (lblLength_)  lblLength_->setText(SketchCAD::I18n::t(QString::fromUtf8("长度")));
+    if (lblSpacing_) lblSpacing_->setText(SketchCAD::I18n::t(QString::fromUtf8("间隔")));
+    if (lblCount_)   lblCount_->setText(SketchCAD::I18n::t(QString::fromUtf8("条数")));
+    if (paramHint_)  paramHint_->setText(SketchCAD::I18n::t(QString::fromUtf8("（选择「角度直线」或「平行线」时此处生效）")));
+    updateParamBarForTool(model_->activeTool());   // 半径/边数等动态标签按当前工具重设
+
+    // 5) 状态栏：静态标签 + 切换按钮 + 自动保存标签（动态值重刷）
+    if (statusBar_) {
+        statusBar_->retranslate();
+        statusBar_->setCount(model_->selection().size());   // 图元数
+        statusBar_->setPlaneInfo(planeName(model_->plane()));
+        statusBar_->setDrawScale(model_->scaleLabel());
+        statusBar_->setAutosaveEnabled(autoSave_ && autoSave_->intervalMinutes() > 0);
+        if (autoSave_) statusBar_->setLastAutosave(autoSave_->lastSaved());
+    }
+    // 构造函数里 makeToggle 创建的两个状态栏按钮（正交/捕捉），重译文本与提示
+    if (btnOrtho_) {
+        btnOrtho_->setText(SketchCAD::I18n::t(QString::fromUtf8("正交")));
+        btnOrtho_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("正交模式：把落点方向锁定到水平/垂直"))
+                              + SketchCAD::I18n::t(QString::fromUtf8("（快捷键 %1）")).arg(QStringLiteral("F8")));
+    }
+    if (btnSnap_) {
+        btnSnap_->setText(SketchCAD::I18n::t(QString::fromUtf8("捕捉")));
+        btnSnap_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("栅格吸附：把坐标量化到步长的整数倍"))
+                             + SketchCAD::I18n::t(QString::fromUtf8("（快捷键 %1）")).arg(QStringLiteral("F9")));
+    }
+
+    // 6) 命令行占位提示
+    if (cmdLine_) cmdLine_->retranslate();
+
+    // 7) 数据库状态标签
+    updateDbStatus();
+
+    // 8) 面板内部静态文本（属性面板表单标签 / 图层面板按钮 / 图元面板条目）
+    if (propPanel_) propPanel_->retranslate();
+    if (layerPanel_) layerPanel_->retranslate();
+    if (elemPanel_) elemPanel_->retranslate();
+}
+
+void MainWindow::changeEvent(QEvent* event) {
+    // installTranslator / removeTranslator 会广播 LanguageChange；借此统一重译常驻 UI。
+    if (event->type() == QEvent::LanguageChange) {
+        retranslateUi();
+        return;
+    }
+    QMainWindow::changeEvent(event);
+}
+
+
 // ---- 命令面板（Ctrl+Shift+P）：薄壳，过滤/排序/最近使用逻辑在 CommandPaletteModel ----
 void MainWindow::openCommandPalette() {
     CommandPaletteDialog dlg(interp_, s_recentPersistEnabled ? appSettings_ : nullptr, this);
@@ -1144,13 +1227,13 @@ void MainWindow::auditShortcutConflicts() {
     //    Ctrl+Shift+P 命令面板等——不挂在菜单上的全局键）
     for (QShortcut* sc : findChildren<QShortcut*>())
         if (!sc->key().isEmpty())
-            bindings.append({ QStringLiteral("（全局快捷键 %1）").arg(sc->key().toString()),
+            bindings.append({ SketchCAD::I18n::t(QString::fromUtf8("（全局快捷键 %1）")).arg(sc->key().toString()),
                               sc->key().toString() });
 
     // 3) 纯函数查重（可无头直测）→ warn 日志
     const auto dups = ShortcutAudit::duplicates(bindings);
     for (const auto& d : dups)
-        model_->log(QStringLiteral("快捷键冲突：%1 同时绑定于 %2（后者将不生效或抢占，请检查菜单定义）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("快捷键冲突：%1 同时绑定于 %2（后者将不生效或抢占，请检查菜单定义）"))
                         .arg(d.first, d.second),
                     QStringLiteral("warn"));
 }
@@ -1164,13 +1247,12 @@ void showRewardDialog(QWidget* parent) {
     const QPixmap pm(qrPath);
     if (!pm.isNull()) {
         QDialog dlg(parent);
-        dlg.setWindowTitle(QStringLiteral("打赏 — 微信收款码"));
+        dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("打赏 — 微信收款码")));
         auto* v = new QVBoxLayout(&dlg);
         v->setContentsMargins(18, 16, 18, 14);
         v->setSpacing(10);
 
-        auto* caption = new QLabel(QStringLiteral(
-            "<b>感谢支持 SketchCAD</b><br>请使用微信「扫一扫」扫描下方收款码"), &dlg);
+        auto* caption = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("<b>感谢支持 SketchCAD</b><br>请使用微信「扫一扫」扫描下方收款码")), &dlg);
         caption->setAlignment(Qt::AlignHCenter);
         v->addWidget(caption);
 
@@ -1186,7 +1268,7 @@ void showRewardDialog(QWidget* parent) {
         // Qt 标准按钮显示为 "Close" 与上方中文提示混排。
         auto* row = new QHBoxLayout;
         row->addStretch(1);
-        auto* closeBtn = new QPushButton(QStringLiteral("关闭"), &dlg);
+        auto* closeBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), &dlg);
         QObject::connect(closeBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
         row->addWidget(closeBtn);
         v->addLayout(row);
@@ -1199,18 +1281,16 @@ void showRewardDialog(QWidget* parent) {
     const QString wx  = QString::fromUtf8(SketchCAD::RewardConfig::kWeChatId).trimmed();
     if (!url.isEmpty()) {
         if (!QDesktopServices::openUrl(QUrl::fromUserInput(url)))
-            QMessageBox::warning(parent, QStringLiteral("打赏"),
-                QStringLiteral("无法打开打赏链接，请检查配置：<br>%1").arg(url.toHtmlEscaped()));
+            QMessageBox::warning(parent, SketchCAD::I18n::t(QString::fromUtf8("打赏")),
+                SketchCAD::I18n::t(QString::fromUtf8("无法打开打赏链接，请检查配置：<br>%1")).arg(url.toHtmlEscaped()));
     } else if (!wx.isEmpty()) {
         if (QClipboard* cb = QGuiApplication::clipboard()) cb->setText(wx);
-        QMessageBox::information(parent, QStringLiteral("打赏"),
-            QStringLiteral("微信号 <b>%1</b> 已复制到剪贴板。<br>"
-                          "请打开微信，通过「添加朋友」搜索该微信号后联系赞赏。")
+        QMessageBox::information(parent, SketchCAD::I18n::t(QString::fromUtf8("打赏")),
+            SketchCAD::I18n::t(QString::fromUtf8("微信号 <b>%1</b> 已复制到剪贴板。<br>请打开微信，通过「添加朋友」搜索该微信号后联系赞赏。"))
                 .arg(wx.toHtmlEscaped()));
     } else {
-        QMessageBox::warning(parent, QStringLiteral("打赏"),
-            QStringLiteral("内置收款码资源加载失败：<code>%1</code><br>"
-                           "请检查 resources/reward/wechat_reward_qr.png 是否已随程序构建。")
+        QMessageBox::warning(parent, SketchCAD::I18n::t(QString::fromUtf8("打赏")),
+            SketchCAD::I18n::t(QString::fromUtf8("内置收款码资源加载失败：<code>%1</code><br>请检查 resources/reward/wechat_reward_qr.png 是否已随程序构建。"))
                 .arg(qrPath.toHtmlEscaped()));
     }
 }
@@ -1235,45 +1315,45 @@ void MainWindow::buildMenu() {
     // 文字类命令需参数，菜单点击时以对话框收集后交给解释器（同一 handler）。
     auto dlgText = [this](bool multi) {
         bool ok = false;
-        QString pos = QInputDialog::getText(this, multi ? QStringLiteral("多行文字") : QStringLiteral("单行文字"),
-                                            QStringLiteral("插入点 x,y："), QLineEdit::Normal, QStringLiteral("0,0"), &ok);
+        QString pos = QInputDialog::getText(this, multi ? SketchCAD::I18n::t(QString::fromUtf8("多行文字")) : SketchCAD::I18n::t(QString::fromUtf8("单行文字")),
+                                            SketchCAD::I18n::t(QString::fromUtf8("插入点 x,y：")), QLineEdit::Normal, QStringLiteral("0,0"), &ok);
         if (!ok || pos.isEmpty()) return;
         bool ok2 = false;
-        double h = QInputDialog::getDouble(this, QStringLiteral("字高"), QStringLiteral("字高(mm)："), 3.5, 0.1, 1000.0, 2, &ok2);
+        double h = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("字高")), SketchCAD::I18n::t(QString::fromUtf8("字高(mm)：")), 3.5, 0.1, 1000.0, 2, &ok2);
         if (!ok2) return;
         bool ok3 = false;
-        QString content = QInputDialog::getText(this, QStringLiteral("内容"), QStringLiteral("文字内容："), QLineEdit::Normal, QString(), &ok3);
+        QString content = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("内容")), SketchCAD::I18n::t(QString::fromUtf8("文字内容：")), QLineEdit::Normal, QString(), &ok3);
         if (!ok3) return;
         interp_->execute(QStringLiteral("%1 %2 %3 %4")
                              .arg(multi ? QStringLiteral("mtext") : QStringLiteral("text")).arg(pos).arg(h, 0, 'f', 2).arg(content));
     };
     auto dlgDdedit = [this]() {
         bool ok = false;
-        QString content = QInputDialog::getText(this, QStringLiteral("编辑文字"), QStringLiteral("新内容："), QLineEdit::Normal, QString(), &ok);
+        QString content = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("编辑文字")), SketchCAD::I18n::t(QString::fromUtf8("新内容：")), QLineEdit::Normal, QString(), &ok);
         if (ok && !content.isEmpty()) interp_->execute(QStringLiteral("ddedit ") + content);
     };
 
-    QMenu* f = new QMenu(tr("文件(&F)"), this);
+    QMenu* f = new QMenu(SketchCAD::I18n::t(tr("文件(&F)")), this);
     f->setObjectName("menuFile");
-    mk(f, tr("新建"),        QKeySequence::New,  [this] {
+    mk(f, SketchCAD::I18n::t(tr("新建")),        QKeySequence::New,  [this] {
             // 空白新建：直接给一张空白图面，不再弹「图纸尺寸 + 图框内容」选择——
             // 该选择流程由【图纸】>【新建图框】（SheetFrameDialog）与启动页模板
             // 按钮承担，【新建】保持独立语义 = 空白画布（Ctrl+N 即得，零打断）。
             createBlankDrawing();
         })
         ->setIcon(icons::make("new"));
-    mk(f, tr("打开..."),      QKeySequence::Open, [this] { openFile(); })
+    mk(f, SketchCAD::I18n::t(tr("打开...")),      QKeySequence::Open, [this] { openFile(); })
         ->setIcon(icons::make("open"));
-    mk(f, tr("保存..."),      QKeySequence::Save, [this] { saveFile(); })
+    mk(f, SketchCAD::I18n::t(tr("保存...")),      QKeySequence::Save, [this] { saveFile(); })
         ->setIcon(icons::make("save"));
     // 自动保存设置：间隔/操作次数/磁盘告警阈值（崩溃不丢稿的用户入口）。
     // 属文件保存行为，故保留在【文件】菜单（与 打开/保存 同组）。
-    mk(f, tr("自动保存设置..."), QKeySequence(), [this] {
+    mk(f, SketchCAD::I18n::t(tr("自动保存设置...")), QKeySequence(), [this] {
             openAutoSaveOptions();
         })->setIcon(icons::make("save"));
     // 最近打开：动态子菜单（条目数 = 选项里的「最近文件数」，列表随成功读档更新；
     // 缺失文件灰显提示、点击移除单条；右键条目 → 固定/取消固定、从列表删除）
-    recentMenu_ = new QMenu(tr("最近打开(&R)"), f);
+    recentMenu_ = new QMenu(SketchCAD::I18n::t(tr("最近打开(&R)")), f);
     recentMenu_->setObjectName("menuRecent");
     recentMenu_->setIcon(icons::make("open"));
     recentMenu_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1283,9 +1363,9 @@ void MainWindow::buildMenu() {
         if (!a || p.isEmpty()) return;                    // 分隔线/空态/清除历史 无右键菜单
         QMenu ctx(recentMenu_);
         QAction* pinAct = ctx.addAction(recent_->isPinned(p)
-                                            ? QStringLiteral("取消固定")
-                                            : QStringLiteral("固定到列表"));
-        QAction* delAct = ctx.addAction(QStringLiteral("从列表中删除"));
+                                            ? SketchCAD::I18n::t(QString::fromUtf8("取消固定"))
+                                            : SketchCAD::I18n::t(QString::fromUtf8("固定到列表")));
+        QAction* delAct = ctx.addAction(SketchCAD::I18n::t(QString::fromUtf8("从列表中删除")));
         QAction* chosen = ctx.exec(recentMenu_->mapToGlobal(pos));
         if (chosen == pinAct) recent_->setPinned(p, !recent_->isPinned(p));
         else if (chosen == delAct) recent_->remove(p);
@@ -1293,50 +1373,50 @@ void MainWindow::buildMenu() {
     f->addMenu(recentMenu_);
     rebuildRecentMenu();
     f->addSeparator();
-    mk(f, tr("导出 DXF..."),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
+    mk(f, SketchCAD::I18n::t(tr("导出 DXF...")),  QKeySequence("Ctrl+E"), [this] { exportDxf(); })
         ->setIcon(icons::make("export"));
     f->addSeparator();
-    mk(f, tr("退出"),        QKeySequence::Quit, [this] { close(); })
+    mk(f, SketchCAD::I18n::t(tr("退出")),        QKeySequence::Quit, [this] { close(); })
         ->setIcon(icons::make("exit"));
     bar->addMenu(f);
 
     // ---- 顶级菜单：打印（页面设置 + 简化 CTB 样式 + 视口/布局 MVP + 预览/PDF/物理打印）----
-    QMenu* pr = new QMenu(tr("打印(&P)"), this);
+    QMenu* pr = new QMenu(SketchCAD::I18n::t(tr("打印(&P)")), this);
     pr->setObjectName("menuPrint");
-    mk(pr, tr("打印设置..."), QKeySequence(), [this] { openPrintSettings(); })
+    mk(pr, SketchCAD::I18n::t(tr("打印设置...")), QKeySequence(), [this] { openPrintSettings(); })
         ->setIcon(icons::make("print"));
-    mk(pr, tr("打印预览..."), QKeySequence(), [this] { openPrintPreview(); })
+    mk(pr, SketchCAD::I18n::t(tr("打印预览...")), QKeySequence(), [this] { openPrintPreview(); })
         ->setIcon(icons::make("print"));
-    mk(pr, tr("导出 PDF..."), QKeySequence(), [this] { exportPdfDirect(); })
+    mk(pr, SketchCAD::I18n::t(tr("导出 PDF...")), QKeySequence(), [this] { exportPdfDirect(); })
         ->setIcon(icons::make("export"));
-    mk(pr, tr("导出 PDF（全部布局）..."), QKeySequence(), [this] { exportPdfLayoutsDirect(); })
+    mk(pr, SketchCAD::I18n::t(tr("导出 PDF（全部布局）...")), QKeySequence(), [this] { exportPdfLayoutsDirect(); })
         ->setIcon(icons::make("export"));
     pr->addSeparator();
-    mk(pr, tr("发布... (PUBLISH)"), QKeySequence(), [this] { openPublish(); })
+    mk(pr, SketchCAD::I18n::t(tr("发布... (PUBLISH)")), QKeySequence(), [this] { openPublish(); })
         ->setIcon(icons::make("print"));
     pr->addSeparator();
-    mk(pr, QStringLiteral("直接打印 (模型空间)"), QKeySequence(), [this] { printDirect(); })
+    mk(pr, SketchCAD::I18n::t(QString::fromUtf8("直接打印 (模型空间)")), QKeySequence(), [this] { printDirect(); })
         ->setIcon(icons::make("print"));
     bar->addMenu(pr);
 
     // ---- 顶级菜单：数据库（启动静默连接；失败则整菜单禁用，沿用纯文件存储）----
     // 要求：① 启动检测连接（失败不报错不中断）② 状态栏显示连接状态 ③ 表格展示记录+打开
     //       ④ 模板：保存图纸尺寸参数，套用「相同形状、不同尺寸」。
-    QMenu* dbm = new QMenu(tr("数据库(&D)"), this);
+    QMenu* dbm = new QMenu(SketchCAD::I18n::t(tr("数据库(&D)")), this);
     dbm->setObjectName("menuDatabase");
-    mk(dbm, tr("数据库配置..."), QKeySequence(), [this] { onShowDbConfig(); });
+    mk(dbm, SketchCAD::I18n::t(tr("数据库配置...")), QKeySequence(), [this] { onShowDbConfig(); });
     dbm->addSeparator();
-    dbActRecords_ = mk(dbm, tr("绘图记录..."), QKeySequence(), [this] { onShowDbDrawings(); });
-    dbActSaveDb_  = mk(dbm, tr("保存当前图纸到数据库..."), QKeySequence(), [this] {
+    dbActRecords_ = mk(dbm, SketchCAD::I18n::t(tr("绘图记录...")), QKeySequence(), [this] { onShowDbDrawings(); });
+    dbActSaveDb_  = mk(dbm, SketchCAD::I18n::t(tr("保存当前图纸到数据库...")), QKeySequence(), [this] {
         bool ok = false;
-        QString name = QInputDialog::getText(this, tr("保存到数据库"),
-            tr("输入图纸名称："), QLineEdit::Normal, QString(), &ok);
+        QString name = QInputDialog::getText(this, SketchCAD::I18n::t(tr("保存到数据库")),
+            SketchCAD::I18n::t(tr("输入图纸名称：")), QLineEdit::Normal, QString(), &ok);
         if (ok && !name.trimmed().isEmpty()) saveCurrentToDatabase(name.trimmed());
     });
-    dbActTmpl_    = mk(dbm, tr("另存当前图纸为模板..."), QKeySequence(), [this] {
+    dbActTmpl_    = mk(dbm, SketchCAD::I18n::t(tr("另存当前图纸为模板...")), QKeySequence(), [this] {
         bool ok = false;
-        QString name = QInputDialog::getText(this, tr("另存为模板"),
-            tr("输入模板名称（将记录当前图纸尺寸作为参考尺寸）："),
+        QString name = QInputDialog::getText(this, SketchCAD::I18n::t(tr("另存为模板")),
+            SketchCAD::I18n::t(tr("输入模板名称（将记录当前图纸尺寸作为参考尺寸）：")),
             QLineEdit::Normal, QString(), &ok);
         if (ok && !name.trimmed().isEmpty()) saveCurrentAsTemplate(name.trimmed());
     });
@@ -1350,65 +1430,65 @@ void MainWindow::buildMenu() {
     // 下列「填写标题栏 / 插入标准标题栏 / 按幅面生成图框与标题栏 / 绘图比例 /
     // 单位与图纸界限 / 捕捉设置」原置于【文件】菜单，均属图纸语义而非文件操作，
     // 已按用户要求迁至本菜单，避免【文件】菜单混入与文件无关的子项。
-    QMenu* sh = new QMenu(tr("图纸(&G)"), this);
+    QMenu* sh = new QMenu(SketchCAD::I18n::t(tr("图纸(&G)")), this);
     sh->setObjectName("menuSheet");
-    mk(sh, tr("新建图框..."), QKeySequence(), [this] { openSheetFrameDialog(); })
+    mk(sh, SketchCAD::I18n::t(tr("新建图框...")), QKeySequence(), [this] { openSheetFrameDialog(); })
         ->setIcon(icons::make("titleblock"));
-    mk(sh, tr("填写标题栏..."), QKeySequence(), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("填写标题栏...")), QKeySequence(), [this] {
             TitleBlockForm dlg(model_, this);
             dlg.exec();
         })->setIcon(icons::make("titleblock"));
-    mk(sh, tr("插入标准标题栏..."), QKeySequence(), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("插入标准标题栏...")), QKeySequence(), [this] {
             insertStandardTitleBlock();
         })->setIcon(icons::make("titleblock"));
-    mk(sh, tr("按幅面生成图框与标题栏..."), QKeySequence(), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("按幅面生成图框与标题栏...")), QKeySequence(), [this] {
             generateFramedTitleBlock();
         })->setIcon(icons::make("titleblock"));
     sh->addSeparator();
     // 绘图比例属于「图纸属性」而非视图属性，已迁至【图纸】菜单（GB/T 14690 技术制图 比例）
-    mk(sh, tr("绘图比例..."), QKeySequence("Ctrl+Shift+S"), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("绘图比例...")), QKeySequence("Ctrl+Shift+S"), [this] {
             changeDrawingScale();
         })->setIcon(icons::make("scale"));
     // 单位与图纸界限同为「图纸属性」：显示/输入口径 + LIMITS 范围，随图存档，置于【图纸】菜单
-    mk(sh, tr("单位与图纸界限..."), QKeySequence(), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("单位与图纸界限...")), QKeySequence(), [this] {
             openUnitsLimits();
         })->setIcon(icons::make("limits"));
     // 捕捉设置（OSNAP）：14 种捕捉模式的独立启用/禁用，随图存档，置于【图纸】菜单
-    mk(sh, tr("捕捉设置..."), QKeySequence(), [this] {
+    mk(sh, SketchCAD::I18n::t(tr("捕捉设置...")), QKeySequence(), [this] {
             openSnapSettings();
         })->setIcon(icons::make("snap"));
     bar->addMenu(sh);
 
     // ---- 顶级菜单：追踪（极轴 POLAR / 对象捕捉追踪 OTRACK / 临时追踪点 TK）----
     // 快速开关 + 追踪设置入口；勾选态与 trackConfigChanged 双向同步（命令行/面板改动即时反映）。
-    QMenu* k = new QMenu(tr("追踪(&K)"), this);
+    QMenu* k = new QMenu(SketchCAD::I18n::t(tr("追踪(&K)")), this);
     k->setObjectName("menuTrack");
-    QAction* aPolar = mk(k, QStringLiteral("极轴追踪 (POLAR)"), QKeySequence("F10"), [this] {
+    QAction* aPolar = mk(k, SketchCAD::I18n::t(QString::fromUtf8("极轴追踪 (POLAR)")), QKeySequence("F10"), [this] {
             snap::TrackConfig c = model_->trackConfig();
             c.polar = !c.polar;
             model_->setTrackConfig(c);
-            model_->log(QStringLiteral("极轴追踪：%1").arg(c.polar ? QStringLiteral("开") : QStringLiteral("关")));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("极轴追踪：%1")).arg(c.polar ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))));
         });
     aPolar->setCheckable(true);
     aPolar->setChecked(model_->trackConfig().polar);
     aPolar_ = aPolar;   // 勾选态连接随活动文档换（hookActiveDoc 登记）
     aPolar->setIcon(icons::make("track"));
-    QAction* aOtrack = mk(k, QStringLiteral("对象捕捉追踪 (OTRACK)"), QKeySequence("F11"), [this] {
+    QAction* aOtrack = mk(k, SketchCAD::I18n::t(QString::fromUtf8("对象捕捉追踪 (OTRACK)")), QKeySequence("F11"), [this] {
             snap::TrackConfig c = model_->trackConfig();
             c.objectTrack = !c.objectTrack;
             model_->setTrackConfig(c);
-            model_->log(QStringLiteral("对象捕捉追踪：%1").arg(c.objectTrack ? QStringLiteral("开") : QStringLiteral("关")));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("对象捕捉追踪：%1")).arg(c.objectTrack ? SketchCAD::I18n::t(QString::fromUtf8("开")) : SketchCAD::I18n::t(QString::fromUtf8("关"))));
         });
     aOtrack->setCheckable(true);
     aOtrack->setChecked(model_->trackConfig().objectTrack);
     aOtrack_ = aOtrack;
     aOtrack->setIcon(icons::make("track"));
     k->addSeparator();
-    mk(k, QStringLiteral("清除临时追踪点"), QKeySequence(), [this] {
+    mk(k, SketchCAD::I18n::t(QString::fromUtf8("清除临时追踪点")), QKeySequence(), [this] {
             model_->clearTrackPoints();
-            model_->log(QStringLiteral("已清除全部临时追踪点 (TK)"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已清除全部临时追踪点 (TK)")));
         })->setIcon(icons::make("track"));
-    mk(k, QStringLiteral("追踪设置..."), QKeySequence(), [this] {
+    mk(k, SketchCAD::I18n::t(QString::fromUtf8("追踪设置...")), QKeySequence(), [this] {
             openSnapSettings();   // 追踪配置并入捕捉设置面板（同一数据源，随图存档）
         })->setIcon(icons::make("snap"));
     // 勾选态随配置变化实时刷新（连接在 hookActiveDoc 登记，随活动文档换绑）
@@ -1417,23 +1497,23 @@ void MainWindow::buildMenu() {
     // 顶级菜单整合后，【修改】【选择】不再各占一个顶级入口，而是作为【编辑】的子菜单
     // （下方构建完成后用 e->addMenu(...) 挂进来）。显示顺序 = 添加顺序：
     //   撤销 / 重做 | 复制 / 粘贴 / 删除 | 修改 | 选择
-    QMenu* e = new QMenu(tr("编辑(&E)"), this);
+    QMenu* e = new QMenu(SketchCAD::I18n::t(tr("编辑(&E)")), this);
     e->setObjectName("menuEdit");
-    mk(e, QStringLiteral("撤销"), QKeySequence::Undo,  [this] { model_->undo(); })
+    mk(e, SketchCAD::I18n::t(QString::fromUtf8("撤销")), QKeySequence::Undo,  [this] { model_->undo(); })
         ->setIcon(icons::make("undo"));
-    mk(e, QStringLiteral("重做"), QKeySequence::Redo,  [this] { model_->redo(); })
+    mk(e, SketchCAD::I18n::t(QString::fromUtf8("重做")), QKeySequence::Redo,  [this] { model_->redo(); })
         ->setIcon(icons::make("redo"));
     e->addSeparator();
-    mk(e, QStringLiteral("复制"), QKeySequence::Copy,  [this] { model_->copySelected(); })
+    mk(e, SketchCAD::I18n::t(QString::fromUtf8("复制")), QKeySequence::Copy,  [this] { model_->copySelected(); })
         ->setIcon(icons::make("copy"));
-    mk(e, QStringLiteral("粘贴"), QKeySequence::Paste, [this] { model_->paste(); })
+    mk(e, SketchCAD::I18n::t(QString::fromUtf8("粘贴")), QKeySequence::Paste, [this] { model_->paste(); })
         ->setIcon(icons::make("paste"));
     // 删除不注册 QKeySequence::Delete：Qt 的 ApplicationShortcut 会在 QWidgetWindow /
     // QShortcutMap 层直接消费 KeyPress，焦点控件（GraphicsView、CommandLine）根本收不到
     // Del；而 QLineEdit 又会 accept ShortcutOverride 反向屏蔽菜单快捷键，于是 Del 随
     // 焦点落点漂移失效。删除统一由应用级 DeleteKeyFilter + 画布/命令行自身处理完成。
     // "\tDel" 仅是菜单显示文本，不是 shortcut（auditShortcutConflicts 也不会收集）。
-    mk(e, QStringLiteral("删除\tDel"), QKeySequence(), [this] { model_->deleteSelected(); })
+    mk(e, SketchCAD::I18n::t(QString::fromUtf8("删除\tDel")), QKeySequence(), [this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
     e->addSeparator();
     // ---- 剪贴板族：copyclip / copybase / pasteclip / pasteblock ----
@@ -1441,24 +1521,24 @@ void MainWindow::buildMenu() {
     // （application/x-sketchcad-clip），支持跨 SketchCAD 实例搬运图元，
     // 粘贴时依赖的块定义一并合并进目标图（详见 core/Clipboard.h）。
     // 快捷键避开既有 Ctrl+C / Ctrl+V（模型内部剪贴板），用 Alt/Shift 组合。
-    QMenu* clipMenu = e->addMenu(icons::make("copy"), tr("剪贴板(&L)"));
-    mk(clipMenu, QStringLiteral("复制(&C)"), QKeySequence("Ctrl+Alt+C"), [this] { copyClipToClipboard(false); })
+    QMenu* clipMenu = e->addMenu(icons::make("copy"), SketchCAD::I18n::t(tr("剪贴板(&L)")));
+    mk(clipMenu, SketchCAD::I18n::t(QString::fromUtf8("复制(&C)")), QKeySequence("Ctrl+Alt+C"), [this] { copyClipToClipboard(false); })
         ->setIcon(icons::make("copy"));
-    mk(clipMenu, QStringLiteral("带基点复制(&B)..."), QKeySequence("Ctrl+Shift+C"), [this] { copyClipToClipboard(true); })
+    mk(clipMenu, SketchCAD::I18n::t(QString::fromUtf8("带基点复制(&B)...")), QKeySequence("Ctrl+Shift+C"), [this] { copyClipToClipboard(true); })
         ->setIcon(icons::make("copy"));
-    mk(clipMenu, QStringLiteral("粘贴(&P)"), QKeySequence("Ctrl+Alt+V"), [this] { pasteFromClipboard(false); })
+    mk(clipMenu, SketchCAD::I18n::t(QString::fromUtf8("粘贴(&P)")), QKeySequence("Ctrl+Alt+V"), [this] { pasteFromClipboard(false); })
         ->setIcon(icons::make("paste"));
-    mk(clipMenu, QStringLiteral("粘贴为块(&K)..."), QKeySequence("Ctrl+Shift+V"), [this] { pasteFromClipboard(true); })
+    mk(clipMenu, SketchCAD::I18n::t(QString::fromUtf8("粘贴为块(&K)...")), QKeySequence("Ctrl+Shift+V"), [this] { pasteFromClipboard(true); })
         ->setIcon(icons::make("paste"));
     e->addSeparator();
     // ---- 选择工具：编组 / 快速选择 / 过滤器（QSELECT / FILTER）----
     // 三者共用 SketchModel 选择集状态，与点击选择/框选/图层选择完全一致。
-    QMenu* selMenu = e->addMenu(icons::make("qselect"), tr("选择工具(&S)"));
-    mk(selMenu, QStringLiteral("编组管理(&G)..."), QKeySequence(), [this] { openGroupManager(); })
+    QMenu* selMenu = e->addMenu(icons::make("qselect"), SketchCAD::I18n::t(tr("选择工具(&S)")));
+    mk(selMenu, SketchCAD::I18n::t(QString::fromUtf8("编组管理(&G)...")), QKeySequence(), [this] { openGroupManager(); })
         ->setIcon(icons::make("group"));
-    mk(selMenu, QStringLiteral("快速选择(&Q)..."), QKeySequence(), [this] { openQSelect(); })
+    mk(selMenu, SketchCAD::I18n::t(QString::fromUtf8("快速选择(&Q)...")), QKeySequence(), [this] { openQSelect(); })
         ->setIcon(icons::make("qselect"));
-    mk(selMenu, QStringLiteral("过滤器(&F)..."), QKeySequence(), [this] { openFilterDialog(); })
+    mk(selMenu, SketchCAD::I18n::t(QString::fromUtf8("过滤器(&F)...")), QKeySequence(), [this] { openFilterDialog(); })
         ->setIcon(icons::make("filter"));
     e->addSeparator();
     bar->addMenu(e);
@@ -1471,128 +1551,128 @@ void MainWindow::buildMenu() {
     //   几何构造（Offset, Bevel, Fillet, Divide, Stretch）
     //   工具与分解（Properties, Attributes, Explode Text into Letters, Explode, Delete）
     // 已存在的工具型菜单项（trim/extend）复用 toolActions_ 指针，其余走 mk() 即时构造。
-    QMenu* mod = new QMenu(tr("修改(&M)"), this);
+    QMenu* mod = new QMenu(SketchCAD::I18n::t(tr("修改(&M)")), this);
     mod->setObjectName("menuModify");
 
     // ---- 变换类 ----
-    mk(mod, QStringLiteral("移动 / 复制..."), QKeySequence("Ctrl+Shift+M"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("移动 / 复制...")), QKeySequence("Ctrl+Shift+M"), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Move, QStringLiteral("移动 / 复制"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
-        if (model_->selection().empty()) { model_->log(QStringLiteral("无可移动图元（请先选中）"), "warn"); return; }
+        if (model_->selection().empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可移动图元（请先选中）")), "warn"); return; }
         const int n = model_->selection().size();
         model_->translateSelection(Vec3(r.dx, r.dy), QStringLiteral("修改-移动"));
-        model_->log(QStringLiteral("已移动 %1 个图元（Δ=(%2,%3)）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已移动 %1 个图元（Δ=(%2,%3)）"))
                         .arg(n).arg(r.dx, 0, 'f', 2).arg(r.dy, 0, 'f', 2));
     })->setIcon(icons::make("move_copy"));
-    mk(mod, QStringLiteral("复制"), QKeySequence("Ctrl+Shift+D"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("复制")), QKeySequence("Ctrl+Shift+D"), [this] {
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可复制图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可复制图元")), "warn"); return; }
         auto changes = modify::makeDuplicate(src, 10.0, 0.0);
-        model_->beginEdit(QStringLiteral("修改-复制"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-复制")));
         auto added = modify::applyChanges(model_, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        model_->log(QStringLiteral("已复制 %1 个图元 → %2").arg(src.size()).arg(ids.join(", ")));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已复制 %1 个图元 → %2")).arg(src.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("duplicate"));
 
     // ---- 阵列复制（需求：基于选中图元的矩形 / 环形阵列）----
-    auto* arrayMenu = mod->addMenu(icons::make("duplicate"), tr("阵列(&R)"));
-    mk(arrayMenu, QStringLiteral("矩形阵列..."), QKeySequence(), [this] { arrayRectangular(); })
+    auto* arrayMenu = mod->addMenu(icons::make("duplicate"), SketchCAD::I18n::t(tr("阵列(&R)")));
+    mk(arrayMenu, SketchCAD::I18n::t(QString::fromUtf8("矩形阵列...")), QKeySequence(), [this] { arrayRectangular(); })
         ->setIcon(icons::make("duplicate"));
-    mk(arrayMenu, QStringLiteral("环形阵列..."), QKeySequence(), [this] { arrayPolar(); })
+    mk(arrayMenu, SketchCAD::I18n::t(QString::fromUtf8("环形阵列...")), QKeySequence(), [this] { arrayPolar(); })
         ->setIcon(icons::make("rotate"));
-    mk(arrayMenu, QStringLiteral("路径阵列..."), QKeySequence(), [this] { arrayPath(); })
+    mk(arrayMenu, SketchCAD::I18n::t(QString::fromUtf8("路径阵列...")), QKeySequence(), [this] { arrayPath(); })
         ->setIcon(icons::make("duplicate"));
 
     // ---- 连合（JOIN）：同层 Line/Arc 按端点容差连合为 Polyline ----
     // 容差取视图真实 snap 容差（8px/zoom），与画布拾取手感一致；
     // 命令行入口 join [tol] 缺省 0.5mm。两者共用 modify::makeJoin。
-    mk(mod, QStringLiteral("连合(&J)"), QKeySequence(), [this] { joinSelected(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("连合(&J)")), QKeySequence(), [this] { joinSelected(); })
         ->setIcon(icons::make("line_join"));
 
     // ---- 剖面填充（GB/T 4457.5-2013 技术制图 剖面区域的表示法）----
     // 把选中的闭合图元（圆/椭圆/矩形/多边形/闭合折线）转成剖面区域并套用标准剖面线规则。
-    mk(mod, QStringLiteral("剖面填充(&H)..."), QKeySequence("Ctrl+Shift+H"), [this] { sectionFill(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("剖面填充(&H)...")), QKeySequence("Ctrl+Shift+H"), [this] { sectionFill(); })
         ->setIcon(icons::make("hatch"));
 
     // ---- 剖面填充参数（对已填充的区域重新选材料/换图案）----
     // 不需重新框选区域：直接对当前选中的 Hatch 图元就地重设材料类别 / 角度 / 间距，
     // 让用户随时把「通用金属」改成「砖墙」「石材」「木材」等工程图案。
-    mk(mod, QStringLiteral("剖面填充参数(&P)..."), QKeySequence(), [this] { sectionFillParams(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("剖面填充参数(&P)...")), QKeySequence(), [this] { sectionFillParams(); })
         ->setIcon(icons::make("hatch"));
 
     // ---- 用选中边界填充（BOUNDARY/BPOLY 直接复用，跳过自动追踪）----
     // 与「点选区域填充」互补：先选中若干边界图元，一次性把它们生成剖面区域，
     // 复杂腔体无需人工逐段描边、也无需依赖剖面引擎的自动边界追踪。
-    mk(mod, QStringLiteral("用选中边界填充(&B)..."), QKeySequence(), [this] { sectionFillSelected(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("用选中边界填充(&B)...")), QKeySequence(), [this] { sectionFillSelected(); })
         ->setIcon(icons::make("boundary"));
 
     // ---- 边界区域管理（REGION：命名分组 + 批量填充/选择/重命名/删除）----
-    mk(mod, QStringLiteral("边界区域管理(&R)..."), QKeySequence(), [this] { openRegionManager(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("边界区域管理(&R)...")), QKeySequence(), [this] { openRegionManager(); })
         ->setIcon(icons::make("boundary"));
 
     // ---- 图形清理（PURGE + OVERKILL：清垃圾/冗余、重合删除、共线重叠合并）----
-    mk(mod, QStringLiteral("图形清理(&C)..."), QKeySequence(), [this] { openCleanup(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("图形清理(&C)...")), QKeySequence(), [this] { openCleanup(); })
         ->setIcon(icons::make("cleanup"));
 
-    auto* alignMenu = mod->addMenu(icons::make("align"), tr("对齐(&A)"));
-    mk(alignMenu, QStringLiteral("对齐..."), QKeySequence(), [this] {
+    auto* alignMenu = mod->addMenu(icons::make("align"), SketchCAD::I18n::t(tr("对齐(&A)")));
+    mk(alignMenu, SketchCAD::I18n::t(QString::fromUtf8("对齐...")), QKeySequence(), [this] {
         std::vector<Element> src;
         const Element* refE = nullptr;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) {
             if (!refE) refE = e; else src.push_back(*e);
         }
-        if (!refE || src.empty()) { model_->log(QStringLiteral("至少 2 个选中（1 参考 + 1+ 待对齐）"), "warn"); return; }
+        if (!refE || src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("至少 2 个选中（1 参考 + 1+ 待对齐）")), "warn"); return; }
         ModifyInputDialog dlg(ModifyInputDialog::M_Align, QStringLiteral("对齐"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto changes = modify::makeAlign(src, *refE, kindIndexFromName(dlg.result().kind));
-        model_->beginEdit(QStringLiteral("修改-对齐"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-对齐")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已对齐 %1 个图元（方式=%2）").arg(src.size()).arg(dlg.result().kind));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已对齐 %1 个图元（方式=%2）")).arg(src.size()).arg(dlg.result().kind));
     })->setIcon(icons::make("align"));
-    mk(alignMenu, QStringLiteral("对齐单条..."), QKeySequence(), [this] {
-        model_->log(QStringLiteral("对齐单条：请用「对齐...」并指定参考元素"), "info");
+    mk(alignMenu, SketchCAD::I18n::t(QString::fromUtf8("对齐单条...")), QKeySequence(), [this] {
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("对齐单条：请用「对齐...」并指定参考元素")), "info");
     })->setIcon(icons::make("align_one"));
-    mk(alignMenu, QStringLiteral("对齐参考点..."), QKeySequence(), [this] {
-        model_->log(QStringLiteral("对齐参考点：请用「对齐...」并指定参考元素"), "info");
+    mk(alignMenu, SketchCAD::I18n::t(QString::fromUtf8("对齐参考点...")), QKeySequence(), [this] {
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("对齐参考点：请用「对齐...」并指定参考元素")), "info");
     })->setIcon(icons::make("align_ref"));
 
-    mk(mod, QStringLiteral("旋转..."), QKeySequence("Ctrl+R"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("旋转...")), QKeySequence("Ctrl+R"), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Rotate, QStringLiteral("旋转"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可旋转图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可旋转图元")), "warn"); return; }
         auto changes = modify::makeRotate(src, Vec3(r.cx, r.cy), r.angleDeg);
-        model_->beginEdit(QStringLiteral("修改-旋转"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-旋转")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已旋转 %1 个图元 %2°").arg(src.size()).arg(r.angleDeg, 0, 'f', 2));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已旋转 %1 个图元 %2°")).arg(src.size()).arg(r.angleDeg, 0, 'f', 2));
     })->setIcon(icons::make("rotate"));
-    mk(mod, QStringLiteral("缩放..."), QKeySequence("Ctrl+K"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("缩放...")), QKeySequence("Ctrl+K"), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Scale, QStringLiteral("缩放"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
-        if (r.factor <= 0) { model_->log(QStringLiteral("缩放因子必须 > 0"), "warn"); return; }
+        if (r.factor <= 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("缩放因子必须 > 0")), "warn"); return; }
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可缩放图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可缩放图元")), "warn"); return; }
         auto changes = modify::makeScale(src, Vec3(r.cx, r.cy), r.factor);
-        model_->beginEdit(QStringLiteral("修改-缩放"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-缩放")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已缩放 %1 个图元（因子=%2）").arg(src.size()).arg(r.factor, 0, 'f', 3));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已缩放 %1 个图元（因子=%2）")).arg(src.size()).arg(r.factor, 0, 'f', 3));
     })->setIcon(icons::make("scale"));
-    mk(mod, QStringLiteral("镜像..."), QKeySequence(), [this] { mirror(); })->setIcon(icons::make("mirror"));
-    mk(mod, QStringLiteral("移动并旋转..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("镜像...")), QKeySequence(), [this] { mirror(); })->setIcon(icons::make("mirror"));
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("移动并旋转...")), QKeySequence(), [this] {
         // 复合：先移动，再旋转（链式应用两次 modify）
         ModifyInputDialog dlg(ModifyInputDialog::M_Rotate, QStringLiteral("移动并旋转（先平移到原点，再绕原点旋转）"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可变换图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可变换图元")), "warn"); return; }
         // 1) 平移 → (cx, cy)
         auto cs = modify::makeMoveCopy(src, Vec3(r.cx, r.cy), false);
         // 2) 旋转 r.angleDeg 绕原点
@@ -1605,72 +1685,72 @@ void MainWindow::buildMenu() {
             for (auto& p : a.replacement.pts) p = p + Vec3(r.cx, r.cy);
             combined.push_back(a);
         }
-        model_->beginEdit(QStringLiteral("修改-移动并旋转"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-移动并旋转")));
         modify::applyChanges(model_, combined, QString());
-        model_->log(QStringLiteral("已对 %1 个图元执行移动并旋转").arg(src.size()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已对 %1 个图元执行移动并旋转")).arg(src.size()));
     })->setIcon(icons::make("move_rotate"));
-    mk(mod, QStringLiteral("旋转两条图元..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("旋转两条图元...")), QKeySequence(), [this] {
         // 复用 rotate：取前 2 个选中
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) {
             src.push_back(*e); if ((int)src.size() >= 2) break;
         }
-        if (src.size() < 2) { model_->log(QStringLiteral("需要至少 2 个选中图元"), "warn"); return; }
+        if (src.size() < 2) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("需要至少 2 个选中图元")), "warn"); return; }
         ModifyInputDialog dlg(ModifyInputDialog::M_Rotate, QStringLiteral("旋转两条图元"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         auto changes = modify::makeRotate(src, Vec3(r.cx, r.cy), r.angleDeg);
-        model_->beginEdit(QStringLiteral("修改-旋转两图元"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-旋转两图元")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已旋转 2 个图元 %1°").arg(r.angleDeg, 0, 'f', 2));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已旋转 2 个图元 %1°")).arg(r.angleDeg, 0, 'f', 2));
     })->setIcon(icons::make("rotate_two"));
-    mk(mod, QStringLiteral("反向"), QKeySequence("Ctrl+Shift+R"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("反向")), QKeySequence("Ctrl+Shift+R"), [this] {
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可反向图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可反向图元")), "warn"); return; }
         auto changes = modify::makeRevertDirection(src);
-        model_->beginEdit(QStringLiteral("修改-反向"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-反向")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已反向 %1 个图元").arg(src.size()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已反向 %1 个图元")).arg(src.size()));
     })->setIcon(icons::make("revert_direction"));
     mod->addSeparator();
 
     // ---- 修剪类 ----
     if (QAction* aTrim = toolActions_.value("trim"))  mod->addAction(aTrim);
-    mk(mod, QStringLiteral("修剪二..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("修剪二...")), QKeySequence(), [this] {
         // 复用 TrimCommand 的语义但强制两个图元
         if (model_->selection().size() < 2) {
-            model_->log(QStringLiteral("修剪二需要至少 2 个选中图元（点击+边界）"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("修剪二需要至少 2 个选中图元（点击+边界）")), "warn");
             return;
         }
         // 直接调用 CLI
         interp_->execute("trim");
-        model_->log(QStringLiteral("已启动修剪（Trim Two）"), "info");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已启动修剪（Trim Two）")), "info");
     })->setIcon(icons::make("trim_two"));
-    mk(mod, QStringLiteral("延长..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("延长...")), QKeySequence(), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Lengthen, QStringLiteral("延长 / 缩短"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可延长图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可延长图元")), "warn"); return; }
         auto changes = modify::makeLengthen(src, r.side, r.deltaMm);
-        model_->beginEdit(QStringLiteral("修改-延长"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-延长")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已延长 %1 个图元（side=%2, Δ=%3 mm）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已延长 %1 个图元（side=%2, Δ=%3 mm）"))
                         .arg(src.size()).arg(r.side).arg(r.deltaMm, 0, 'f', 2));
     })->setIcon(icons::make("lengthen"));
-    mk(mod, QStringLiteral("连接线段..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("连接线段...")), QKeySequence(), [this] {
         // 选两条直线，连接成一条（保留第一段几何不变，延伸/裁短第二段接到第一段端点）
         if (model_->selection().size() < 2) {
-            model_->log(QStringLiteral("连接线段需要至少 2 个选中图元"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("连接线段需要至少 2 个选中图元")), "warn");
             return;
         }
         // 直接用 BendLineJoin 算法：取两条线的端点，按距离最小配对，延伸一段
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
         if (src.size() < 2 || src[0].pts.size() < 2 || src[1].pts.size() < 2) {
-            model_->log(QStringLiteral("选中的图元不是直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("选中的图元不是直线")), "warn"); return;
         }
         // 简化：把第二条直线删除并把第一条延长到第二条最远端
         Vec3 a = src[0].pts[0], b = src[0].pts[1];
@@ -1687,49 +1767,49 @@ void MainWindow::buildMenu() {
         auto changes = modify::makeLengthen({src[0]}, side, farEnd.distTo(da < db ? a : b));
         // 加删除 src[1]
         changes.push_back({src[1].id, Element(), true, QStringLiteral("删除第二条")});
-        model_->beginEdit(QStringLiteral("修改-连接"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-连接")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已连接两线段"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已连接两线段")));
     })->setIcon(icons::make("line_join"));
-    mk(mod, QStringLiteral("打断 / 等分..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("打断 / 等分...")), QKeySequence(), [this] {
         if (model_->selection().size() != 1) {
-            model_->log(QStringLiteral("打断 / 等分需要先选中 1 条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("打断 / 等分需要先选中 1 条直线")), "warn"); return;
         }
         const Element* e = model_->element(model_->selection()[0]);
         if (!e || e->type != ElementType::Line) {
-            model_->log(QStringLiteral("请选中一条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("请选中一条直线")), "warn"); return;
         }
         ModifyInputDialog dlg(ModifyInputDialog::M_Divide, QStringLiteral("打断 / 等分（直线）"), e->id, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         int n = dlg.result().n;
         std::vector<Element> src = { *e };
         auto changes = modify::makeBreakDivide(src, e->id, Vec3(0,0,0), n);
-        if (changes.empty()) { model_->log(QStringLiteral("等分失败"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-等分"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("等分失败")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-等分")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已把图元 #%1 等分为 %2 段").arg(e->id).arg(n));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已把图元 #%1 等分为 %2 段")).arg(e->id).arg(n));
     })->setIcon(icons::make("break_divide"));
-    mk(mod, QStringLiteral("线间隙..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("线间隙...")), QKeySequence(), [this] {
         // 线间隙 (Line Gap)：在选中直线的中点处切开一个指定宽度的缺口，
         // 变成两段互不相连的直线（起止点各自后退 gap/2）。
         if (model_->selection().size() != 1) {
-            model_->log(QStringLiteral("线间隙需要 1 条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("线间隙需要 1 条直线")), "warn"); return;
         }
         const Element* e = model_->element(model_->selection()[0]);
         if (!e || e->type != ElementType::Line || e->pts.size() < 2) {
-            model_->log(QStringLiteral("请选中一条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("请选中一条直线")), "warn"); return;
         }
         bool ok = false;
         const double gap = QInputDialog::getDouble(
-            this, QStringLiteral("线间隙"),
-            QStringLiteral("缺口宽度 (mm)："), 2.0, 0.01, 1.0e6, 2, &ok);
+            this, SketchCAD::I18n::t(QString::fromUtf8("线间隙")),
+            SketchCAD::I18n::t(QString::fromUtf8("缺口宽度 (mm)：")), 2.0, 0.01, 1.0e6, 2, &ok);
         if (!ok) return;
 
         const Vec3 a = e->pts[0], b = e->pts[1];
         const Vec3 ab = b - a;
         const double L = ab.len2D();
-        if (L < 1e-9) { model_->log(QStringLiteral("直线长度为 0"), "warn"); return; }
-        if (gap >= L) { model_->log(QStringLiteral("缺口宽度不能大于线长"), "warn"); return; }
+        if (L < 1e-9) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("直线长度为 0")), "warn"); return; }
+        if (gap >= L) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("缺口宽度不能大于线长")), "warn"); return; }
         const Vec3 u(ab.x / L, ab.y / L, 0);
         const double t0 = (L - gap) / 2.0;      // 缺口起点参数
         const double t1 = t0 + gap;             // 缺口终点参数
@@ -1738,132 +1818,132 @@ void MainWindow::buildMenu() {
 
         // 先在 p0 处打断（保留 (a,p0)，新增 (p0,b)），再把新增段的起点推到 p1，形成缺口
         auto changes = modify::makeBreakDivide({*e}, e->id, p0, 0);
-        if (changes.empty()) { model_->log(QStringLiteral("线间隙打断失败"), "warn"); return; }
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("线间隙打断失败")), "warn"); return; }
         for (auto& c : changes)
             if (!c.remove && c.id < 0 && c.replacement.pts.size() >= 2) c.replacement.pts[0] = p1;
 
-        model_->beginEdit(QStringLiteral("修改-线间隙"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-线间隙")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已在 #%1 中点处开出 %2 mm 缺口").arg(e->id).arg(gap, 0, 'f', 2));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已在 #%1 中点处开出 %2 mm 缺口")).arg(e->id).arg(gap, 0, 'f', 2));
     })->setIcon(icons::make("line_gap"));
     mod->addSeparator();
 
     // ---- 几何构造 ----
-    mk(mod, QStringLiteral("偏移..."), QKeySequence("Ctrl+Shift+O"), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("偏移...")), QKeySequence("Ctrl+Shift+O"), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Offset, QStringLiteral("偏移"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         double d = dlg.result().distMm;
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可偏移图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可偏移图元")), "warn"); return; }
         auto changes = modify::makeOffset(src, d);
-        if (changes.empty()) { model_->log(QStringLiteral("偏移失败（线 / 圆 / 圆弧才有意义）"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-偏移"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("偏移失败（线 / 圆 / 圆弧才有意义）")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-偏移")));
         auto added = modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已偏移 %1 个图元（Δ=%2 mm）").arg(added.size()).arg(d, 0, 'f', 2));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已偏移 %1 个图元（Δ=%2 mm）")).arg(added.size()).arg(d, 0, 'f', 2));
     })->setIcon(icons::make("offset"));
-    mk(mod, QStringLiteral("倒角..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("倒角...")), QKeySequence(), [this] {
         // 快速倒角：取选中两条直线的角点，沿两线各回退默认距离做距离-距离倒角。
         // 无参数对话框、直接落盘（与「反向/分解/删除」同为一步式菜单项）。
         // 需要设定距离/角度时，使用命令行 chamfer <id1> <id2> <d1> <d2> [angleDeg]。
         int id1 = model_->selection().size() >= 1 ? model_->selection()[0] : -1;
         int id2 = model_->selection().size() >= 2 ? model_->selection()[1] : -1;
-        if (id1 < 0 || id2 < 0) { model_->log(QStringLiteral("倒角需要 2 条选中直线"), "warn"); return; }
+        if (id1 < 0 || id2 < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("倒角需要 2 条选中直线")), "warn"); return; }
         const Element* ea = model_->element(id1);
         const Element* eb = model_->element(id2);
-        if (!ea || !eb) { model_->log(QStringLiteral("图元不存在"), "warn"); return; }
+        if (!ea || !eb) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("图元不存在")), "warn"); return; }
         const double defD = 5.0;   // 默认回退距离（mm），可由命令行 override
         corner::CornerResult res = corner::chamferPair(*ea, *eb, defD, defD);
-        if (!res.ok) { model_->log(QStringLiteral("倒角失败：") + res.msg, "warn"); return; }
+        if (!res.ok) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("倒角失败：")) + res.msg, "warn"); return; }
         auto changes = modify::makeCornerChanges(id1, id2, res);
-        model_->beginEdit(QStringLiteral("修改-倒角"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-倒角")));
         auto added = modify::applyChanges(model_, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        model_->log(QStringLiteral("已对 #%1 与 #%2 做倒角（默认 d=%3 mm），新增 %4：%5")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已对 #%1 与 #%2 做倒角（默认 d=%3 mm），新增 %4：%5"))
                         .arg(id1).arg(id2).arg(defD, 0, 'f', 2)
                         .arg(added.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("bevel"));
-    mk(mod, QStringLiteral("圆角..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("圆角...")), QKeySequence(), [this] {
         int id1 = model_->selection().size() >= 1 ? model_->selection()[0] : -1;
         int id2 = model_->selection().size() >= 2 ? model_->selection()[1] : -1;
-        if (id1 < 0 || id2 < 0) { model_->log(QStringLiteral("圆角需要 2 条选中直线"), "warn"); return; }
+        if (id1 < 0 || id2 < 0) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆角需要 2 条选中直线")), "warn"); return; }
         ModifyInputDialog dlg(ModifyInputDialog::M_Fillet, QStringLiteral("圆角"), id1, id2, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         std::vector<Element> pool = model_->elements();
         auto changes = modify::makeFillet(r.id1, r.id2, r.radiusMm, pool);
-        if (changes.empty()) { model_->log(QStringLiteral("圆角失败（两线平行或不相交）"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-圆角"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("圆角失败（两线平行或不相交）")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-圆角")));
         auto added = modify::applyChanges(model_, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        model_->log(QStringLiteral("已对 #%1 与 #%2 做圆角（r=%3 mm），新增 %4：%5")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已对 #%1 与 #%2 做圆角（r=%3 mm），新增 %4：%5"))
                         .arg(r.id1).arg(r.id2).arg(r.radiusMm, 0, 'f', 2)
                         .arg(added.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("fillet"));
-    mk(mod, QStringLiteral("等分..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("等分...")), QKeySequence(), [this] {
         if (model_->selection().size() != 1) {
-            model_->log(QStringLiteral("等分需要 1 条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("等分需要 1 条直线")), "warn"); return;
         }
         const Element* e = model_->element(model_->selection()[0]);
         if (!e || e->type != ElementType::Line) {
-            model_->log(QStringLiteral("请选中一条直线"), "warn"); return;
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("请选中一条直线")), "warn"); return;
         }
         ModifyInputDialog dlg(ModifyInputDialog::M_Divide, QStringLiteral("等分"), e->id, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         int n = dlg.result().n;
         auto changes = modify::makeBreakDivide({*e}, e->id, Vec3(0,0,0), n);
-        if (changes.empty()) { model_->log(QStringLiteral("等分失败"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-等分"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("等分失败")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-等分")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已把 #%1 等分为 %2 段").arg(e->id).arg(n));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已把 #%1 等分为 %2 段")).arg(e->id).arg(n));
     })->setIcon(icons::make("divide"));
-    mk(mod, QStringLiteral("拉伸..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("拉伸...")), QKeySequence(), [this] {
         ModifyInputDialog dlg(ModifyInputDialog::M_Stretch, QStringLiteral("拉伸端点"), -1, -1, this);
         if (dlg.exec() != QDialog::Accepted) return;
         auto r = dlg.result();
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可拉伸图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可拉伸图元")), "warn"); return; }
         auto changes = modify::makeStretch(src, Vec3(r.baseX, r.baseY), Vec3(r.toX, r.toY));
-        if (changes.empty()) { model_->log(QStringLiteral("未命中端点（basePt 必须落在图元端点 1e-3 mm 容差内）"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-拉伸"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("未命中端点（basePt 必须落在图元端点 1e-3 mm 容差内）")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-拉伸")));
         modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已拉伸 %1 个端点").arg(changes.size()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已拉伸 %1 个端点")).arg(changes.size()));
     })->setIcon(icons::make("stretch"));
     mod->addSeparator();
 
     // ---- 工具与分解 ----
-    mk(mod, QStringLiteral("属性..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("属性...")), QKeySequence(), [this] {
         // 切到属性面板：仅显示属性 dock
         if (propDock_) propDock_->show();
-        model_->log(QStringLiteral("属性面板已显示（编辑当前选中）"), "info");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("属性面板已显示（编辑当前选中）")), "info");
     })->setIcon(icons::make("properties"));
-    mk(mod, QStringLiteral("属性模板..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("属性模板...")), QKeySequence(), [this] {
         // 属性模板 (Attributes)：把工具条当前的「颜色 / 线宽 / 线型」三件套
         // 一次性套用到选中图元（未选中时只更新"新图元默认样式"的提示）。
         // 与 LibreCAD 的 Modify > Attributes 语义一致：改属性，不改几何。
         if (model_->selection().empty()) {
-            model_->log(QStringLiteral("属性模板：请先选中图元，再套用当前颜色 / 线宽 / 线型"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("属性模板：请先选中图元，再套用当前颜色 / 线宽 / 线型")), "warn");
             return;
         }
         const QColor c = model_->defaultColor();
         const double px = model_->defaultWidth();
         const LineStyle ls = model_->defaultLineStyle();
-        model_->beginEdit(QStringLiteral("修改-属性模板"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-属性模板")));
         const bool ok = model_->styleSelectedEx(&c, &px, &ls);
-        model_->log(ok ? QStringLiteral("已把当前样式（%1 / %2 / %3）套用到 %4 个选中图元")
+        model_->log(ok ? SketchCAD::I18n::t(QString::fromUtf8("已把当前样式（%1 / %2 / %3）套用到 %4 个选中图元"))
                             .arg(c.name(), QString::number(px, 'f', 1),
-                                 QString::fromUtf8(lineStyleName(ls)))
+                                 SketchCAD::I18n::t(QString::fromUtf8(lineStyleName(ls))))
                             .arg(model_->selection().size())
-                       : QStringLiteral("属性模板套用失败"), ok ? "info" : "warn");
+                       : SketchCAD::I18n::t(QString::fromUtf8("属性模板套用失败")), ok ? "info" : "warn");
     })->setIcon(icons::make("attributes"));
-    mk(mod, QStringLiteral("文本分解为字..."), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("文本分解为字...")), QKeySequence(), [this] {
         // 简化：对 ElementType::Text 图元按字符拆为多段独立 Text（无字体子集化，仅字符级拷贝）
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可分解文本"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解文本")), "warn"); return; }
         std::vector<modify::Change> changes;
         for (const auto& s : src) {
             if (s.type != ElementType::Text) continue;
@@ -1875,54 +1955,54 @@ void MainWindow::buildMenu() {
                 // 在源文字的起点 (x + k*w, y) 处放置
                 if (!e.pts.empty()) e.pts[0] = Vec3(s.pts[0].x + k * w, s.pts[0].y, 0);
                 modify::Change c; c.id = -1; c.replacement = e;
-                c.note = QStringLiteral("字分解");
+                c.note = SketchCAD::I18n::t(QString::fromUtf8("字分解"));
                 changes.push_back(c);
             }
             modify::Change del; del.id = s.id; del.remove = true;
             changes.push_back(del);
         }
-        if (changes.empty()) { model_->log(QStringLiteral("未找到可分解的文本图元"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-文本分解"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("未找到可分解的文本图元")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-文本分解")));
         auto added = modify::applyChanges(model_, changes, QString());
-        model_->log(QStringLiteral("已把 %1 个文本图元分解为 %2 个字")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已把 %1 个文本图元分解为 %2 个字"))
                         .arg(src.size()).arg(added.size()));
     })->setIcon(icons::make("explode_text"));
-    mk(mod, QStringLiteral("分解"), QKeySequence(), [this] {
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("分解")), QKeySequence(), [this] {
         std::vector<Element> src;
         for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-        if (src.empty()) { model_->log(QStringLiteral("无可分解图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解图元")), "warn"); return; }
         auto changes = modify::makeExplode(src);
-        if (changes.empty()) { model_->log(QStringLiteral("无可分解对象"), "warn"); return; }
-        model_->beginEdit(QStringLiteral("修改-分解"));
+        if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解对象")), "warn"); return; }
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-分解")));
         auto added = modify::applyChanges(model_, changes, QString());
         QStringList ids;
         for (int id : added) ids << ("#" + QString::number(id));
-        model_->log(QStringLiteral("已分解 %1 个图元 → %2 段：%3")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已分解 %1 个图元 → %2 段：%3"))
                         .arg(src.size()).arg(added.size()).arg(ids.join(", ")));
     })->setIcon(icons::make("explode"));
     // 同样不绑定 Delete：删除键统一走应用级 DeleteKeyFilter + 画布处理，
     // 避免任何一处 ApplicationShortcut(Delete) 让 QShortcutMap 重新吞掉 KeyPress。
-    mk(mod, QStringLiteral("删除"), QKeySequence(), [this] { model_->deleteSelected(); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("删除")), QKeySequence(), [this] { model_->deleteSelected(); })
         ->setIcon(icons::make("delete"));
 
     // 块（Block）：把命令行块操作封装为可视化子菜单（与【绘图>块】共用 buildBlockMenu）
     {
-        QMenu* blk = mod->addMenu(icons::make("block"), tr("块(&B)"));
+        QMenu* blk = mod->addMenu(icons::make("block"), SketchCAD::I18n::t(tr("块(&B)")));
         buildBlockMenu(blk);
     }
 
     // ---- 命令补齐：修改类命令（与命令行共用 interp_->execute）----
-    mk(mod, QStringLiteral("多段线编辑(&P)..."), QKeySequence(), [this] { interp_->execute("pedit"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("多段线编辑(&P)...")), QKeySequence(), [this] { interp_->execute("pedit"); })
         ->setIcon(icons::make("polyline"));
-    mk(mod, QStringLiteral("特性匹配(&M)"),       QKeySequence(), [this] { interp_->execute("matchprop"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("特性匹配(&M)")),       QKeySequence(), [this] { interp_->execute("matchprop"); })
         ->setIcon(icons::make("attributes"));
-    mk(mod, QStringLiteral("删除重复对象(&O)"),   QKeySequence(), [this] { interp_->execute("overkill"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("删除重复对象(&O)")),   QKeySequence(), [this] { interp_->execute("overkill"); })
         ->setIcon(icons::make("cleanup"));
-    mk(mod, QStringLiteral("写块(&W)..."),        QKeySequence(), [this] { interp_->execute("wblock"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("写块(&W)...")),        QKeySequence(), [this] { interp_->execute("wblock"); })
         ->setIcon(icons::make("block"));
-    mk(mod, QStringLiteral("插入块(&I)..."),      QKeySequence(), [this] { interp_->execute("insert"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("插入块(&I)...")),      QKeySequence(), [this] { interp_->execute("insert"); })
         ->setIcon(icons::make("block"));
-    mk(mod, QStringLiteral("清理(&U)"),           QKeySequence(), [this] { interp_->execute("purge"); })
+    mk(mod, SketchCAD::I18n::t(QString::fromUtf8("清理(&U)")),           QKeySequence(), [this] { interp_->execute("purge"); })
         ->setIcon(icons::make("cleanup"));
 
     e->addSeparator();
@@ -1934,13 +2014,13 @@ void MainWindow::buildMenu() {
     //       选择相交 / 取消相交 / (取消)选择图层 / 反选
     // 注意：工具型菜单项直接复用 toolActions_ 中已注册的 QAction（与工具条下拉
     // 共享高亮/互斥状态），即时命令（全选等）由 mk() 单独构造。
-    QMenu* sel = new QMenu(tr("选择(&N)"), this);
+    QMenu* sel = new QMenu(SketchCAD::I18n::t(tr("选择(&N)")), this);
     sel->setObjectName("menuSelect");
     // 快捷键：Ctrl+K 已绑给【编辑>修改>缩放】（ApplicationShortcut 全局生效，
     // 两处同绑会导致后者永不触发 / Qt ambiguous 警告），故「全部不选」改用 Ctrl+Shift+K
-    mk(sel, QStringLiteral("全部不选"), QKeySequence("Ctrl+Shift+K"), [this] { model_->clearSelection(); })
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("全部不选")), QKeySequence("Ctrl+Shift+K"), [this] { model_->clearSelection(); })
         ->setIcon(icons::make("deselect_all"));
-    mk(sel, QStringLiteral("全选"),     QKeySequence("Ctrl+A"), [this] { model_->selectAll(); })
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("全选")),     QKeySequence("Ctrl+A"), [this] { model_->selectAll(); })
         ->setIcon(icons::make("select_all"));
     sel->addSeparator();
     auto addSel = [&](const QString& id) {
@@ -1961,27 +2041,27 @@ void MainWindow::buildMenu() {
     sel->addSeparator();
     addSel("toggle_layer");               // (取消)选择图层
     sel->addSeparator();
-    mk(sel, QStringLiteral("反选"),     QKeySequence("Ctrl+Shift+I"), [this] { model_->invertSelection(); })
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("反选")),     QKeySequence("Ctrl+Shift+I"), [this] { model_->invertSelection(); })
         ->setIcon(icons::make("invert_selection"));
     sel->addSeparator();
     // 快速选择（QSELECT）：打开 QSelectDialog，按类型/图层/颜色/线型筛选并落地选择集
-    mk(sel, QStringLiteral("快速选择(&Q)..."), QKeySequence(), [this] { openQSelect(); })
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("快速选择(&Q)...")), QKeySequence(), [this] { openQSelect(); })
         ->setIcon(icons::make("qselect"));
     sel->addSeparator();
     // 按属性累加选择：以当前选中的"参考图元"的线型/颜色为匹配条件，把同类图元加入选区，
     // 保留已有选择（不清除、不取消）——满足"累加选择"需求。
-    mk(sel, QStringLiteral("按相同线型累加选择"), QKeySequence(), [this] {
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("按相同线型累加选择")), QKeySequence(), [this] {
         if (model_->selection().empty()) {
-            model_->log(QStringLiteral("请先选中一个参考图元（以其线型为匹配条件）"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中一个参考图元（以其线型为匹配条件）")), "warn");
             return;
         }
         const Element* ref = model_->element(model_->selection().front());
         if (!ref) return;
         model_->addSelectionByStyle(ref->lineStyle);
     })->setIcon(icons::make("select_entity"));
-    mk(sel, QStringLiteral("按相同颜色累加选择"), QKeySequence(), [this] {
+    mk(sel, SketchCAD::I18n::t(QString::fromUtf8("按相同颜色累加选择")), QKeySequence(), [this] {
         if (model_->selection().empty()) {
-            model_->log(QStringLiteral("请先选中一个参考图元（以其颜色为匹配条件）"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中一个参考图元（以其颜色为匹配条件）")), "warn");
             return;
         }
         const Element* ref = model_->element(model_->selection().front());
@@ -2009,30 +2089,30 @@ void MainWindow::buildMenu() {
 
     // ---- 顶级菜单：绘图（原「草图绘制」+ 直线/圆/圆弧/多边形/样条/椭圆/折线 7 个顶级菜单
     //      全部收纳到本菜单，各类图元的绘制方式以子菜单形式挂在下面）----
-    QMenu* s = new QMenu(tr("绘图(&D)"), this);
+    QMenu* s = new QMenu(SketchCAD::I18n::t(tr("绘图(&D)")), this);
     s->setObjectName("menuDraw");
     buildSketchMenu(s);
     // ---- 命令补齐：绘图类命令（与命令行共用 interp_->execute）----
-    mk(s, QStringLiteral("图案填充(&H)..."), QKeySequence(), [this] { interp_->execute("hatch"); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("图案填充(&H)...")), QKeySequence(), [this] { interp_->execute("hatch"); })
         ->setIcon(icons::make("hatch"));
-    mk(s, QStringLiteral("边界填充(&B)..."), QKeySequence(), [this] { interp_->execute("bhatch"); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("边界填充(&B)...")), QKeySequence(), [this] { interp_->execute("bhatch"); })
         ->setIcon(icons::make("boundary"));
-    mk(s, QStringLiteral("单行文字(&T)..."), QKeySequence(), [this, dlgText] { dlgText(false); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("单行文字(&T)...")), QKeySequence(), [this, dlgText] { dlgText(false); })
         ->setIcon(icons::make("mtext"));
-    mk(s, QStringLiteral("多行文字(&M)..."), QKeySequence(), [this, dlgText] { dlgText(true); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("多行文字(&M)...")), QKeySequence(), [this, dlgText] { dlgText(true); })
         ->setIcon(icons::make("mtext"));
-    mk(s, QStringLiteral("编辑文字(&E)..."), QKeySequence(), [this, dlgDdedit] { dlgDdedit(); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("编辑文字(&E)...")), QKeySequence(), [this, dlgDdedit] { dlgDdedit(); })
         ->setIcon(icons::make("mtext"));
-    mk(s, QStringLiteral("定距等分(&D)..."), QKeySequence(), [this] { interp_->execute("measure"); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("定距等分(&D)...")), QKeySequence(), [this] { interp_->execute("measure"); })
         ->setIcon(icons::make("divide"));
-    mk(s, QStringLiteral("形位公差(&G)..."), QKeySequence(), [this] { interp_->execute("tol"); })
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("形位公差(&G)...")), QKeySequence(), [this] { interp_->execute("tol"); })
         ->setIcon(icons::make("dim"));
-    mk(s, QStringLiteral("GD&T 标注面板(&D)..."), QKeySequence(), [this] {
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("GD&T 标注面板(&D)...")), QKeySequence(), [this] {
             GdtAnnotationDialog dlg(model_, this);
             dlg.exec();
        })
         ->setIcon(icons::make("dim"));
-    mk(s, QStringLiteral("焊缝符号(&W)..."), QKeySequence(), [this] {
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("焊缝符号(&W)...")), QKeySequence(), [this] {
             WeldSymbolDialog dlg(model_, interp_, this);
             dlg.exec();
        })
@@ -2040,24 +2120,24 @@ void MainWindow::buildMenu() {
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
-    QMenu* q = new QMenu(tr("测量查询(&I)"), this);
+    QMenu* q = new QMenu(SketchCAD::I18n::t(tr("测量查询(&I)")), this);
     q->setObjectName("menuInquiry");
-    mk(q, QStringLiteral("打开测量查询面板..."), QKeySequence(), [this] { openInquiry(); })
+    mk(q, SketchCAD::I18n::t(QString::fromUtf8("打开测量查询面板...")), QKeySequence(), [this] { openInquiry(); })
         ->setIcon(icons::make("query"));
     bar->addMenu(q);
 
-    QMenu* v = new QMenu(tr("视图(&V)"), this);
+    QMenu* v = new QMenu(SketchCAD::I18n::t(tr("视图(&V)")), this);
     v->setObjectName("menuView");
-    mk(v, QStringLiteral("放大"),     QKeySequence::ZoomIn,  [this] { view_->zoomBy(1.2); })
+    mk(v, SketchCAD::I18n::t(QString::fromUtf8("放大")),     QKeySequence::ZoomIn,  [this] { view_->zoomBy(1.2); })
         ->setIcon(icons::make("zoomin"));
-    mk(v, QStringLiteral("缩小"),     QKeySequence::ZoomOut, [this] { view_->zoomBy(1.0 / 1.2); })
+    mk(v, SketchCAD::I18n::t(QString::fromUtf8("缩小")),     QKeySequence::ZoomOut, [this] { view_->zoomBy(1.0 / 1.2); })
         ->setIcon(icons::make("zoomout"));
-    mk(v, QStringLiteral("适配窗口"), QKeySequence("Ctrl+0"), [this] { view_->fitView(); })
+    mk(v, SketchCAD::I18n::t(QString::fromUtf8("适配窗口")), QKeySequence("Ctrl+0"), [this] { view_->fitView(); })
         ->setIcon(icons::make("fit"));
-    mk(v, QStringLiteral("窗口缩放"), QKeySequence("Ctrl+9"), [this] { view_->setZoomBoxMode(true); })
+    mk(v, SketchCAD::I18n::t(QString::fromUtf8("窗口缩放")), QKeySequence("Ctrl+9"), [this] { view_->setZoomBoxMode(true); })
         ->setIcon(icons::make("zoombox"));
     v->addSeparator();
-    QAction* aGrid = mk(v, QStringLiteral("显示栅格"), QKeySequence("F7"),
+    QAction* aGrid = mk(v, SketchCAD::I18n::t(QString::fromUtf8("显示栅格")), QKeySequence("F7"),
                         [this] { model_->setShowGrid(!model_->showGrid()); });
     aGrid->setIcon(icons::make("grid"));
     aGrid->setCheckable(true);
@@ -2066,19 +2146,19 @@ void MainWindow::buildMenu() {
 
     // 绘图比例入口已迁至【图纸】菜单（属图纸属性），此处不再重复提供，避免同一功能两处出现
 
-    QMenu* plane = new QMenu(tr("视图方向"), this);
+    QMenu* plane = new QMenu(SketchCAD::I18n::t(tr("视图方向")), this);
     plane->setIcon(icons::make("plane_xy"));
-    mk(plane, QStringLiteral("XY 平面（俯视）"), QKeySequence("Ctrl+1"), [this] { model_->setPlane(Plane::XY); })
+    mk(plane, SketchCAD::I18n::t(QString::fromUtf8("XY 平面（俯视）")), QKeySequence("Ctrl+1"), [this] { model_->setPlane(Plane::XY); })
         ->setIcon(icons::make("plane_xy"));
-    mk(plane, QStringLiteral("YZ 平面（左视）"), QKeySequence("Ctrl+2"), [this] { model_->setPlane(Plane::YZ); })
+    mk(plane, SketchCAD::I18n::t(QString::fromUtf8("YZ 平面（左视）")), QKeySequence("Ctrl+2"), [this] { model_->setPlane(Plane::YZ); })
         ->setIcon(icons::make("plane_yz"));
-    mk(plane, QStringLiteral("XZ 平面（主视）"), QKeySequence("Ctrl+3"), [this] { model_->setPlane(Plane::XZ); })
+    mk(plane, SketchCAD::I18n::t(QString::fromUtf8("XZ 平面（主视）")), QKeySequence("Ctrl+3"), [this] { model_->setPlane(Plane::XZ); })
         ->setIcon(icons::make("plane_xz"));
     v->addMenu(plane);
     v->addSeparator();
 
     // 面板显隐切换：关闭后可在此重新勾选（QDockWidget::toggleViewAction 自带勾选态同步）
-    QMenu* panels = new QMenu(tr("面板"), this);
+    QMenu* panels = new QMenu(SketchCAD::I18n::t(tr("面板")), this);
     panels->setIcon(icons::make("panel"));
     panels->addAction(bomDock_->toggleViewAction());
     panels->addAction(elemDock_->toggleViewAction());
@@ -2093,82 +2173,82 @@ void MainWindow::buildMenu() {
     if (toolbar_)  panels->addAction(toolbar_->toggleViewAction());
     if (toolbar2_) panels->addAction(toolbar2_->toggleViewAction());
     panels->addSeparator();
-    panels->addAction(QStringLiteral("全部显示"), this, [this] {
+    panels->addAction(SketchCAD::I18n::t(QString::fromUtf8("全部显示")), this, [this] {
         for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, standardsDock_}) d->show();
         if (toolbar_)  toolbar_->show();
         if (toolbar2_) toolbar2_->show();
-        model_->log(QStringLiteral("已恢复全部面板"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已恢复全部面板")));
     });
     v->addMenu(panels);
-    mk(v, QStringLiteral("重生成(&R)"), QKeySequence("F5"), [this] { interp_->execute("regen"); })
+    mk(v, SketchCAD::I18n::t(QString::fromUtf8("重生成(&R)")), QKeySequence("F5"), [this] { interp_->execute("regen"); })
         ->setIcon(icons::make("regen"));
     bar->addMenu(v);
 
     // ---- 脚本（二次开发宿主）----
-    QMenu* scr = new QMenu(tr("脚本(&S)"), this);
+    QMenu* scr = new QMenu(SketchCAD::I18n::t(tr("脚本(&S)")), this);
     scr->setObjectName("menuScript");
-    mk(scr, QStringLiteral("运行 JavaScript..."), QKeySequence(), [this] { onRunJavaScript(); })
+    mk(scr, SketchCAD::I18n::t(QString::fromUtf8("运行 JavaScript...")), QKeySequence(), [this] { onRunJavaScript(); })
         ->setIcon(icons::make("script"));
-    mk(scr, QStringLiteral("运行脚本文件..."), QKeySequence(), [this] { onRunScriptFile(); })
+    mk(scr, SketchCAD::I18n::t(QString::fromUtf8("运行脚本文件...")), QKeySequence(), [this] { onRunScriptFile(); })
         ->setIcon(icons::make("script"));
-    mk(scr, QStringLiteral("可用脚本引擎"), QKeySequence(), [this] {
-        model_->log(QStringLiteral("可用脚本引擎：%1").arg(scriptHost_->availableLanguages().join(", ")));
+    mk(scr, SketchCAD::I18n::t(QString::fromUtf8("可用脚本引擎")), QKeySequence(), [this] {
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("可用脚本引擎：%1")).arg(scriptHost_->availableLanguages().join(", ")));
     })->setIcon(icons::make("script"));
 
     // ---- 动作宏 / SCR 脚本批处理（录制 → 保存 → 回放）----
     scr->addSeparator();
-    QAction* aRec = mk(scr, QStringLiteral("宏：开始录制"), QKeySequence(), [this] {
+    QAction* aRec = mk(scr, SketchCAD::I18n::t(QString::fromUtf8("宏：开始录制")), QKeySequence(), [this] {
         QAction* act = qobject_cast<QAction*>(sender());
         const bool wasRecording = MacroRecorder::instance().isRecording();
         interp_->execute(wasRecording ? "macrostop" : "macrorec");
         if (act) act->setText(MacroRecorder::instance().isRecording()
-                                  ? QStringLiteral("宏：停止录制")
-                                  : QStringLiteral("宏：开始录制"));
+                                  ? SketchCAD::I18n::t(QString::fromUtf8("宏：停止录制"))
+                                  : SketchCAD::I18n::t(QString::fromUtf8("宏：开始录制")));
     });
     aRec->setIcon(icons::make("script"));
     // 菜单打开时同步录制状态（命令行 macrorec/macrostop 也能改变状态）
     connect(scr, &QMenu::aboutToShow, this, [aRec] {
         aRec->setText(MacroRecorder::instance().isRecording()
-                          ? QStringLiteral("宏：停止录制")
-                          : QStringLiteral("宏：开始录制"));
+                          ? SketchCAD::I18n::t(QString::fromUtf8("宏：停止录制"))
+                          : SketchCAD::I18n::t(QString::fromUtf8("宏：开始录制")));
     });
-    mk(scr, QStringLiteral("宏：保存录制..."), QKeySequence(), [this] {
+    mk(scr, SketchCAD::I18n::t(QString::fromUtf8("宏：保存录制...")), QKeySequence(), [this] {
         const QString path = QFileDialog::getSaveFileName(
-            this, QStringLiteral("保存动作宏"), QString(),
-            QStringLiteral("脚本文件 (*.scr);;所有文件 (*.*)"));
+            this, SketchCAD::I18n::t(QString::fromUtf8("保存动作宏")), QString(),
+            SketchCAD::I18n::t(QString::fromUtf8("脚本文件 (*.scr);;所有文件 (*.*)")));
         if (path.isEmpty()) return;
         interp_->execute(QStringLiteral("macrosave \"%1\"").arg(path));
     })->setIcon(icons::make("script"));
     scr->addSeparator();
-    mk(scr, QStringLiteral("运行 SCR 脚本..."), QKeySequence(), [this] {
+    mk(scr, SketchCAD::I18n::t(QString::fromUtf8("运行 SCR 脚本...")), QKeySequence(), [this] {
         const QString path = QFileDialog::getOpenFileName(
-            this, QStringLiteral("运行 SCR 脚本（每行一条命令，# 为注释）"), QString(),
-            QStringLiteral("脚本文件 (*.scr);;所有文件 (*.*)"));
+            this, SketchCAD::I18n::t(QString::fromUtf8("运行 SCR 脚本（每行一条命令，# 为注释）")), QString(),
+            SketchCAD::I18n::t(QString::fromUtf8("脚本文件 (*.scr);;所有文件 (*.*)")));
         if (path.isEmpty()) return;
         interp_->execute(QStringLiteral("scr \"%1\"").arg(path));
     })->setIcon(icons::make("script"));
     bar->addMenu(scr);
 
     // ---- 界面定制（CUIx + 命令别名，二次开发生态）----
-    QMenu* cui = new QMenu(tr("界面(&U)"), this);
+    QMenu* cui = new QMenu(SketchCAD::I18n::t(tr("界面(&U)")), this);
     cui->setObjectName("menuCui");
-    mk(cui, QStringLiteral("编辑命令别名文件..."), QKeySequence(), [this] { openAliasFile(); })
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("编辑命令别名文件...")), QKeySequence(), [this] { openAliasFile(); })
         ->setIcon(icons::make("script"));
-    mk(cui, QStringLiteral("重新加载命令别名"), QKeySequence(), [this] {
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("重新加载命令别名")), QKeySequence(), [this] {
         interp_->execute("aliasreload");
     })->setIcon(icons::make("script"));
-    mk(cui, QStringLiteral("命令别名列表"), QKeySequence(), [this] {
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("命令别名列表")), QKeySequence(), [this] {
         interp_->execute("aliaslist");
     })->setIcon(icons::make("script"));
     cui->addSeparator();
     // 工作空间子菜单：切换项在展开时动态重建（反映当前工作空间列表与勾选态）
-    QMenu* wsMenu = new QMenu(tr("工作空间"), this);
+    QMenu* wsMenu = new QMenu(SketchCAD::I18n::t(tr("工作空间")), this);
     wsMenu->setIcon(icons::make("panel"));
     cui->addMenu(wsMenu);
     connect(wsMenu, &QMenu::aboutToShow, this, [this, wsMenu] {
         wsMenu->clear();
         QAction* def = wsMenu->addAction(icons::make("panel"),
-                                         QStringLiteral("（默认 / 全部显示）"));
+                                         SketchCAD::I18n::t(QString::fromUtf8("（默认 / 全部显示）")));
         def->setCheckable(true);
         def->setChecked(CuiManager::instance().currentWorkspace().isEmpty());
         connect(def, &QAction::triggered, this, [this] {
@@ -2188,40 +2268,40 @@ void MainWindow::buildMenu() {
         wsMenu->addSeparator();
         {
             QAction* a = wsMenu->addAction(icons::make("panel"),
-                                           QStringLiteral("新建工作空间（保存当前视图）..."));
+                                           SketchCAD::I18n::t(QString::fromUtf8("新建工作空间（保存当前视图）...")));
             connect(a, &QAction::triggered, this, [this] { saveCurrentAsWorkspaceDialog(); });
         }
         {
             QAction* a = wsMenu->addAction(icons::make("panel"),
-                                           QStringLiteral("工作空间列表"));
+                                           SketchCAD::I18n::t(QString::fromUtf8("工作空间列表")));
             connect(a, &QAction::triggered, this, [this] { interp_->execute("wslist"); });
         }
     });
     cui->addSeparator();
-    mk(cui, QStringLiteral("加载界面配置 (CUIx)..."), QKeySequence(), [this] {
-        const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("加载界面配置"),
-            QString(), QStringLiteral("CUIx 文件 (*.cuix);;所有文件 (*.*)"));
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("加载界面配置 (CUIx)...")), QKeySequence(), [this] {
+        const QString path = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("加载界面配置")),
+            QString(), SketchCAD::I18n::t(QString::fromUtf8("CUIx 文件 (*.cuix);;所有文件 (*.*)")));
         if (path.isEmpty()) return;
         interp_->execute(QStringLiteral("cuiload \"%1\"").arg(path));
     })->setIcon(icons::make("properties"));
-    mk(cui, QStringLiteral("保存界面配置 (CUIx)"), QKeySequence(), [this] {
-        const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("保存界面配置"),
-            QString(), QStringLiteral("CUIx 文件 (*.cuix);;所有文件 (*.*)"));
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("保存界面配置 (CUIx)")), QKeySequence(), [this] {
+        const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("保存界面配置")),
+            QString(), SketchCAD::I18n::t(QString::fromUtf8("CUIx 文件 (*.cuix);;所有文件 (*.*)")));
         if (path.isEmpty()) return;
         interp_->execute(QStringLiteral("cuisave \"%1\"").arg(path));
     })->setIcon(icons::make("properties"));
-    mk(cui, QStringLiteral("新建自定义工具条..."), QKeySequence(), [this] { newToolbarDialog(); })
+    mk(cui, SketchCAD::I18n::t(QString::fromUtf8("新建自定义工具条...")), QKeySequence(), [this] { newToolbarDialog(); })
         ->setIcon(icons::make("properties"));
     bar->addMenu(cui);
 
     // ---- 插件（原生 SDK 二次开发框架）----
-    QMenu* plug = new QMenu(tr("插件(&X)"), this);
+    QMenu* plug = new QMenu(SketchCAD::I18n::t(tr("插件(&X)")), this);
     plug->setObjectName("menuPlugin");
-    mk(plug, QStringLiteral("加载插件文件..."), QKeySequence(), [this] { onLoadPlugin(); })
+    mk(plug, SketchCAD::I18n::t(QString::fromUtf8("加载插件文件...")), QKeySequence(), [this] { onLoadPlugin(); })
         ->setIcon(icons::make("plugin"));
-    mk(plug, QStringLiteral("重新加载插件目录"), QKeySequence(), [this] { onReloadPlugins(); })
+    mk(plug, SketchCAD::I18n::t(QString::fromUtf8("重新加载插件目录")), QKeySequence(), [this] { onReloadPlugins(); })
         ->setIcon(icons::make("plugin"));
-    pluginLoadedSub_ = new QMenu(tr("已加载插件"), this);
+    pluginLoadedSub_ = new QMenu(SketchCAD::I18n::t(tr("已加载插件")), this);
     pluginLoadedSub_->setIcon(icons::make("plugin"));
     plug->addMenu(pluginLoadedSub_);
     refreshPluginMenu();   // 填充已加载列表（如启动时已自动加载示例插件）
@@ -2232,7 +2312,7 @@ void MainWindow::buildMenu() {
     // 禁止在此手工维护第二份清单（同一语义两处拼装 ⇒ 一处更新一处漏）。
     // 准入：aboutToShow → updateFeatureMenuState() 逐项 evaluateFeature，
     // 不满足条件 setEnabled(false) 且 statusTip/toolTip 回显原因（悬停可读）。
-    QMenu* ex = new QMenu(tr("扩展工具(&R)"), this);
+    QMenu* ex = new QMenu(SketchCAD::I18n::t(tr("扩展工具(&R)")), this);
     ex->setObjectName("menuExt");
     featureActs_.clear();   // 语言切换会重跑 buildMenu：先清登记表，避免动作累积
     {
@@ -2278,8 +2358,8 @@ void MainWindow::buildMenu() {
     // ---- 标准知识库浏览面板（只读，不影响既有功能特性菜单）----
     ex->addSeparator();
     {
-        QAction* aStd = new QAction(tr("标准知识库(&B)..."), this);
-        aStd->setStatusTip(tr("浏览内嵌的 12 类机械制图国标数据（图幅/比例/字体/线型/粗糙度/公差/形位公差/螺纹/齿轮/轴承/焊缝/CAD 图层）"));
+        QAction* aStd = new QAction(SketchCAD::I18n::t(tr("标准知识库(&B)...")), this);
+        aStd->setStatusTip(SketchCAD::I18n::t(tr("浏览内嵌的 12 类机械制图国标数据（图幅/比例/字体/线型/粗糙度/公差/形位公差/螺纹/齿轮/轴承/焊缝/CAD 图层）")));
         connect(aStd, &QAction::triggered, this, [this] {
             StandardsBrowserDialog dlg(this);
             dlg.exec();
@@ -2291,20 +2371,20 @@ void MainWindow::buildMenu() {
     bar->addMenu(ex);
 
     // ---- 工具（统一「选项」入口：应用级配置持久化 + 分类树表单）----
-    QMenu* tools = new QMenu(tr("工具(&T)"), this);
+    QMenu* tools = new QMenu(SketchCAD::I18n::t(tr("工具(&T)")), this);
     tools->setObjectName("menuTools");
-    mk(tools, QStringLiteral("选项..."), QKeySequence(), [this] { openOptionsDialog(); })
+    mk(tools, SketchCAD::I18n::t(QString::fromUtf8("选项...")), QKeySequence(), [this] { openOptionsDialog(); })
         ->setIcon(icons::make("options"));
     tools->addSeparator();
     // ---- 命令补齐：格式/工具类命令（与命令行共用 interp_->execute）----
-    mk(tools, QStringLiteral("线型(&L)..."), QKeySequence(), [this] { interp_->execute("linetype"); })
+    mk(tools, SketchCAD::I18n::t(QString::fromUtf8("线型(&L)...")), QKeySequence(), [this] { interp_->execute("linetype"); })
         ->setIcon(icons::lineStyleIcon(LineStyle::DashDot));
-    mk(tools, QStringLiteral("特性(&P)..."), QKeySequence(), [this] { interp_->execute("properties"); })
+    mk(tools, SketchCAD::I18n::t(QString::fromUtf8("特性(&P)...")), QKeySequence(), [this] { interp_->execute("properties"); })
         ->setIcon(icons::make("properties"));
     // ---- AI 自然语言助手：唤起对话面板 ----
     // aiDock_ 初始隐藏；只 show 子控件（AiAssistantPanel）不会让隐藏的 QDockWidget
     // 变为可见，必须先显示 dock 本身，否则首次按 Ctrl+Shift+A 会「点了没反应」。
-    mk(tools, QStringLiteral("AI 助手(&A)..."), QKeySequence("Ctrl+Shift+A"), [this] {
+    mk(tools, SketchCAD::I18n::t(QString::fromUtf8("AI 助手(&A)...")), QKeySequence("Ctrl+Shift+A"), [this] {
         if (!aiDock_ || !aiPanel_) return;
         if (!aiDock_->isVisible()) {
             aiDock_->show();
@@ -2314,36 +2394,30 @@ void MainWindow::buildMenu() {
     });
     bar->addMenu(tools);
 
-    QMenu* h = new QMenu(tr("帮助(&H)"), this);
+    QMenu* h = new QMenu(SketchCAD::I18n::t(tr("帮助(&H)")), this);
     h->setObjectName("menuHelp");
-    mk(h, QStringLiteral("命令列表"), QKeySequence("F1"), [this] { interp_->execute("help"); })
+    mk(h, SketchCAD::I18n::t(QString::fromUtf8("命令列表")), QKeySequence("F1"), [this] { interp_->execute("help"); })
         ->setIcon(icons::make("help"));
     // 崩溃可复现诊断包：一键导出（异常退出启动提示与此共用 DiagnosticsDialog）
-    mk(h, QStringLiteral("导出诊断包..."), QKeySequence(), [this] { exportDiagnosticBundle(); })
+    mk(h, SketchCAD::I18n::t(QString::fromUtf8("导出诊断包...")), QKeySequence(), [this] { exportDiagnosticBundle(); })
         ->setIcon(icons::make("log"));
-    mk(h, QStringLiteral("打开日志目录"), QKeySequence(), [this] {
+    mk(h, SketchCAD::I18n::t(QString::fromUtf8("打开日志目录")), QKeySequence(), [this] {
         QDesktopServices::openUrl(
             QUrl::fromLocalFile(SketchCAD::Diagnostics::logDir()));
     })->setIcon(icons::make("log"));
-    mk(h, QStringLiteral("关于"), QKeySequence(), [this] {
+    mk(h, SketchCAD::I18n::t(QString::fromUtf8("关于")), QKeySequence(), [this] {
         // 版本号来自 version.h（CMake project VERSION 生成的宏），
         // 与 exe 文件属性（app.rc）、安装包名（installer.iss）同源于同一个版本号，
         // 三者天然一致，不会出现「关于显示 1.1.0、属性却是 1.0.0」的商用事故。
-        model_->log(QStringLiteral("我是慎独 草图模块 v%1 — C++17 / Qt6 实现")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("我是慎独 草图模块 v%1 — C++17 / Qt6 实现"))
                         .arg(QString::fromLatin1(SKETCHCAD_VERSION)));
 
         // 「关于」仍是同一个原生 QMessageBox（标题 / 图标 / 富文本内容不变），
         // 仅在底部按钮行追加一个「打赏」入口；不新增页面、不引入支付流程或依赖。
         QMessageBox box(this);
-        box.setWindowTitle(QStringLiteral("关于 SketchCAD"));
+        box.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("关于 SketchCAD")));
         box.setIcon(QMessageBox::Information);
-        box.setText(QStringLiteral(
-                "<h3>SketchCAD 草图设计系统</h3>"
-                "<p><b>版本</b>：%1（文件属性 %2）</p>"
-                "<p><b>版权所有</b>：%3</p>"
-                "<p>基于 C++17 / Qt 6 构建，核心几何与约束求解为自研实现。</p>"
-                "<p>本软件为专有商业软件，详见安装目录内 LICENSE.txt。</p>"
-                "<p>如果 SketchCAD 对你有帮助，可点击下方「打赏」支持作者。</p>")
+        box.setText(SketchCAD::I18n::t(QString::fromUtf8("<h3>SketchCAD 草图设计系统</h3><p><b>版本</b>：%1（文件属性 %2）</p><p><b>版权所有</b>：%3</p><p>基于 C++17 / Qt 6 构建，核心几何与约束求解为自研实现。</p><p>本软件为专有商业软件，详见安装目录内 LICENSE.txt。</p><p>如果 SketchCAD 对你有帮助，可点击下方「打赏」支持作者。</p>"))
                 .arg(QString::fromLatin1(SKETCHCAD_VERSION),
                      QString::fromLatin1(SKETCHPAD_VERSION),
                      QString::fromUtf8(SKETCHCAD_COPYRIGHT)));
@@ -2397,58 +2471,54 @@ void MainWindow::openStyleManager() {
 // 运行 JavaScript：弹窗输入源码，经脚本宿主执行；输出与错误实时进日志面板，并弹窗提示结果。
 void MainWindow::onRunJavaScript() {
     bool ok = false;
-    QString code = QInputDialog::getMultiLineText(this, QStringLiteral("运行 JavaScript"),
-        QStringLiteral("输入 JavaScript 脚本。全局对象 app 提供：addLine/addCircle/addArc/addRect/addPoint/addText、"
-                       "elementCount/elementInfo/removeElement、run(命令)/log(消息)；print(...) 输出到日志。"),
-        QStringLiteral("// 示例：画一个十字标记\n"
-                       "app.addLine(-50, 0, 50, 0);\n"
-                       "app.addLine(0, -50, 0, 50);\n"
-                       "print('当前图元数 =', app.elementCount());\n"),
+    QString code = QInputDialog::getMultiLineText(this, SketchCAD::I18n::t(QString::fromUtf8("运行 JavaScript")),
+        SketchCAD::I18n::t(QString::fromUtf8("输入 JavaScript 脚本。全局对象 app 提供：addLine/addCircle/addArc/addRect/addPoint/addText、elementCount/elementInfo/removeElement、run(命令)/log(消息)；print(...) 输出到日志。")),
+        SketchCAD::I18n::t(QString::fromUtf8("// 示例：画一个十字标记\napp.addLine(-50, 0, 50, 0);\napp.addLine(0, -50, 0, 50);\nprint('当前图元数 =', app.elementCount());\n")),
         &ok);
     if (!ok || code.trimmed().isEmpty()) return;
     ScriptResult r = scriptHost_->runCode("javascript", code);
     if (!r.ok) {
-        QMessageBox::warning(this, QStringLiteral("脚本错误"), r.error);
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("脚本错误")), r.error);
     } else {
-        model_->log(QStringLiteral("JavaScript 执行完成，图元数=%1").arg(scriptHost_->api()->elementCount()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("JavaScript 执行完成，图元数=%1")).arg(scriptHost_->api()->elementCount()));
         if (!r.output.trimmed().isEmpty())
-            model_->log(QStringLiteral("脚本输出：%1").arg(r.output.trimmed()));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("脚本输出：%1")).arg(r.output.trimmed()));
     }
 }
 
 // 运行脚本文件：按扩展名推断语言（.js→javascript/.py→python/.vbs→vba），经脚本宿主执行。
 void MainWindow::onRunScriptFile() {
-    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择脚本文件"),
-        QString(), QStringLiteral("脚本 (*.js *.py *.vbs);;JavaScript (*.js);;Python (*.py);;VBA/VBScript (*.vbs);;所有文件 (*.*)"));
+    QString path = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("选择脚本文件")),
+        QString(), SketchCAD::I18n::t(QString::fromUtf8("脚本 (*.js *.py *.vbs);;JavaScript (*.js);;Python (*.py);;VBA/VBScript (*.vbs);;所有文件 (*.*)")));
     if (path.isEmpty()) return;
     QString ext = QFileInfo(path).suffix().toLower();
     QString lang;
     if (ext == "js")       lang = "javascript";
     else if (ext == "py")  lang = "python";
     else if (ext == "vbs") lang = "vba";
-    else { model_->log(QStringLiteral("无法根据扩展名判断脚本语言：%1").arg(path)); return; }
+    else { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无法根据扩展名判断脚本语言：%1")).arg(path)); return; }
     if (!scriptHost_->isLanguageAvailable(lang)) {
-        QMessageBox::warning(this, QStringLiteral("引擎不可用"),
-            QStringLiteral("%1 引擎不可用（可能未启用构建开关或缺少运行时）").arg(lang));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("引擎不可用")),
+            SketchCAD::I18n::t(QString::fromUtf8("%1 引擎不可用（可能未启用构建开关或缺少运行时）")).arg(lang));
         return;
     }
     ScriptResult r = scriptHost_->runFile(lang, path);
-    if (!r.ok) QMessageBox::warning(this, QStringLiteral("脚本错误"), r.error);
-    else       model_->log(QStringLiteral("脚本执行完成：%1").arg(path));
+    if (!r.ok) QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("脚本错误")), r.error);
+    else       model_->log(SketchCAD::I18n::t(QString::fromUtf8("脚本执行完成：%1")).arg(path));
 }
 
 // ===================== 插件框架（原生 SDK 二次开发） =====================
 
 // 加载插件文件：文件对话框选 .dll/.so，交由 PluginManager 校验 ABI 并加载。
 void MainWindow::onLoadPlugin() {
-    QString path = QFileDialog::getOpenFileName(this, QStringLiteral("加载插件"),
-        QString(), QStringLiteral("插件 (*.dll *.so *.dylib);;所有文件 (*.*)"));
+    QString path = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("加载插件")),
+        QString(), SketchCAD::I18n::t(QString::fromUtf8("插件 (*.dll *.so *.dylib);;所有文件 (*.*)")));
     if (path.isEmpty()) return;
     if (pluginManager_->loadPlugin(path))
-        model_->log(QStringLiteral("插件加载成功：%1").arg(path));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("插件加载成功：%1")).arg(path));
     else
-        QMessageBox::warning(this, QStringLiteral("插件加载失败"),
-            QStringLiteral("未能加载插件：%1\n详见日志面板（ABI 不兼容 / 符号缺失 / 初始化失败等）。").arg(path));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("插件加载失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("未能加载插件：%1\n详见日志面板（ABI 不兼容 / 符号缺失 / 初始化失败等）。")).arg(path));
 }
 
 // 重新加载插件目录：先整体卸载，再扫描宿主同目录 plugins/ 重新加载。
@@ -2456,7 +2526,7 @@ void MainWindow::onReloadPlugins() {
     pluginManager_->unloadAll();
     const int n = pluginManager_->loadDirectory(
         QCoreApplication::applicationDirPath() + QStringLiteral("/plugins"));
-    model_->log(QStringLiteral("已重新加载插件目录，当前加载 %1 个插件").arg(n));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已重新加载插件目录，当前加载 %1 个插件")).arg(n));
     refreshPluginMenu();
 }
 
@@ -2466,7 +2536,7 @@ void MainWindow::refreshPluginMenu() {
     pluginLoadedSub_->clear();
     const auto& list = pluginManager_->loadedPlugins();
     if (list.isEmpty()) {
-        QAction* empty = pluginLoadedSub_->addAction(QStringLiteral("（无已加载插件）"));
+        QAction* empty = pluginLoadedSub_->addAction(SketchCAD::I18n::t(QString::fromUtf8("（无已加载插件）")));
         empty->setEnabled(false);
         return;
     }
@@ -2479,11 +2549,11 @@ void MainWindow::refreshPluginMenu() {
         a->setData(p.path);
         // 点击插件项 → 写日志详情；右键「卸载」单独提供
         QAction* unload = pluginLoadedSub_->addAction(
-            QStringLiteral("  卸载 %1").arg(name));
+            SketchCAD::I18n::t(QString::fromUtf8("  卸载 %1")).arg(name));
         unload->setData(p.path);
         connect(unload, &QAction::triggered, this, [this, path = p.path] {
             if (pluginManager_->unloadPlugin(path))
-                model_->log(QStringLiteral("已卸载插件：%1").arg(path));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("已卸载插件：%1")).arg(path));
         });
         Q_UNUSED(a);
     }
@@ -2501,7 +2571,7 @@ void MainWindow::editElementText(int id) {
         TableDialog dlg(model_, this, e);
         if (dlg.exec() != QDialog::Accepted) return;
         const Element upd = dlg.buildElement(e->pts.empty() ? Vec3() : e->pts[0]);
-        model_->beginEdit(QStringLiteral("编辑表格"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("编辑表格")));
         model_->updateElementQuiet(id, [&upd](Element& x) {
             x.tableRows  = upd.tableRows;
             x.tableCols  = upd.tableCols;
@@ -2511,7 +2581,7 @@ void MainWindow::editElementText(int id) {
             x.radius     = upd.radius;     // 字高
             x.textAlign  = upd.textAlign;  // 单元格文字对齐
         });
-        model_->log(QStringLiteral("已更新表格 #%1（%2×%3）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已更新表格 #%1（%2×%3）"))
                         .arg(id).arg(upd.tableRows).arg(upd.tableCols));
         return;
     }
@@ -2525,8 +2595,8 @@ void MainWindow::editElementText(int id) {
         const QString cur = e->text.isEmpty()
             ? QString::number(geo::measureDimension(*e), 'f', 2) : e->text;
         const QString txt = QInputDialog::getText(
-            this, QStringLiteral("编辑尺寸"),
-            QStringLiteral("数值→驱动几何联动调整；留空→恢复测量值；文字→覆盖显示文本："),
+            this, SketchCAD::I18n::t(QString::fromUtf8("编辑尺寸")),
+            SketchCAD::I18n::t(QString::fromUtf8("数值→驱动几何联动调整；留空→恢复测量值；文字→覆盖显示文本：")),
             QLineEdit::Normal, cur, &ok);
         if (!ok) return;
         const QString trimmed = txt.trimmed();
@@ -2535,23 +2605,23 @@ void MainWindow::editElementText(int id) {
             const double v = trimmed.toDouble();
             if (model_->dimensionDriven()) {
                 if (!model_->driveDimension(id, v)) {
-                    QMessageBox::warning(this, QStringLiteral("尺寸驱动"),
-                        QStringLiteral("该标注类型不支持尺寸驱动（支持：对齐/距离/水平/竖直/半径/直径/角度）"));
+                    QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动")),
+                        SketchCAD::I18n::t(QString::fromUtf8("该标注类型不支持尺寸驱动（支持：对齐/距离/水平/竖直/半径/直径/角度）")));
                     return;
                 }
-                model_->log(QStringLiteral("尺寸驱动 #%1 → %2（关联几何与标注已联动更新）").arg(id).arg(v, 0, 'f', 2));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动 #%1 → %2（关联几何与标注已联动更新）")).arg(id).arg(v, 0, 'f', 2));
             } else {
                 // 尺寸驱动主开关关闭（需求 D-③）：仅覆盖显示文本，不改动任何图元几何
-                model_->beginEdit(QStringLiteral("编辑标注数值(仅显示)"));
+                model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("编辑标注数值(仅显示)")));
                 model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
-                model_->log(QStringLiteral("尺寸驱动已关闭：仅更新标注显示文本 #%1 → %2（几何未改动）")
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动已关闭：仅更新标注显示文本 #%1 → %2（几何未改动）"))
                                 .arg(id).arg(txt));
             }
             return;
         }
-        model_->beginEdit(QStringLiteral("编辑标注文字"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("编辑标注文字")));
         model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
-        model_->log(QStringLiteral("已更新标注文字 #%1").arg(id));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已更新标注文字 #%1")).arg(id));
         return;
     }
 
@@ -2559,12 +2629,12 @@ void MainWindow::editElementText(int id) {
     if (e->type == ElementType::MLeader || e->type == ElementType::Fcf) {
         bool ok = false;
         const QString txt = QInputDialog::getMultiLineText(
-            this, QStringLiteral("编辑文字"),
-            QStringLiteral("覆盖文本（留空恢复默认内容）："), e->text, &ok);
+            this, SketchCAD::I18n::t(QString::fromUtf8("编辑文字")),
+            SketchCAD::I18n::t(QString::fromUtf8("覆盖文本（留空恢复默认内容）：")), e->text, &ok);
         if (!ok) return;
-        model_->beginEdit(QStringLiteral("编辑标注文字"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("编辑标注文字")));
         model_->updateElementQuiet(id, [txt](Element& x) { x.text = txt; });
-        model_->log(QStringLiteral("已更新标注文字 #%1").arg(id));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已更新标注文字 #%1")).arg(id));
         return;
     }
 
@@ -2574,7 +2644,7 @@ void MainWindow::editElementText(int id) {
     if (dlg.exec() != QDialog::Accepted) return;
 
     const Element upd = dlg.buildElement(e->pts.empty() ? Vec3() : e->pts[0]);
-    model_->beginEdit(QStringLiteral("编辑文字"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("编辑文字")));
     model_->updateElementQuiet(id, [&upd](Element& x) {
         x.text        = upd.text;         // 内容（支持 \n 与 %<字段>% 占位）
         x.radius      = upd.radius;       // 字高(mm)，复用 radius
@@ -2584,9 +2654,9 @@ void MainWindow::editElementText(int id) {
         x.lineSpacing = upd.lineSpacing;
         x.mtextWidth  = upd.mtextWidth;
     });
-    model_->log(QStringLiteral("已更新文字 #%1（样式 %2）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已更新文字 #%1（样式 %2）"))
                     .arg(id)
-                    .arg(upd.styleName.isEmpty() ? QStringLiteral("默认") : upd.styleName));
+                    .arg(upd.styleName.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("默认")) : upd.styleName));
 }
 
 // ============================================================================
@@ -2651,26 +2721,26 @@ void MainWindow::openPrintPreview() {
 }
 
 void MainWindow::exportPdfDirect() {
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF"),
+    const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("导出 PDF")),
                                                      QStringLiteral("SketchCAD.pdf"),
-                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+                                                     SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
     if (path.isEmpty()) return;
     if (PrintEngine::exportPdf(model_, currentPrintSettings_, path))
-        model_->log(QStringLiteral("已导出 PDF：%1").arg(path), "info");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已导出 PDF：%1")).arg(path), "info");
     else
-        model_->log(QStringLiteral("导出 PDF 失败"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("导出 PDF 失败")), "warn");
 }
 
 void MainWindow::exportPdfLayoutsDirect() {
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF（全部布局）"),
+    const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("导出 PDF（全部布局）")),
                                                      QStringLiteral("SketchCAD.pdf"),
-                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+                                                     SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
     if (path.isEmpty()) return;
     const int pages = PrintEngine::exportPdfLayouts(model_, path);
     if (pages > 0)
-        model_->log(QStringLiteral("已按布局导出 PDF（%1 页）：%2").arg(pages).arg(path), "info");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已按布局导出 PDF（%1 页）：%2")).arg(pages).arg(path), "info");
     else
-        model_->log(QStringLiteral("导出 PDF 失败"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("导出 PDF 失败")), "warn");
 }
 
 void MainWindow::printDirect() {
@@ -2686,9 +2756,9 @@ void MainWindow::printDirect() {
     if (appSettings_ && !printer.printerName().isEmpty())
         appSettings_->setPrinterName(printer.printerName());
     if (!PrintEngine::print(model_, currentPrintSettings_, &printer))
-        model_->log(QStringLiteral("打印失败"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("打印失败")), "warn");
     else
-        model_->log(QStringLiteral("已发送至打印机"), "info");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已发送至打印机")), "info");
 }
 
 // ============================================================================
@@ -2730,8 +2800,8 @@ void MainWindow::openInsertBlockDialog() {
 
 void MainWindow::openCreateBlockDialog() {
     if (model_->selection().empty()) {
-        QMessageBox::information(this, QStringLiteral("创建块"),
-            QStringLiteral("请先选中要收进块的图元，再执行「创建块」。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("创建块")),
+            SketchCAD::I18n::t(QString::fromUtf8("请先选中要收进块的图元，再执行「创建块」。")));
         return;
     }
     CreateBlockDialog dlg(model_, this);
@@ -2755,15 +2825,15 @@ void MainWindow::openBlockEditorDialog() {
     if (name.isEmpty() || !model_->hasBlock(name)) {
         // 兜底：从块表里选一个
         if (model_->blockCount() == 0) {
-            QMessageBox::information(this, QStringLiteral("在位编辑块"),
-                QStringLiteral("当前图还没有块定义，请先「创建块」或「插入块」。"));
+            QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("在位编辑块")),
+                SketchCAD::I18n::t(QString::fromUtf8("当前图还没有块定义，请先「创建块」或「插入块」。")));
             return;
         }
         QStringList names;
         for (const auto& d : model_->blockTable()) names << d.name;
         bool ok = false;
-        name = QInputDialog::getItem(this, QStringLiteral("在位编辑块"),
-                                     QStringLiteral("选择要编辑的块："), names, 0, false, &ok);
+        name = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("在位编辑块")),
+                                     SketchCAD::I18n::t(QString::fromUtf8("选择要编辑的块：")), names, 0, false, &ok);
         if (!ok || name.isEmpty()) return;
     }
     openBlockEditorDialog(name);
@@ -2797,8 +2867,8 @@ void MainWindow::explodeBlockFromMenu() {
         if (e && e->type == ElementType::BlockRef) refs.push_back(id);
     }
     if (refs.empty()) {
-        QMessageBox::information(this, QStringLiteral("分解块"),
-            QStringLiteral("请先选中至少一个块引用（已插入的块），再执行「分解块」。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("分解块")),
+            SketchCAD::I18n::t(QString::fromUtf8("请先选中至少一个块引用（已插入的块），再执行「分解块」。")));
         return;
     }
     int total = 0;
@@ -2806,7 +2876,7 @@ void MainWindow::explodeBlockFromMenu() {
         auto added = model_->explodeBlockRef(id);
         total += (int)added.size();
     }
-    model_->log(QStringLiteral("已分解 %1 个块引用 → %2 个图元")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已分解 %1 个块引用 → %2 个图元"))
                     .arg(refs.size()).arg(total));
 }
 
@@ -2822,17 +2892,17 @@ void MainWindow::openAttachXrefDialog() {
 void MainWindow::detachXrefFromMenu() {
     const QStringList names = model_->xrefNames();
     if (names.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("分离外部参照"),
-            QStringLiteral("当前图纸没有已附加的外部参照。"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("分离外部参照")),
+            SketchCAD::I18n::t(QString::fromUtf8("当前图纸没有已附加的外部参照。")));
         return;
     }
     bool ok = false;
-    const QString pick = QInputDialog::getItem(this, QStringLiteral("分离外部参照"),
-        QStringLiteral("选择要分离的外部参照（嵌套参照只能在它的宿主图中分离）："),
+    const QString pick = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("分离外部参照")),
+        SketchCAD::I18n::t(QString::fromUtf8("选择要分离的外部参照（嵌套参照只能在它的宿主图中分离）：")),
         names, 0, false, &ok);
     if (!ok || pick.isEmpty()) return;
-    if (QMessageBox::question(this, QStringLiteral("分离外部参照"),
-            QStringLiteral("确定分离外部参照「%1」？它的全部参照实例将一并删除（可撤销）。")
+    if (QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("分离外部参照")),
+            SketchCAD::I18n::t(QString::fromUtf8("确定分离外部参照「%1」？它的全部参照实例将一并删除（可撤销）。"))
                 .arg(pick),
             QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
         return;
@@ -2894,19 +2964,19 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     // 尺寸标注子菜单：GB/T 4458.4-2003 的各种注法集中在这里
     m->addSection(QStringLiteral("尺寸标注  GB/T 4458.4 / ISO 129"));
-    dimMenu_ = m->addMenu(icons::make("dim"), tr("尺寸标注"));
+    dimMenu_ = m->addMenu(icons::make("dim"), SketchCAD::I18n::t(tr("尺寸标注")));
     for (QAction* a : dimActs_) if (a) dimMenu_->addAction(a);
 
     m->addSection(QStringLiteral("绘制选项"));
     m->addAction(actChain_);
 
     // 线宽子菜单（与工具条下拉框指向同一个 applyWidth）
-    widthMenu_ = m->addMenu(icons::make("width"), tr("线宽"));
+    widthMenu_ = m->addMenu(icons::make("width"), SketchCAD::I18n::t(tr("线宽")));
     auto* wg = new QActionGroup(this);
     wg->setExclusive(true);
     for (double px : {1.0, 2.0, 3.0, 5.0}) {
         QAction* a = widthMenu_->addAction(icons::widthBar(px),
-                                           QString::fromUtf8(lineWidthName(px)));
+                                           SketchCAD::I18n::t(QString::fromUtf8(lineWidthName(px))));
         a->setCheckable(true);
         a->setActionGroup(wg);
         a->setData(px);
@@ -2920,54 +2990,54 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     // 航空制图与机械制图模板
     m->addSection(QStringLiteral("制图模板"));
-    QAction* aircraftAct = m->addAction(QStringLiteral("飞机三面图..."));
+    QAction* aircraftAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("飞机三面图...")));
     aircraftAct->setIcon(icons::make("views"));
-    aircraftAct->setToolTip(QStringLiteral("按默认或自定义尺寸生成飞机正面图、侧面图、俯视图"));
+    aircraftAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义尺寸生成飞机正面图、侧面图、俯视图")));
     aircraftAct->setStatusTip(aircraftAct->toolTip());
     connect(aircraftAct, &QAction::triggered, this, [this] {
         AircraftViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
-    QAction* flangeAct = m->addAction(QStringLiteral("法兰盘三面图..."));
+    QAction* flangeAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("法兰盘三面图...")));
     flangeAct->setIcon(icons::make("views"));
-    flangeAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘主视图、俯视图、左视图"));
+    flangeAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成法兰盘主视图、俯视图、左视图")));
     flangeAct->setStatusTip(flangeAct->toolTip());
     connect(flangeAct, &QAction::triggered, this, [this] {
         FlangeViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
-    QAction* bearingAct = m->addAction(QStringLiteral("轴承座三面图..."));
+    QAction* bearingAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("轴承座三面图...")));
     bearingAct->setIcon(icons::make("views"));
-    bearingAct->setToolTip(QStringLiteral("按默认或自定义参数生成轴承座主视图、俯视图、左视图（左视图全剖）"));
+    bearingAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成轴承座主视图、俯视图、左视图（左视图全剖）")));
     bearingAct->setStatusTip(bearingAct->toolTip());
     connect(bearingAct, &QAction::triggered, this, [this] {
         BearingViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
-    QAction* housingAct = m->addAction(QStringLiteral("箱体视图..."));
+    QAction* housingAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("箱体视图...")));
     housingAct->setIcon(icons::make("views"));
-    housingAct->setToolTip(QStringLiteral("按默认或自定义参数生成箱体主视图（全剖）、俯视图 B、A—A 断面、C 向视图（含剖切符号与粗糙度）"));
+    housingAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成箱体主视图（全剖）、俯视图 B、A—A 断面、C 向视图（含剖切符号与粗糙度）")));
     housingAct->setStatusTip(housingAct->toolTip());
     connect(housingAct, &QAction::triggered, this, [this] {
         HousingViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
-    QAction* flangeHubAct = m->addAction(QStringLiteral("法兰盘轮毂视图..."));
+    QAction* flangeHubAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("法兰盘轮毂视图...")));
     flangeHubAct->setIcon(icons::make("views"));
-    flangeHubAct->setToolTip(QStringLiteral("按默认或自定义参数生成法兰盘轮毂视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）"));
+    flangeHubAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成法兰盘轮毂视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）")));
     flangeHubAct->setStatusTip(flangeHubAct->toolTip());
     connect(flangeHubAct, &QAction::triggered, this, [this] {
         FlangeHubViewsDialog dlg(model_, this);
         dlg.exec();
     });
 
-    QAction* floorPlanAct = m->addAction(QStringLiteral("户型平面图..."));
+    QAction* floorPlanAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("户型平面图...")));
     floorPlanAct->setIcon(icons::make("views"));
-    floorPlanAct->setToolTip(QStringLiteral("按默认或自定义参数生成建筑户型平面图：墙体（剪力墙涂黑/双线内墙）、门（开启弧）、窗、家具图块、房间标注、四周建筑尺寸链与右侧图签"));
+    floorPlanAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成建筑户型平面图：墙体（剪力墙涂黑/双线内墙）、门（开启弧）、窗、家具图块、房间标注、四周建筑尺寸链与右侧图签")));
     floorPlanAct->setStatusTip(floorPlanAct->toolTip());
     connect(floorPlanAct, &QAction::triggered, this, [this] {
         FloorPlanViewsDialog dlg(model_, this);
@@ -2976,14 +3046,14 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     // 块（Block）：创建/插入/管理/分解的可视化入口（与【编辑>修改>块】共用 buildBlockMenu）
     {
-        QMenu* blk = m->addMenu(icons::make("block"), tr("块(&B)"));
+        QMenu* blk = m->addMenu(icons::make("block"), SketchCAD::I18n::t(tr("块(&B)")));
         buildBlockMenu(blk);
     }
 
     // 文字样式管理器（STYLE）：统一治理字体/字高/宽度因子并批量应用。
     // MTEXT 多行文字工具经上方「文字」分组（drawGroups_）进入，此处不重复挂载。
-    QAction* styleAct = m->addAction(icons::make("style"), QStringLiteral("文字样式管理器..."));
-    styleAct->setToolTip(QStringLiteral("文字样式管理器 (STYLE)：创建/修改/删除样式，统一字体、字高、宽度因子并批量应用到已有文字"));
+    QAction* styleAct = m->addAction(icons::make("style"), SketchCAD::I18n::t(QString::fromUtf8("文字样式管理器...")));
+    styleAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("文字样式管理器 (STYLE)：创建/修改/删除样式，统一字体、字高、宽度因子并批量应用到已有文字")));
     styleAct->setStatusTip(styleAct->toolTip());
     connect(styleAct, &QAction::triggered, this, [this] { openStyleManager(); });
 
@@ -2991,7 +3061,7 @@ void MainWindow::buildSketchMenu(QMenu* m) {
     // 不给它绑 Esc：Esc 已经绑在「选择」工具上，两处都注册会触发 Qt 的
     // ambiguous shortcut（按键被吞掉、谁也不响应）。画布内的 Esc 由
     // GraphicsView::keyPressEvent 统一处理，这里只提供一个鼠标入口。
-    QAction* cancel = m->addAction(QStringLiteral("取消当前绘制  (Esc)"));
+    QAction* cancel = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("取消当前绘制  (Esc)")));
     cancel->setIcon(icons::make("cancel"));
     connect(cancel, &QAction::triggered, this, [this] { view_->cancelDrawing(); });
     // 注：原「编辑与视图」分组（editGroups_）已按语义拆分——
@@ -3023,22 +3093,22 @@ void MainWindow::addFlatGroups(QMenu* parent,
 // 全部复用工具条的 toolActions_ 指针，因此菜单项与工具条按钮共享高亮/快捷键，
 // 与「草图绘制 > 直线绘制方式」是同一批动作的两个入口，不会不同步。
 void MainWindow::buildLineMenu(QMenu* m) {
-    addSubMenu(m, "line", QStringLiteral("基本"), {
+    addSubMenu(m, "line", SketchCAD::I18n::t(QString::fromUtf8("基本")), {
         "line", "line_h", "line_v", "line_angle",
         "line_parallel", "line_parallel_pt", "line_bisector"});
-    addSubMenu(m, "line", QStringLiteral("切线"), {
+    addSubMenu(m, "line", SketchCAD::I18n::t(QString::fromUtf8("切线")), {
         "line_tangent_pc", "line_tangent_cc", "line_tangent_ortho"});
-    addSubMenu(m, "line", QStringLiteral("垂直与角度"), {
+    addSubMenu(m, "line", SketchCAD::I18n::t(QString::fromUtf8("垂直与角度")), {
         "line_orthogonal", "line_rel_angle", "line_angle_from_line",
         "line_orthogonal_from_line", "line_from_point_to_line"});
-    addSubMenu(m, "line", QStringLiteral("正交折线"), {
+    addSubMenu(m, "line", SketchCAD::I18n::t(QString::fromUtf8("正交折线")), {
         "line_snake", "line_snake_x", "line_snake_y"});
 }
 
 // 【构造线】菜单：XLINE 六种绘制方式（对应 AutoCAD Through/Hor/Ver/Angle/Bisect/Offset）。
 // 全部复用工具条的 toolActions_ 指针，与「草图绘制 > 构造线」是同一批动作的两个入口。
 void MainWindow::buildXlineMenu(QMenu* m) {
-    addSubMenu(m, "xline", QStringLiteral("基本"), {
+    addSubMenu(m, "xline", SketchCAD::I18n::t(QString::fromUtf8("基本")), {
         "xline", "xline_h", "xline_v", "xline_angle",
         "xline_bisector", "xline_parallel"});
 }
@@ -3047,22 +3117,22 @@ void MainWindow::buildXlineMenu(QMenu* m) {
 // 全部复用工具条的 toolActions_ 指针，因此菜单项与工具条按钮共享高亮/快捷键，
 // 与「草图绘制 > 圆」是同一批动作的两个入口，不会不同步。
 void MainWindow::buildCircleMenu(QMenu* m) {
-    addSubMenu(m, "circle", QStringLiteral("基本"), {
+    addSubMenu(m, "circle", SketchCAD::I18n::t(QString::fromUtf8("基本")), {
         "circle", "circle_2p", "circle_2pr", "circle3p", "circle_cr"});
-    addSubMenu(m, "circle", QStringLiteral("相切"), {
+    addSubMenu(m, "circle", SketchCAD::I18n::t(QString::fromUtf8("相切")), {
         "circle_t2e1p", "circle_t1e2p", "circle_t2er", "circle_t3e"});
-    addSubMenu(m, "circle", QStringLiteral("其他"), {
+    addSubMenu(m, "circle", SketchCAD::I18n::t(QString::fromUtf8("其他")), {
         "circle_inscribed", "circle_concentric", "circle_byarc"});
 }
 
 // 【圆弧】菜单：把圆弧绘制方式按类别拆成中文二级子菜单。
 // 全部复用工具条的 toolActions_ 指针，与「草图绘制 > 圆弧」是同一批动作的两个入口。
 void MainWindow::buildArcMenu(QMenu* m) {
-    addSubMenu(m, "arc", QStringLiteral("基本"), {
+    addSubMenu(m, "arc", SketchCAD::I18n::t(QString::fromUtf8("基本")), {
         "arc", "arc_3p", "arc_cpc", "arc_cpaa",
         "arc_tpa", "arc_tpr", "arc_tpl", "arc_tph"});
-    addSubMenu(m, "arc", QStringLiteral("相切"), {"arc_tan"});
-    addSubMenu(m, "arc", QStringLiteral("椭圆弧"), {"arc_ea_axis", "arc_ea_1pt"});
+    addSubMenu(m, "arc", SketchCAD::I18n::t(QString::fromUtf8("相切")), {"arc_tan"});
+    addSubMenu(m, "arc", SketchCAD::I18n::t(QString::fromUtf8("椭圆弧")), {"arc_ea_axis", "arc_ea_1pt"});
 }
 
 // 【多边形】菜单：把多边形绘制方式按类别拆成中文二级子菜单。
@@ -3072,11 +3142,11 @@ void MainWindow::buildPolyMenu(QMenu* m) {
     // 自由多边形 / 矩形（主工具，不在子菜单中，直接作为顶级项）
     if (QAction* a = toolActions_.value("poly")) m->addAction(a);
     if (QAction* a = toolActions_.value("rect")) m->addAction(a);
-    addSubMenu(m, "poly", QStringLiteral("正多边形"), {
+    addSubMenu(m, "poly", SketchCAD::I18n::t(QString::fromUtf8("正多边形")), {
         "poly_regular", "poly_circumscribed", "poly_edge"});
-    addSubMenu(m, "poly", QStringLiteral("特殊矩形"), {
+    addSubMenu(m, "poly", SketchCAD::I18n::t(QString::fromUtf8("特殊矩形")), {
         "rect_chamfer", "rect_fillet"});
-    addSubMenu(m, "poly", QStringLiteral("其他"), {"poly_star"});
+    addSubMenu(m, "poly", SketchCAD::I18n::t(QString::fromUtf8("其他")), {"poly_star"});
 }
 
 // 【样条】菜单 —— 扁平布局，与参考图（FreeCAD Sketcher 的 Spline 菜单）逐项一致：
@@ -3149,9 +3219,9 @@ void MainWindow::buildParamBar() {
     hl->setContentsMargins(8, 4, 8, 4);
     hl->setSpacing(8);
 
-    hl->addWidget(new QLabel(QStringLiteral("参数输入条")));
+    hl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("参数输入条"))));
 
-    lblAngle_ = new QLabel(QStringLiteral("角度"));
+    lblAngle_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("角度")));
     hl->addWidget(lblAngle_);
     sbAngle_ = new QDoubleSpinBox(this);
     sbAngle_->setRange(-360.0, 360.0);
@@ -3162,7 +3232,7 @@ void MainWindow::buildParamBar() {
             this, [this](double v) { model_->setLineParamAngle(v); });
     hl->addWidget(sbAngle_);
 
-    lblLength_ = new QLabel(QStringLiteral("长度"));
+    lblLength_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("长度")));
     hl->addWidget(lblLength_);
     sbLength_ = new QDoubleSpinBox(this);
     sbLength_->setRange(0.0, 1e6);
@@ -3175,7 +3245,7 @@ void MainWindow::buildParamBar() {
             });
     hl->addWidget(sbLength_);
 
-    lblSpacing_ = new QLabel(QStringLiteral("间隔"));
+    lblSpacing_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("间隔")));
     hl->addWidget(lblSpacing_);
     sbSpacing_ = new QDoubleSpinBox(this);
     sbSpacing_->setRange(0.1, 1e6);
@@ -3188,7 +3258,7 @@ void MainWindow::buildParamBar() {
             });
     hl->addWidget(sbSpacing_);
 
-    lblCount_ = new QLabel(QStringLiteral("条数"));
+    lblCount_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("条数")));
     hl->addWidget(lblCount_);
     sbCount_ = new QSpinBox(this);
     sbCount_->setRange(1, 999);
@@ -3200,7 +3270,7 @@ void MainWindow::buildParamBar() {
     hl->addSpacing(12);
 
     // 线型选择：绘图时可在此切换新图元的线型
-    hl->addWidget(new QLabel(QStringLiteral("线型")));
+    hl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("线型"))));
     paramStyleBox_ = new QComboBox(this);
     paramStyleBox_->setIconSize(QSize(48, 16));
     paramStyleBox_->setMinimumContentsLength(8);
@@ -3209,14 +3279,14 @@ void MainWindow::buildParamBar() {
     for (int i = 0; i < kLineStyleCount; ++i) {
         LineStyle ls = (LineStyle)i;
         paramStyleBox_->addItem(icons::lineStyleIcon(ls),
-                                QString::fromUtf8(lineStyleName(ls)), i);
+                                SketchCAD::I18n::t(QString::fromUtf8(lineStyleName(ls))), i);
     }
     connect(paramStyleBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int i) { if (i >= 0) applyLineStyle(i); });
     hl->addWidget(paramStyleBox_);
 
     hl->addSpacing(12);
-    paramHint_ = new QLabel(QStringLiteral("（选择「角度直线」或「平行线」时此处生效）"));
+    paramHint_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("（选择「角度直线」或「平行线」时此处生效）")));
     paramHint_->setStyleSheet(QStringLiteral("color:#6c7484;"));
     // 提示文字占 paramBar 最小宽的大头(约 333px)：设弹性尺寸策略后大屏由 stretch 占满显示，
     // 窄屏时随 paramBar 一起压缩，从而让 paramBar/主窗口最小宽显著下降、不再把窗口顶出屏幕。
@@ -3269,21 +3339,21 @@ void MainWindow::updateParamBarForTool(const QString& t) {
     if (lblLength_) {
         lblLength_->setVisible(!isPolySides);
         lblLength_->setText(isCircleRadius
-                            ? QStringLiteral("半径")
-                            : QStringLiteral("长度"));
+                            ? SketchCAD::I18n::t(QString::fromUtf8("半径"))
+                            : SketchCAD::I18n::t(QString::fromUtf8("长度")));
     }
     if (sbLength_)  sbLength_->setVisible(!isPolySides);
     // 多边形边数模式：隐藏间隔，将「条数」改为「边数」
     if (lblSpacing_) lblSpacing_->setVisible(!isPolySides);
     if (sbSpacing_)  sbSpacing_->setVisible(!isPolySides);
     if (lblCount_)   lblCount_->setText(isPolySides
-                                        ? QStringLiteral("边数")
-                                        : QStringLiteral("条数"));
+                                        ? SketchCAD::I18n::t(QString::fromUtf8("边数"))
+                                        : SketchCAD::I18n::t(QString::fromUtf8("条数")));
     // 提示文本从 ToolRegistry 获取（单一数据源，消除 8 个硬编码 if-else 分支）
     if (paramHint_) {
         const QString hint = reg.paramHint(t);
         paramHint_->setText(hint.isEmpty()
-                            ? QStringLiteral("（选择「角度直线」「平行线」「圆心+半径」等时此处生效）")
+                            ? SketchCAD::I18n::t(QString::fromUtf8("（选择「角度直线」「平行线」「圆心+半径」等时此处生效）"))
                             : hint);
     }
 }
@@ -3530,23 +3600,26 @@ void MainWindow::createDropdownTool(QToolBar* tb, QActionGroup* group, QList<QAc
         else qWarning().noquote() << QStringLiteral("未知即时命令:") << id;
     };
     for (const auto& sm : subModes) {
+        // 子模式中文名/提示走运行时词典，语言切换重建工具条时按新语言求值。
+        const QString smZh = SketchCAD::I18n::t(sm.zh);
+        const QString smTip = SketchCAD::I18n::t(sm.tip);
         if (sm.instant) {
-            auto* a = new QAction(sm.zh, this);
+            auto* a = new QAction(smZh, this);
             if (!sm.icon.isEmpty()) a->setIcon(icons::make(sm.icon));
             a->setCheckable(false);
-            a->setToolTip(sm.tip);
-            a->setStatusTip(sm.tip);
+            a->setToolTip(smTip);
+            a->setStatusTip(smTip);
             connect(a, &QAction::triggered, this, [runInstant, id = sm.id] { runInstant(id); });
             menu->addAction(a);
             addAction(a);
             continue;                          // 即时项不注册进 toolActions_（无工具状态可同步）
         }
-        auto* a = new QAction(sm.zh, this);
+        auto* a = new QAction(smZh, this);
         if (!sm.icon.isEmpty()) a->setIcon(icons::make(sm.icon));
         a->setCheckable(true);
         a->setActionGroup(group);
-        a->setToolTip(sm.tip);
-        a->setStatusTip(sm.tip);
+        a->setToolTip(smTip);
+        a->setStatusTip(smTip);
         connect(a, &QAction::triggered, this, [this, id = sm.id] { model_->setActiveTool(id); });
         menu->addAction(a);
         addAction(a);
@@ -3634,15 +3707,17 @@ void MainWindow::buildToolbar() {
         }
         if (sep) curTb->addSeparator();
     };
-    auto beginGroup = [&](const QString& title) { bucketTitle = title; };
+    auto beginGroup = [&](const QString& title) { bucketTitle = SketchCAD::I18n::t(title); };
 
     // onBar=false：只注册动作与快捷键，不占用工具条横向空间（放进菜单子项里）
     auto addEx = [&](const QString& zh, const QString& en, const QString& tip,
                      const QString& key, const QString& icon, bool onBar, bool inBucket) {
-        auto* a = new QAction(icons::make(icon), zh, this);
+        const QString zhT  = SketchCAD::I18n::t(zh);   // 中文名/提示走运行时词典，语言切换重建时重求值
+        const QString tipT = SketchCAD::I18n::t(tip);
+        auto* a = new QAction(icons::make(icon), zhT, this);
         a->setCheckable(true);
         a->setActionGroup(group);
-        a->setToolTip(key.isEmpty() ? tip : QString("%1  [%2]").arg(tip, key));
+        a->setToolTip(key.isEmpty() ? tipT : QString("%1  [%2]").arg(tipT, key));
         a->setStatusTip(a->toolTip());
         if (!key.isEmpty()) { a->setShortcut(QKeySequence(key)); a->setShortcutContext(Qt::ApplicationShortcut); }
         connect(a, &QAction::triggered, this, [this, en] { model_->setActiveTool(en); });
@@ -3660,65 +3735,65 @@ void MainWindow::buildToolbar() {
 
     beginGroup(QStringLiteral("选择"));
     // 主按钮 = 选择/移动工具（Esc），下拉菜单含窗口选择/取消、选择实体/轮廓/相交/图层等
-    createDropdownTool(curTb, group, bucket, "select", QStringLiteral("选择"),
-                       "select", QStringLiteral("选择 / 移动 (Select)：点击选择，拖拽平移，空白处框选"),
-                       "Esc", QStringLiteral("选择菜单"), selectSubModes());
+    createDropdownTool(curTb, group, bucket, "select", SketchCAD::I18n::t(QString::fromUtf8("选择")),
+                       "select", SketchCAD::I18n::t(QString::fromUtf8("选择 / 移动 (Select)：点击选择，拖拽平移，空白处框选")),
+                       "Esc", SketchCAD::I18n::t(QString::fromUtf8("选择菜单")), selectSubModes());
     if (QAction* sa = toolActions_.value("select")) sa->setChecked(true);  // 默认选择工具高亮
     flush();
 
     beginGroup(QStringLiteral("基本图元"));
     // 直线：主按钮 = 2 Points，下拉菜单包含所有绘制方式（工厂方法消除重复代码）
-    createDropdownTool(curTb, group, bucket, "line", QStringLiteral("直线"),
-                       "line", QStringLiteral("直线 (两点)：连续模式下右键结束"),
-                       "L", QStringLiteral("直线绘制方式"), lineSubModes());
+    createDropdownTool(curTb, group, bucket, "line", SketchCAD::I18n::t(QString::fromUtf8("直线")),
+                       "line", SketchCAD::I18n::t(QString::fromUtf8("直线 (两点)：连续模式下右键结束")),
+                       "L", SketchCAD::I18n::t(QString::fromUtf8("直线绘制方式")), lineSubModes());
     // 构造线：主按钮 = 两点构造线，下拉菜单包含 H/V/A/B/O 六种绘制方式
-    createDropdownTool(curTb, group, bucket, "xline", QStringLiteral("构造线"),
-                       "xline", QStringLiteral("构造线 (Xline)：向两端无限延伸的辅助线，连续绘制，右键/Esc 退出"),
-                       "", QStringLiteral("构造线绘制方式"), xlineSubModes());
+    createDropdownTool(curTb, group, bucket, "xline", SketchCAD::I18n::t(QString::fromUtf8("构造线")),
+                       "xline", SketchCAD::I18n::t(QString::fromUtf8("构造线 (Xline)：向两端无限延伸的辅助线，连续绘制，右键/Esc 退出")),
+                       "", SketchCAD::I18n::t(QString::fromUtf8("构造线绘制方式")), xlineSubModes());
     add(QStringLiteral("矩形"),   "rect", QStringLiteral("矩形 (Rectangle)"), "R", "rect");
     // 多边形：主按钮 = 自由多边形(右键闭合)，下拉菜单包含正多边形/倒角矩形/圆角矩形/星形等绘制方式
-    createDropdownTool(curTb, group, bucket, "poly", QStringLiteral("多边形"),
-                       "poly", QStringLiteral("多边形 (Polygon)：自由顶点，右键闭合"),
-                       "P", QStringLiteral("多边形绘制方式"), polySubModes());
+    createDropdownTool(curTb, group, bucket, "poly", SketchCAD::I18n::t(QString::fromUtf8("多边形")),
+                       "poly", SketchCAD::I18n::t(QString::fromUtf8("多边形 (Polygon)：自由顶点，右键闭合")),
+                       "P", SketchCAD::I18n::t(QString::fromUtf8("多边形绘制方式")), polySubModes());
     flush();
 
     beginGroup(QStringLiteral("圆与圆弧"));
     // 圆：主按钮 = 圆心+点，下拉菜单包含所有12种绘制方式（工厂方法消除重复代码）
-    createDropdownTool(curTb, group, bucket, "circle", QStringLiteral("圆"),
-                       "circle", QStringLiteral("圆 (圆心+点)：点击圆心与圆周点"),
-                       "C", QStringLiteral("圆形绘制方式"), circleSubModes());
+    createDropdownTool(curTb, group, bucket, "circle", SketchCAD::I18n::t(QString::fromUtf8("圆")),
+                       "circle", SketchCAD::I18n::t(QString::fromUtf8("圆 (圆心+点)：点击圆心与圆周点")),
+                       "C", SketchCAD::I18n::t(QString::fromUtf8("圆形绘制方式")), circleSubModes());
     // 圆弧：主按钮 = 圆心+起点+终点，下拉菜单包含全部 11 种绘制方式
-    createDropdownTool(curTb, group, bucket, "arc", QStringLiteral("圆弧"),
-                       "arc", QStringLiteral("圆弧 (Arc)：圆心 + 起点 + 终点"),
-                       "A", QStringLiteral("圆弧绘制方式"), arcSubModes());
+    createDropdownTool(curTb, group, bucket, "arc", SketchCAD::I18n::t(QString::fromUtf8("圆弧")),
+                       "arc", SketchCAD::I18n::t(QString::fromUtf8("圆弧 (Arc)：圆心 + 起点 + 终点")),
+                       "A", SketchCAD::I18n::t(QString::fromUtf8("圆弧绘制方式")), arcSubModes());
     // 椭圆：主按钮 = 椭圆(1点)，下拉菜单包含参考图全部 6 种绘制方式
-    createDropdownTool(curTb, group, bucket, "ellipse", QStringLiteral("椭圆"),
-                       "ellipse_1pt", QStringLiteral("椭圆 (Ellipse (1 Point))：点击中心，再点椭圆上一点"),
-                       "E", QStringLiteral("椭圆绘制方式"), ellipseSubModes());
+    createDropdownTool(curTb, group, bucket, "ellipse", SketchCAD::I18n::t(QString::fromUtf8("椭圆")),
+                       "ellipse_1pt", SketchCAD::I18n::t(QString::fromUtf8("椭圆 (Ellipse (1 Point))：点击中心，再点椭圆上一点")),
+                       "E", SketchCAD::I18n::t(QString::fromUtf8("椭圆绘制方式")), ellipseSubModes());
     flush();
 
     // 折线：主按钮 = 绘制折线（依次点击节点），下拉菜单包含 9 个编辑命令
-    createDropdownTool(curTb, group, bucket, "polyline", QStringLiteral("折线"),
-                       "polyline", QStringLiteral("折线 (Polyline)：依次点击节点生成多段线，右键结束"),
-                       "P", QStringLiteral("折线绘制与编辑"), polylineSubModes());
+    createDropdownTool(curTb, group, bucket, "polyline", SketchCAD::I18n::t(QString::fromUtf8("折线")),
+                       "polyline", SketchCAD::I18n::t(QString::fromUtf8("折线 (Polyline)：依次点击节点生成多段线，右键结束")),
+                       "P", SketchCAD::I18n::t(QString::fromUtf8("折线绘制与编辑")), polylineSubModes());
     flush();
 
     // 边界（BOUNDARY / BPOLY）：交互定义填充边界（外环 + 可选内孔），作为剖面填充的直接输入，
     // 解除剖面填充对内置「边界自动追踪算法」的单一依赖。BPOLY 为同义命令别名。
-    createDropdownTool(curTb, group, bucket, "boundary", QStringLiteral("边界"),
-                       "boundary", QStringLiteral("边界 (BOUNDARY)：依次点击节点定义封闭填充边界（可含内孔），生成边界图元供剖面填充直接复用，无需逐段描边"),
-                       "", QStringLiteral("边界 (BOUNDARY/BPOLY)"), QVector<ToolSubMode>());
+    createDropdownTool(curTb, group, bucket, "boundary", SketchCAD::I18n::t(QString::fromUtf8("边界")),
+                       "boundary", SketchCAD::I18n::t(QString::fromUtf8("边界 (BOUNDARY)：依次点击节点定义封闭填充边界（可含内孔），生成边界图元供剖面填充直接复用，无需逐段描边")),
+                       "", SketchCAD::I18n::t(QString::fromUtf8("边界 (BOUNDARY/BPOLY)")), QVector<ToolSubMode>());
     flush();
 
     beginGroup(QStringLiteral("曲线"));
     // 样条：主按钮 = 自由样条(右键结束)，下拉菜单包含抛物线/双曲线/4点抛物线/焦点准线/过点/自由手绘等绘制方式
-    createDropdownTool(curTb, group, bucket, "spline", QStringLiteral("样条"),
-                       "spline", QStringLiteral("样条曲线 (Spline)：过控制点的光滑曲线，右键结束"),
-                       "S", QStringLiteral("样条绘制方式"), splineSubModes());
+    createDropdownTool(curTb, group, bucket, "spline", SketchCAD::I18n::t(QString::fromUtf8("样条")),
+                       "spline", SketchCAD::I18n::t(QString::fromUtf8("样条曲线 (Spline)：过控制点的光滑曲线，右键结束")),
+                       "S", SketchCAD::I18n::t(QString::fromUtf8("样条绘制方式")), splineSubModes());
     // 样条编辑：主按钮 = 由多段线创建，下拉菜单包含追加/插入/删除控制点/删除两段之间/分解
-    createDropdownTool(curTb, group, bucket, "spline", QStringLiteral("样条编辑"),
-                       "spline_from_polyline", QStringLiteral("样条编辑：由多段线创建 / 增删控制点 / 分解"),
-                       "", QStringLiteral("样条编辑命令"), splineEditSubModes());
+    createDropdownTool(curTb, group, bucket, "spline", SketchCAD::I18n::t(QString::fromUtf8("样条编辑")),
+                       "spline_from_polyline", SketchCAD::I18n::t(QString::fromUtf8("样条编辑：由多段线创建 / 增删控制点 / 分解")),
+                       "", SketchCAD::I18n::t(QString::fromUtf8("样条编辑命令")), splineEditSubModes());
     flush();
 
     beginGroup(QStringLiteral("约束"));
@@ -3730,11 +3805,11 @@ void MainWindow::buildToolbar() {
     // 文字与表格组：MTEXT 多行文字 + TABLE 明细表。不上工具条（第一行横向空间已满，
     // 见修改组注释），经【绘图>文字与表格】分组进入；点击画布后弹出对应编辑对话框。
     beginGroup(QStringLiteral("文字与表格"));
-    addEx(QStringLiteral("多行文字"), "mtext",
-          QStringLiteral("多行文字 (MTEXT)：点击插入点后编辑多行内容、对齐、样式、字段与自动换行"),
+    addEx(SketchCAD::I18n::t(QString::fromUtf8("多行文字")), "mtext",
+          SketchCAD::I18n::t(QString::fromUtf8("多行文字 (MTEXT)：点击插入点后编辑多行内容、对齐、样式、字段与自动换行")),
           "", "mtext", /*onBar=*/false, /*inBucket=*/true);
-    addEx(QStringLiteral("表格"), "table",
-          QStringLiteral("表格 (TABLE)：点击放置表格左上角后编辑行列、列宽、行高、字高与单元格内容（明细表）"),
+    addEx(SketchCAD::I18n::t(QString::fromUtf8("表格")), "table",
+          SketchCAD::I18n::t(QString::fromUtf8("表格 (TABLE)：点击放置表格左上角后编辑行列、列宽、行高、字高与单元格内容（明细表）")),
           "", "table", /*onBar=*/false, /*inBucket=*/true);
     flush(/*sep=*/false, /*toMenu=*/true);
 
@@ -3742,40 +3817,40 @@ void MainWindow::buildToolbar() {
     // 它们与工具条上的「标注」同属一个互斥组，切换时高亮状态自动互斥。
     dimActs_.clear();
     dimActs_ << toolActions_.value("dim");
-    dimActs_ << addEx(QStringLiteral("智能标注"), "dim_smart",
-                      QStringLiteral("智能标注：先选中一条直线(→对齐标注)或一个圆(→直径标注)，一键生成，免逐点拾取"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("智能标注")), "dim_smart",
+                      SketchCAD::I18n::t(QString::fromUtf8("智能标注：先选中一条直线(→对齐标注)或一个圆(→直径标注)，一键生成，免逐点拾取")),
                       "Shift+S", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("对齐标注"), "dim_aligned",
-                      QStringLiteral("对齐标注：尺寸线平行于两测量点连线，量真实距离"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("对齐标注")), "dim_aligned",
+                      SketchCAD::I18n::t(QString::fromUtf8("对齐标注：尺寸线平行于两测量点连线，量真实距离")),
                       "Shift+D", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("水平标注"), "dim_h",
-                      QStringLiteral("水平标注：只量 X 方向投影"), "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("竖直标注"), "dim_v",
-                      QStringLiteral("竖直标注：只量 Y 方向投影"), "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("角度标注"), "dim_angle",
-                      QStringLiteral("角度标注：角顶点 + 两条边上各一点，数字一律水平书写"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("水平标注")), "dim_h",
+                      SketchCAD::I18n::t(QString::fromUtf8("水平标注：只量 X 方向投影")), "", "dim", false, false);
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("竖直标注")), "dim_v",
+                      SketchCAD::I18n::t(QString::fromUtf8("竖直标注：只量 Y 方向投影")), "", "dim", false, false);
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("角度标注")), "dim_angle",
+                      SketchCAD::I18n::t(QString::fromUtf8("角度标注：角顶点 + 两条边上各一点，数字一律水平书写")),
                       "Shift+A", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("半径标注"), "dim_radius",
-                      QStringLiteral("半径标注：点选圆/圆弧，点击方位即引出方向（R 前缀）"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("半径标注")), "dim_radius",
+                      SketchCAD::I18n::t(QString::fromUtf8("半径标注：点选圆/圆弧，点击方位即引出方向（R 前缀）")),
                       "Shift+R", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("直径标注"), "dim_diameter",
-                      QStringLiteral("直径标注：点选圆/圆弧，尺寸线通过圆心（⌀ 前缀）"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("直径标注")), "dim_diameter",
+                      SketchCAD::I18n::t(QString::fromUtf8("直径标注：点选圆/圆弧，尺寸线通过圆心（⌀ 前缀）")),
                       "Shift+I", "dim", false, false);
     // ---- GB/T 4458.4 / ISO 129 通用注法：基线 / 连续 / 弧长 / 引线 / 坐标 ----
-    dimActs_ << addEx(QStringLiteral("基线标注"), "dim_baseline",
-                      QStringLiteral("基线标注：自同一基准线起并行排列的一组尺寸"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("基线标注")), "dim_baseline",
+                      SketchCAD::I18n::t(QString::fromUtf8("基线标注：自同一基准线起并行排列的一组尺寸")),
                       "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("连续标注"), "dim_continue",
-                      QStringLiteral("连续标注：首尾相接的链式尺寸（首尾均为箭头）"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("连续标注")), "dim_continue",
+                      SketchCAD::I18n::t(QString::fromUtf8("连续标注：首尾相接的链式尺寸（首尾均为箭头）")),
                       "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("弧长标注"), "dim_arc",
-                      QStringLiteral("弧长标注：点选圆弧，尺寸线为同心弧，数字带 ⌒ 前缀"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("弧长标注")), "dim_arc",
+                      SketchCAD::I18n::t(QString::fromUtf8("弧长标注：点选圆弧，尺寸线为同心弧，数字带 ⌒ 前缀")),
                       "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("引线标注"), "dim_leader",
-                      QStringLiteral("引线标注：连续点击折线点，末点为文字落点，用于文字/符号说明"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("引线标注")), "dim_leader",
+                      SketchCAD::I18n::t(QString::fromUtf8("引线标注：连续点击折线点，末点为文字落点，用于文字/符号说明")),
                       "", "dim", false, false);
-    dimActs_ << addEx(QStringLiteral("坐标标注"), "dim_ordinate",
-                      QStringLiteral("坐标标注：折线引出 + X 或 Y 坐标值，用于孔系定位"),
+    dimActs_ << addEx(SketchCAD::I18n::t(QString::fromUtf8("坐标标注")), "dim_ordinate",
+                      SketchCAD::I18n::t(QString::fromUtf8("坐标标注：折线引出 + X 或 Y 坐标值，用于孔系定位")),
                       "", "dim", false, false);
 
     // =================================================================
@@ -3789,19 +3864,19 @@ void MainWindow::buildToolbar() {
     // =================================================================
     beginGroup(QStringLiteral("修改"));
     // 修剪 / 延伸：仍是互斥工具（快捷键 T / X），但不再单独占用工具条横向空间
-    QAction* trimAct = addEx(QStringLiteral("修剪"), "trim",
-        QStringLiteral("修剪 (Trim)：点击要剪掉的一段；Shift+点击可先指定边界图元"),
+    QAction* trimAct = addEx(SketchCAD::I18n::t(QString::fromUtf8("修剪")), "trim",
+        SketchCAD::I18n::t(QString::fromUtf8("修剪 (Trim)：点击要剪掉的一段；Shift+点击可先指定边界图元")),
         "T", "trim", /*onBar=*/false, /*inBucket=*/true);
-    QAction* extendAct = addEx(QStringLiteral("延伸"), "extend",
-        QStringLiteral("延伸 (Extend)：目标直线 + 边界直线"),
+    QAction* extendAct = addEx(SketchCAD::I18n::t(QString::fromUtf8("延伸")), "extend",
+        SketchCAD::I18n::t(QString::fromUtf8("延伸 (Extend)：目标直线 + 边界直线")),
         "X", "extend", /*onBar=*/false, /*inBucket=*/true);
 
     // 一键触发型修改命令：不是"切换工具"，而是点击后立即调用 modify 引擎，
     // 因此不加入互斥组（否则会把 activeTool 置成无效 id）。
     QList<QAction*> modifyActs;
     auto cmd = [&](const QString& zh, const QString& tip, const QString& icon, auto fn) {
-        auto* a = new QAction(icons::make(icon), zh, this);
-        a->setToolTip(tip);
+        auto* a = new QAction(icons::make(icon), SketchCAD::I18n::t(zh), this);
+        a->setToolTip(SketchCAD::I18n::t(tip));
         a->setStatusTip(a->toolTip());
         connect(a, &QAction::triggered, this, fn);
         addAction(a);            // 挂到窗口，便于下拉菜单与菜单栏复用同一指针
@@ -3816,11 +3891,11 @@ void MainWindow::buildToolbar() {
                 auto r = dlg.result();
                 std::vector<Element> src;
                 for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-                if (src.empty()) { model_->log(QStringLiteral("无可旋转图元"), "warn"); return; }
+                if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可旋转图元")), "warn"); return; }
                 auto changes = modify::makeRotate(src, Vec3(r.cx, r.cy), r.angleDeg);
-                model_->beginEdit(QStringLiteral("修改-旋转"));
+                model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-旋转")));
                 modify::applyChanges(model_, changes, QString());
-                model_->log(QStringLiteral("已旋转 %1 个图元 %2°").arg(src.size()).arg(r.angleDeg, 0, 'f', 2));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("已旋转 %1 个图元 %2°")).arg(src.size()).arg(r.angleDeg, 0, 'f', 2));
             });
         cmd(QStringLiteral("镜像"), QStringLiteral("镜像 (Mirror)：选中图元 → 选基准(点/直线) → 生成镜像副本"), "mirror",
             [this] { mirror(); });
@@ -3831,25 +3906,25 @@ void MainWindow::buildToolbar() {
                 double d = dlg.result().distMm;
                 std::vector<Element> src;
                 for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-                if (src.empty()) { model_->log(QStringLiteral("无可偏移图元"), "warn"); return; }
+                if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可偏移图元")), "warn"); return; }
                 auto changes = modify::makeOffset(src, d);
-                if (changes.empty()) { model_->log(QStringLiteral("偏移失败"), "warn"); return; }
-                model_->beginEdit(QStringLiteral("修改-偏移"));
+                if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("偏移失败")), "warn"); return; }
+                model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-偏移")));
                 auto added = modify::applyChanges(model_, changes, QString());
-                model_->log(QStringLiteral("已偏移 %1 个图元（Δ=%2 mm）").arg(added.size()).arg(d, 0, 'f', 2));
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("已偏移 %1 个图元（Δ=%2 mm）")).arg(added.size()).arg(d, 0, 'f', 2));
             });
         cmd(QStringLiteral("分解"), QStringLiteral("分解 (Explode)：矩形/多边形/折线/样条 → 多段独立直线/圆弧"), "explode",
             [this] {
                 std::vector<Element> src;
                 for (int id : model_->selection()) if (const Element* e = model_->element(id)) src.push_back(*e);
-                if (src.empty()) { model_->log(QStringLiteral("无可分解图元"), "warn"); return; }
+                if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解图元")), "warn"); return; }
                 auto changes = modify::makeExplode(src);
-                if (changes.empty()) { model_->log(QStringLiteral("无可分解对象"), "warn"); return; }
-                model_->beginEdit(QStringLiteral("修改-分解"));
+                if (changes.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可分解对象")), "warn"); return; }
+                model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-分解")));
                 auto added = modify::applyChanges(model_, changes, QString());
                 QStringList ids;
                 for (int id : added) ids << ("#" + QString::number(id));
-                model_->log(QStringLiteral("已分解 %1 个图元 → %2 段：%3")
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("已分解 %1 个图元 → %2 段：%3"))
                                 .arg(src.size()).arg(added.size()).arg(ids.join(", ")));
             });
 
@@ -3857,11 +3932,11 @@ void MainWindow::buildToolbar() {
     auto* modifyBtn = new QToolButton(curTb);
     modifyBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     modifyBtn->setIcon(icons::make(QStringLiteral("modify")));
-    modifyBtn->setText(QStringLiteral("修改"));
+    modifyBtn->setText(SketchCAD::I18n::t(QString::fromUtf8("修改")));
     modifyBtn->setPopupMode(QToolButton::InstantPopup);
-    modifyBtn->setToolTip(QStringLiteral("修改 (Modify)：修剪 / 延伸 / 旋转 / 镜像 / 偏移 / 分解 …"));
+    modifyBtn->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("修改 (Modify)：修剪 / 延伸 / 旋转 / 镜像 / 偏移 / 分解 …")));
     modifyBtn->setStatusTip(modifyBtn->toolTip());
-    auto* modifyMenu = new QMenu(QStringLiteral("修改命令"), modifyBtn);
+    auto* modifyMenu = new QMenu(SketchCAD::I18n::t(QString::fromUtf8("修改命令")), modifyBtn);
     modifyMenu->addAction(trimAct);
     modifyMenu->addAction(extendAct);
     modifyMenu->addSeparator();
@@ -3892,8 +3967,9 @@ void MainWindow::buildToolbar() {
     };
     auto act = [&](const QString& zh, const QString& tip, const QString& key,
                    const QString& icon, auto fn) {
-        auto* a = new QAction(icons::make(icon), zh, this);
-        a->setToolTip(key.isEmpty() ? tip : QString("%1  [%2]").arg(tip, key));
+        auto* a = new QAction(icons::make(icon), SketchCAD::I18n::t(zh), this);
+        a->setToolTip(key.isEmpty() ? SketchCAD::I18n::t(tip)
+                                    : QString("%1  [%2]").arg(SketchCAD::I18n::t(tip), key));
         a->setStatusTip(a->toolTip());
         connect(a, &QAction::triggered, this, fn);
         curTb->addAction(a);
@@ -3901,13 +3977,13 @@ void MainWindow::buildToolbar() {
         return a;
     };
 
-    etitle = QStringLiteral("编辑");
-    act(QStringLiteral("删除"), QStringLiteral("删除选中图元 (Delete)"), "Del", "delete",
+    etitle = SketchCAD::I18n::t(QString::fromUtf8("编辑"));
+    act(SketchCAD::I18n::t(QString::fromUtf8("删除")), SketchCAD::I18n::t(QString::fromUtf8("删除选中图元 (Delete)")), "Del", "delete",
         [this] { model_->deleteSelected(); });
     eflush();
 
     // ---- 样式区：线宽 / 颜色 / 连续直线 ----
-    auto* wLabel = new QLabel(QStringLiteral(" 线宽 "), curTb);
+    auto* wLabel = new QLabel(SketchCAD::I18n::t(QString::fromUtf8(" 线宽 ")), curTb);
     curTb->addWidget(wLabel);
     widthBox_ = new QComboBox(curTb);
     widthBox_->setIconSize(QSize(20, 14));
@@ -3916,9 +3992,7 @@ void MainWindow::buildToolbar() {
     // 否则最长的"特粗线 5px"会把这个下拉框撑到 138px，第二行总宽随之溢出。
     for (double px : {1.0, 2.0, 3.0, 5.0})
         widthBox_->addItem(icons::widthBar(px), QStringLiteral("%1px").arg(px, 0, 'f', 0), px);
-    widthBox_->setToolTip(QStringLiteral(
-        "线宽（细线 1px / 中粗线 2px / 粗线 3px / 特粗线 5px）："
-        "未选中图元时设定新图元线宽；已选中时同时修改选中图元"));
+    widthBox_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("线宽（细线 1px / 中粗线 2px / 粗线 3px / 特粗线 5px）：未选中图元时设定新图元线宽；已选中时同时修改选中图元")));
     connect(widthBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
         if (i >= 0) applyWidth(widthBox_->itemData(i).toDouble());
     });
@@ -3931,16 +4005,16 @@ void MainWindow::buildToolbar() {
     for (int i = 0; i < kLineStyleCount; ++i) {
         LineStyle ls = (LineStyle)i;
         styleBox_->addItem(icons::lineStyleIcon(ls),
-                           QString::fromUtf8(lineStyleName(ls)), i);
+                           SketchCAD::I18n::t(QString::fromUtf8(lineStyleName(ls))), i);
     }
-    styleBox_->setToolTip(QStringLiteral("线型：未选中图元时设定新图元线型；已选中时同时修改选中图元"));
+    styleBox_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("线型：未选中图元时设定新图元线型；已选中时同时修改选中图元")));
     connect(styleBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
             [this](int i) { if (i >= 0) applyLineStyle(i); });
     curTb->addWidget(styleBox_);
 
     // ---- 标注标准切换：GB/T 4458 ↔ ISO 129 ----
-    auto* stdLabel = new QLabel(QStringLiteral(" 标准 "), curTb);
-    stdLabel->setToolTip(QStringLiteral("切换尺寸标注遵循的制图标准：箭头形式 / 文字方向 / 公差规则随之改变"));
+    auto* stdLabel = new QLabel(SketchCAD::I18n::t(QString::fromUtf8(" 标准 ")), curTb);
+    stdLabel->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("切换尺寸标注遵循的制图标准：箭头形式 / 文字方向 / 公差规则随之改变")));
     curTb->addWidget(stdLabel);
     stdBox_ = new QComboBox(curTb);
     stdBox_->setMinimumContentsLength(7);
@@ -3948,19 +4022,18 @@ void MainWindow::buildToolbar() {
     stdBox_->addItem(QStringLiteral("GB/T 4458"), (int)DimensionStandard::GBT);
     stdBox_->addItem(QStringLiteral("ISO 129"),   (int)DimensionStandard::ISO);
     stdBox_->setCurrentIndex((model_->dimensionStandard() == DimensionStandard::ISO) ? 1 : 0);
-    stdBox_->setToolTip(QStringLiteral("标注标准（GB/T 4458 国标 / ISO 129 国际）："
-                                       "切换后已有标注按所选标准的箭头/文字方向/公差规则自动重绘"));
+    stdBox_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("标注标准（GB/T 4458 国标 / ISO 129 国际）：切换后已有标注按所选标准的箭头/文字方向/公差规则自动重绘")));
     connect(stdBox_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int i) {
         if (i >= 0) model_->setDimensionStandard((DimensionStandard)stdBox_->itemData(i).toInt());
     });
     curTb->addWidget(stdBox_);
 
     colorBtn_ = new QToolButton(curTb);
-    colorBtn_->setText(QStringLiteral("颜色"));
+    colorBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("颜色")));
     colorBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     colorBtn_->setPopupMode(QToolButton::InstantPopup);
-    colorBtn_->setToolTip(QStringLiteral("图元颜色：预设色板 + 自定义取色；已选中图元时同时改其颜色"));
-    colorMenu_ = new QMenu(QStringLiteral("颜色"), this);
+    colorBtn_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("图元颜色：预设色板 + 自定义取色；已选中图元时同时改其颜色")));
+    colorMenu_ = new QMenu(SketchCAD::I18n::t(QString::fromUtf8("颜色")), this);
     colorMenu_->setIcon(icons::make("color"));
     for (const auto& pc : presetColors()) {
         QAction* a = colorMenu_->addAction(icons::swatch(pc.second), pc.first);
@@ -3971,16 +4044,16 @@ void MainWindow::buildToolbar() {
         colorActs_ << a;
     }
     colorMenu_->addSeparator();
-    QAction* custom = colorMenu_->addAction(icons::make("color"), QStringLiteral("自定义颜色..."));
+    QAction* custom = colorMenu_->addAction(icons::make("color"), SketchCAD::I18n::t(QString::fromUtf8("自定义颜色...")));
     connect(custom, &QAction::triggered, this, &MainWindow::pickCustomColor);
     colorBtn_->setMenu(colorMenu_);
     colorBtn_->setIcon(icons::swatch(model_->defaultColor()));
     curTb->addWidget(colorBtn_);
 
-    actChain_ = new QAction(icons::make("chain"), QStringLiteral("连续"), this);
+    actChain_ = new QAction(icons::make("chain"), SketchCAD::I18n::t(QString::fromUtf8("连续")), this);
     actChain_->setCheckable(true);
     actChain_->setChecked(model_->chainLine());
-    actChain_->setToolTip(QStringLiteral("连续直线模式：上一段终点自动作为下一段起点，右键结束  [K]"));
+    actChain_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("连续直线模式：上一段终点自动作为下一段起点，右键结束  [K]")));
     actChain_->setStatusTip(actChain_->toolTip());
     actChain_->setShortcut(QKeySequence("K"));
     actChain_->setShortcutContext(Qt::ApplicationShortcut);
@@ -3990,31 +4063,31 @@ void MainWindow::buildToolbar() {
 
     // 视图类为即时命令（不改变绘图模式，因此不入互斥组）。
     // 第二行空间充裕，这里与绘图工具一样显示「图标 + 文字」，不再压成纯图标。
-    etitle = QStringLiteral("视图");
-    act(QStringLiteral("网格"), QStringLiteral("栅格显示开/关 (Grid)"), "F7", "grid",
+    etitle = SketchCAD::I18n::t(QString::fromUtf8("视图"));
+    act(SketchCAD::I18n::t(QString::fromUtf8("网格")), SketchCAD::I18n::t(QString::fromUtf8("栅格显示开/关 (Grid)")), "F7", "grid",
         [this] { model_->setShowGrid(!model_->showGrid()); });
-    act(QStringLiteral("放大"), QStringLiteral("放大 (Zoom In)"), "Ctrl++", "zoomin",
+    act(SketchCAD::I18n::t(QString::fromUtf8("放大")), SketchCAD::I18n::t(QString::fromUtf8("放大 (Zoom In)")), "Ctrl++", "zoomin",
         [this] { view_->zoomBy(1.2); });
-    act(QStringLiteral("缩小"), QStringLiteral("缩小 (Zoom Out)"), "Ctrl+-", "zoomout",
+    act(SketchCAD::I18n::t(QString::fromUtf8("缩小")), SketchCAD::I18n::t(QString::fromUtf8("缩小 (Zoom Out)")), "Ctrl+-", "zoomout",
         [this] { view_->zoomBy(1.0 / 1.2); });
-    act(QStringLiteral("适配"), QStringLiteral("适配窗口 (Fit)"), "Ctrl+0", "fit",
+    act(SketchCAD::I18n::t(QString::fromUtf8("适配")), SketchCAD::I18n::t(QString::fromUtf8("适配窗口 (Fit)")), "Ctrl+0", "fit",
         [this] { view_->fitView(); });
-    act(QStringLiteral("窗口缩放"), QStringLiteral("窗口缩放：拖拽框选目标区域，释放后该区域充满整个绘图工作区域 (Zoom to Box)"), "Ctrl+9", "zoombox",
+    act(SketchCAD::I18n::t(QString::fromUtf8("窗口缩放")), SketchCAD::I18n::t(QString::fromUtf8("窗口缩放：拖拽框选目标区域，释放后该区域充满整个绘图工作区域 (Zoom to Box)")), "Ctrl+9", "zoombox",
         [this] { view_->setZoomBoxMode(true); });
     // 测量查询：只读几何查询面板入口（与【测量查询】菜单共用 openInquiry()）
-    act(QStringLiteral("测量查询"), QStringLiteral("测量查询 (Inquiry)：距离 / 面积 / 质量特性 / 点坐标"), "", "query",
+    act(SketchCAD::I18n::t(QString::fromUtf8("测量查询")), SketchCAD::I18n::t(QString::fromUtf8("测量查询 (Inquiry)：距离 / 面积 / 质量特性 / 点坐标")), "", "query",
         [this] { openInquiry(); });
     // 打印预览：页面设置 / 简化 CTB 样式 / 视口布局 / PDF 入口（与【打印】菜单共用 openPrintPreview()）
-    act(QStringLiteral("打印"), QStringLiteral("打印预览 (Print)：页面设置 / CTB 样式 / 视口 / PDF"), "", "print",
+    act(SketchCAD::I18n::t(QString::fromUtf8("打印")), SketchCAD::I18n::t(QString::fromUtf8("打印预览 (Print)：页面设置 / CTB 样式 / 视口 / PDF")), "", "print",
         [this] { openPrintPreview(); });
     eflush();
 
-    etitle = QStringLiteral("工作平面");
-    act(QStringLiteral("XY"), QStringLiteral("切换到 XY 工作平面（俯视）"), "Ctrl+1", "plane_xy",
+    etitle = SketchCAD::I18n::t(QString::fromUtf8("工作平面"));
+    act(QStringLiteral("XY"), SketchCAD::I18n::t(QString::fromUtf8("切换到 XY 工作平面（俯视）")), "Ctrl+1", "plane_xy",
         [this] { model_->setPlane(Plane::XY); });
-    act(QStringLiteral("YZ"), QStringLiteral("切换到 YZ 工作平面（左视）"), "Ctrl+2", "plane_yz",
+    act(QStringLiteral("YZ"), SketchCAD::I18n::t(QString::fromUtf8("切换到 YZ 工作平面（左视）")), "Ctrl+2", "plane_yz",
         [this] { model_->setPlane(Plane::YZ); });
-    act(QStringLiteral("XZ"), QStringLiteral("切换到 XZ 工作平面（主视）"), "Ctrl+3", "plane_xz",
+    act(QStringLiteral("XZ"), SketchCAD::I18n::t(QString::fromUtf8("切换到 XZ 工作平面（主视）")), "Ctrl+3", "plane_xz",
         [this] { model_->setPlane(Plane::XZ); });
     eflush(false);
 
@@ -4028,31 +4101,31 @@ void MainWindow::buildToolbar() {
 // ---- 样式应用：绘制前设默认值；若当前有选中图元，则一并改选中图元 ----
 void MainWindow::applyWidth(double px) {
     model_->setDefaultWidth(px);
-    const QString name = QString::fromUtf8(lineWidthName(px));
+    const QString name = SketchCAD::I18n::t(QString::fromUtf8(lineWidthName(px)));
     if (model_->selectedId() >= 0 && model_->styleSelected(nullptr, &px))
-        model_->log(QStringLiteral("选中图元线宽 -> %1").arg(name));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("选中图元线宽 -> %1")).arg(name));
     else
-        model_->log(QStringLiteral("新图元线宽 -> %1").arg(name));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("新图元线宽 -> %1")).arg(name));
 }
 
 void MainWindow::applyLineStyle(int idx) {
     if (idx < 0 || idx > 4) return;
     const LineStyle ls = (LineStyle)idx;
     model_->setDefaultLineStyle(ls);
-    const QString name = QString::fromUtf8(lineStyleName(ls));
+    const QString name = SketchCAD::I18n::t(QString::fromUtf8(lineStyleName(ls)));
     if (model_->selectedId() >= 0 && model_->styleSelectedEx(nullptr, nullptr, &ls))
-        model_->log(QStringLiteral("选中图元线型 -> %1").arg(name));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("选中图元线型 -> %1")).arg(name));
     else
-        model_->log(QStringLiteral("新图元线型 -> %1").arg(name));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("新图元线型 -> %1")).arg(name));
 }
 
 void MainWindow::applyColor(const QColor& c) {
     if (!c.isValid()) return;
     model_->setDefaultColor(c);
     if (model_->selectedId() >= 0 && model_->styleSelected(&c, nullptr))
-        model_->log(QStringLiteral("选中图元颜色 -> %1").arg(c.name().toUpper()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("选中图元颜色 -> %1")).arg(c.name().toUpper()));
     else
-        model_->log(QStringLiteral("新图元颜色 -> %1").arg(c.name().toUpper()));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("新图元颜色 -> %1")).arg(c.name().toUpper()));
 }
 
 void MainWindow::pickCustomColor() {
@@ -4096,43 +4169,43 @@ void MainWindow::syncLineStyleWidgets(int styleIdx) {
 }
 
 void MainWindow::buildDocks() {
-    bomDock_ = new QDockWidget(QStringLiteral("BOM 树"), this);
+    bomDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("BOM 树")), this);
     bomDock_->setObjectName("dockBom");
     bomDock_->setWidget(bom_);
 
-    elemDock_ = new QDockWidget(QStringLiteral("图元面板"), this);
+    elemDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("图元面板")), this);
     elemDock_->setObjectName("dockElement");
     elemDock_->setWidget(elemPanel_);
 
-    propDock_ = new QDockWidget(QStringLiteral("属性面板"), this);
+    propDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("属性面板")), this);
     propDock_->setObjectName("dockProperty");
     propDock_->setWidget(propPanel_);
     // 点选图元会 show/raise 本面板；禁止激活以免抢走画布焦点，导致 Del 变成改属性文本。
     propDock_->setAttribute(Qt::WA_ShowWithoutActivating);
 
-    logDock_ = new QDockWidget(QStringLiteral("执行信息"), this);
+    logDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("执行信息")), this);
     logDock_->setObjectName("dockLog");
     logDock_->setWidget(logPanel_);
 
     auto* cmdWidget = new QWidget(this);
     auto* cl = new QHBoxLayout(cmdWidget);
     cl->setContentsMargins(6, 2, 6, 2);
-    cl->addWidget(new QLabel(QStringLiteral("命令>")));
+    cl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("命令>"))));
     cl->addWidget(cmdLine_);
     cmdWidget->setLayout(cl);
-    cmdDock_ = new QDockWidget(QStringLiteral("命令行"), this);
+    cmdDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("命令行")), this);
     cmdDock_->setObjectName("dockCommand");
     cmdDock_->setWidget(cmdWidget);
 
     // 图层管理面板（新建/删除/改名/显隐/批量改属性/把选中图元移入图层）
     layerPanel_ = new LayerPanel(model_, this);
-    layerDock_ = new QDockWidget(QStringLiteral("图层"), this);
+    layerDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("图层")), this);
     layerDock_->setObjectName("dockLayer");
     layerDock_->setWidget(layerPanel_);
 
     // 工程制图合规检查面板（STDCHECK / CHECKCOMPLIANCE 结果展示，双击跳转图元）
     standardsPanel_ = new StandardsPanel(model_, this);
-    standardsDock_ = new QDockWidget(QStringLiteral("合规检查"), this);
+    standardsDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("合规检查")), this);
     standardsDock_->setObjectName("dockStandards");
     standardsDock_->setWidget(standardsPanel_);
     // 命令经 notifyComplianceReport 把检查结果推回本面板刷新（全局回调桥，一次性注册）
@@ -4143,13 +4216,13 @@ void MainWindow::buildDocks() {
 
     // 约束栏面板（需求③④：展示选中图元的约束与状态；删除/定位约束）
     constraintBar_ = new ConstraintBar(model_, this);
-    constraintDock_ = new QDockWidget(QStringLiteral("约束栏"), this);
+    constraintDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("约束栏")), this);
     constraintDock_->setObjectName("dockConstraint");
     constraintDock_->setWidget(constraintBar_);
 
     // 设计中心（符号库浏览/插入）：当前图块表 + 外部文件块表；双击块在视图中心插入
     designPanel_ = new DesignCenterPanel(model_, this);
-    designDock_ = new QDockWidget(QStringLiteral("设计中心"), this);
+    designDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("设计中心")), this);
     designDock_->setObjectName("dockDesignCenter");
     designDock_->setWidget(designPanel_);
 
@@ -4158,7 +4231,7 @@ void MainWindow::buildDocks() {
     //    若此处为空指针将对 nullptr 调用 QDockWidget::setFeatures → 0xc0000005，
     //    且崩溃发生在 MainWindow 构造期（w.show() 之前），表现为主界面未显示即退出。
     aiPanel_ = new AiAssistantPanel(this);
-    aiDock_ = new QDockWidget(QStringLiteral("AI 助手"), this);
+    aiDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("AI 助手")), this);
     aiDock_->setObjectName("dockAiAssistant");
     aiDock_->setWidget(aiPanel_);
 
@@ -4378,7 +4451,7 @@ void MainWindow::hookActiveDoc() {
     // 无上一命令时回显提示。
     viewConns_ << connect(view_, &GraphicsView::repeatLastCommandRequested, this, [this] {
         if (interp_->lastCommand().isEmpty())
-            model_->log(QStringLiteral("没有可重复的命令"), "info");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("没有可重复的命令")), "info");
         else
             cmdLine_->repeatLastCommand();
     });
@@ -4543,8 +4616,8 @@ bool MainWindow::confirmCloseDoc(int idx) {
     DocSession* d = docs_->doc(idx);
     if (!d || !d->isDirty()) return true;
     switchToDoc(idx);   // 保存流程作用于活动文档，先切过去
-    const auto ret = QMessageBox::question(this, QStringLiteral("关闭图纸"),
-        QStringLiteral("图纸「%1」有未保存的修改，是否保存？").arg(d->title()),
+    const auto ret = QMessageBox::question(this, SketchCAD::I18n::t(QString::fromUtf8("关闭图纸")),
+        SketchCAD::I18n::t(QString::fromUtf8("图纸「%1」有未保存的修改，是否保存？")).arg(d->title()),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
         QMessageBox::Save);
     if (ret == QMessageBox::Save)   { saveFile(); return !d->isDirty(); }   // 保存失败/取消 → 继续保留
@@ -4662,7 +4735,7 @@ void MainWindow::createBlankDrawing() {
         model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
     model_->setSheetSpec(spec);                        // 打印页面尺寸/方向的数据源
     syncPrintSettingsToSheet();                        // 修复「新建横向、出图纵向」同理
-    model_->log(QStringLiteral("已新建空白图纸（A4 横向 1:1，无图框/标题栏；需要图框请用【图纸】>【新建图框】）"),
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已新建空白图纸（A4 横向 1:1，无图框/标题栏；需要图框请用【图纸】>【新建图框】）")),
                 QStringLiteral("info"));
     view_->fitToRect(QRectF(0.0, 0.0, spec.width, spec.height));
     s->markClean();                                    // 空白图不是用户改动
@@ -4675,7 +4748,7 @@ void MainWindow::removeTitleBlockElements() {
     for (const auto& e : model_->elements())
         if (e.layer == QStringLiteral("标题栏")) ids.push_back(e.id);
     for (int id : ids) model_->removeElementQuiet(id);
-    model_->log(QStringLiteral("已按「无标题栏」样式移除标题栏（%1 条图元）").arg(ids.size()));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已按「无标题栏」样式移除标题栏（%1 条图元）")).arg(ids.size()));
 }
 
 // 【图纸】>【新建图框】：弹窗收集图框选项 → 生成到新文档（与「新建」同流，不破坏当前工作）。
@@ -4703,7 +4776,7 @@ void MainWindow::applySheetFrame(const SheetFrameOptions& opts, double scaleRati
     model_->setScaleRatio(scaleRatio, false);
     for (const Layer& l : standardLayers())
         model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
-    model_->beginEdit(QStringLiteral("新建图框"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("新建图框")));
     model_->addElementsQuiet(buildSheetFrameWithOptions(opts));
     model_->setSheetSpec(spec);                        // 幅面规格随图存档
     syncTitleBlockScale();                             // 标题栏「比例」栏预填当前比例
@@ -4717,17 +4790,16 @@ void MainWindow::applySheetFrame(const SheetFrameOptions& opts, double scaleRati
     }
     model_->setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"),
                               Vec3(opts.widthMm() / 2.0, opts.heightMm() / 2.0, 0.0), 0.0));
-    model_->log(QStringLiteral("已生成 %1 图框（比例 %2）：装订边%3、对中符号%4、分区%5、"
-                                "明细栏%6、附加栏%7、代号栏%8、参数栏%9")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成 %1 图框（比例 %2）：装订边%3、对中符号%4、分区%5、明细栏%6、附加栏%7、代号栏%8、参数栏%9"))
                     .arg(opts.sizeLabel()).arg(model_->scaleLabel())
-                    .arg(opts.bindingMargin ? QStringLiteral("有") : QStringLiteral("无"))
-                    .arg(opts.centerMarks ? QStringLiteral("有") : QStringLiteral("无"))
-                    .arg(opts.zonesEnabled ? QStringLiteral("有") : QStringLiteral("无"))
-                    .arg(opts.bomEnabled ? QStringLiteral("有") : QStringLiteral("无"))
+                    .arg(opts.bindingMargin ? SketchCAD::I18n::t(QString::fromUtf8("有")) : SketchCAD::I18n::t(QString::fromUtf8("无")))
+                    .arg(opts.centerMarks ? SketchCAD::I18n::t(QString::fromUtf8("有")) : SketchCAD::I18n::t(QString::fromUtf8("无")))
+                    .arg(opts.zonesEnabled ? SketchCAD::I18n::t(QString::fromUtf8("有")) : SketchCAD::I18n::t(QString::fromUtf8("无")))
+                    .arg(opts.bomEnabled ? SketchCAD::I18n::t(QString::fromUtf8("有")) : SketchCAD::I18n::t(QString::fromUtf8("无")))
                     .arg(opts.additionalBarEnabled ? opts.additionalBarKey
-                                                   : QStringLiteral("无"))
-                    .arg(opts.codeBarEnabled ? opts.codeBarKey : QStringLiteral("无"))
-                    .arg(opts.paramBarEnabled ? opts.paramBarKey : QStringLiteral("无")));
+                                                   : SketchCAD::I18n::t(QString::fromUtf8("无")))
+                    .arg(opts.codeBarEnabled ? opts.codeBarKey : SketchCAD::I18n::t(QString::fromUtf8("无")))
+                    .arg(opts.paramBarEnabled ? opts.paramBarKey : SketchCAD::I18n::t(QString::fromUtf8("无"))));
     syncPrintSettingsToSheet();
     view_->fitToRect(QRectF(0.0, 0.0, opts.widthMm(), opts.heightMm()));
 }
@@ -4744,11 +4816,11 @@ public:
 
     explicit StartupPage(SketchCAD::RecentFiles* recent, int maxShown, QWidget* parent)
         : QDialog(parent), recent_(recent), maxShown_(maxShown) {
-        setWindowTitle(QStringLiteral("我是慎独 — 继续"));
+        setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("我是慎独 — 继续")));
         resize(420, 480);
 
         auto* root = new QVBoxLayout(this);
-        auto* title = new QLabel(QStringLiteral("继续上次工作"), this);
+        auto* title = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("继续上次工作")), this);
         QFont tf = title->font();
         tf.setBold(true);
         tf.setPointSize(tf.pointSize() + 2);
@@ -4764,17 +4836,17 @@ public:
                 QStringLiteral("QFrame { background: #FFF4E5; border: 1px solid #E6A23C; border-radius: 4px; }"));
             auto* bl = new QVBoxLayout(banner);
             bl->addWidget(new QLabel(
-                QStringLiteral("检测到 %1 份上次未正常保存的图纸快照").arg(snaps.size()), banner));
-            auto* recBtn = new QPushButton(QStringLiteral("恢复图纸..."), banner);
+                SketchCAD::I18n::t(QString::fromUtf8("检测到 %1 份上次未正常保存的图纸快照")).arg(snaps.size()), banner));
+            auto* recBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("恢复图纸...")), banner);
             bl->addWidget(recBtn);
             connect(recBtn, &QPushButton::clicked, this, [this] { done(Recover); });
             root->addWidget(banner);
         }
 
         // ---- 新建：空白 / 标准模板 A0~A4（横向 1:1）/ 更多模板 ----
-        auto* gbNew = new QGroupBox(QStringLiteral("新建"), this);
+        auto* gbNew = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("新建")), this);
         auto* nl = new QGridLayout(gbNew);
-        auto* blankBtn = new QPushButton(QStringLiteral("空白图"), gbNew);
+        auto* blankBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("空白图")), gbNew);
         nl->addWidget(blankBtn, 0, 0);
         connect(blankBtn, &QPushButton::clicked, this, [this] { done(None); });
         static const QPair<SheetFormat, QString> kFmts[] = {
@@ -4794,7 +4866,7 @@ public:
             });
             nl->addWidget(b, 0, col++);
         }
-        auto* moreBtn = new QPushButton(QStringLiteral("更多模板..."), gbNew);
+        auto* moreBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("更多模板...")), gbNew);
         connect(moreBtn, &QPushButton::clicked, this, [this] {
             NewDrawingDialog dlg(this);
             if (dlg.exec() != QDialog::Accepted) return;
@@ -4807,7 +4879,7 @@ public:
         root->addWidget(gbNew);
 
         // ---- 打开最近 ----
-        auto* gbRecent = new QGroupBox(QStringLiteral("打开最近"), this);
+        auto* gbRecent = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("打开最近")), this);
         auto* rl = new QVBoxLayout(gbRecent);
         list_ = new QListWidget(gbRecent);
         list_->setObjectName("startupRecentList");
@@ -4818,8 +4890,8 @@ public:
             const QString p = it->data(Qt::UserRole).toString();
             if (p.isEmpty()) return;
             if (!QFile::exists(p)) {
-                QMessageBox::information(this, QStringLiteral("路径不存在"),
-                    QStringLiteral("该文件当前不可用：\n%1").arg(p));
+                QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("路径不存在")),
+                    SketchCAD::I18n::t(QString::fromUtf8("该文件当前不可用：\n%1")).arg(p));
                 return;
             }
             recentPath_ = p;
@@ -4834,9 +4906,9 @@ public:
             if (p.isEmpty()) return;
             QMenu ctx(list_);
             QAction* pinAct = ctx.addAction(recent_->isPinned(p)
-                                                ? QStringLiteral("取消固定")
-                                                : QStringLiteral("固定到列表"));
-            QAction* delAct = ctx.addAction(QStringLiteral("从列表中删除"));
+                                                ? SketchCAD::I18n::t(QString::fromUtf8("取消固定"))
+                                                : SketchCAD::I18n::t(QString::fromUtf8("固定到列表")));
+            QAction* delAct = ctx.addAction(SketchCAD::I18n::t(QString::fromUtf8("从列表中删除")));
             QAction* chosen = ctx.exec(list_->mapToGlobal(pos));
             if (chosen == pinAct) recent_->setPinned(p, !recent_->isPinned(p));
             else if (chosen == delAct) recent_->remove(p);
@@ -4846,11 +4918,11 @@ public:
 
         // ---- 打开其他 / 关闭 ----
         auto* hl = new QHBoxLayout;
-        auto* openBtn = new QPushButton(QStringLiteral("打开其他..."), this);
+        auto* openBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("打开其他...")), this);
         connect(openBtn, &QPushButton::clicked, this, [this] { done(OpenOther); });
         hl->addWidget(openBtn);
         hl->addStretch(1);
-        auto* closeBtn = new QPushButton(QStringLiteral("继续使用空白图"), this);
+        auto* closeBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("继续使用空白图")), this);
         connect(closeBtn, &QPushButton::clicked, this, [this] { done(None); });
         hl->addWidget(closeBtn);
         root->addLayout(hl);
@@ -4867,7 +4939,7 @@ private:
     void populateRecent() {
         list_->clear();
         if (!recent_ || recent_->count() == 0 || maxShown_ <= 0) {
-            auto* it = new QListWidgetItem(QStringLiteral("（空）"), list_);
+            auto* it = new QListWidgetItem(SketchCAD::I18n::t(QString::fromUtf8("（空）")), list_);
             it->setFlags(Qt::NoItemFlags);
             return;
         }
@@ -4879,7 +4951,7 @@ private:
                 QStringLiteral("%1%2%3")
                     .arg(e.pinned ? QStringLiteral("📌 ") : QString())
                     .arg(QFileInfo(e.path).fileName())
-                    .arg(missing ? QStringLiteral("（路径不存在）") : QString()),
+                    .arg(missing ? SketchCAD::I18n::t(QString::fromUtf8("（路径不存在）")) : QString()),
                 list_);
             it->setData(Qt::UserRole, e.path);
             it->setToolTip(e.path);
@@ -5015,7 +5087,7 @@ void MainWindow::applyNewDrawing(const SheetSpec& spec, double scaleRatio) {
     // GB/T 14665-2012 表6：预置标准图层模板（01~12），便于按标准标识分层出图（T9）
     for (const Layer& l : standardLayers())
         model_->addLayer(l.name, l.color, l.lineWidth, l.lineStyle);
-    model_->beginEdit(QStringLiteral("新建图纸"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("新建图纸")));
     model_->addElementsQuiet(buildSheetFrame(spec));   // 整张图框只占一次撤销
     model_->setSheetSpec(spec);                        // 幅面规格随图存档（打印页面尺寸/方向的数据源）
     syncTitleBlockScale();                             // 标题栏「比例」栏预填当前比例
@@ -5024,7 +5096,7 @@ void MainWindow::applyNewDrawing(const SheetSpec& spec, double scaleRatio) {
     // 仅输入与显示基准平移；UCS 为会话态不随图存档，旧档打开行为不变。
     model_->setCurrentUcs(Ucs(QStringLiteral("SHEET_CENTER"),
                               Vec3(spec.width / 2.0, spec.height / 2.0, 0.0), 0.0));
-    model_->log(QStringLiteral("已新建 %1 图纸（比例 %2）：已生成图框与标准标题栏；坐标原点已置于图纸中央")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已新建 %1 图纸（比例 %2）：已生成图框与标准标题栏；坐标原点已置于图纸中央"))
                     .arg(spec.formatName()).arg(model_->scaleLabel()));
     // 打印/预览/PDF 的页面尺寸与方向跟随本次新建选择（修复「新建横向、出图纵向」）
     syncPrintSettingsToSheet();
@@ -5101,14 +5173,14 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     }
     if (out.isEmpty()) {
         if (err) *err = e;
-        model_->log(QStringLiteral("保存失败：") + e, "error");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("保存失败：")) + e, "error");
         return false;
     }
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
         if (err) *err = QStringLiteral("无法写入 ") + path;
-        model_->log(QStringLiteral("保存失败（无法写入）：") + path, "error");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("保存失败（无法写入）：")) + path, "error");
         return false;
     }
     f.write(out);
@@ -5120,7 +5192,7 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
     // 无转换器 → 已按 R12 写出：落盘**之后**再弹缺失指引（文件已保存，仅提示如何获得 R2000）
     if (needDwgMissingNote) warnDwgConverterMissing(false, QString(), QString());
     if (err) *err = e;
-    model_->log(QStringLiteral("已保存：%1（%2，%3 字节）%4")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已保存：%1（%2，%3 字节）%4"))
                     .arg(path).arg(cadfmt::formatName(fmt)).arg(out.size()).arg(e));
     return true;
 }
@@ -5130,8 +5202,8 @@ bool MainWindow::writeDrawing(const QString& path, QString* err) {
 void MainWindow::openFile() {
     // 起始目录习惯：默认存盘目录 > 上次目录 > 系统默认
     const QString startDir = rememberDialogDir();
-    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("打开图纸"), startDir,
-        QStringLiteral("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)"));
+    const QString fn = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("打开图纸")), startDir,
+        SketchCAD::I18n::t(QString::fromUtf8("草图与图形 (*.json *.dxf *.dwg);;草图文件 (*.json);;AutoCAD DXF (*.dxf);;AutoCAD (*.dwg);;所有文件 (*)")));
     qWarning() << "[MainWindow] openFile: 用户选择路径 =" << fn;
     if (fn.isEmpty()) { qWarning() << "[MainWindow] openFile: 未选择文件（取消）"; return; }
     if (appSettings_) appSettings_->setLastDir(QFileInfo(fn).absolutePath());
@@ -5161,10 +5233,10 @@ void MainWindow::updateDbStatus() {
     if (!dbStatusLabel_) return;
     const bool ok = DrawingDb::instance()->isConnected();
     if (ok) {
-        dbStatusLabel_->setText(QStringLiteral("数据库: 已连接"));
+        dbStatusLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("数据库: 已连接")));
         dbStatusLabel_->setStyleSheet(QStringLiteral("color:#1B7A1B;"));
     } else {
-        dbStatusLabel_->setText(QStringLiteral("数据库: 未连接（使用文件）"));
+        dbStatusLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("数据库: 未连接（使用文件）")));
         dbStatusLabel_->setStyleSheet(QStringLiteral("color:#9A6B00;"));
     }
     if (dbActRecords_) dbActRecords_->setEnabled(ok);
@@ -5212,10 +5284,10 @@ void MainWindow::onDbConfigAccepted(const QString& driver, const QString& dbPath
     db->setPort(port);
     // 无论连接是否成功，都先把配置落到本地文件（启动即按此输入）
     if (!db->saveConfigToFile()) {
-        model_->log(QStringLiteral("数据库配置已应用，但写入配置文件失败：%1").arg(db->lastError()),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("数据库配置已应用，但写入配置文件失败：%1")).arg(db->lastError()),
                     QStringLiteral("warn"));
     } else {
-        model_->log(QStringLiteral("数据库配置已保存到：%1").arg(DrawingDb::defaultConfigPath()),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("数据库配置已保存到：%1")).arg(DrawingDb::defaultConfigPath()),
                     QStringLiteral("info"));
     }
     // 尝试按新配置连接；失败静默降级（状态栏/菜单可用态会随之刷新）
@@ -5229,12 +5301,12 @@ void MainWindow::saveCurrentToDatabase(const QString& name) {
     const QString json = QString::fromUtf8(model_->toDrawingBytes());
     int id = 0;
     if (DrawingDb::instance()->insertDrawing(name, json, &id)) {
-        model_->log(QStringLiteral("已保存到数据库：%1（id=%2）").arg(name).arg(id),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已保存到数据库：%1（id=%2）")).arg(name).arg(id),
                     QStringLiteral("info"));
         if (dbDlg_) dbDlg_->refresh();
     } else {
-        QMessageBox::warning(this, QStringLiteral("保存失败"),
-            QStringLiteral("写入数据库失败：") + DrawingDb::instance()->lastError());
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("保存失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("写入数据库失败：")) + DrawingDb::instance()->lastError());
     }
 }
 
@@ -5249,13 +5321,13 @@ void MainWindow::saveCurrentAsTemplate(const QString& name) {
     }
     int id = 0;
     if (DrawingDb::instance()->insertTemplate(name, json, refW, refH, &id)) {
-        model_->log(QStringLiteral("已另存为模板：%1（id=%2，参考尺寸 %3×%4 mm）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已另存为模板：%1（id=%2，参考尺寸 %3×%4 mm）"))
                         .arg(name).arg(id).arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1),
                     QStringLiteral("info"));
         if (dbDlg_) dbDlg_->refresh();
     } else {
-        QMessageBox::warning(this, QStringLiteral("保存失败"),
-            QStringLiteral("写入模板失败：") + DrawingDb::instance()->lastError());
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("保存失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("写入模板失败：")) + DrawingDb::instance()->lastError());
     }
 }
 
@@ -5291,14 +5363,14 @@ void MainWindow::openDrawingFromDb(int id) {
     if (!DrawingDb::instance()->isConnected()) return;
     QString json = DrawingDb::instance()->getDrawingJson(id);
     if (json.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("打开失败"),
-            QStringLiteral("读取图档失败：") + DrawingDb::instance()->lastError());
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("打开失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("读取图档失败：")) + DrawingDb::instance()->lastError());
         return;
     }
     QString err;
     if (!loadDrawingJsonViaTempFile(json, &err)) {
         if (!err.isEmpty())
-            QMessageBox::warning(this, QStringLiteral("打开失败"), err);
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("打开失败")), err);
     }
 }
 
@@ -5307,21 +5379,21 @@ void MainWindow::applyTemplateFromDb(int id) {
     double refW = 0.0, refH = 0.0;
     const QString json = DrawingDb::instance()->getTemplateJson(id);
     if (json.isEmpty() || !DrawingDb::instance()->getTemplateRefSize(id, &refW, &refH)) {
-        QMessageBox::warning(this, QStringLiteral("套用失败"),
-            QStringLiteral("读取模板失败：") + DrawingDb::instance()->lastError());
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("套用失败")),
+            SketchCAD::I18n::t(QString::fromUtf8("读取模板失败：")) + DrawingDb::instance()->lastError());
         return;
     }
     // 先按模板几何新建一份文档（复用既有打开逻辑）
     QString err;
     if (!loadDrawingJsonViaTempFile(json, &err)) {
-        if (!err.isEmpty()) QMessageBox::warning(this, QStringLiteral("套用失败"), err);
+        if (!err.isEmpty()) QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("套用失败")), err);
         return;
     }
 
     // 询问目标尺寸（宽,高，单位 mm），默认回填模板参考尺寸
     bool ok = false;
-    const QString sizeText = QInputDialog::getText(this, QStringLiteral("套用模板"),
-        QStringLiteral("模板参考尺寸 %1 × %2 mm。\n输入目标图纸尺寸（宽,高，单位 mm），如 420,297：")
+    const QString sizeText = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("套用模板")),
+        SketchCAD::I18n::t(QString::fromUtf8("模板参考尺寸 %1 × %2 mm。\n输入目标图纸尺寸（宽,高，单位 mm），如 420,297："))
             .arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1),
         QLineEdit::Normal,
         QStringLiteral("%1,%2").arg(refW, 0, 'f', 1).arg(refH, 0, 'f', 1), &ok);
@@ -5329,16 +5401,16 @@ void MainWindow::applyTemplateFromDb(int id) {
 
     const QStringList parts = sizeText.split(QStringLiteral(","), Qt::SkipEmptyParts);
     if (parts.size() != 2) {
-        QMessageBox::warning(this, QStringLiteral("尺寸无效"),
-            QStringLiteral("请输入「宽,高」两个数值，例如 420,297。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("尺寸无效")),
+            SketchCAD::I18n::t(QString::fromUtf8("请输入「宽,高」两个数值，例如 420,297。")));
         return;
     }
     bool okw = false, okh = false;
     const double newW = parts.at(0).toDouble(&okw);
     const double newH = parts.at(1).toDouble(&okh);
     if (!okw || !okh || newW <= 0 || newH <= 0 || refW <= 0) {
-        QMessageBox::warning(this, QStringLiteral("尺寸无效"),
-            QStringLiteral("宽/高必须为正数，且模板参考尺寸需 > 0。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("尺寸无效")),
+            SketchCAD::I18n::t(QString::fromUtf8("宽/高必须为正数，且模板参考尺寸需 > 0。")));
         return;
     }
 
@@ -5353,7 +5425,7 @@ void MainWindow::applyTemplateFromDb(int id) {
     sp.height = newH;
     model_->setSheetSpec(sp);
 
-    model_->log(QStringLiteral("已套用模板并按 %1 × %2 mm 缩放（比例因子 %3）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已套用模板并按 %1 × %2 mm 缩放（比例因子 %3）"))
                     .arg(newW, 0, 'f', 1).arg(newH, 0, 'f', 1).arg(factor, 0, 'f', 3),
                 QStringLiteral("info"));
     if (view_) view_->fitToRect(QRectF(0.0, 0.0, newW, newH));
@@ -5375,7 +5447,7 @@ template <class F>
 bool runParseStep(QWidget* parent, F&& fn, const QString& label, std::atomic<bool>* cancelFlag) {
     if (!MainWindow::s_asyncLoadEnabled) { fn(); return false; }   // 同步路径（自测）
     QProgressDialog prog(label, QStringLiteral("取消"), 0, 0, parent);
-    prog.setWindowTitle(QStringLiteral("打开图纸"));
+    prog.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("打开图纸")));
     prog.setWindowModality(Qt::WindowModal);
     prog.setMinimumDuration(0);
     prog.setValue(0);                        // 0..0 = busy 转圈（解析总量未知）
@@ -5409,7 +5481,7 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
             if (appSettings_ && appSettings_->fieldAutoUpdateOnOpen()) {
                 const int nField = model_->refreshFields();
                 if (nField > 0)
-                    model_->log(QStringLiteral("已自动刷新 %1 个域宿主（fieldupdate 可手动重算）").arg(nField),
+                    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已自动刷新 %1 个域宿主（fieldupdate 可手动重算）")).arg(nField),
                                 QStringLiteral("info"));
             }
         }
@@ -5418,9 +5490,9 @@ bool MainWindow::readDrawing(const QString& path, QString* err) {
         if (modelTouched) {
             model_->clear();   // 恢复到已知空态（clear 发 modelChanged → 视图自动清空场景项）
         }
-        model_->log(QStringLiteral("内存不足，已停止加载：") + path, "error");
-        QMessageBox::warning(this, QStringLiteral("打开图纸"),
-            QStringLiteral("内存不足，已停止加载。\n\n文件过大或系统可用内存不足，当前图纸未被改动（或已恢复为空图），程序仍可正常使用。"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("内存不足，已停止加载：")) + path, "error");
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("打开图纸")),
+            SketchCAD::I18n::t(QString::fromUtf8("内存不足，已停止加载。\n\n文件过大或系统可用内存不足，当前图纸未被改动（或已恢复为空图），程序仍可正常使用。")));
         if (err) *err = QStringLiteral("内存不足，已停止加载");
         return false;
     }
@@ -5438,7 +5510,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         if (err) *err = QStringLiteral("无法读取 ") + path;
-        model_->log(QStringLiteral("打开失败：") + path, "error");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开失败：")) + path, "error");
         qWarning() << "[MainWindow] readDrawingImpl: 无法以只读方式打开文件 =" << path;
         return false;
     }
@@ -5450,7 +5522,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
 
     if (fmt == cadfmt::CadFormat::Step) {
         if (err) *err = QStringLiteral("STEP 为只写格式，不支持读回");
-        model_->log(QStringLiteral("STEP 为只写格式（曲线集交换），本程序不支持读回：请用 CAD 转换后再导入"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("STEP 为只写格式（曲线集交换），本程序不支持读回：请用 CAD 转换后再导入")), "warn");
         return false;
     }
 
@@ -5465,13 +5537,13 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         }, bigFile ? QStringLiteral("正在解析 DXF（后台）…") : QStringLiteral("正在解析 DXF…"),
            bigFile ? &cancelFlag : nullptr);
         if (canceled) {
-            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消打开：")) + path, "info");
             if (err) *err = QStringLiteral("已取消");
             return false;                    // 解析阶段取消：模型未被改动，原图纸完好
         }
         if (!parseOk) {
             if (err) *err = e;
-            model_->log(QStringLiteral("DXF 解析失败：") + e, "error");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("DXF 解析失败：")) + e, "error");
             return false;
         }
         // 跨单位交换：DXF 头声明的 $INSUNITS ≠ mm 时，按元数据把几何整体换算到 mm
@@ -5505,9 +5577,9 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         int robSkip = 0, robFix = 0; QString robRep;
         std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
         if (robSkip > 0 || robFix > 0)
-            model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
                            .arg(robSkip).arg(robFix).arg(robRep), "warn");
-        model_->beginEdit(QStringLiteral("导入 DXF"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("导入 DXF")));
         model_->addElementsQuiet(kept);
         QString note = QStringLiteral("已打开 DXF：%1（导入 %2 个图元%3；标注/样条已按几何炸开）")
                            .arg(path).arg(kept.size())
@@ -5560,7 +5632,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         if (dwgNeedsBridge && !dwgbridge::available()) {
             const QString human = dwgbridge::versionHuman(dwgVer);
             if (err) *err = QStringLiteral("未安装 DWG 转换组件，无法读取 %1（%2）").arg(human, dwgVer);
-            model_->log(QStringLiteral("DWG 解析失败：未安装 DWG 转换组件，无法读取版本 %1（%2）")
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("DWG 解析失败：未安装 DWG 转换组件，无法读取版本 %1（%2）"))
                             .arg(human, dwgVer), "error");
             qWarning() << "[MainWindow] readDrawingImpl: 转换组件缺失，拒绝打开" << dwgVer;
             warnDwgConverterMissing(true, dwgVer, human);
@@ -5576,14 +5648,14 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         }, bigFile ? QStringLiteral("正在解析 DWG（后台）…") : QStringLiteral("正在解析 DWG…"),
            bigFile ? &cancelFlag : nullptr);
         if (canceled) {
-            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消打开：")) + path, "info");
             if (err) *err = QStringLiteral("已取消");
             qWarning() << "[MainWindow] readDrawingImpl: 用户取消 DWG 打开";
             return false;
         }
         if (!parseOk) {
             if (err) *err = e;
-            model_->log(QStringLiteral("DWG 解析失败：") + e, "error");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("DWG 解析失败：")) + e, "error");
             qWarning() << "[MainWindow] readDrawingImpl: DWG 解析失败 =" << e;
             return false;
         }
@@ -5621,9 +5693,9 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         int robSkip = 0, robFix = 0; QString robRep;
         std::vector<Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
         if (robSkip > 0 || robFix > 0)
-            model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
                            .arg(robSkip).arg(robFix).arg(robRep), "warn");
-        model_->beginEdit(QStringLiteral("导入 DWG"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("导入 DWG")));
         model_->addElementsQuiet(kept);
         QString note = QStringLiteral("已打开 DWG：%1（导入 %2 个图元%3）")
                            .arg(path).arg(kept.size())
@@ -5674,14 +5746,14 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         }, bigFile ? QStringLiteral("正在解析图纸（后台）…") : QStringLiteral("正在解析图纸…"),
            bigFile ? &cancelFlag : nullptr);
         if (canceled) {
-            model_->log(QStringLiteral("已取消打开：") + path, "info");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已取消打开：")) + path, "info");
             if (err) *err = QStringLiteral("已取消");
             return false;   // 解析阶段取消：模型未被改动，原图纸完好
         }
     }
     if (!jsonOk) {
         if (err) *err = QStringLiteral("不是有效的草图文件");
-        model_->log(QStringLiteral("打开失败：不是有效的草图文件"), "error");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开失败：不是有效的草图文件")), "error");
         return false;
     }
     const QJsonObject root = parsedRoot;
@@ -5691,9 +5763,9 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     int robSkip = 0, robFix = 0; QString robRep;
     std::vector<Element> kept = SketchCAD::filterElements(loaded, &robSkip, &robFix, &robRep);
     if (robSkip > 0 || robFix > 0)
-        model_->log(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
                        .arg(robSkip).arg(robFix).arg(robRep), "warn");
-    model_->beginEdit(QStringLiteral("打开草图"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("打开草图")));
     model_->addElementsQuiet(kept);
     // 读回图层表（若有）。必须在 addElementsQuiet 之后、setScaleRatioValue 之前：
     // 图层表不依赖比例；若文件无 layers 字段则回退为单层"0"，不影响旧图兼容。
@@ -5719,7 +5791,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
         QString drep;
         const int dangling = SketchCAD::countDanglingRefs(kept, lns, bns, sns, &drep);
         if (dangling > 0)
-            model_->log(QStringLiteral("打开校验：%1 个图元引用了不存在的图层/块/样式或悬空几何：%2")
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("打开校验：%1 个图元引用了不存在的图层/块/样式或悬空几何：%2"))
                            .arg(dangling).arg(drep), "warn");
     }
     // 读回单位与图纸界限（若有）。二者是**随图属性**（随图存档、现按 Ctrl+Z 可回退）：
@@ -5759,7 +5831,7 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
     // 登记图纸路径：它是外部参照「相对路径」的解析基准（读回后 xref 才能被重新定位）
     model_->setDrawingPath(path);
     syncTitleBlockScale();
-    model_->log(QStringLiteral("已打开：%1（比例 %2）").arg(path).arg(model_->scaleLabel()));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已打开：%1（比例 %2）")).arg(path).arg(model_->scaleLabel()));
     view_->fitView();
     if (err) err->clear();
     return true;
@@ -5768,9 +5840,8 @@ bool MainWindow::readDrawingImpl(const QString& path, QString* err, bool* modelT
 // 修改绘图比例：按内容包围盒中心等比缩放已有图元（图框/标题栏代表纸张，不缩放）
 void MainWindow::changeDrawingScale() {
     bool ok = false;
-    const double v = QInputDialog::getDouble(this, QStringLiteral("绘图比例"),
-        QStringLiteral("输入比例（图形:实际）。1:1 = 1.0，1:2 = 0.5，2:1 = 2.0。\n"
-                       "修改比例后，已有图元将按此比例等比缩放（图框与标题栏不变）。"),
+    const double v = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("绘图比例")),
+        SketchCAD::I18n::t(QString::fromUtf8("输入比例（图形:实际）。1:1 = 1.0，1:2 = 0.5，2:1 = 2.0。\n修改比例后，已有图元将按此比例等比缩放（图框与标题栏不变）。")),
         model_->scaleRatio(), 1e-4, 1000.0, 4, &ok);
     if (ok && v > 0.0) model_->setScaleRatio(v, true);
 }
@@ -5789,27 +5860,27 @@ void MainWindow::syncTitleBlockScale() {
 // 追加绘制标准化「图纸边框 + 标准标题栏」。全程只追加新图元，绝不修改/移动/删除已有图元。
 void MainWindow::insertStandardTitleBlock() {
     // 1) 弹出图纸选择对话框，供用户选择目标图纸文件并确认
-    const QString fn = QFileDialog::getOpenFileName(this, QStringLiteral("选择图纸文件"),
-        QString(), QStringLiteral("草图文件 (*.json);;所有文件 (*)"));
+    const QString fn = QFileDialog::getOpenFileName(this, SketchCAD::I18n::t(QString::fromUtf8("选择图纸文件")),
+        QString(), SketchCAD::I18n::t(QString::fromUtf8("草图文件 (*.json);;所有文件 (*)")));
     if (fn.isEmpty()) {   // 未选择图纸
-        QMessageBox::warning(this, QStringLiteral("插入标准标题栏"),
-            QStringLiteral("未选择图纸文件。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("插入标准标题栏")),
+            SketchCAD::I18n::t(QString::fromUtf8("未选择图纸文件。")));
         return;
     }
 
     // 2) 读取并解析所选文件（仅取元数据，不替换当前图纸）
     QFile f(fn);
     if (!f.open(QIODevice::ReadOnly)) {
-        QMessageBox::critical(this, QStringLiteral("插入标准标题栏"),
-            QStringLiteral("文件加载失败：无法打开文件。\n%1").arg(fn));
+        QMessageBox::critical(this, SketchCAD::I18n::t(QString::fromUtf8("插入标准标题栏")),
+            SketchCAD::I18n::t(QString::fromUtf8("文件加载失败：无法打开文件。\n%1")).arg(fn));
         return;
     }
     const QByteArray raw = f.readAll();
     f.close();
     const QJsonDocument d = QJsonDocument::fromJson(raw);
     if (!d.isObject()) {
-        QMessageBox::critical(this, QStringLiteral("插入标准标题栏"),
-            QStringLiteral("文件加载失败：不是有效的草图文件。"));
+        QMessageBox::critical(this, SketchCAD::I18n::t(QString::fromUtf8("插入标准标题栏")),
+            SketchCAD::I18n::t(QString::fromUtf8("文件加载失败：不是有效的草图文件。")));
         return;
     }
     const QJsonObject root = d.object();
@@ -5833,9 +5904,9 @@ void MainWindow::insertStandardTitleBlock() {
         if (r.isValid()) { cb = have ? cb.united(r) : r; have = true; }
     }
     auto elems = buildInsertedTitleBlock(have ? cb : QRectF(), data);
-    model_->beginEdit(QStringLiteral("插入标准标题栏"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("插入标准标题栏")));
     model_->addElementsQuiet(elems);
-    model_->log(QStringLiteral("已插入标准标题栏（图名：%1，比例：%2）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已插入标准标题栏（图名：%1，比例：%2）"))
         .arg(data.drawingName).arg(data.scale));
 
     // 适配视图以显示全部内容（含新边框/标题栏）；仅改变视图，不动图元
@@ -5871,11 +5942,11 @@ void MainWindow::generateFramedTitleBlock() {
 
     // 4) 生成"图纸边框 + 标题栏"并仅追加：不修改/移动/删除任何已有图元
     auto elems = buildAutoFrameTitleBlock(have ? cb : QRectF(), spec, data);
-    model_->beginEdit(QStringLiteral("按幅面生成图框与标题栏"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("按幅面生成图框与标题栏")));
     model_->addElementsQuiet(elems);
-    model_->log(QStringLiteral("已按 %1 生成图框与标题栏（内容%2被包含，标题栏自动避让）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已按 %1 生成图框与标题栏（内容%2被包含，标题栏自动避让）"))
         .arg(spec.formatName())
-        .arg(have ? QStringLiteral("已") : QStringLiteral("未")));
+        .arg(have ? SketchCAD::I18n::t(QString::fromUtf8("已")) : SketchCAD::I18n::t(QString::fromUtf8("未"))));
 
     // 5) 适配视图以显示全部内容（含新边框/标题栏）；仅改变视图，不动图元
     QRectF all; bool ha = false;
@@ -5911,8 +5982,8 @@ static Vec3 selectionCenter(SketchModel* model) {
 
 void MainWindow::arrayRectangular() {
     if (model_->selection().empty()) {
-        QMessageBox::warning(this, QStringLiteral("阵列复制"),
-                             QStringLiteral("请先选中要阵列的一个或多个图元。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("阵列复制")),
+                             SketchCAD::I18n::t(QString::fromUtf8("请先选中要阵列的一个或多个图元。")));
         return;
     }
     ArrayDialog dlg(ArrayDialog::Rectangular, Vec3(0, 0, 0), this);
@@ -5923,18 +5994,18 @@ void MainWindow::arrayRectangular() {
     auto src = collectSelectedElements(model_);
     auto changes = modify::makeRectangularArray(src, res.rows, res.cols,
                                                 res.rowSpacing, res.colSpacing);
-    model_->beginEdit(QStringLiteral("矩形阵列"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("矩形阵列")));
     const auto newIds = modify::applyChanges(model_, changes, QString());
     // 选中全部新生成的副本，便于继续编辑
     model_->setSelection(newIds);
-    model_->log(QStringLiteral("矩形阵列：%1 个源图元 → 新增 %2 个副本（%3×%4）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("矩形阵列：%1 个源图元 → 新增 %2 个副本（%3×%4）"))
                     .arg(src.size()).arg(newIds.size()).arg(res.rows).arg(res.cols));
 }
 
 void MainWindow::arrayPolar() {
     if (model_->selection().empty()) {
-        QMessageBox::warning(this, QStringLiteral("阵列复制"),
-                             QStringLiteral("请先选中要阵列的一个或多个图元。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("阵列复制")),
+                             SketchCAD::I18n::t(QString::fromUtf8("请先选中要阵列的一个或多个图元。")));
         return;
     }
     const Vec3 defCenter = selectionCenter(model_);
@@ -5953,11 +6024,11 @@ void MainWindow::arrayPolar() {
 
         auto src = collectSelectedElements(model_);
         auto changes = modify::makePolarArray(src, res.center, res.count, res.angleRangeDeg);
-        model_->beginEdit(QStringLiteral("环形阵列"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("环形阵列")));
         const auto newIds = modify::applyChanges(model_, changes, QString());
         // 选中全部新生成的副本，便于继续编辑
         model_->setSelection(newIds);
-        model_->log(QStringLiteral("环形阵列：%1 个源图元 → 新增 %2 个副本（%3 个 / %4°）")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("环形阵列：%1 个源图元 → 新增 %2 个副本（%3 个 / %4°）"))
                         .arg(src.size()).arg(newIds.size())
                         .arg(res.count).arg(res.angleRangeDeg, 0, 'f', 2));
     });
@@ -5994,12 +6065,12 @@ void MainWindow::onCanvasPointPicked(const Vec3& p) {
 
 void MainWindow::mirror() {
     if (model_->selection().empty()) {
-        model_->log(QStringLiteral("请先选中要镜像的图元"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中要镜像的图元")), "warn");
         return;
     }
     QMessageBox box(this);
-    box.setWindowTitle(QStringLiteral("镜像"));
-    box.setText(QStringLiteral("请选择镜像基准："));
+    box.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("镜像")));
+    box.setText(SketchCAD::I18n::t(QString::fromUtf8("请选择镜像基准：")));
     QPushButton* bPoint = box.addButton(QStringLiteral("点镜像（指定对称中心点）"), QMessageBox::ActionRole);
     QPushButton* bLine  = box.addButton(QStringLiteral("线镜像（指定一条直线）"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);
@@ -6008,12 +6079,12 @@ void MainWindow::mirror() {
         mirrorPending_ = true; mirrorIsPoint_ = true;  mirrorP1Valid_ = false;
         model_->setActiveTool(QStringLiteral("select"));
         view_->setPointPickMode(true);
-        model_->log(QStringLiteral("点镜像：请在画布上单击指定对称中心点"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("点镜像：请在画布上单击指定对称中心点")));
     } else if (box.clickedButton() == bLine) {
         mirrorPending_ = true; mirrorIsPoint_ = false; mirrorP1Valid_ = false;
         model_->setActiveTool(QStringLiteral("select"));
         view_->setPointPickMode(true);
-        model_->log(QStringLiteral("线镜像：请依次单击两点定义镜像轴（先第一点，后第二点）"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("线镜像：请依次单击两点定义镜像轴（先第一点，后第二点）")));
     }
 }
 
@@ -6026,7 +6097,7 @@ void MainWindow::handleMirrorPick(const Vec3& p) {
     // 线镜像：收集两点
     if (!mirrorP1Valid_) {
         mirrorP1_ = p; mirrorP1Valid_ = true;
-        model_->log(QStringLiteral("线镜像：已拾取第一点，请拾取第二点定义镜像轴"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("线镜像：已拾取第一点，请拾取第二点定义镜像轴")));
         // pointPickMode 在每次左键拾取后仍保持开启（见 GraphicsView::mousePressEvent），
         // 无需重新 setPointPickMode(true)；保持十字光标等待第二点。
         return;
@@ -6037,13 +6108,13 @@ void MainWindow::handleMirrorPick(const Vec3& p) {
 
 void MainWindow::applyMirror(bool isPoint, const Vec3& b1, const Vec3& b2) {
     std::vector<Element> src = collectSelectedElements(model_);
-    if (src.empty()) { model_->log(QStringLiteral("无可镜像图元"), "warn"); return; }
+    if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可镜像图元")), "warn"); return; }
     auto changes = modify::makeMirror(src, isPoint, b1, b2);
-    model_->beginEdit(QStringLiteral("修改-镜像"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("修改-镜像")));
     const auto newIds = modify::applyChanges(model_, changes, QString());
     if (!newIds.empty()) model_->setSelection(newIds);  // 选中新生成的镜像副本，便于继续编辑
-    model_->log(QStringLiteral("已生成 %1 个镜像图元（%2）")
-                    .arg(newIds.size()).arg(isPoint ? "点镜像" : "线镜像"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成 %1 个镜像图元（%2）"))
+                    .arg(newIds.size()).arg(isPoint ? SketchCAD::I18n::t(QString::fromUtf8("点镜像")) : SketchCAD::I18n::t(QString::fromUtf8("线镜像"))));
 }
 
 void MainWindow::finishMirror() {
@@ -6062,16 +6133,16 @@ void MainWindow::onPointPickCancelled() {
 // 命令行入口 join [tol] 缺省 kJoinDefaultTol=0.5mm，两者共用 modify::makeJoin。
 void MainWindow::joinSelected() {
     std::vector<Element> src = collectSelectedElements(model_);
-    if (src.empty()) { model_->log(QStringLiteral("请先选中要连合的 Line/Arc"), "warn"); return; }
+    if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中要连合的 Line/Arc")), "warn"); return; }
     auto changes = modify::makeJoin(src, view_->worldTol());
     if (changes.empty()) {
-        model_->log(QStringLiteral("没有可连合的链（只连合同层且端点在容差内相接的 Line/Arc）"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("没有可连合的链（只连合同层且端点在容差内相接的 Line/Arc）")), "warn");
         return;
     }
-    model_->beginEdit(QStringLiteral("连合"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("连合")));
     const auto newIds = modify::applyChanges(model_, changes, QString());
     if (!newIds.empty()) model_->setSelection(newIds);   // 选中连合结果，便于继续编辑
-    model_->log(QStringLiteral("连合：%1 条图元 → %2 条 Polyline")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("连合：%1 条图元 → %2 条 Polyline"))
                     .arg(src.size()).arg(newIds.size()));
 }
 
@@ -6090,7 +6161,7 @@ void MainWindow::arrayPath() {
             src.push_back(*e);              // 其余图元作阵列源
     }
     if (!path || src.empty()) {
-        model_->log(QStringLiteral("路径阵列需要选区同时含 1 条 Polyline/Spline（路径）与待阵列图元"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("路径阵列需要选区同时含 1 条 Polyline/Spline（路径）与待阵列图元")), "warn");
         return;
     }
     std::vector<Vec3> pathPts;
@@ -6101,19 +6172,19 @@ void MainWindow::arrayPath() {
 
     bool ok = false;
     const double spacing = QInputDialog::getDouble(
-        this, QStringLiteral("路径阵列"),
-        QStringLiteral("项目间距 (mm)："), 10.0, 0.001, 1.0e6, 2, &ok);
+        this, SketchCAD::I18n::t(QString::fromUtf8("路径阵列")),
+        SketchCAD::I18n::t(QString::fromUtf8("项目间距 (mm)：")), 10.0, 0.001, 1.0e6, 2, &ok);
     if (!ok) return;
 
     auto changes = modify::makePathArray(src, pathPts, spacing);
     if (changes.empty()) {
-        model_->log(QStringLiteral("路径阵列退化：路径太短或间距大于路径全长"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("路径阵列退化：路径太短或间距大于路径全长")), "warn");
         return;
     }
-    model_->beginEdit(QStringLiteral("路径阵列"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("路径阵列")));
     const auto newIds = modify::applyChanges(model_, changes, QString());
     if (!newIds.empty()) model_->setSelection(newIds);
-    model_->log(QStringLiteral("路径阵列：%1 个源图元 → 新增 %2 个副本（间距 %3 mm，路径 #%4）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("路径阵列：%1 个源图元 → 新增 %2 个副本（间距 %3 mm，路径 #%4）"))
                     .arg(src.size()).arg(newIds.size()).arg(spacing, 0, 'f', 2).arg(path->id));
 }
 
@@ -6124,13 +6195,13 @@ void MainWindow::arrayPath() {
 
 void MainWindow::copyClipToClipboard(bool withBase) {
     std::vector<Element> src = collectSelectedElements(model_);
-    if (src.empty()) { model_->log(QStringLiteral("无可复制图元（请先选中）"), "warn"); return; }
+    if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可复制图元（请先选中）")), "warn"); return; }
     if (withBase) {
         // 带基点复制：进入拾取态，落点即基点（图元在 handleClipPick 里组包）
         clipBasePending_ = true;
         model_->setActiveTool(QStringLiteral("select"));
         view_->setPointPickMode(true);
-        model_->log(QStringLiteral("带基点复制：请单击指定基点"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("带基点复制：请单击指定基点")));
         return;
     }
     // 复制：基点 = 选区包围盒左下角（对齐 AutoCAD 默认基点语义，与命令行一致）
@@ -6145,8 +6216,8 @@ void MainWindow::copyClipToClipboard(bool withBase) {
     p.base = Vec3(minX, minY, 0);
     p.elements = std::move(src);
     p.blocks = clipboard::collectBlockDeps(*model_, p.elements);
-    if (!clipboard::putToClipboard(p)) { model_->log(QStringLiteral("写入剪贴板失败"), "warn"); return; }
-    model_->log(QStringLiteral("已复制 %1 个图元到剪贴板（基点 %2,%3）")
+    if (!clipboard::putToClipboard(p)) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("写入剪贴板失败")), "warn"); return; }
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已复制 %1 个图元到剪贴板（基点 %2,%3）"))
                     .arg(p.elements.size()).arg(p.base.x, 0, 'f', 2).arg(p.base.y, 0, 'f', 2));
 }
 
@@ -6154,7 +6225,7 @@ void MainWindow::pasteFromClipboard(bool asBlock) {
     clipboard::Payload p;
     QString err;
     if (!clipboard::getFromClipboard(&p, &err)) {
-        model_->log(err.isEmpty() ? QStringLiteral("剪贴板内容不可用") : err, "warn");
+        model_->log(err.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("剪贴板内容不可用")) : err, "warn");
         return;
     }
     clipPastePayload_ = std::move(p);
@@ -6162,8 +6233,8 @@ void MainWindow::pasteFromClipboard(bool asBlock) {
     clipPasteAsBlock_ = asBlock;
     model_->setActiveTool(QStringLiteral("select"));
     view_->setPointPickMode(true);
-    model_->log(asBlock ? QStringLiteral("粘贴为块：请单击指定插入点")
-                        : QStringLiteral("粘贴：请单击指定落点（剪贴板基点将对齐该点）"));
+    model_->log(asBlock ? SketchCAD::I18n::t(QString::fromUtf8("粘贴为块：请单击指定插入点"))
+                        : SketchCAD::I18n::t(QString::fromUtf8("粘贴：请单击指定落点（剪贴板基点将对齐该点）")));
 }
 
 void MainWindow::handleClipPick(const Vec3& p) {
@@ -6172,13 +6243,13 @@ void MainWindow::handleClipPick(const Vec3& p) {
         clipBasePending_ = false;
         if (view_->pointPickMode()) view_->setPointPickMode(false);
         std::vector<Element> src = collectSelectedElements(model_);
-        if (src.empty()) { model_->log(QStringLiteral("无可复制图元"), "warn"); return; }
+        if (src.empty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("无可复制图元")), "warn"); return; }
         clipboard::Payload pay;
         pay.base = p;
         pay.elements = std::move(src);
         pay.blocks = clipboard::collectBlockDeps(*model_, pay.elements);
-        if (!clipboard::putToClipboard(pay)) { model_->log(QStringLiteral("写入剪贴板失败"), "warn"); return; }
-        model_->log(QStringLiteral("已复制 %1 个图元到剪贴板（基点 %2,%3）")
+        if (!clipboard::putToClipboard(pay)) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("写入剪贴板失败")), "warn"); return; }
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已复制 %1 个图元到剪贴板（基点 %2,%3）"))
                         .arg(pay.elements.size()).arg(pay.base.x, 0, 'f', 2).arg(pay.base.y, 0, 'f', 2));
         return;
     }
@@ -6187,11 +6258,11 @@ void MainWindow::handleClipPick(const Vec3& p) {
     clipboard::Payload pay = std::move(clipPastePayload_);
     const bool asBlock = clipPasteAsBlock_;
     finishClipPick();
-    model_->beginEdit(asBlock ? QStringLiteral("剪贴板-粘贴为块") : QStringLiteral("剪贴板-粘贴"));
+    model_->beginEdit(asBlock ? SketchCAD::I18n::t(QString::fromUtf8("剪贴板-粘贴为块")) : SketchCAD::I18n::t(QString::fromUtf8("剪贴板-粘贴")));
     QString msg;
     if (!clipboard::pasteInto(model_, pay, p, asBlock, &msg)) {
         model_->undo();   // 空转回滚：粘贴失败不留 beginEdit 快照
-        model_->log(msg.isEmpty() ? QStringLiteral("粘贴失败") : msg, "warn");
+        model_->log(msg.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("粘贴失败")) : msg, "warn");
         return;
     }
     model_->log(msg);
@@ -6253,8 +6324,7 @@ void MainWindow::sectionFill() {
     pickLoopsValid_ = false;
     pickHlLoop_ = -2;
     view_->setRegionHighlight({});
-    model_->log(QStringLiteral("剖面填充：请在要填充的封闭区域内部单击（可连续点击多个区域）；"
-                               "Enter 调整参数（角度/间距/材料）、Esc 或右键退出。"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充：请在要填充的封闭区域内部单击（可连续点击多个区域）；Enter 调整参数（角度/间距/材料）、Esc 或右键退出。")));
 }
 
 void MainWindow::exitRegionPick(const QString& logMsg) {
@@ -6318,8 +6388,8 @@ void MainWindow::onRegionPickRequested(double x, double y) {
             }
             break;
         }
-        model_->log(QStringLiteral("剖面填充：%1").arg(msg.section('\n', 0, 0)), "warn");
-        if (modal) QMessageBox::information(this, QStringLiteral("剖面填充"), msg);
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充：%1")).arg(msg.section('\n', 0, 0)), "warn");
+        if (modal) QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("剖面填充")), msg);
         return;                     // 保持拾取模式，用户可直接换位置再点
     }
 
@@ -6328,11 +6398,11 @@ void MainWindow::onRegionPickRequested(double x, double y) {
     // 避免填充本区域时把相邻区域一并裁剪掉（"另一部分被一并裁掉"缺陷）。
     const auto result = makeSectionChangeForPick(pick, model_->elements(), sectionStyle_);
     if (!result.anySuccess()) {
-        model_->log(QStringLiteral("剖面填充：该区域无法生成剖面线，已跳过"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充：该区域无法生成剖面线，已跳过")), "warn");
         return;
     }
 
-    model_->beginEdit(QStringLiteral("剖面填充"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("剖面填充")));
     const std::vector<int> newIds = modify::applyChanges(model_, result.changes, QString());
     const int changedId = result.changes.empty() ? -1 : result.changes.front().id;
     if (changedId > 0)          model_->setSelection({ changedId });      // 复用原 ID：选中态不跳
@@ -6343,11 +6413,11 @@ void MainWindow::onRegionPickRequested(double x, double y) {
     pickHlLoop_ = -2;
     view_->setRegionHighlight({});
 
-    model_->log(QStringLiteral("剖面填充：已填充 1 个区域（边界 %1 段%2；角度 %3°，间距 %4mm）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充：已填充 1 个区域（边界 %1 段%2；角度 %3°，间距 %4mm）"))
                     .arg(pick.boundary.size())
                     .arg(pick.holes.empty()
                              ? QString()
-                             : QStringLiteral("，内孔 %1 个已掏空").arg(pick.holes.size()))
+                             : SketchCAD::I18n::t(QString::fromUtf8("，内孔 %1 个已掏空")).arg(pick.holes.size()))
                     .arg(sectionStyle_.angleDeg, 0, 'f', 1)
                     .arg(sectionStyle_.spacingMm, 0, 'f', 2));
 }
@@ -6356,14 +6426,14 @@ void MainWindow::onRegionPickCancelled() {
     if (view_->regionPickMode()) view_->setRegionPickMode(false);
     pickLoopsValid_ = false;
     pickHlLoop_ = -2;
-    model_->log(QStringLiteral("剖面填充：已退出区域选择"));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充：已退出区域选择")));
 }
 
 void MainWindow::onRegionPickParams() {
     SectionDialog dlg(SectionDialog::Result{ sectionStyle_, true }, this);
     if (dlg.exec() != QDialog::Accepted) return;
     sectionStyle_ = dlg.result().style;
-    model_->log(QStringLiteral("剖面填充参数：角度 %1°、间距 %2mm（继续在区域内单击即可填充）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充参数：角度 %1°、间距 %2mm（继续在区域内单击即可填充）"))
                     .arg(sectionStyle_.angleDeg, 0, 'f', 1)
                     .arg(sectionStyle_.spacingMm, 0, 'f', 2));
 }
@@ -6388,15 +6458,14 @@ void MainWindow::sectionFillParams() {
     }
 
     if (hatchIds.empty()) {
-        model_->log(QStringLiteral("剖面填充参数已设为：%1（角度 %2°、间距 %3mm）；"
-                                   "下次点选填充即按此生效。若想改已填充区域，请先选中该剖面区域。")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("剖面填充参数已设为：%1（角度 %2°、间距 %3mm）；下次点选填充即按此生效。若想改已填充区域，请先选中该剖面区域。"))
                         .arg(QString::fromUtf8(sectionMaterialLabel(st.material)))
                         .arg(st.angleDeg, 0, 'f', 1)
                         .arg(st.spacingMm, 0, 'f', 2));
         return;
     }
 
-    model_->beginEdit(QStringLiteral("剖面填充参数"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("剖面填充参数")));
     int n = 0;
     for (int id : hatchIds) {
         const Element* src = model_->element(id);
@@ -6414,7 +6483,7 @@ void MainWindow::sectionFillParams() {
         });
         ++n;
     }
-    model_->log(QStringLiteral("已把 %1 个剖面区域改为：%2（角度 %3°、间距 %4mm）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已把 %1 个剖面区域改为：%2（角度 %3°、间距 %4mm）"))
                     .arg(n)
                     .arg(QString::fromUtf8(sectionMaterialLabel(st.material)))
                     .arg(st.angleDeg, 0, 'f', 1)
@@ -6431,22 +6500,22 @@ void MainWindow::sectionFillSelected() {
     for (int id : model_->selection())
         if (const Element* e = model_->element(id)) src.push_back(*e);
     if (src.empty()) {
-        model_->log(QStringLiteral("请先选中要填充的图元（边界/闭合形状），再执行「用选中边界填充」"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("请先选中要填充的图元（边界/闭合形状），再执行「用选中边界填充」")), "warn");
         return;
     }
     const auto res = makeSectionChangesEx(src, sectionStyle_, true);
     if (res.changes.empty()) {
-        model_->log(QStringLiteral("选中图元中无可填充的闭合区域（边界需 ≥3 点外环，或选中圆/矩形/多边形/闭合折线）"), "warn");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("选中图元中无可填充的闭合区域（边界需 ≥3 点外环，或选中圆/矩形/多边形/闭合折线）")), "warn");
         return;
     }
-    model_->beginEdit(QStringLiteral("剖面填充（选中）"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("剖面填充（选中）")));
     const std::vector<int> newIds = modify::applyChanges(model_, res.changes, QString());
     int picked = -1;
     for (const auto& c : res.changes)
         if (!c.remove) { picked = (c.id > 0 ? c.id : -1); break; }
     if (picked > 0)          model_->setSelection({ picked });
     else if (!newIds.empty()) model_->setSelection({ newIds.front() });
-    model_->log(QStringLiteral("已填充 %1 个区域（跨 %2 个选中的闭合图元）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已填充 %1 个区域（跨 %2 个选中的闭合图元）"))
                     .arg(res.filledRegions).arg((int)src.size()));
 }
 
@@ -6489,8 +6558,8 @@ cadfmt::DxfVersion MainWindow::chooseDxfVersion() {
         items << (o.label + QStringLiteral(" —— ") + desc);
     }
     bool ok = false;
-    QString sel = QInputDialog::getItem(this, QStringLiteral("选择 DXF 版本"),
-                                        QStringLiteral("导出 DXF 时使用的 AutoCAD 版本（R2004+ 可被正版 AutoCAD 识别为该版本并直接另存为 DWG）："),
+    QString sel = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("选择 DXF 版本")),
+                                        SketchCAD::I18n::t(QString::fromUtf8("导出 DXF 时使用的 AutoCAD 版本（R2004+ 可被正版 AutoCAD 识别为该版本并直接另存为 DWG）：")),
                                         items, 0, false, &ok);
     if (!ok) return cadfmt::DxfVersion::R12;
     for (const auto& o : opts) if (sel.startsWith(o.label)) return o.v;
@@ -6498,7 +6567,7 @@ cadfmt::DxfVersion MainWindow::chooseDxfVersion() {
 }
 
 void MainWindow::exportDxf() {
-    const QString fn = QFileDialog::getSaveFileName(this, QStringLiteral("导出 DXF"),
+    const QString fn = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("导出 DXF")),
                                                     QStringLiteral("sketch.dxf"),
                                                     QStringLiteral("DXF (*.dxf)"));
     if (fn.isEmpty()) return;
@@ -6509,13 +6578,13 @@ void MainWindow::exportDxf() {
     no.version = chooseDxfVersion();
     const QByteArray body = cadfmt::toDxf(model_->elements(), &err, model_->scaleRatio(),
                                           4, &model_->blockTable(), &no);
-    if (body.isEmpty()) { model_->log(QStringLiteral("导出失败：") + err, "error"); return; }
+    if (body.isEmpty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("导出失败：")) + err, "error"); return; }
     QFile f(fn);
     if (f.open(QIODevice::WriteOnly)) {
         f.write(body);                       // 原样写盘：DXF 可能是 GBK 字节
-        model_->log(QStringLiteral("已导出 DXF：") + fn);
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已导出 DXF：")) + fn);
     } else {
-        model_->log(QStringLiteral("导出失败（无法写入）：") + fn, "error");
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("导出失败（无法写入）：")) + fn, "error");
     }
 }
 
@@ -6634,25 +6703,25 @@ void MainWindow::openAliasFile() {
     }
     AliasTable::instance().setFilePath(ap);
     QDesktopServices::openUrl(QUrl::fromLocalFile(ap));
-    model_->log(QStringLiteral("已用系统编辑器打开别名文件：%1（编辑后点「重新加载命令别名」生效）").arg(ap));
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已用系统编辑器打开别名文件：%1（编辑后点「重新加载命令别名」生效）")).arg(ap));
 }
 
 void MainWindow::newToolbarDialog() {
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("新建自定义工具条"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("新建自定义工具条")));
     auto* nameEdit = new QLineEdit(&dlg);
-    nameEdit->setPlaceholderText(QStringLiteral("工具条 id（如 mybar），用作 objectName"));
+    nameEdit->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("工具条 id（如 mybar），用作 objectName")));
     auto* titleEdit = new QLineEdit(&dlg);
-    titleEdit->setPlaceholderText(QStringLiteral("显示标题（留空则用 id）"));
+    titleEdit->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("显示标题（留空则用 id）")));
     auto* body = new QPlainTextEdit(&dlg);
-    body->setPlaceholderText(QStringLiteral("每行一个按钮：命令 [文字] [图标]\n示例：\nline 直线 line\ncircle 圆 circle\nzoom 缩放 zoom"));
+    body->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("每行一个按钮：命令 [文字] [图标]\n示例：\nline 直线 line\ncircle 圆 circle\nzoom 缩放 zoom")));
     body->setMinimumSize(440, 240);
-    auto* ok = new QPushButton(QStringLiteral("确定"), &dlg);
-    auto* cancel = new QPushButton(QStringLiteral("取消"), &dlg);
+    auto* ok = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("确定")), &dlg);
+    auto* cancel = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("取消")), &dlg);
     auto* form = new QFormLayout();
-    form->addRow(QStringLiteral("工具条 id："), nameEdit);
-    form->addRow(QStringLiteral("标题："), titleEdit);
-    form->addRow(QStringLiteral("按钮："), body);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("工具条 id：")), nameEdit);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("标题：")), titleEdit);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("按钮：")), body);
     auto* btnRow = new QHBoxLayout();
     btnRow->addStretch(); btnRow->addWidget(ok); btnRow->addWidget(cancel);
     auto* v = new QVBoxLayout(&dlg);
@@ -6662,7 +6731,7 @@ void MainWindow::newToolbarDialog() {
     if (dlg.exec() != QDialog::Accepted) return;
 
     QString id = nameEdit->text().trimmed().toLower();
-    if (id.isEmpty()) { model_->log(QStringLiteral("工具条 id 不能为空"), "warn"); return; }
+    if (id.isEmpty()) { model_->log(SketchCAD::I18n::t(QString::fromUtf8("工具条 id 不能为空")), "warn"); return; }
     QString title = titleEdit->text().trimmed();
     CuiManager::instance().addToolbar(id, title.isEmpty() ? id : title);
     int n = 0;
@@ -6679,14 +6748,14 @@ void MainWindow::newToolbarDialog() {
         ++n;
     }
     CuiManager::instance().requestRefresh();
-    model_->log(QStringLiteral("已新建自定义工具条：%1（%2 个按钮）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已新建自定义工具条：%1（%2 个按钮）"))
                     .arg(title.isEmpty() ? id : title).arg(n));
 }
 
 void MainWindow::saveCurrentAsWorkspaceDialog() {
     bool ok = false;
-    QString id = QInputDialog::getText(this, QStringLiteral("新建工作空间"),
-        QStringLiteral("工作空间 id："), QLineEdit::Normal, QString(), &ok);
+    QString id = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("新建工作空间")),
+        SketchCAD::I18n::t(QString::fromUtf8("工作空间 id：")), QLineEdit::Normal, QString(), &ok);
     if (!ok || id.trimmed().isEmpty()) return;
     id = id.trimmed().toLower();
 
@@ -6705,7 +6774,7 @@ void MainWindow::saveCurrentAsWorkspaceDialog() {
     QString cp = QCoreApplication::applicationDirPath() + "/sketchcad.cuix";
     QString err; CuiManager::instance().save(cp, &err);
     applyCui();
-    model_->log(QStringLiteral("已保存并切换到工作空间：%1（%2 工具条 / %3 菜单）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("已保存并切换到工作空间：%1（%2 工具条 / %3 菜单）"))
                     .arg(id).arg(tbs.size()).arg(menus.size()));
 }
 
@@ -6786,7 +6855,7 @@ void MainWindow::onFeatureTriggered(FeatureId id) {
     // 双保险：旁路触发（命令面板/脚本/自定义工具条不经菜单）也按准入拦一道
     const FeatureAvailability av = evaluateFeature(model_, id);
     if (!av.enabled) {
-        model_->log(QStringLiteral("功能当前不可用：%1").arg(av.reason), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("功能当前不可用：%1")).arg(av.reason), QStringLiteral("warn"));
         return;
     }
     if (isCenterLineFeature(id)) { insertCenterLineFor(centerLineKindFor(id)); return; }
@@ -6829,7 +6898,7 @@ void MainWindow::onFeatureTriggered(FeatureId id) {
     case FeatureId::PackDrawings:  runPackDrawings(); break;
     case FeatureId::BatchSign:     runBatchSign(); break;
     default:
-        model_->log(QStringLiteral("功能菜单：未实现的入口"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("功能菜单：未实现的入口")), QStringLiteral("warn"));
         break;
     }
 }
@@ -6838,7 +6907,7 @@ void MainWindow::onFeatureTriggered(FeatureId id) {
 void MainWindow::insertCenterLineFor(CenterLineKind kind) {
     const std::vector<Element> refs = selectedRefElements();
     if (refs.empty()) {
-        model_->log(QStringLiteral("中心线：请先选中参考图元"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("中心线：请先选中参考图元")), QStringLiteral("warn"));
         return;
     }
     CLParams p;
@@ -6846,14 +6915,14 @@ void MainWindow::insertCenterLineFor(CenterLineKind kind) {
     QString reason;
     const std::vector<Element> parts = makeCenterLine(kind, refs, p, &reason);
     if (parts.empty()) {
-        model_->log(QStringLiteral("中心线：%1")
-                        .arg(reason.isEmpty() ? QStringLiteral("生成失败（退化输入）") : reason),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("中心线：%1"))
+                        .arg(reason.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("生成失败（退化输入）")) : reason),
                     QStringLiteral("warn"));
         return;
     }
     const int n = insertGeneratedElements(parts, QStringLiteral("中心线"));
     if (n > 0)
-        model_->log(QString("中心线：已生成 %1 条（%2）")
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("中心线：已生成 %1 条（%2）")))
                         .arg(n).arg(QString::fromUtf8(centerLineKindName(kind))),
                     QStringLiteral("info"));
 }
@@ -6861,16 +6930,16 @@ void MainWindow::insertCenterLineFor(CenterLineKind kind) {
 // ---- P2 明细表：只读表格展示 BOM 数据（无数据时菜单已置灰，此处双保险）----
 void MainWindow::openBomTableDialog() {
     if (!model_ || model_->bomCount() <= 0) {
-        if (model_) model_->log(QStringLiteral("明细表：图纸尚无 BOM 数据"), QStringLiteral("warn"));
+        if (model_) model_->log(SketchCAD::I18n::t(QString::fromUtf8("明细表：图纸尚无 BOM 数据")), QStringLiteral("warn"));
         return;
     }
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("明细表（BOM）"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("明细表（BOM）")));
     auto* lay = new QVBoxLayout(&dlg);
     auto* table = new QTableWidget(model_->bomCount(), 6, &dlg);
-    table->setHorizontalHeaderLabels({ QStringLiteral("序号"), QStringLiteral("代号"),
-                                       QStringLiteral("名称"), QStringLiteral("材料"),
-                                       QStringLiteral("单重"), QStringLiteral("备注") });
+    table->setHorizontalHeaderLabels({ SketchCAD::I18n::t(QString::fromUtf8("序号")), SketchCAD::I18n::t(QString::fromUtf8("代号")),
+                                       SketchCAD::I18n::t(QString::fromUtf8("名称")), SketchCAD::I18n::t(QString::fromUtf8("材料")),
+                                       SketchCAD::I18n::t(QString::fromUtf8("单重")), SketchCAD::I18n::t(QString::fromUtf8("备注")) });
     for (int i = 0; i < model_->bomCount(); ++i) {
         const BomItem* it = model_->bomItemAt(i);
         if (!it) continue;
@@ -6893,62 +6962,62 @@ void MainWindow::insertSymbolAtAnchor(const QString& symbolName) {
     QVariantMap params;
     bool ok = false;
     if (symbolName == QStringLiteral("datum")) {
-        const QString letter = QInputDialog::getText(this, QStringLiteral("基准符号"),
-                                                     QStringLiteral("基准字母："),
+        const QString letter = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("基准符号")),
+                                                     SketchCAD::I18n::t(QString::fromUtf8("基准字母：")),
                                                      QLineEdit::Normal, QStringLiteral("A"), &ok);
         if (!ok || letter.isEmpty()) return;
         params.insert(QStringLiteral("letter"), letter);
     } else if (symbolName == QStringLiteral("weld")) {
         const QStringList items = { QStringLiteral("角焊 (fillet)"), QStringLiteral("V 形 (v)"),
                                     QStringLiteral("方框 (square)") };
-        const QString sel = QInputDialog::getItem(this, QStringLiteral("焊接符号"),
-                                                  QStringLiteral("焊接类型："), items, 0, false, &ok);
+        const QString sel = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("焊接符号")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("焊接类型：")), items, 0, false, &ok);
         if (!ok) return;
         params.insert(QStringLiteral("type"),
                       sel.startsWith(QStringLiteral("V")) ? QStringLiteral("v")
                       : sel.startsWith(QStringLiteral("方")) ? QStringLiteral("square")
                                                              : QStringLiteral("fillet"));
     } else if (symbolName == QStringLiteral("taper")) {
-        const QString ratio = QInputDialog::getText(this, QStringLiteral("锥度/斜度符号"),
-                                                    QStringLiteral("比率文本："),
+        const QString ratio = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("锥度/斜度符号")),
+                                                    SketchCAD::I18n::t(QString::fromUtf8("比率文本：")),
                                                     QLineEdit::Normal, QStringLiteral("1:50"), &ok);
         if (!ok || ratio.isEmpty()) return;
         params.insert(QStringLiteral("ratio"), ratio);
     } else if (symbolName == QStringLiteral("centerhole")) {
-        const double r = QInputDialog::getDouble(this, QStringLiteral("中心孔符号"),
-                                                 QStringLiteral("孔径(mm)："), 2.5, 0.1, 100.0, 2, &ok);
+        const double r = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("中心孔符号")),
+                                                 SketchCAD::I18n::t(QString::fromUtf8("孔径(mm)：")), 2.5, 0.1, 100.0, 2, &ok);
         if (!ok) return;
-        const QString label = QInputDialog::getText(this, QStringLiteral("中心孔符号"),
-                                                    QStringLiteral("旁注（可空）："),
+        const QString label = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("中心孔符号")),
+                                                    SketchCAD::I18n::t(QString::fromUtf8("旁注（可空）：")),
                                                     QLineEdit::Normal, QString(), &ok);
         if (!ok) return;
         params.insert(QStringLiteral("r"), r);
         if (!label.isEmpty()) params.insert(QStringLiteral("label"), label);
     } else if (symbolName == QStringLiteral("elevation")) {
-        const QString value = QInputDialog::getText(this, QStringLiteral("标高符号"),
-                                                    QStringLiteral("标高值："),
+        const QString value = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("标高符号")),
+                                                    SketchCAD::I18n::t(QString::fromUtf8("标高值：")),
                                                     QLineEdit::Normal, QStringLiteral("±0.000"), &ok);
         if (!ok || value.isEmpty()) return;
         params.insert(QStringLiteral("value"), value);
     } else if (symbolName == QStringLiteral("rotation")) {
-        const QString angle = QInputDialog::getText(this, QStringLiteral("旋转符号"),
-                                                    QStringLiteral("角度文本："),
+        const QString angle = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("旋转符号")),
+                                                    SketchCAD::I18n::t(QString::fromUtf8("角度文本：")),
                                                     QLineEdit::Normal, QStringLiteral("360°"), &ok);
         if (!ok || angle.isEmpty()) return;
         params.insert(QStringLiteral("angle"), angle);
     } else {
-        model_->log(QStringLiteral("符号标注：未知符号 %1").arg(symbolName), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("符号标注：未知符号 %1")).arg(symbolName), QStringLiteral("warn"));
         return;
     }
     const Vec3 anchor = selectionAnchorOrViewCenter();
     const std::vector<Element> parts = SymbolFactory::mkSymbol(symbolName, anchor, params);
     if (parts.empty()) {
-        model_->log(QStringLiteral("符号标注：生成失败（%1）").arg(symbolName), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("符号标注：生成失败（%1）")).arg(symbolName), QStringLiteral("warn"));
         return;
     }
     const int n = insertGeneratedElements(parts, QStringLiteral("符号标注"));
     if (n > 0)
-        model_->log(QString("符号标注：已插入 %1（%2 个图元）").arg(symbolName).arg(n),
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("符号标注：已插入 %1（%2 个图元）"))).arg(symbolName).arg(n),
                     QStringLiteral("info"));
 }
 
@@ -6957,15 +7026,15 @@ void MainWindow::insertPartAtAnchor(const QString& partId, const QString& title)
     QVariantMap params;
     bool ok = false;
     if (partId == QStringLiteral("gear")) {
-        const int teeth = QInputDialog::getInt(this, title, QStringLiteral("齿数 z："),
+        const int teeth = QInputDialog::getInt(this, title, SketchCAD::I18n::t(QString::fromUtf8("齿数 z：")),
                                                20, 6, 300, 1, &ok);
         if (!ok) return;
-        const double module = QInputDialog::getDouble(this, title, QStringLiteral("模数 m(mm)："),
+        const double module = QInputDialog::getDouble(this, title, SketchCAD::I18n::t(QString::fromUtf8("模数 m(mm)：")),
                                                       2.0, 0.5, 20.0, 2, &ok);
         if (!ok) return;
         const QStringList paItems = { QStringLiteral("20°"), QStringLiteral("14.5°"),
                                       QStringLiteral("25°") };
-        const QString pa = QInputDialog::getItem(this, title, QStringLiteral("压力角："),
+        const QString pa = QInputDialog::getItem(this, title, SketchCAD::I18n::t(QString::fromUtf8("压力角：")),
                                                  paItems, 0, false, &ok);
         if (!ok) return;
         params.insert(QStringLiteral("teeth"), teeth);
@@ -6981,17 +7050,17 @@ void MainWindow::insertPartAtAnchor(const QString& partId, const QString& title)
         QStringList items;
         for (double s : szs) items << QStringLiteral("M%1").arg(s);
         if (items.isEmpty()) {
-            model_->log(QStringLiteral("国标图库：规格表为空"), QStringLiteral("warn"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("国标图库：规格表为空")), QStringLiteral("warn"));
             return;
         }
         const int defIdx = items.indexOf(QStringLiteral("M6"));
-        const QString sel = QInputDialog::getItem(this, title, QStringLiteral("公称规格："),
+        const QString sel = QInputDialog::getItem(this, title, SketchCAD::I18n::t(QString::fromUtf8("公称规格：")),
                                                   items, defIdx < 0 ? 0 : defIdx, false, &ok);
         if (!ok) return;
         const int idx = items.indexOf(sel);
         params.insert(QStringLiteral("nominal"), szs.value(idx < 0 ? 0 : idx, 6.0));
         if (partId == QStringLiteral("bolt")) {
-            const double length = QInputDialog::getDouble(this, title, QStringLiteral("杆长 L(mm)："),
+            const double length = QInputDialog::getDouble(this, title, SketchCAD::I18n::t(QString::fromUtf8("杆长 L(mm)：")),
                                                           30.0, 5.0, 500.0, 1, &ok);
             if (!ok) return;
             params.insert(QStringLiteral("length"), length);
@@ -7000,7 +7069,7 @@ void MainWindow::insertPartAtAnchor(const QString& partId, const QString& title)
     std::vector<Element> out;
     QString note;
     if (!PartLibrary::instance().generate(partId, params, out, &note) || out.empty()) {
-        model_->log(QStringLiteral("%1：生成失败（参数不合法）").arg(title), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("%1：生成失败（参数不合法）")).arg(title), QStringLiteral("warn"));
         return;
     }
     // 生成器产出于局部原点 → 平移到锚点（选中质心或视图中心）
@@ -7009,7 +7078,7 @@ void MainWindow::insertPartAtAnchor(const QString& partId, const QString& title)
         for (Vec3& p : e.pts) p = p + at;
     const int n = insertGeneratedElements(out, title);
     if (n > 0) {
-        model_->log(QString("%1：已出库插入（%2 个图元）").arg(title).arg(n),
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("%1：已出库插入（%2 个图元）"))).arg(title).arg(n),
                     QStringLiteral("info"));
         if (!note.isEmpty())
             model_->log(note, QStringLiteral("warn"));   // 规格回落提示（G3 门禁）
@@ -7023,8 +7092,8 @@ void MainWindow::insertViewToolSymbol(FeatureId id) {
     QString label;
     if (id == FeatureId::DirectionSymbol) {
         bool ok = false;
-        const QString letter = QInputDialog::getText(this, QStringLiteral("向视符号"),
-                                                     QStringLiteral("视图字母："),
+        const QString letter = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("向视符号")),
+                                                     SketchCAD::I18n::t(QString::fromUtf8("视图字母：")),
                                                      QLineEdit::Normal, QStringLiteral("A"), &ok);
         if (!ok || letter.isEmpty()) return;
         DirectionSymbolSpec s;
@@ -7032,68 +7101,68 @@ void MainWindow::insertViewToolSymbol(FeatureId id) {
         s.letter = letter;
         label = QStringLiteral("向视符号");
         if (!buildDirectionSymbol(s, out)) {
-            model_->log(QStringLiteral("向视符号：生成失败（方向/箭长非法）"), QStringLiteral("warn"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("向视符号：生成失败（方向/箭长非法）")), QStringLiteral("warn"));
             return;
         }
     } else if (id == FeatureId::HoleProjection) {
         bool ok = false;
-        const double dia = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
-                                                   QStringLiteral("直径(mm)："), 10.0, 0.5, 500.0, 2, &ok);
+        const double dia = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("孔轴投影")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("直径(mm)：")), 10.0, 0.5, 500.0, 2, &ok);
         if (!ok) return;
-        const double depth = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
-                                                     QStringLiteral("投影长度(mm)："), 30.0, 1.0, 2000.0, 2, &ok);
+        const double depth = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("孔轴投影")),
+                                                     SketchCAD::I18n::t(QString::fromUtf8("投影长度(mm)：")), 30.0, 1.0, 2000.0, 2, &ok);
         if (!ok) return;
-        const double ang = QInputDialog::getDouble(this, QStringLiteral("孔轴投影"),
-                                                   QStringLiteral("轴向角(度)："), 90.0, -360.0, 360.0, 1, &ok);
+        const double ang = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("孔轴投影")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("轴向角(度)：")), 90.0, -360.0, 360.0, 1, &ok);
         if (!ok) return;
         HoleProjectionSpec s;
         s.anchor = anchor; s.diameter = dia; s.depth = depth; s.angleDeg = ang;
         label = QStringLiteral("孔轴投影");
         if (!buildHoleProjection(s, out)) {
-            model_->log(QStringLiteral("孔轴投影：生成失败"), QStringLiteral("warn"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("孔轴投影：生成失败")), QStringLiteral("warn"));
             return;
         }
     } else {
         bool ok = false;
-        const double l1 = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
-                                                  QStringLiteral("第一段长(mm)："), 20.0, 1.0, 2000.0, 2, &ok);
+        const double l1 = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("转角投影")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("第一段长(mm)：")), 20.0, 1.0, 2000.0, 2, &ok);
         if (!ok) return;
-        const double ta = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
-                                                  QStringLiteral("转角(度)："), 45.0, -360.0, 360.0, 1, &ok);
+        const double ta = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("转角投影")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("转角(度)：")), 45.0, -360.0, 360.0, 1, &ok);
         if (!ok) return;
-        const double l2 = QInputDialog::getDouble(this, QStringLiteral("转角投影"),
-                                                  QStringLiteral("第二段长(mm)："), 15.0, 1.0, 2000.0, 2, &ok);
+        const double l2 = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("转角投影")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("第二段长(mm)：")), 15.0, 1.0, 2000.0, 2, &ok);
         if (!ok) return;
         RotationProjectionSpec s;
         s.anchor = anchor; s.length1 = l1; s.turnAngleDeg = ta; s.length2 = l2;
         label = QStringLiteral("转角投影");
         if (!buildRotationProjection(s, out)) {
-            model_->log(QStringLiteral("转角投影：生成失败"), QStringLiteral("warn"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("转角投影：生成失败")), QStringLiteral("warn"));
             return;
         }
     }
     const int n = insertGeneratedElements(out, label);
     if (n > 0)
-        model_->log(QString("%1：已生成（%2 个图元）").arg(label).arg(n), QStringLiteral("info"));
+        model_->log(QString(SketchCAD::I18n::t(QString::fromUtf8("%1：已生成（%2 个图元）"))).arg(label).arg(n), QStringLiteral("info"));
 }
 
 // ---- P7 截面特性：单选闭合轮廓 → Green 定理标准公式 → 结果框 + 日志 ----
 void MainWindow::showSectionPropsOfSelection() {
     if (!model_ || model_->selection().size() != 1) {
-        model_->log(QStringLiteral("截面特性：请恰好选中一个闭合轮廓"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("截面特性：请恰好选中一个闭合轮廓")), QStringLiteral("warn"));
         return;
     }
     const Element* e = model_->element(model_->selection().front());
     std::vector<Vec3> poly;
     if (!e || !closedProfilePolygon(*e, poly)) {
-        model_->log(QStringLiteral("截面特性：选中图元不是闭合轮廓"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("截面特性：选中图元不是闭合轮廓")), QStringLiteral("warn"));
         return;
     }
     SectionProperties sp;
     QString reason;
     if (!SectionProps::compute(poly, sp, &reason) || !sp.valid) {
-        QMessageBox::warning(this, QStringLiteral("截面特性"),
-                             reason.isEmpty() ? QStringLiteral("计算失败（退化截面）") : reason);
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("截面特性")),
+                             reason.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("计算失败（退化截面）")) : reason);
         return;
     }
     const QString text = QStringLiteral(
@@ -7106,71 +7175,71 @@ void MainWindow::showSectionPropsOfSelection() {
         .arg(sp.centroid.x, 0, 'f', 3).arg(sp.centroid.y, 0, 'f', 3)
         .arg(sp.inertiaIx, 0, 'f', 3).arg(sp.inertiaIy, 0, 'f', 3)
         .arg(sp.inertiaIxy, 0, 'f', 3);
-    model_->log(QStringLiteral("截面特性：A=%1 mm², C=(%2, %3), Ix=%4, Iy=%5, Ixy=%6")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("截面特性：A=%1 mm², C=(%2, %3), Ix=%4, Iy=%5, Ixy=%6"))
                     .arg(sp.area, 0, 'f', 3)
                     .arg(sp.centroid.x, 0, 'f', 3).arg(sp.centroid.y, 0, 'f', 3)
                     .arg(sp.inertiaIx, 0, 'f', 3).arg(sp.inertiaIy, 0, 'f', 3)
                     .arg(sp.inertiaIxy, 0, 'f', 3),
                 QStringLiteral("info"));
-    QMessageBox::information(this, QStringLiteral("截面特性"), text);
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("截面特性")), text);
 }
 
 // ---- P7 重量估算：截面面积 × 材料密度 × 厚度 ----
 void MainWindow::estimateMassOfSelection() {
     if (!model_ || model_->selection().size() != 1) {
-        model_->log(QStringLiteral("重量估算：请恰好选中一个闭合轮廓"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("重量估算：请恰好选中一个闭合轮廓")), QStringLiteral("warn"));
         return;
     }
     const Element* e = model_->element(model_->selection().front());
     std::vector<Vec3> poly;
     if (!e || !closedProfilePolygon(*e, poly)) {
-        model_->log(QStringLiteral("重量估算：选中图元不是闭合轮廓"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("重量估算：选中图元不是闭合轮廓")), QStringLiteral("warn"));
         return;
     }
     SectionProperties sp;
     QString reason;
     if (!SectionProps::compute(poly, sp, &reason) || !sp.valid) {
-        QMessageBox::warning(this, QStringLiteral("重量估算"),
-                             reason.isEmpty() ? QStringLiteral("计算失败（退化截面）") : reason);
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重量估算")),
+                             reason.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("计算失败（退化截面）")) : reason);
         return;
     }
     bool ok = false;
     const QStringList materials = DensityTable::materials();
     if (materials.isEmpty()) {
-        model_->log(QStringLiteral("重量估算：密度表为空"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("重量估算：密度表为空")), QStringLiteral("warn"));
         return;
     }
-    const QString material = QInputDialog::getItem(this, QStringLiteral("重量估算"),
-                                                   QStringLiteral("材料："), materials, 0, false, &ok);
+    const QString material = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("重量估算")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("材料：")), materials, 0, false, &ok);
     if (!ok || material.isEmpty()) return;
-    const double thickness = QInputDialog::getDouble(this, QStringLiteral("重量估算"),
-                                                     QStringLiteral("厚度(mm)："), 1.0, 0.1, 1000.0, 2, &ok);
+    const double thickness = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("重量估算")),
+                                                     SketchCAD::I18n::t(QString::fromUtf8("厚度(mm)：")), 1.0, 0.1, 1000.0, 2, &ok);
     if (!ok) return;
     double grams = 0.0;
     if (!SectionProps::massGrams(sp.area, material, grams, thickness)) {
-        QMessageBox::warning(this, QStringLiteral("重量估算"),
-                             QStringLiteral("未知材料密度：%1").arg(material));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("重量估算")),
+                             SketchCAD::I18n::t(QString::fromUtf8("未知材料密度：%1")).arg(material));
         return;
     }
     const QString text = QStringLiteral("材料：%1\n厚度：%2 mm\n面积：%3 mm²\n估算重量：%4 g")
         .arg(material).arg(thickness, 0, 'f', 2).arg(sp.area, 0, 'f', 3).arg(grams, 0, 'f', 3);
-    model_->log(QStringLiteral("重量估算：%1（%2 mm 厚）→ %3 g")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("重量估算：%1（%2 mm 厚）→ %3 g"))
                     .arg(material).arg(thickness, 0, 'f', 2).arg(grams, 0, 'f', 3),
                 QStringLiteral("info"));
-    QMessageBox::information(this, QStringLiteral("重量估算"), text);
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("重量估算")), text);
 }
 
 // ---- P7 批量 BOM：多档扫描 → (名称,代号) 跨档汇总 ----
 void MainWindow::runBatchBomAnalysis() {
     const QStringList paths = QFileDialog::getOpenFileNames(
-        this, QStringLiteral("批量 BOM 分析"), rememberDialogDir(),
-        QStringLiteral("图纸文件 (*.skd *.json);;所有文件 (*.*)"));
+        this, SketchCAD::I18n::t(QString::fromUtf8("批量 BOM 分析")), rememberDialogDir(),
+        SketchCAD::I18n::t(QString::fromUtf8("图纸文件 (*.skd *.json);;所有文件 (*.*)")));
     if (paths.isEmpty()) return;
     QStringList errors;
     const QVector<BomSummaryRow> rows = BatchBom::analyze(paths, &errors);
     if (rows.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("批量 BOM 分析"),
-                             errors.isEmpty() ? QStringLiteral("未找到任何 BOM 明细数据")
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("批量 BOM 分析")),
+                             errors.isEmpty() ? SketchCAD::I18n::t(QString::fromUtf8("未找到任何 BOM 明细数据"))
                                               : errors.join(QStringLiteral("\n")));
         return;
     }
@@ -7180,21 +7249,21 @@ void MainWindow::runBatchBomAnalysis() {
     if (!errors.isEmpty())
         text += QStringLiteral("\n读取警告 %1 个：\n").arg(errors.size())
                 + errors.join(QStringLiteral("\n"));
-    model_->log(QStringLiteral("批量 BOM：%1 个文件 → %2 种零件（读错误 %3 个）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("批量 BOM：%1 个文件 → %2 种零件（读错误 %3 个）"))
                     .arg(paths.size()).arg(rows.size()).arg(errors.size()),
                 QStringLiteral("info"));
-    QMessageBox::information(this, QStringLiteral("批量 BOM 分析"), text);
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("批量 BOM 分析")), text);
 }
 
 // ---- P8 变量表：定义 / 设值 / 驱动 / 清空（ facade 会话级变量表）----
 void MainWindow::openVariableTableDialog() {
     auto& facade = ConstraintSolverFacade::instance();
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("参数化变量表"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("参数化变量表")));
     auto* lay = new QVBoxLayout(&dlg);
     auto* table = new QTableWidget(0, 3, &dlg);
-    table->setHorizontalHeaderLabels({ QStringLiteral("变量"), QStringLiteral("表达式 / 值"),
-                                       QStringLiteral("当前值") });
+    table->setHorizontalHeaderLabels({ SketchCAD::I18n::t(QString::fromUtf8("变量")), SketchCAD::I18n::t(QString::fromUtf8("表达式 / 值")),
+                                       SketchCAD::I18n::t(QString::fromUtf8("当前值")) });
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     auto rebuild = [&table, &facade]() {
         table->setRowCount(0);
@@ -7209,11 +7278,11 @@ void MainWindow::openVariableTableDialog() {
     };
     rebuild();
     lay->addWidget(table);
-    auto* btnDefine = new QPushButton(QStringLiteral("定义..."), &dlg);
-    auto* btnSet    = new QPushButton(QStringLiteral("设值..."), &dlg);
-    auto* btnDrive  = new QPushButton(QStringLiteral("驱动..."), &dlg);
-    auto* btnClear  = new QPushButton(QStringLiteral("全部清空"), &dlg);
-    auto* btnClose  = new QPushButton(QStringLiteral("关闭"), &dlg);
+    auto* btnDefine = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("定义...")), &dlg);
+    auto* btnSet    = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("设值...")), &dlg);
+    auto* btnDrive  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("驱动...")), &dlg);
+    auto* btnClear  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("全部清空")), &dlg);
+    auto* btnClose  = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), &dlg);
     auto* row = new QHBoxLayout();
     row->addWidget(btnDefine); row->addWidget(btnSet); row->addWidget(btnDrive);
     row->addWidget(btnClear); row->addStretch(1); row->addWidget(btnClose);
@@ -7227,36 +7296,36 @@ void MainWindow::openVariableTableDialog() {
     };
     connect(btnDefine, &QPushButton::clicked, &dlg, [&]() {
         bool ok = false;
-        const QString name = QInputDialog::getText(&dlg, QStringLiteral("定义变量"),
-                                                   QStringLiteral("变量名："),
+        const QString name = QInputDialog::getText(&dlg, SketchCAD::I18n::t(QString::fromUtf8("定义变量")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("变量名：")),
                                                    QLineEdit::Normal, QString(), &ok);
         if (!ok || name.isEmpty()) return;
-        const QString expr = QInputDialog::getText(&dlg, QStringLiteral("定义变量"),
-                                                   QStringLiteral("表达式 / 数值："),
+        const QString expr = QInputDialog::getText(&dlg, SketchCAD::I18n::t(QString::fromUtf8("定义变量")),
+                                                   SketchCAD::I18n::t(QString::fromUtf8("表达式 / 数值：")),
                                                    QLineEdit::Normal, QString(), &ok);
         if (!ok || expr.isEmpty()) return;
         const QString err = facade.defineVariable(name, expr);
         if (!err.isEmpty()) {
-            QMessageBox::warning(&dlg, QStringLiteral("定义变量"), err);
+            QMessageBox::warning(&dlg, SketchCAD::I18n::t(QString::fromUtf8("定义变量")), err);
             return;
         }
         rebuild();
-        model_->log(QStringLiteral("变量已定义：%1 = %2").arg(name, expr), QStringLiteral("info"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("变量已定义：%1 = %2")).arg(name, expr), QStringLiteral("info"));
     });
     connect(btnSet, &QPushButton::clicked, &dlg, [&]() {
         const QString name = currentName();
         if (name.isEmpty()) {
-            QMessageBox::warning(&dlg, QStringLiteral("设值"), QStringLiteral("请先在表中选中一个变量"));
+            QMessageBox::warning(&dlg, SketchCAD::I18n::t(QString::fromUtf8("设值")), SketchCAD::I18n::t(QString::fromUtf8("请先在表中选中一个变量")));
             return;
         }
         bool ok = false;
-        const double v = QInputDialog::getDouble(&dlg, QStringLiteral("设值"),
+        const double v = QInputDialog::getDouble(&dlg, SketchCAD::I18n::t(QString::fromUtf8("设值")),
                                                  name + QStringLiteral(" ="),
                                                  facade.variableValue(name), -1e9, 1e9, 4, &ok);
         if (!ok) return;
         const QString err = facade.setVariableValue(name, v);
         if (!err.isEmpty()) {
-            QMessageBox::warning(&dlg, QStringLiteral("设值"), err);
+            QMessageBox::warning(&dlg, SketchCAD::I18n::t(QString::fromUtf8("设值")), err);
             return;
         }
         rebuild();
@@ -7264,26 +7333,26 @@ void MainWindow::openVariableTableDialog() {
     connect(btnDrive, &QPushButton::clicked, &dlg, [&]() {
         const QString name = currentName();
         if (name.isEmpty()) {
-            QMessageBox::warning(&dlg, QStringLiteral("驱动"), QStringLiteral("请先在表中选中一个变量"));
+            QMessageBox::warning(&dlg, SketchCAD::I18n::t(QString::fromUtf8("驱动")), SketchCAD::I18n::t(QString::fromUtf8("请先在表中选中一个变量")));
             return;
         }
         bool ok = false;
-        const double v = QInputDialog::getDouble(&dlg, QStringLiteral("驱动"),
+        const double v = QInputDialog::getDouble(&dlg, SketchCAD::I18n::t(QString::fromUtf8("驱动")),
                                                  name + QStringLiteral(" ="),
                                                  facade.variableValue(name), -1e9, 1e9, 4, &ok);
         if (!ok) return;
         const QString err = facade.drive(*model_, name, v);
         if (!err.isEmpty()) {
-            QMessageBox::warning(&dlg, QStringLiteral("驱动"), err);
+            QMessageBox::warning(&dlg, SketchCAD::I18n::t(QString::fromUtf8("驱动")), err);
             return;
         }
         rebuild();
-        model_->log(QStringLiteral("变量驱动：%1 = %2").arg(name).arg(v, 0, 'f', 4),
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("变量驱动：%1 = %2")).arg(name).arg(v, 0, 'f', 4),
                     QStringLiteral("info"));
     });
     connect(btnClear, &QPushButton::clicked, &dlg, [&]() {
-        if (QMessageBox::question(&dlg, QStringLiteral("全部清空"),
-                                  QStringLiteral("确认清空全部变量定义？"))
+        if (QMessageBox::question(&dlg, SketchCAD::I18n::t(QString::fromUtf8("全部清空")),
+                                  SketchCAD::I18n::t(QString::fromUtf8("确认清空全部变量定义？")))
                 != QMessageBox::Yes)
             return;
         facade.clearVariables();
@@ -7295,15 +7364,15 @@ void MainWindow::openVariableTableDialog() {
 // ---- P9 机械图拆分：按图层/图框分组 → 克隆根仅替换 elements → 原子写子档 ----
 void MainWindow::runSplitDrawing() {
     if (!model_ || model_->elementCount() <= 0) {
-        model_->log(QStringLiteral("机械图拆分：图纸为空"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("机械图拆分：图纸为空")), QStringLiteral("warn"));
         return;
     }
     bool ok = false;
     const QString mode = QInputDialog::getItem(
-        this, QStringLiteral("机械图拆分"), QStringLiteral("分组方式："),
-        { QStringLiteral("按图层"), QStringLiteral("按图框（图框层矩形）") }, 0, false, &ok);
+        this, SketchCAD::I18n::t(QString::fromUtf8("机械图拆分")), SketchCAD::I18n::t(QString::fromUtf8("分组方式：")),
+        { SketchCAD::I18n::t(QString::fromUtf8("按图层")), SketchCAD::I18n::t(QString::fromUtf8("按图框（图框层矩形）")) }, 0, false, &ok);
     if (!ok) return;
-    const QString dir = QFileDialog::getExistingDirectory(this, QStringLiteral("选择子档输出目录"),
+    const QString dir = QFileDialog::getExistingDirectory(this, SketchCAD::I18n::t(QString::fromUtf8("选择子档输出目录")),
                                                           rememberDialogDir());
     if (dir.isEmpty()) return;
     QVector<SplitGroup> groups;
@@ -7312,14 +7381,14 @@ void MainWindow::runSplitDrawing() {
     } else {
         const QVector<QRectF> frames = frameRectsInDrawing();
         if (frames.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("机械图拆分"),
-                                 QStringLiteral("图纸中未找到图框（图框层矩形），无法按图框分组"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("机械图拆分")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("图纸中未找到图框（图框层矩形），无法按图框分组")));
             return;
         }
         groups = groupByFrame(model_->elements(), frames);
     }
     if (groups.isEmpty()) {
-        model_->log(QStringLiteral("机械图拆分：分组结果为空"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("机械图拆分：分组结果为空")), QStringLiteral("warn"));
         return;
     }
     // 基名：当前文档标题（去脏标记与空白）
@@ -7337,10 +7406,10 @@ void MainWindow::runSplitDrawing() {
     if (!sr.errors.isEmpty())
         text += QStringLiteral("\n失败 %1 组：\n").arg(sr.errors.size())
                 + sr.errors.join(QStringLiteral("\n"));
-    model_->log(QStringLiteral("机械图拆分：%1/%2 组写出至 %3（错误 %4）")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("机械图拆分：%1/%2 组写出至 %3（错误 %4）"))
                     .arg(sr.written).arg(groups.size()).arg(dir).arg(sr.errors.size()),
                 sr.errors.isEmpty() ? QStringLiteral("info") : QStringLiteral("warn"));
-    QMessageBox::information(this, QStringLiteral("机械图拆分"), text);
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("机械图拆分")), text);
 }
 
 // ---- P9 自动排图：图框层矩形 → shelf 装箱 → 落位报告（Phase-1 不改模型）----
@@ -7348,19 +7417,19 @@ void MainWindow::runPackDrawings() {
     if (!model_) return;
     const QVector<QRectF> frames = frameRectsInDrawing();
     if (frames.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("自动排图"),
-                             QStringLiteral("图纸中未找到图框（图框层矩形）作为排图输入"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("自动排图")),
+                             SketchCAD::I18n::t(QString::fromUtf8("图纸中未找到图框（图框层矩形）作为排图输入")));
         return;
     }
     bool ok = false;
-    const double sheetW = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
-                                                  QStringLiteral("可用区宽(mm)："), 420.0, 50.0, 5000.0, 1, &ok);
+    const double sheetW = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("自动排图")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("可用区宽(mm)：")), 420.0, 50.0, 5000.0, 1, &ok);
     if (!ok) return;
-    const double sheetH = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
-                                                  QStringLiteral("可用区高(mm)："), 297.0, 50.0, 5000.0, 1, &ok);
+    const double sheetH = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("自动排图")),
+                                                  SketchCAD::I18n::t(QString::fromUtf8("可用区高(mm)：")), 297.0, 50.0, 5000.0, 1, &ok);
     if (!ok) return;
-    const double gap = QInputDialog::getDouble(this, QStringLiteral("自动排图"),
-                                               QStringLiteral("图框间距(mm)："), 5.0, 0.0, 100.0, 1, &ok);
+    const double gap = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("自动排图")),
+                                               SketchCAD::I18n::t(QString::fromUtf8("图框间距(mm)：")), 5.0, 0.0, 100.0, 1, &ok);
     if (!ok) return;
     QVector<PackRect> rects;
     for (int i = 0; i < frames.size(); ++i)
@@ -7380,10 +7449,10 @@ void MainWindow::runPackDrawings() {
                     .arg(p.id + 1).arg(p.x, 0, 'f', 1).arg(p.y, 0, 'f', 1)
                     .arg(p.w, 0, 'f', 1).arg(p.h, 0, 'f', 1);
     text += QStringLiteral("\n（Phase-1 仅计算报告，不改动模型图元）");
-    model_->log(QStringLiteral("自动排图：%1 个图框，利用率 %2%")
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("自动排图：%1 个图框，利用率 %2%"))
                     .arg(pr.placements.size()).arg(pr.utilization * 100.0, 0, 'f', 1),
                 pr.ok ? QStringLiteral("info") : QStringLiteral("warn"));
-    QMessageBox::information(this, QStringLiteral("自动排图"), text);
+    QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("自动排图")), text);
 }
 
 // ---- P9 批量签名：字段表单（预填当前值）→ batchSign → 单元格适配写回 ----
@@ -7397,7 +7466,7 @@ void MainWindow::runBatchSign() {
         current.insert(e.name.mid(kFieldPrefix.size()), e.text);
     }
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("批量签名（标题栏）"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("批量签名（标题栏）")));
     auto* lay = new QVBoxLayout(&dlg);
     auto* form = new QFormLayout();
     QVector<QLineEdit*> edits;
@@ -7421,22 +7490,22 @@ void MainWindow::runBatchSign() {
         if (!v.isEmpty()) input.insert(keys[i], v);
     }
     if (input.isEmpty()) {
-        model_->log(QStringLiteral("批量签名：未填写任何字段"), QStringLiteral("warn"));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("批量签名：未填写任何字段")), QStringLiteral("warn"));
         return;
     }
     const SignResult sr = batchSign(*model_, input);
     if (sr.updates.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("批量签名"),
-                             QStringLiteral("签名表未匹配到图纸标题栏字段"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("批量签名")),
+                             SketchCAD::I18n::t(QString::fromUtf8("签名表未匹配到图纸标题栏字段")));
         return;
     }
-    model_->beginEdit(QStringLiteral("批量签名"));
+    model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("批量签名")));
     for (const SignUpdate& u : sr.updates)
         model_->updateElementQuiet((int)u.elemId, [&u](Element& e) { e = u.newElem; });
-    model_->log(QStringLiteral("批量签名：已填写 %1 个字段").arg(sr.updates.size()),
+    model_->log(SketchCAD::I18n::t(QString::fromUtf8("批量签名：已填写 %1 个字段")).arg(sr.updates.size()),
                 QStringLiteral("info"));
     if (!sr.unmatched.isEmpty())
-        model_->log(QStringLiteral("批量签名：未匹配字段 %1")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("批量签名：未匹配字段 %1"))
                         .arg(sr.unmatched.join(QStringLiteral(", "))),
                     QStringLiteral("warn"));
 }

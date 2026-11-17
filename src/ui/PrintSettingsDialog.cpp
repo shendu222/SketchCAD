@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PrintSettingsDialog.h"
 #include "PrintPreviewDialog.h"
 #include "core/PlotStyle.h"
@@ -42,45 +43,45 @@ static const char* kPaperNames[] = {
 PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings& initial,
                                          QWidget* parent)
     : QDialog(parent), model_(model), s_(initial) {
-    setWindowTitle(QStringLiteral("打印设置"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("打印设置")));
     resize(720, 640);
 
     auto* root = new QVBoxLayout(this);
 
     // ---------------- 页面设置 ----------------
-    auto* pageBox = new QGroupBox(QStringLiteral("页面设置"));
+    auto* pageBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("页面设置")));
     auto* pg = new QGridLayout(pageBox);
     paperCombo_ = new QComboBox();
     for (const char* n : kPaperNames) paperCombo_->addItem(QString::fromUtf8(n));
     refreshPaperSizeCombo();
-    pg->addWidget(new QLabel(QStringLiteral("纸张尺寸")), 0, 0);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("纸张尺寸"))), 0, 0);
     pg->addWidget(paperCombo_, 0, 1);
 
-    portraitBtn_  = new QRadioButton(QStringLiteral("纵向"));
-    landscapeBtn_ = new QRadioButton(QStringLiteral("横向"));
+    portraitBtn_  = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("纵向")));
+    landscapeBtn_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("横向")));
     auto* orientRow = new QHBoxLayout();
     orientRow->addWidget(portraitBtn_); orientRow->addWidget(landscapeBtn_);
-    pg->addWidget(new QLabel(QStringLiteral("方向")), 1, 0);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("方向"))), 1, 0);
     pg->addLayout(orientRow, 1, 1);
 
     marginL_ = new QDoubleSpinBox(); marginL_->setRange(0, 200); marginL_->setSuffix(" mm");
     marginT_ = new QDoubleSpinBox(); marginT_->setRange(0, 200); marginT_->setSuffix(" mm");
     marginR_ = new QDoubleSpinBox(); marginR_->setRange(0, 200); marginR_->setSuffix(" mm");
     marginB_ = new QDoubleSpinBox(); marginB_->setRange(0, 200); marginB_->setSuffix(" mm");
-    pg->addWidget(new QLabel(QStringLiteral("页边距 左")), 2, 0); pg->addWidget(marginL_, 2, 1);
-    pg->addWidget(new QLabel(QStringLiteral("上")), 2, 2); pg->addWidget(marginT_, 2, 3);
-    pg->addWidget(new QLabel(QStringLiteral("右")), 3, 0); pg->addWidget(marginR_, 3, 1);
-    pg->addWidget(new QLabel(QStringLiteral("下")), 3, 2); pg->addWidget(marginB_, 3, 3);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("页边距 左"))), 2, 0); pg->addWidget(marginL_, 2, 1);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("上"))), 2, 2); pg->addWidget(marginT_, 2, 3);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("右"))), 3, 0); pg->addWidget(marginR_, 3, 1);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("下"))), 3, 2); pg->addWidget(marginB_, 3, 3);
 
     scaleSpin_ = new QDoubleSpinBox(); scaleSpin_->setRange(0.01, 1000); scaleSpin_->setDecimals(3);
     scaleSpin_->setValue(1.0); scaleSpin_->setSuffix(" : 1");
-    fitBox_ = new QCheckBox(QStringLiteral("自适应铺满可打印区(优先)"));
-    pg->addWidget(new QLabel(QStringLiteral("打印比例")), 4, 0); pg->addWidget(scaleSpin_, 4, 1);
+    fitBox_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("自适应铺满可打印区(优先)")));
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("打印比例"))), 4, 0); pg->addWidget(scaleSpin_, 4, 1);
     pg->addWidget(fitBox_, 4, 2, 1, 2);
 
-    centerHBox_ = new QCheckBox(QStringLiteral("水平居中"));
-    centerVBox_ = new QCheckBox(QStringLiteral("垂直居中"));
-    borderBox_  = new QCheckBox(QStringLiteral("绘制可打印区边框"));
+    centerHBox_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("水平居中")));
+    centerVBox_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("垂直居中")));
+    borderBox_  = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("绘制可打印区边框")));
     auto* cRow = new QHBoxLayout();
     cRow->addWidget(centerHBox_); cRow->addWidget(centerVBox_); cRow->addWidget(borderBox_);
     pg->addLayout(cRow, 5, 0, 1, 4);
@@ -91,59 +92,59 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
     lineWidthScale_->setDecimals(2);
     lineWidthScale_->setValue(0.5);
     lineWidthScale_->setSingleStep(0.05);
-    pg->addWidget(new QLabel(QStringLiteral("打印线宽比例")), 6, 0);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("打印线宽比例"))), 6, 0);
     pg->addWidget(lineWidthScale_, 6, 1);
-    pg->addWidget(new QLabel(QStringLiteral("(0.5=细一档, 1.0=原值, 越小越细)")), 6, 2, 1, 2);
+    pg->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("(0.5=细一档, 1.0=原值, 越小越细)"))), 6, 2, 1, 2);
 
     root->addWidget(pageBox);
     connect(paperCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &PrintSettingsDialog::onPaperChanged);
 
     // ---------------- 打印样式 CTB ----------------
-    auto* styleBox = new QGroupBox(QStringLiteral("打印样式 (简化 CTB)"));
+    auto* styleBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("打印样式 (简化 CTB)")));
     auto* sl = new QGridLayout(styleBox);
 
     // 样式表预设行：黑白出图一键切换（GB 预设 / 灰度抖动 / 导入 CTB）
     presetCombo_ = new QComboBox();
-    presetCombo_->addItem(QStringLiteral("无（沿用图元颜色与线宽组）"));   // idx 0
-    presetCombo_->addItem(QStringLiteral("GB 黑白出图（按线型分粗/细，纯黑不抖动）")); // idx 1
-    presetCombo_->addItem(QStringLiteral("GB 灰度抖动（粗/细分线宽 + 中间调网点）"));  // idx 2
-    presetCombo_->addItem(QStringLiteral("自定义 / 已导入 CTB"));         // idx 3
-    importCtbBtn_ = new QPushButton(QStringLiteral("导入 CTB..."));
-    monoBox_ = new QCheckBox(QStringLiteral("黑白出图(打印机/PDF)"));
-    sl->addWidget(new QLabel(QStringLiteral("样式表预设")), 0, 0);
+    presetCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("无（沿用图元颜色与线宽组）")));   // idx 0
+    presetCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("GB 黑白出图（按线型分粗/细，纯黑不抖动）"))); // idx 1
+    presetCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("GB 灰度抖动（粗/细分线宽 + 中间调网点）")));  // idx 2
+    presetCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8("自定义 / 已导入 CTB")));         // idx 3
+    importCtbBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("导入 CTB...")));
+    monoBox_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("黑白出图(打印机/PDF)")));
+    sl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("样式表预设"))), 0, 0);
     sl->addWidget(presetCombo_, 0, 1, 1, 2);
     sl->addWidget(importCtbBtn_, 0, 3);
     sl->addWidget(monoBox_, 1, 0, 1, 2);
 
     styleTargetType_ = new QComboBox();
-    styleTargetType_->addItem(QStringLiteral("按图层"));
-    styleTargetType_->addItem(QStringLiteral("按颜色"));
-    styleTargetType_->addItem(QStringLiteral("按线型"));
-    sl->addWidget(new QLabel(QStringLiteral("匹配维度")), 2, 0);
+    styleTargetType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("按图层")));
+    styleTargetType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("按颜色")));
+    styleTargetType_->addItem(SketchCAD::I18n::t(QString::fromUtf8("按线型")));
+    sl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("匹配维度"))), 2, 0);
     sl->addWidget(styleTargetType_, 2, 1);
     styleTargetName_ = new QLineEdit();
-    styleTargetName_->setPlaceholderText(QStringLiteral("图层名(如 0)")); // 按颜色/线型时显示目标值
-    sl->addWidget(new QLabel(QStringLiteral("目标")), 3, 0);
+    styleTargetName_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("图层名(如 0)"))); // 按颜色/线型时显示目标值
+    sl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("目标"))), 3, 0);
     sl->addWidget(styleTargetName_, 3, 1);
-    styleColorPick_ = new QPushButton(QStringLiteral("选择颜色"));
+    styleColorPick_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("选择颜色")));
     sl->addWidget(styleColorPick_, 3, 2);
-    styleOverrideColor_ = new QCheckBox(QStringLiteral("覆盖颜色"));
-    styleOverrideWidth_ = new QCheckBox(QStringLiteral("覆盖线宽"));
+    styleOverrideColor_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("覆盖颜色")));
+    styleOverrideWidth_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("覆盖线宽")));
     styleWidth_ = new QDoubleSpinBox(); styleWidth_->setRange(0.05, 10); styleWidth_->setDecimals(2);
     styleWidth_->setSuffix(" mm");
-    styleOverrideGray_ = new QCheckBox(QStringLiteral("灰度(黑白)"));
+    styleOverrideGray_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("灰度(黑白)")));
     styleGray_ = new QDoubleSpinBox(); styleGray_->setRange(0.0, 1.0); styleGray_->setDecimals(2);
     styleGray_->setSingleStep(0.05);
-    styleDither_ = new QCheckBox(QStringLiteral("抖动"));
+    styleDither_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("抖动")));
     sl->addWidget(styleOverrideColor_, 4, 0);
     sl->addWidget(styleOverrideWidth_, 4, 1);
     sl->addWidget(styleWidth_, 4, 2);
     sl->addWidget(styleOverrideGray_, 5, 0);
     sl->addWidget(styleGray_, 5, 1);
     sl->addWidget(styleDither_, 5, 2);
-    styleAddBtn_ = new QPushButton(QStringLiteral("添加/更新"));
-    styleDelBtn_ = new QPushButton(QStringLiteral("删除"));
+    styleAddBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("添加/更新")));
+    styleDelBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
     sl->addWidget(styleAddBtn_, 6, 1);
     sl->addWidget(styleDelBtn_, 6, 2);
     styleList_ = new QListWidget();
@@ -180,8 +181,8 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
                 QStringLiteral("实线"), QStringLiteral("虚线"), QStringLiteral("点线"),
                 QStringLiteral("点划线"), QStringLiteral("双点划线"), QStringLiteral("波浪线"),
                 QStringLiteral("双折线"), QStringLiteral("粗虚线"), QStringLiteral("粗点画线") };
-            const QString picked = QInputDialog::getItem(this, QStringLiteral("选择线型"),
-                                                         QStringLiteral("线型"), names, 0, false, &ok);
+            const QString picked = QInputDialog::getItem(this, SketchCAD::I18n::t(QString::fromUtf8("选择线型")),
+                                                         SketchCAD::I18n::t(QString::fromUtf8("线型")), names, 0, false, &ok);
             if (ok) {
                 // 显示中文，内部按索引映射回 LineStyle 枚举（与 Element.h 顺序一致）
                 const int idx = names.indexOf(picked);
@@ -200,15 +201,14 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
     root->addWidget(styleBox);
 
     // ---------------- 视口 / 布局 ----------------
-    auto* vpBox = new QGroupBox(QStringLiteral("视口 / 布局 (MVP)"));
+    auto* vpBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("视口 / 布局 (MVP)")));
     auto* vl = new QVBoxLayout(vpBox);
-    vl->addWidget(new QLabel(QStringLiteral("空列表 = 模型空间打印（整体图形直接出图，无需切换布局）。"
-                                           "下列每个视口将其区域映射到整块可打印区。")));
+    vl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("空列表 = 模型空间打印（整体图形直接出图，无需切换布局）。下列每个视口将其区域映射到整块可打印区。"))));
     vpList_ = new QListWidget();
     vl->addWidget(vpList_);
-    vpAddBtn_ = new QPushButton(QStringLiteral("添加：整体图形范围"));
-    vpEditBtn_ = new QPushButton(QStringLiteral("编辑比例..."));
-    vpDelBtn_ = new QPushButton(QStringLiteral("删除"));
+    vpAddBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("添加：整体图形范围")));
+    vpEditBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("编辑比例...")));
+    vpDelBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")));
     auto* vpRow = new QHBoxLayout();
     vpRow->addWidget(vpAddBtn_); vpRow->addWidget(vpEditBtn_); vpRow->addWidget(vpDelBtn_);
     vl->addLayout(vpRow);
@@ -219,10 +219,10 @@ PrintSettingsDialog::PrintSettingsDialog(SketchModel* model, const PrintSettings
 
     // ---------------- 底部按钮 ----------------
     auto* btnRow = new QHBoxLayout();
-    auto* previewBtn = new QPushButton(QStringLiteral("打印预览..."));
-    auto* pdfBtn = new QPushButton(QStringLiteral("导出 PDF..."));
-    auto* okBtn = new QPushButton(QStringLiteral("确定"));
-    auto* cancelBtn = new QPushButton(QStringLiteral("取消"));
+    auto* previewBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("打印预览...")));
+    auto* pdfBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("导出 PDF...")));
+    auto* okBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    auto* cancelBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     okBtn->setDefault(true);
     btnRow->addWidget(previewBtn); btnRow->addWidget(pdfBtn);
     btnRow->addStretch(1);
@@ -296,12 +296,12 @@ void PrintSettingsDialog::onPresetChanged(int idx) {
 
 void PrintSettingsDialog::onImportCtb() {
     const QString path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("导入简化 CTB 打印样式表"), QString(),
-        QStringLiteral("CTB 样式表 (*.ctb *.txt);;所有文件 (*)"));
+        this, SketchCAD::I18n::t(QString::fromUtf8("导入简化 CTB 打印样式表")), QString(),
+        SketchCAD::I18n::t(QString::fromUtf8("CTB 样式表 (*.ctb *.txt);;所有文件 (*)")));
     if (path.isEmpty()) return;
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, QStringLiteral("导入失败"), QStringLiteral("无法打开文件: %1").arg(path));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("导入失败")), SketchCAD::I18n::t(QString::fromUtf8("无法打开文件: %1")).arg(path));
         return;
     }
     const QString text = QString::fromUtf8(f.readAll());
@@ -309,8 +309,8 @@ void PrintSettingsDialog::onImportCtb() {
     PlotStyleTable t;
     QString err;
     if (!PlotStyleTable::fromCtb(text, &t, &err)) {
-        QMessageBox::warning(this, QStringLiteral("CTB 解析警告"),
-                             QStringLiteral("存在无法解析的行（已跳过）：\n%1").arg(err));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("CTB 解析警告")),
+                             SketchCAD::I18n::t(QString::fromUtf8("存在无法解析的行（已跳过）：\n%1")).arg(err));
     }
     s_.plotStyle = t;
     presetCombo_->blockSignals(true);
@@ -383,17 +383,17 @@ void PrintSettingsDialog::onAddStyle() {
     const int dim = styleTargetType_->currentIndex();
     if (dim == 0) {
         const QString layer = styleTargetName_->text().trimmed();
-        if (layer.isEmpty()) { QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请填写图层名")); return; }
+        if (layer.isEmpty()) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("提示")), SketchCAD::I18n::t(QString::fromUtf8("请填写图层名"))); return; }
         s_.plotStyle.setLayerStyle(layer, e);
     } else if (dim == 1) {
         const QString colStr = styleTargetName_->text().trimmed();
         QColor col(colStr);
-        if (!col.isValid()) { QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择要匹配的颜色")); return; }
+        if (!col.isValid()) { QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("提示")), SketchCAD::I18n::t(QString::fromUtf8("请先选择要匹配的颜色"))); return; }
         s_.plotStyle.setColorStyle(col, e);
     } else {
         LineStyle ls;
         if (!plotStyleFromName(styleTargetName_->text().trimmed(), &ls)) {
-            QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("请先选择线型"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("提示")), SketchCAD::I18n::t(QString::fromUtf8("请先选择线型")));
             return;
         }
         s_.plotStyle.setStyleStyle(ls, e);
@@ -465,8 +465,8 @@ void PrintSettingsDialog::onAddViewport() {
     vp.name = QStringLiteral("视口%1").arg(s_.viewports.size() + 1);
     vp.modelRect = QRectF();   // 空 → 整体图形范围
     bool ok = false;
-    const double sc = QInputDialog::getDouble(this, QStringLiteral("视口比例"),
-                                             QStringLiteral("该视口的模型mm→图纸mm比例 (1=1:1):"),
+    const double sc = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("视口比例")),
+                                             SketchCAD::I18n::t(QString::fromUtf8("该视口的模型mm→图纸mm比例 (1=1:1):")),
                                              1.0, 0.01, 1000, 3, &ok);
     if (!ok) return;
     vp.scale = sc;
@@ -478,23 +478,23 @@ void PrintSettingsDialog::onEditViewport() {
     const int row = vpList_->currentRow();
     if (row < 0 || row >= s_.viewports.size()) return;
     bool ok = false;
-    const double sc = QInputDialog::getDouble(this, QStringLiteral("视口比例"),
-                                             QStringLiteral("该视口的模型mm→图纸mm比例 (1=1:1):"),
+    const double sc = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("视口比例")),
+                                             SketchCAD::I18n::t(QString::fromUtf8("该视口的模型mm→图纸mm比例 (1=1:1):")),
                                              s_.viewports[row].scale > 0 ? s_.viewports[row].scale : 1.0,
                                              0.01, 1000, 3, &ok);
     if (!ok) return;
     s_.viewports[row].scale = sc;
     // 视口旋转角（消费 PlotViewport::rotationDeg；0 = 不旋转）
-    const double rot = QInputDialog::getDouble(this, QStringLiteral("视口旋转"),
-                                               QStringLiteral("视口内容旋转角（度，逆时针；0 = 不旋转）:"),
+    const double rot = QInputDialog::getDouble(this, SketchCAD::I18n::t(QString::fromUtf8("视口旋转")),
+                                               SketchCAD::I18n::t(QString::fromUtf8("视口内容旋转角（度，逆时针；0 = 不旋转）:")),
                                                s_.viewports[row].rotationDeg, -360.0, 360.0, 2, &ok);
     if (ok) s_.viewports[row].rotationDeg = rot;
     // per-viewport 冻结：勾选的图层仅在该视口出图中隐藏（模型空间与其他视口正常）
     if (model_ && model_->layerCount() > 0) {
         QDialog dlg(this);
-        dlg.setWindowTitle(QStringLiteral("视口冻结图层 - %1").arg(s_.viewports[row].name));
+        dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("视口冻结图层 - %1")).arg(s_.viewports[row].name));
         auto* lay = new QVBoxLayout(&dlg);
-        lay->addWidget(new QLabel(QStringLiteral("勾选 = 该视口内不输出（其他视口与模型空间不受影响）："), &dlg));
+        lay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("勾选 = 该视口内不输出（其他视口与模型空间不受影响）：")), &dlg));
         auto* area = new QScrollArea(&dlg);
         auto* box = new QWidget(&dlg);
         auto* grid = new QVBoxLayout(box);
@@ -535,7 +535,7 @@ void PrintSettingsDialog::onDeleteViewport() {
 void PrintSettingsDialog::syncViewportList() {
     vpList_->clear();
     if (s_.viewports.isEmpty()) {
-        auto* item = new QListWidgetItem(QStringLiteral("（空）= 模型空间打印"));
+        auto* item = new QListWidgetItem(SketchCAD::I18n::t(QString::fromUtf8("（空）= 模型空间打印")));
         item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
         vpList_->addItem(item);
         return;
@@ -549,7 +549,7 @@ void PrintSettingsDialog::syncViewportList() {
         QString tail;
         if (std::fabs(vp.rotationDeg) > 1e-9) tail += QStringLiteral(" 旋转%1°").arg(vp.rotationDeg, 0, 'g', 3);
         if (!vp.frozenLayers.isEmpty()) tail += QStringLiteral(" 冻结%1层").arg(vp.frozenLayers.size());
-        vpList_->addItem(QStringLiteral("%1: %2 比例%3%4").arg(vp.name).arg(rect).arg(vp.scale).arg(tail));
+        vpList_->addItem(SketchCAD::I18n::t(QString::fromUtf8("%1: %2 比例%3%4")).arg(vp.name).arg(rect).arg(vp.scale).arg(tail));
     }
 }
 
@@ -577,15 +577,15 @@ void PrintSettingsDialog::onExportPdf() {
     s_.drawBorder = borderBox_->isChecked();
     s_.lineWidthScale = lineWidthScale_->value();
 
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("导出 PDF"),
+    const QString path = QFileDialog::getSaveFileName(this, SketchCAD::I18n::t(QString::fromUtf8("导出 PDF")),
                                                      QStringLiteral("SketchCAD.pdf"),
-                                                     QStringLiteral("PDF 文件 (*.pdf)"));
+                                                     SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
     if (path.isEmpty()) return;
     if (PrintEngine::exportPdf(model_, s_, path))
-        QMessageBox::information(this, QStringLiteral("导出成功"),
-                                QStringLiteral("已生成 PDF：%1").arg(path));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("导出成功")),
+                                SketchCAD::I18n::t(QString::fromUtf8("已生成 PDF：%1")).arg(path));
     else
-        QMessageBox::warning(this, QStringLiteral("导出失败"), QStringLiteral("生成 PDF 时出错。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("导出失败")), SketchCAD::I18n::t(QString::fromUtf8("生成 PDF 时出错。")));
 }
 
 void PrintSettingsDialog::onAccept() {

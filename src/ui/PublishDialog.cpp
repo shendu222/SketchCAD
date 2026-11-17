@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PublishDialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -16,18 +17,18 @@ namespace SketchCAD {
 PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpaceSettings,
                              QWidget* parent)
     : QDialog(parent), model_(model), modelSpaceSettings_(modelSpaceSettings) {
-    setWindowTitle(QStringLiteral("发布 (PUBLISH)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("发布 (PUBLISH)")));
     resize(520, 460);
 
     auto* lay = new QVBoxLayout(this);
 
     // ---- 图纸集列表（勾选要发布的页）----
-    lay->addWidget(new QLabel(QStringLiteral("选择要发布的图纸（按列表顺序出图）："), this));
+    lay->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("选择要发布的图纸（按列表顺序出图）：")), this));
     pageList_ = new QListWidget(this);
     pageList_->setObjectName("publishPageList");
     // 模型空间条目：视口清空 = 模型空间打印语义
     {
-        auto* it = new QListWidgetItem(QStringLiteral("模型空间"), pageList_);
+        auto* it = new QListWidgetItem(SketchCAD::I18n::t(QString::fromUtf8("模型空间")), pageList_);
         it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
         it->setCheckState(Qt::Checked);
         it->setData(Qt::UserRole, QStringLiteral("__model__"));
@@ -37,7 +38,7 @@ PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpace
         const PlotLayoutDef* def = model_->layoutAt(i);
         if (!def) continue;
         auto* it = new QListWidgetItem(
-            QStringLiteral("%1（%2 个视口）").arg(def->name).arg(def->settings.viewports.size()), pageList_);
+            SketchCAD::I18n::t(QString::fromUtf8("%1（%2 个视口）")).arg(def->name).arg(def->settings.viewports.size()), pageList_);
         it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
         it->setCheckState(Qt::Checked);
         it->setData(Qt::UserRole, def->name);
@@ -45,28 +46,28 @@ PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpace
     lay->addWidget(pageList_);
 
     // ---- 输出目标 ----
-    auto* targetGrp = new QGroupBox(QStringLiteral("输出目标"), this);
+    auto* targetGrp = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("输出目标")), this);
     auto* tLay = new QVBoxLayout(targetGrp);
-    singlePdfBtn_ = new QRadioButton(QStringLiteral("单个多页 PDF"), targetGrp);
-    multiPdfBtn_  = new QRadioButton(QStringLiteral("每布局一个 PDF"), targetGrp);
-    printerBtn_   = new QRadioButton(QStringLiteral("物理打印机"), targetGrp);
+    singlePdfBtn_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("单个多页 PDF")), targetGrp);
+    multiPdfBtn_  = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("每布局一个 PDF")), targetGrp);
+    printerBtn_   = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("物理打印机")), targetGrp);
     singlePdfBtn_->setChecked(true);
     tLay->addWidget(singlePdfBtn_);
     tLay->addWidget(multiPdfBtn_);
     tLay->addWidget(printerBtn_);
     auto* pathRow = new QHBoxLayout;
     pathEdit_ = new QLineEdit(targetGrp);
-    pathEdit_->setPlaceholderText(QStringLiteral("PDF 路径（多 PDF 模式 = 文件基名）"));
-    browseBtn_ = new QPushButton(QStringLiteral("浏览..."), targetGrp);
+    pathEdit_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("PDF 路径（多 PDF 模式 = 文件基名）")));
+    browseBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("浏览...")), targetGrp);
     pathRow->addWidget(pathEdit_, 1);
     pathRow->addWidget(browseBtn_);
     tLay->addLayout(pathRow);
     lay->addWidget(targetGrp);
 
     // ---- 页面设置覆盖（可选）----
-    auto* ovGrp = new QGroupBox(QStringLiteral("页面设置覆盖（可选）"), this);
+    auto* ovGrp = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("页面设置覆盖（可选）")), this);
     auto* ovLay = new QHBoxLayout(ovGrp);
-    overrideBox_ = new QCheckBox(QStringLiteral("统一覆盖纸张/方向"), ovGrp);
+    overrideBox_ = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("统一覆盖纸张/方向")), ovGrp);
     overridePaper_ = new QComboBox(ovGrp);
     const char* papers[] = { "A4", "A3", "A2", "A1", "A0", "B5", "B4", "Letter", "Legal" };
     const QPageSize::PageSizeId ids[] = {
@@ -76,8 +77,8 @@ PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpace
     for (int i = 0; i < 9; ++i) {
         overridePaper_->addItem(QString::fromUtf8(papers[i]), (int)ids[i]);
     }
-    overridePortrait_  = new QRadioButton(QStringLiteral("纵向"), ovGrp);
-    overrideLandscape_ = new QRadioButton(QStringLiteral("横向"), ovGrp);
+    overridePortrait_  = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("纵向")), ovGrp);
+    overrideLandscape_ = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("横向")), ovGrp);
     overridePortrait_->setChecked(true);
     ovLay->addWidget(overrideBox_);
     ovLay->addWidget(overridePaper_);
@@ -89,9 +90,9 @@ PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpace
     // ---- 运行 ----
     auto* runRow = new QHBoxLayout;
     runRow->addStretch(1);
-    auto* runBtn = new QPushButton(QStringLiteral("发布"), this);
+    auto* runBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("发布")), this);
     runBtn->setDefault(true);
-    auto* closeBtn = new QPushButton(QStringLiteral("关闭"), this);
+    auto* closeBtn = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("关闭")), this);
     runRow->addWidget(runBtn);
     runRow->addWidget(closeBtn);
     lay->addLayout(runRow);
@@ -99,13 +100,13 @@ PublishDialog::PublishDialog(SketchModel* model, const PrintSettings& modelSpace
     connect(browseBtn_, &QPushButton::clicked, this, [this] {
         if (multiPdfBtn_->isChecked()) {
             const QString base = QFileDialog::getSaveFileName(
-                this, QStringLiteral("选择输出基名"), QStringLiteral("SketchCAD.pdf"),
-                QStringLiteral("PDF 文件 (*.pdf)"));
+                this, SketchCAD::I18n::t(QString::fromUtf8("选择输出基名")), QStringLiteral("SketchCAD.pdf"),
+                SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
             if (!base.isEmpty()) pathEdit_->setText(base);
         } else {
             const QString p = QFileDialog::getSaveFileName(
-                this, QStringLiteral("选择输出 PDF"), QStringLiteral("SketchCAD.pdf"),
-                QStringLiteral("PDF 文件 (*.pdf)"));
+                this, SketchCAD::I18n::t(QString::fromUtf8("选择输出 PDF")), QStringLiteral("SketchCAD.pdf"),
+                SketchCAD::I18n::t(QString::fromUtf8("PDF 文件 (*.pdf)")));
             if (!p.isEmpty()) pathEdit_->setText(p);
         }
     });
@@ -144,8 +145,8 @@ QList<PrintEngine::PublishPage> PublishDialog::buildPages() const {
 void PublishDialog::onRun() {
     const QList<PrintEngine::PublishPage> pages = buildPages();
     if (pages.isEmpty()) {
-        QMessageBox::warning(this, QStringLiteral("发布"),
-                             QStringLiteral("未勾选任何图纸。"));
+        QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("发布")),
+                             SketchCAD::I18n::t(QString::fromUtf8("未勾选任何图纸。")));
         return;
     }
 
@@ -153,18 +154,18 @@ void PublishDialog::onRun() {
     if (singlePdfBtn_->isChecked()) {
         QString path = pathEdit_->text().trimmed();
         if (path.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("发布"),
-                                 QStringLiteral("请先指定输出 PDF 路径。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("发布")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("请先指定输出 PDF 路径。")));
             return;
         }
         const int done = PrintEngine::exportPagesPdf(model_, pages, path);
         if (done > 0)
-            model_->log(QStringLiteral("发布完成：%1 页 → %2").arg(done).arg(path), QStringLiteral("info"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("发布完成：%1 页 → %2")).arg(done).arg(path), QStringLiteral("info"));
         else
-            model_->log(QStringLiteral("发布失败：未生成任何页"), QStringLiteral("warn"));
-        QMessageBox::information(this, QStringLiteral("发布"),
-                                 done > 0 ? QStringLiteral("已发布 %1 页 → %2").arg(done).arg(path)
-                                          : QStringLiteral("发布失败：未生成任何页。"));
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("发布失败：未生成任何页")), QStringLiteral("warn"));
+        QMessageBox::information(this, SketchCAD::I18n::t(QString::fromUtf8("发布")),
+                                 done > 0 ? SketchCAD::I18n::t(QString::fromUtf8("已发布 %1 页 → %2")).arg(done).arg(path)
+                                          : SketchCAD::I18n::t(QString::fromUtf8("发布失败：未生成任何页。")));
         return;
     }
 
@@ -172,8 +173,8 @@ void PublishDialog::onRun() {
     if (multiPdfBtn_->isChecked()) {
         QString base = pathEdit_->text().trimmed();
         if (base.isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("发布"),
-                                 QStringLiteral("请先指定输出文件基名。"));
+            QMessageBox::warning(this, SketchCAD::I18n::t(QString::fromUtf8("发布")),
+                                 SketchCAD::I18n::t(QString::fromUtf8("请先指定输出文件基名。")));
             return;
         }
         // 去掉可能带上的扩展名，统一 <基名>_<页名>.pdf

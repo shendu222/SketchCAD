@@ -1,5 +1,7 @@
 # SketchCAD
 
+> 中文 · [English README](README.en.md)
+
 <p align="center">
   <img src="resources/logo_sketchcad_v1.0_small.png" width="120" alt="SketchCAD Logo" />
 </p>
@@ -225,6 +227,10 @@ qselect type=直线 layer=0  # 快速选择 0 层的所有直线
 | :--- | :--- |
 | `%LOCALAPPDATA%\SketchCAD` | 存放自动保存、崩溃日志、运行日志 |
 | `HKCU\Software\SketchCAD` | COM 自动化注册项 |
+
+### 界面语言
+
+在「选项 → 常规 → 界面语言」中可切换 `zh-CN` / `en`。英文模式覆盖菜单、工具栏、状态栏、命令行反馈、弹窗、错误与空态提示；词典与生成器位于 `tools/i18n/`，执行 `python tools/i18n/build_i18n.py --check` 可校验译文覆盖率，`--apply` 重新生成 `src/core/I18nDict.cpp`。中文模式为源语言，所有文案与行为保持原样。
 
 ### 安装 / 卸载参数
 

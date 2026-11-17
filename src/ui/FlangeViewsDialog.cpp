@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "FlangeViewsDialog.h"
 #include "core/SketchModel.h"
 #include <QVBoxLayout>
@@ -12,7 +13,7 @@ namespace SketchCAD {
 
 FlangeViewsDialog::FlangeViewsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("绘制法兰盘三面图"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("绘制法兰盘三面图")));
     resize(360, 520);
     buildUi();
 }
@@ -21,7 +22,7 @@ void FlangeViewsDialog::buildUi() {
     auto* root = new QVBoxLayout(this);
 
     root->addWidget(new QLabel(
-        QStringLiteral("所有尺寸单位：毫米（mm）。参数收敛后生成带颈平焊法兰三面图。"), this));
+        SketchCAD::I18n::t(QString::fromUtf8("所有尺寸单位：毫米（mm）。参数收敛后生成带颈平焊法兰三面图。")), this));
 
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight);
@@ -52,22 +53,22 @@ void FlangeViewsDialog::buildUi() {
 
     auto* sbBoltAngle = makeDouble(p_.boltAngle0Deg, -180.0, 180.0, " °");
 
-    form->addRow(QStringLiteral("法兰外径 D"),      sbOuterD);
-    form->addRow(QStringLiteral("颈部外径 N"),      sbHubD);
-    form->addRow(QStringLiteral("法兰厚度 C"),      sbThickness);
-    form->addRow(QStringLiteral("中心孔径"),        sbBoreD);
-    form->addRow(QStringLiteral("螺栓孔分布圆 K"),  sbBoltCircle);
-    form->addRow(QStringLiteral("螺栓孔径 L"),      sbBoltHoleD);
-    form->addRow(QStringLiteral("螺栓孔数量 n"),    sbBoltCount);
-    form->addRow(QStringLiteral("颈部总高"),          sbHubHeight);
-    form->addRow(QStringLiteral("第一孔起始角"),    sbBoltAngle);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("法兰外径 D")),      sbOuterD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("颈部外径 N")),      sbHubD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("法兰厚度 C")),      sbThickness);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("中心孔径")),        sbBoreD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓孔分布圆 K")),  sbBoltCircle);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓孔径 L")),      sbBoltHoleD);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("螺栓孔数量 n")),    sbBoltCount);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("颈部总高")),          sbHubHeight);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("第一孔起始角")),    sbBoltAngle);
 
     root->addLayout(form);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, [this, sbOuterD, sbHubD,
             sbThickness, sbBoreD, sbBoltCircle, sbBoltHoleD,
             sbBoltCount, sbHubHeight, sbBoltAngle]() {
@@ -83,9 +84,9 @@ void FlangeViewsDialog::buildUi() {
         p.boltAngle0Deg= sbBoltAngle->value();
 
         const auto r = buildFlangeViews(p, model_);
-        model_->beginEdit(QStringLiteral("绘制法兰盘三面图"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制法兰盘三面图")));
         model_->addElementsQuiet(r.elems);
-        model_->log(QStringLiteral("已生成法兰盘三面图：%1 个图元，比例 %2")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成法兰盘三面图：%1 个图元，比例 %2"))
                         .arg(r.elems.size()).arg(r.scaleLabel));
         accept();
     });

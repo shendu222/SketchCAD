@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PaperSizeDialog.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -11,13 +12,13 @@
 namespace SketchCAD {
 
 PaperSizeDialog::PaperSizeDialog(QWidget* parent) : QDialog(parent) {
-    setWindowTitle(QStringLiteral("按幅面生成图框与标题栏 — 选择幅面"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("按幅面生成图框与标题栏 — 选择幅面")));
     resize(340, 300);
 
     auto* root = new QVBoxLayout(this);
 
     // ---- 幅面 A0~A5 ----
-    auto* gbFmt = new QGroupBox(QStringLiteral("图纸幅面 (GB/T 14689 / ISO 128)"), this);
+    auto* gbFmt = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("图纸幅面 (GB/T 14689 / ISO 128)")), this);
     auto* fmtLay = new QVBoxLayout(gbFmt);
     auto* grpFmt = new QButtonGroup(this);
     static const QPair<SheetFormat, QString> kFmts[] = {
@@ -39,11 +40,11 @@ PaperSizeDialog::PaperSizeDialog(QWidget* parent) : QDialog(parent) {
     root->addWidget(gbFmt);
 
     // ---- 摆放方向 ----
-    auto* gbOri = new QGroupBox(QStringLiteral("摆放方向"), this);
+    auto* gbOri = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("摆放方向")), this);
     auto* oriLay = new QHBoxLayout(gbOri);
     auto* grpOri = new QButtonGroup(this);
-    auto* rbLand = new QRadioButton(QStringLiteral("横向（长边水平）"), gbOri);
-    auto* rbPort = new QRadioButton(QStringLiteral("纵向（长边垂直）"), gbOri);
+    auto* rbLand = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("横向（长边水平）")), gbOri);
+    auto* rbPort = new QRadioButton(SketchCAD::I18n::t(QString::fromUtf8("纵向（长边垂直）")), gbOri);
     grpOri->addButton(rbLand, 1);
     grpOri->addButton(rbPort, 0);
     rbLand->setChecked(true);   // 工程图默认横向
@@ -53,15 +54,13 @@ PaperSizeDialog::PaperSizeDialog(QWidget* parent) : QDialog(parent) {
     connect(rbPort, &QRadioButton::toggled, this, [this](bool on) { if (on) landscape_ = false; });
     root->addWidget(gbOri);
 
-    root->addWidget(new QLabel(QStringLiteral(
-        "确认后将以所选幅面为最小尺寸自动套框：图框会包住全部已有图元，"
-        "标题栏固定在右下角并自动避让，不覆盖任何现有图元。"), this));
+    root->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("确认后将以所选幅面为最小尺寸自动套框：图框会包住全部已有图元，标题栏固定在右下角并自动避让，不覆盖任何现有图元。")), this));
 
     // ---- 确认/取消 ----
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                     Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
     root->addWidget(box);

@@ -11,6 +11,7 @@
 //   Invoke         ：switch(dispid)，位置参数自右向左压栈（COM 约定：
 //                    rgvarg[cArgs-1] 为第 1 个参数）
 // ============================================================================
+#include "core/I18n.h"
 #include "SketchCADComServer.h"
 #include "ComError.h"
 #include "BatchPlotEngine.h"
@@ -231,7 +232,7 @@ private:
         if (HRESULT pre = requireStarted(); FAILED(pre)) return pre;
         const QString path = strArg(p, 1);
         if (path.isEmpty()) {
-            setErr(SCAD_E_BAD_ARG, QStringLiteral("缺少 path 参数"));
+            setErr(SCAD_E_BAD_ARG, SketchCAD::I18n::t(QString::fromUtf8("缺少 path 参数")));
             return SCAD_E_BAD_ARG;
         }
         if (!QFileInfo::exists(path)) {
@@ -253,7 +254,7 @@ private:
         if (HRESULT pre = requireStarted(); FAILED(pre)) return pre;
         const QString path = strArg(p, 1);
         if (path.isEmpty()) {
-            setErr(SCAD_E_BAD_ARG, QStringLiteral("缺少 path 参数"));
+            setErr(SCAD_E_BAD_ARG, SketchCAD::I18n::t(QString::fromUtf8("缺少 path 参数")));
             return SCAD_E_BAD_ARG;
         }
         QJsonObject settings;
@@ -283,7 +284,7 @@ private:
         const QString tasksJson = strArg(p, 1);
         const QString logPath   = strArg(p, 2);
         if (tasksJson.isEmpty()) {
-            setErr(SCAD_E_BAD_TASK, QStringLiteral("缺少 tasks 参数"));
+            setErr(SCAD_E_BAD_TASK, SketchCAD::I18n::t(QString::fromUtf8("缺少 tasks 参数")));
             return SCAD_E_BAD_TASK;
         }
         const BatchResult r = BatchPlotEngine::runBatch(tasksJson, logPath);
@@ -310,7 +311,7 @@ private:
         std::lock_guard<std::recursive_mutex> lk(m_mtx);
         if (!p || (int)p->cArgs < 1 || p->rgvarg[p->cArgs - 1].vt != VT_DISPATCH
             || !p->rgvarg[p->cArgs - 1].pdispVal) {
-            setErr(SCAD_E_BAD_ARG, QStringLiteral("sink 必须是 IDispatch 对象"));
+            setErr(SCAD_E_BAD_ARG, SketchCAD::I18n::t(QString::fromUtf8("sink 必须是 IDispatch 对象")));
             return SCAD_E_BAD_ARG;
         }
         if (m_sink) { m_sink->Release(); m_sink = nullptr; }

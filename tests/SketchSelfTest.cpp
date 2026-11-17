@@ -32,6 +32,7 @@
 #include "ConstraintSolver.h"
 #include "ConstraintSolverFacade.h"   // SKT 集成 Phase B：约束求解路由门面
 #include "Geometry.h"
+#include "Trim.h"            // 剪切引擎 trimElement/gatherCuts/extendTrimPair（t_trim 直测）
 #include "CenterLineGen.h"   // P1 中心线家族生成器（t_centerLine 直测）
 #include "SymbolFactory.h"    // P3 符号标注扩展生成器（t_symbolExt 直测）
 #include "BomItem.h"           // P2 序号球标纯生成器 + BomItem 数据模型（t_bom 直测）
@@ -76,12 +77,16 @@
 #include "Clipboard.h"       // 分层测试网：内部剪贴板（JOIN/阵列/剪贴板三件套）
 #include "ui/DocTab.h"      // 多文档标签：DocSession/DocManager 会话核心（t_multidoc）
 #include "ui/CommandLine.h"  // 命令行键盘语义（历史/补全/重复上一命令），t_interaction 直测
+#include "ui/ElementPanel.h" // 图元类型条目 retranslate（语言切换即时刷新，t_i18nEnglishCoverage）
+#include "ui/StatusBar.h"    // 状态栏静态标签/开关按钮 retranslate（语言切换即时刷新）
+#include <QToolButton>       // t_i18nEnglishCoverage EC24/25 遍历状态栏开关按钮文本
 #include "AppSettings.h"     // 应用级配置持久化（t_appsettings / t_recent / t_interaction）
 #include "ui/DrawingTheme.h"  // 绘图区域主题配色（t_drawingTheme：亮/暗两套 + current() 契约）
 #include "ui/ThemeManager.h"  // 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源
 #include "ui/GraphicsView.h" // DEL 键端到端交互：真实 GraphicsView + QApplication::sendEvent(QKeyEvent)
 #include "ui/DeleteKeyFilter.h" // DEL 键应用级兜底：策略纯函数 + 窗口级真实派发
-#include "I18n.h"            // 界面语言单一入口（t_i18n：解析/装载/回落）
+#include "I18n.h"            // 界面语言单一入口（t_i18n / t_i18nEnglishCoverage）
+#include "core/ToolRegistry.h" // 工具注册表显示名语言切换（t_i18nEnglishCoverage）
 #include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
 #include "ai/NlAssistant.h"   // AI 自然语言助手（MockProvider → runSketchCommand 派发，t_nlAssistant 直测）
 #include "ai/NlCommandMapper.h" // LLM 响应结构化解码（t_llmIntegration 直测）
@@ -5665,6 +5670,182 @@ static bool t_i18n() {
         CHECK(QLocale(QLocale::C).toString(3.5, 'f', 2) == QStringLiteral("3.50"),
               "IE2 数值→串小数点口径可经 QLocale 显式固定（C locale='.'）");
     }
+    return true;
+}
+
+// ============================================================================
+// t_i18nEnglishCoverage —— 英文界面「零中文残留」全量验收
+// 覆盖：中文模式逐字不变 / 英文模式词典全量无汉字 / 动态拼接术语清洗 /
+//       模板占位符守恒 / 命令名·字体族名·JSON 键等非 UI 串不入词典 /
+//       SketchModel::log() 反馈出口 / CommandCatalog 元数据 / ToolRegistry 显示名 /
+//       语言来回切换即时刷新（异常与边界状态同样无残留）。
+// ============================================================================
+static bool t_i18nEnglishCoverage() {
+    using namespace SketchCAD;
+
+    auto hasCjk = [](const QString& s) {
+        for (int i = 0; i < s.size(); ++i) {
+            const ushort u = s.at(i).unicode();
+            if (u >= 0x3400 && u <= 0x9fff) return true;
+        }
+        return false;
+    };
+    auto phCount = [](const QString& s) {
+        int n = 0;
+        for (int i = 1; i <= 9; ++i)
+            n += s.count(QString(QLatin1Char('%')) + QString::number(i));
+        return n;
+    };
+
+    const QString prevLang = I18n::activeLanguage();
+    const QStringList keys = I18n::dictionaryKeys();
+
+    // ---- A. 词典规模与中文模式恒等（保证中文界面零行为变化）----
+    CHECK(keys.size() > 2500, "EC1 生成式词典覆盖全部用户可见中文串");
+    I18n::setRuntimeLanguageForTest(QStringLiteral("zh-CN"));
+    bool identity = true;
+    for (const QString& k : keys) {
+        if (I18n::t(k) != k) { identity = false; break; }
+    }
+    CHECK(identity, "EC2 中文模式 t() 对全部词典键逐字恒等（显示/布局/流程不变）");
+    CHECK(I18n::t(QStringLiteral("line")) == QStringLiteral("line") &&
+          I18n::t(QStringLiteral("elements")) == QStringLiteral("elements"),
+          "EC3 纯 ASCII 命令名/JSON 键直接透传");
+    CHECK(!keys.contains(QStringLiteral("line")) &&
+          !keys.contains(QStringLiteral("elements")) &&
+          !keys.contains(QStringLiteral("长仿宋体")) &&
+          !keys.contains(QStringLiteral("CAD封面.png")),
+          "EC4 非 UI 文本（命令名/JSON 键/字体族名/文件名）未进词典");
+
+    // ---- B. 英文模式全量校验 ----
+    I18n::setRuntimeLanguageForTest(QStringLiteral("en"));
+    int cjkBad = 0, phBad = 0, emptyBad = 0;
+    for (const QString& k : keys) {
+        const QString en = I18n::t(k);
+        if (hasCjk(en)) ++cjkBad;
+        if (phCount(en) != phCount(k)) ++phBad;
+        if (en.trimmed().isEmpty()) ++emptyBad;
+    }
+    CHECK(cjkBad == 0, "EC5 英文模式 %1 条译文全量无中文残留");
+    CHECK(phBad == 0, "EC6 动态模板 %1..%9 占位符数量守恒");
+    CHECK(emptyBad == 0, "EC7 无空译文（短标签/边界态文案齐全）");
+    CHECK(I18n::t(QStringLiteral("删除")) == QStringLiteral("Delete") &&
+          I18n::t(QStringLiteral("图层")) == QStringLiteral("Layer") &&
+          I18n::t(QStringLiteral("直线")) == QStringLiteral("Line") &&
+          !hasCjk(I18n::t(QStringLiteral("图元"))),
+          "EC8 术语一致性抽查（删除/图层/直线/图元）");
+
+    // ---- C. 动态拼接 / 运行时生成反馈 ----
+    const QString dyn = I18n::termScrub(QStringLiteral("已创建直线 #5 (0,0)->(10,10)"));
+    CHECK(!hasCjk(dyn) && !dyn.isEmpty(), "EC9 运行时拼接串按术语表清洗后无中文残留");
+    CHECK(I18n::t(QStringLiteral("已删除 %1 个选中图元")).arg(3) ==
+              QStringLiteral("Deleted 3 selected entities"),
+          "EC10 模板消息先翻译后 .arg() 代入，语序与占位符正确");
+    CHECK(I18n::t(QStringLiteral("")) == QString() &&
+          I18n::t(QStringLiteral("line")) == QStringLiteral("line"),
+          "EC11 空串 / 纯 ASCII 边界态不误译");
+
+    // ---- D. 统一反馈出口 SketchModel::log() ----
+    {
+        SketchModel m;
+        QString got;
+        QString gotType;
+        QObject::connect(&m, &SketchModel::logAppended, &m,
+                         [&](const QString& msg, const QString& type) {
+                             got = msg; gotType = type;
+                         });
+        m.log(QStringLiteral("未选中要删除的图元"), QStringLiteral("warn"));
+        CHECK(!hasCjk(got) && got.contains(QStringLiteral("No entities")),
+              "EC12 命令行/状态反馈出口在英文模式输出英文且类型不变");
+        CHECK(gotType == QStringLiteral("warn"),
+              "EC13 翻译不影响日志级别等非文本字段");
+
+        // 异常态：参数已代入的动态中文报错，仍由术语清洗兜底
+        got.clear();
+        m.log(QStringLiteral("图层 %1 不存在").arg(7));
+        CHECK(!hasCjk(got), "EC14 异常态动态中文反馈无中文残留");
+    }
+
+    // ---- E. 元数据表：命令目录 + 工具注册表 ----
+    {
+        bool catalogOk = true, idOk = true;
+        int checked = 0;
+        for (const CommandInfo& ci : CommandCatalog::entries()) {
+            if (!ci.name.isEmpty()) {
+                for (int i = 0; i < ci.name.size(); ++i)
+                    if (ci.name.at(i).unicode() > 0x7f) idOk = false;
+            }
+            const QString all = ci.zhName + ci.category + ci.summary + ci.usage +
+                                ci.params + ci.example;
+            if (hasCjk(all)) catalogOk = false;
+            ++checked;
+        }
+        CHECK(checked > 100, "EC15 命令目录全量遍历");
+        CHECK(catalogOk, "EC16 帮助/命令面板/AI 提示的目录文案无中文残留");
+        CHECK(idOk, "EC17 命令 id 恒 ASCII，翻译不改变命令语义");
+
+        const ToolSpec* spec = ToolRegistry::instance().find(QStringLiteral("line"));
+        CHECK(spec && !hasCjk(spec->displayName) &&
+              spec->displayName == QStringLiteral("Line"),
+              "EC18 工具菜单显示名英文模式为 Line");
+    }
+
+    // ---- F. 语言切回中文即时还原（缓存失效）----
+    I18n::setRuntimeLanguageForTest(QStringLiteral("zh-CN"));
+    {
+        bool cnCatalog = false;
+        for (const CommandInfo& ci : CommandCatalog::entries()) {
+            if (ci.name == QStringLiteral("line")) {
+                cnCatalog = (ci.zhName == QStringLiteral("直线"));
+                break;
+            }
+        }
+        const ToolSpec* spec = ToolRegistry::instance().find(QStringLiteral("line"));
+        CHECK(cnCatalog, "EC19 切回中文后命令目录即时还原中文");
+        CHECK(spec && spec->displayName == QStringLiteral("直线"),
+              "EC20 切回中文后工具显示名即时还原中文");
+    }
+
+    // ---- G. 语言切换即时刷新：常驻 UI 组件的 retranslate() ----
+    // 根因修复：切换语言后除菜单栏外，工具栏/面板标题/状态栏/命令行等常驻控件
+    // 原本在构造时固化文本，切回后不刷新。现给这些组件加 retranslate()，语言切换
+    // 时统一重译，无需重启。这里直测 ElementPanel / StatusBar 的 retranslate
+    // 在 zh-CN ↔ en 间来回切换后文本即时正确。
+    {
+        // ElementPanel：图元类型条目（直线→Line，圆→Circle）
+        ElementPanel ep;
+        I18n::setRuntimeLanguageForTest(QStringLiteral("zh-CN"));
+        ep.retranslate();
+        CHECK(ep.count() > 0 && ep.item(0)->text() == QStringLiteral("直线"),
+              "EC21 图元面板条目中文模式为「直线」");
+        I18n::setRuntimeLanguageForTest(QStringLiteral("en"));
+        ep.retranslate();
+        CHECK(ep.item(0) && !hasCjk(ep.item(0)->text()) &&
+              ep.item(0)->text() == QStringLiteral("Line"),
+              "EC22 图元面板条目切英文后即时变为 Line（无需重启）");
+        I18n::setRuntimeLanguageForTest(QStringLiteral("zh-CN"));
+        ep.retranslate();
+        CHECK(ep.item(0) && ep.item(0)->text() == QStringLiteral("直线"),
+              "EC23 图元面板条目切回中文后即时还原「直线」");
+
+        // StatusBar：开关按钮（正交/捕捉/追踪/线宽等）在英文模式重译后无中文残留
+        StatusBar sb;
+        I18n::setRuntimeLanguageForTest(QStringLiteral("en"));
+        sb.retranslate();
+        bool sbCjk = false;
+        for (QToolButton* b : sb.findChildren<QToolButton*>()) {
+            if (hasCjk(b->text()) || hasCjk(b->toolTip())) { sbCjk = true; break; }
+        }
+        CHECK(!sbCjk, "EC24 状态栏开关按钮切英文后无中文残留（无需重启）");
+        I18n::setRuntimeLanguageForTest(QStringLiteral("zh-CN"));
+        sb.retranslate();
+        bool sbCn = false;
+        for (QToolButton* b : sb.findChildren<QToolButton*>())
+            if (b->text() == QStringLiteral("正交")) { sbCn = true; break; }
+        CHECK(sbCn, "EC25 状态栏开关按钮切回中文后即时还原「正交」");
+    }
+
+    I18n::setRuntimeLanguageForTest(prevLang);
     return true;
 }
 
@@ -14169,6 +14350,274 @@ static bool t_compliance() {
     return g_fail == fail0;
 }
 
+// ================= 剖面交叉细分回归 t_sectionCrossing =================
+// 锁定 docs/剖面填充交叉边界细分修复说明.md 的两类诉求（曾被删的 section_crossing_test.cpp 断言回归）：
+//   图1 斜线底边内部交叉四边形 + 内部圆：圆外区域可拾取、圆成内孔、剖面线不渗漏进圆；
+//   图2 贯穿竖线分隔矩形：左右各成环、单侧独立填充且不越界；
+//   回归保护：内部短直线不误分、纯交叉开放线安全跳过。
+static bool t_sectionCrossing() {
+    const int fail0 = g_fail;
+    auto mkLine = [](const Vec3& a, const Vec3& b, int id) {
+        Element e; e.type = ElementType::Line; e.pts = {a, b}; e.id = id; return e;
+    };
+    auto mkCircle = [](const Vec3& c, double r, int id) {
+        Element e; e.type = ElementType::Circle; e.pts = {c}; e.radius = r; e.id = id; return e;
+    };
+    auto mkRect = [](double x0, double y0, double x1, double y1, int id) {
+        Element e; e.type = ElementType::Rectangle;
+        e.pts = {Vec3(x0,y0,0), Vec3(x1,y1,0)}; e.id = id; return e;
+    };
+    auto allXLe = [](const std::vector<Vec3>& poly, double xMax) {
+        for (const auto& p : poly) { if (p.x > xMax + 1e-6) return false; }
+        return true;
+    };
+    auto allXGe = [](const std::vector<Vec3>& poly, double xMin) {
+        for (const auto& p : poly) { if (p.x < xMin - 1e-6) return false; }
+        return true;
+    };
+
+    // ---- 图1：四边形斜底边内部交叉 + 内部圆 ----
+    {
+        std::vector<Element> elems = {
+            mkLine(Vec3(0,0,0), Vec3(100,0,0), 1),
+            mkLine(Vec3(0,0,0), Vec3(0,100,0), 2),
+            mkLine(Vec3(100,0,0), Vec3(100,100,0), 3),
+            mkLine(Vec3(-20,100,0), Vec3(120,60,0), 4),  // 斜穿底边
+            mkCircle(Vec3(50,50,0), 20.0, 6)
+        };
+        const auto set = buildSectionLoopSet(elems, kDefaultClosureTol);
+        CHECK(set.loops.size() >= 2, "剖面细分 图1：解析出 ≥2 闭环(四边形面+圆)");
+
+        const auto inCircle = pickSectionRegionAt(elems, Vec3(50,50,0));
+        CHECK(inCircle.ok(), "剖面细分 图1：点圆内部命中圆本身");
+        bool circleOnly = inCircle.boundarySrcIds.size() == 1 && inCircle.boundarySrcIds[0] == 6;
+        CHECK(circleOnly, "剖面细分 图1：圆内部边界 = 圆(id6)");
+
+        const auto inQuad = pickSectionRegionAt(elems, Vec3(50,15,0));
+        CHECK(inQuad.ok(), "剖面细分 图1：点四边形内/圆外命中(修复前此步失败)");
+        CHECK(inQuad.area > 6700.0, "剖面细分 图1：圆外净面积≈8000−1257≈6743(圆孔掏空)");
+        bool hasHole6 = false;
+        for (int id : inQuad.holeSrcIds) if (id == 6) hasHole6 = true;
+        CHECK(hasHole6, "剖面细分 图1：圆成为子区域的内孔(even-odd)");
+
+        // 落盘：圆外子区域剖面线不进入圆内
+        SketchModel model;
+        for (const auto& e : elems) model.addElement(e);
+        const std::vector<Element> srcs = model.elements();
+        const auto rePick = pickSectionRegionAt(srcs, Vec3(50,15,0));
+        const auto res = makeSectionChangeForPick(rePick, srcs, SectionStyle());
+        CHECK(res.filledRegions == 1, "剖面细分 图1：圆外子区域产生 1 个填充动作");
+        model.beginEdit(QStringLiteral("剖面填充"));
+        modify::applyChanges(&model, res.changes, QString());
+        const Element* h = nullptr;
+        for (const auto& e : model.elements()) if (e.type == ElementType::Hatch) h = &e;
+        CHECK(h != nullptr, "剖面细分 图1：圆外子区域落盘为 Hatch");
+        if (h) {
+            const SectionRegion back = hatchRegionFromElement(*h);
+            const auto segs = generateHatchLines(back);
+            CHECK(!segs.empty(), "剖面细分 图1：圆外子区域生成剖面线段");
+            bool avoid = true;
+            for (const auto& s : segs) {
+                Vec3 mid((s.a.x+s.b.x)*0.5, (s.a.y+s.b.y)*0.5, 0);
+                if (std::hypot(mid.x-50.0, mid.y-50.0) < 20.0-1e-6) { avoid = false; break; }
+            }
+            CHECK(avoid, "剖面细分 图1：全部剖面线避开圆孔(不渗漏)");
+        }
+    }
+
+    // ---- 图2：贯穿竖线分隔矩形 ----
+    {
+        std::vector<Element> elems = {
+            mkRect(0,0,100,60,11),
+            mkLine(Vec3(50,-20,0), Vec3(50,80,0), 12)  // 端点超出上下边
+        };
+        const auto set = buildSectionLoopSet(elems, kDefaultClosureTol);
+        CHECK(set.loops.size() == 2, "剖面细分 图2：竖线把矩形切成 2 个闭环");
+
+        const auto left = pickSectionRegionAt(elems, Vec3(25,30,0));
+        CHECK(left.ok(), "剖面细分 图2：点左侧命中");
+        CHECK(left.area > 2900.0 && left.area < 3100.0, "剖面细分 图2：左面积≈3000");
+        CHECK(allXLe(left.boundary, 50.0), "剖面细分 图2：左边界全部 x≤50(不越竖线)");
+
+        const auto right = pickSectionRegionAt(elems, Vec3(75,30,0));
+        CHECK(right.ok(), "剖面细分 图2：点右侧命中");
+        CHECK(right.area > 2900.0 && right.area < 3100.0, "剖面细分 图2：右面积≈3000");
+        CHECK(allXGe(right.boundary, 50.0), "剖面细分 图2：右边界全部 x≥50(不越竖线)");
+
+        // 落盘：左侧 Hatch 几何严格落在左半
+        SketchModel model;
+        for (const auto& e : elems) model.addElement(e);
+        const std::vector<Element> srcs = model.elements();
+        const auto rePick = pickSectionRegionAt(srcs, Vec3(25,30,0));
+        const auto res = makeSectionChangeForPick(rePick, srcs, SectionStyle());
+        model.beginEdit(QStringLiteral("剖面填充"));
+        modify::applyChanges(&model, res.changes, QString());
+        const Element* h = nullptr;
+        for (const auto& e : model.elements()) if (e.type == ElementType::Hatch) h = &e;
+        CHECK(h != nullptr, "剖面细分 图2：左侧落盘为单个 Hatch");
+        if (h) CHECK(allXLe(h->pts, 50.0), "剖面细分 图2：落盘 Hatch 仅覆盖左侧(不渗漏)");
+    }
+
+    // ---- 回归保护：内部短直线不误分矩形 ----
+    {
+        std::vector<Element> elems = {
+            mkRect(0,0,100,60,21),
+            mkLine(Vec3(10,30,0), Vec3(90,30,0), 22)  // 两端都在内部，不触碰边界
+        };
+        const auto set = buildSectionLoopSet(elems, kDefaultClosureTol);
+        CHECK(set.loops.size() == 1, "剖面细分 回归：内部短直线不触发细分，矩形仍 1 环");
+        const auto p = pickSectionRegionAt(elems, Vec3(50,45,0));
+        CHECK(p.ok() && std::fabs(p.area - 6000.0) < 50.0, "剖面细分 回归：点内部得整体区域(未误分)");
+    }
+
+    // ---- 回归保护：纯交叉开放线安全跳过 ----
+    {
+        std::vector<Element> elems = {
+            mkLine(Vec3(0,0,0), Vec3(100,100,0), 31),
+            mkLine(Vec3(0,100,0), Vec3(100,0,0), 32)
+        };
+        const auto set = buildSectionLoopSet(elems, kDefaultClosureTol);
+        CHECK(set.loops.empty(), "剖面细分 回归：两条交叉开放线无闭合边界 → 0 区域(安全跳过)");
+    }
+
+    return g_fail == fail0;
+}
+
+// ================= 剪切引擎直测 t_trim =================
+// 覆盖 直线/圆/圆弧/椭圆/折线/样条 各类型剪切、gatherCuts 交点、extendTrimPair 对称修剪延伸、
+// 以及退化情形（无交点/几何不完整/平行共线）。椭圆是 #33 遗留缺口：polylineOf 曾未处理导致恒失败。
+static bool t_trim() {
+    const int fail0 = g_fail;
+
+    // gatherCuts 会跳过 c.id == target.id 的边界（实际场景中 id 唯一），
+    // 测试里必须显式分配唯一 id，否则所有 cutters 被当作 target 自身过滤掉。
+    int nextId = 1;
+    auto mkLine = [&](double x0, double y0, double x1, double y1) {
+        Element e; e.type = ElementType::Line; e.pts = {Vec3(x0,y0,0), Vec3(x1,y1,0)}; e.id = nextId++; return e;
+    };
+    auto mkCircle = [&](double cx, double cy, double r) {
+        Element e; e.type = ElementType::Circle; e.pts = {Vec3(cx,cy,0)}; e.radius = r; e.id = nextId++; return e;
+    };
+
+    // 1) 直线被竖线剪断：水平线 (0,0)-(10,0)，边界 x=5，点击右侧 → 剩左段 (0,0)-(5,0)
+    {
+        Element target = mkLine(0,0,10,0);
+        std::vector<Element> cutters = { mkLine(5,-5,5,5) };
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(target, cutters, Vec3(8,0,0), out, msg);
+        CHECK(ok && out.size() == 1 && out[0].type == ElementType::Line,
+              "trimElement 直线单交点剪断：成功且剩 1 条直线");
+        if (ok && out.size() == 1) {
+            double maxX = std::max(out[0].pts[0].x, out[0].pts[1].x);
+            double minX = std::min(out[0].pts[0].x, out[0].pts[1].x);
+            CHECK(std::fabs(maxX-5.0) < 1e-6 && minX < 1e-6,
+                  "trimElement 直线：点右侧被剪后保留段端点 = [0,5]");
+        }
+    }
+
+    // 2) 圆被竖线剪两交点 → 降级为圆弧（整圆剪切剩一段弧）
+    {
+        Element target = mkCircle(0,0,10);
+        std::vector<Element> cutters = { mkLine(5,-15,5,15) };  // x=5 与圆交于 (5,±8.66)
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(target, cutters, Vec3(9,0,0), out, msg);
+        CHECK(ok && out.size() == 1 && out[0].type == ElementType::Arc,
+              "trimElement 圆：单边界两交点剪后降级为 1 段圆弧");
+        if (ok && out.size() == 1)
+            CHECK(std::fabs(out[0].radius-10.0) < 1e-6,
+                  "trimElement 圆：降级圆弧半径保持 10");
+    }
+
+    // 3) 圆弧：内部交点把弧剪成两段中的一段
+    {
+        Element a; a.type = ElementType::Arc; a.pts = {Vec3(0,0,0)};
+        a.id = nextId++;
+        a.radius = 10; a.startAngle = 0; a.endAngle = 180;   // 上半圆
+        std::vector<Element> cutters = { mkLine(0,0,0,15) };  // y 轴穿过弧顶 (0,10)
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(a, cutters, Vec3(9,0,0), out, msg);
+        CHECK(ok && out.size() >= 1, "trimElement 圆弧：内部交点剪后至少剩 1 段");
+        for (const auto& e : out)
+            CHECK(e.type == ElementType::Arc, "trimElement 圆弧：产物仍为圆弧");
+    }
+
+    // 4) 椭圆：#33 核心缺口 —— 竖线剪椭圆两交点 → 降级为样条（曾是恒返回 false）
+    {
+        Element el; el.type = ElementType::Ellipse;
+        el.id = nextId++;
+        el.pts = {Vec3(0,0,0)}; el.radius = 20; el.radiusY = 10; el.rotation = 0;
+        std::vector<Element> cutters = { mkLine(10,-15,10,15) };  // x=10 与椭圆交于 (10,±8.66)
+        std::vector<Vec3> cuts = trim::gatherCuts(el, cutters);
+        CHECK(cuts.size() >= 2, "gatherCuts 椭圆：x=10 边界应得 ≥2 个交点");
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(el, cutters, Vec3(19,0,0), out, msg);
+        CHECK(ok && out.size() >= 1, "trimElement 椭圆：可剪切（#33 缺口修复）");
+        for (const auto& e : out) {
+            CHECK(e.type == ElementType::Spline, "trimElement 椭圆：剪后降级为样条");
+            CHECK(e.pts.size() >= 2, "trimElement 椭圆：降级样条有 ≥2 控制点");
+        }
+    }
+
+    // 5) 闭合矩形被剪：竖线 x=5 穿过 → 降级为开放多边形
+    {
+        Element r; r.type = ElementType::Rectangle;
+        r.id = nextId++;
+        r.pts = {Vec3(0,0,0), Vec3(10,8,0)}; r.closed = true;
+        std::vector<Element> cutters = { mkLine(5,-2,5,10) };
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(r, cutters, Vec3(8,4,0), out, msg);
+        CHECK(ok && out.size() >= 1, "trimElement 矩形：闭合轮廓被剪成功");
+        for (const auto& e : out)
+            CHECK(e.type == ElementType::Polygon && !e.closed,
+                  "trimElement 矩形：剪后降级为开放多边形");
+    }
+
+    // 6) 无交点 → 失败且给出原因
+    {
+        Element target = mkLine(0,0,10,0);
+        std::vector<Element> cutters = { mkLine(0,20,10,20) };  // 远处平行线，与水平线无交点
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(target, cutters, Vec3(5,0,0), out, msg);
+        CHECK(!ok && !msg.isEmpty(), "trimElement 无交点：返回失败且给出原因文案");
+    }
+
+    // 7) 约束/标注非几何图元 → 拒绝
+    {
+        Element c; c.type = ElementType::Constraint;
+        std::vector<Element> out; QString msg;
+        bool ok = trim::trimElement(c, {}, Vec3(0,0,0), out, msg);
+        CHECK(!ok, "trimElement 约束图元：拒绝剪切");
+    }
+
+    // 8) extendTrimPair 对称修剪/延伸：两线交点 (10,10)
+    {
+        Element a = mkLine(0,0,10,0);      // 水平线，交点恰在右端
+        Element b = mkLine(10,0,10,10);    // 竖线
+        Element oa, ob; bool ca=false, cb=false; QString msg;
+        bool ok = trim::extendTrimPair(a, Vec3(2,0,0), b, Vec3(10,5,0), oa, ca, ob, cb, msg);
+        CHECK(ok, "extendTrimPair 相交线对：成功");
+        CHECK((ca || cb), "extendTrimPair：至少一条线被改动");
+    }
+    // 9) extendTrimPair 平行线 → 失败
+    {
+        Element a = mkLine(0,0,10,0), b = mkLine(0,5,10,5);
+        Element oa, ob; bool ca=false, cb=false; QString msg;
+        bool ok = trim::extendTrimPair(a, Vec3(2,0,0), b, Vec3(2,5,0), oa, ca, ob, cb, msg);
+        CHECK(!ok && msg.contains(QStringLiteral("平行")),
+              "extendTrimPair 平行线：失败且文案含『平行』");
+    }
+    // 10) extendTrimPair 共线 → 失败
+    {
+        Element a = mkLine(0,0,10,0), b = mkLine(20,0,30,0);
+        Element oa, ob; bool ca=false, cb=false; QString msg;
+        bool ok = trim::extendTrimPair(a, Vec3(2,0,0), b, Vec3(22,0,0), oa, ca, ob, cb, msg);
+        CHECK(!ok && msg.contains(QStringLiteral("共线")),
+              "extendTrimPair 共线：失败且文案含『共线』");
+    }
+
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -14260,8 +14709,10 @@ int main(int argc, char** argv) {
     fprintf(stdout, "--- 分层测试网：core 纯函数层 ---\n");
     t_geometryCore();
     t_modifyCore();
+    CHECK(t_trim(), "剪切引擎 Trim(直线/圆/圆弧/椭圆降级/矩形降级/无交点/非几何拒绝/extendTrimPair 修剪延伸+平行共线)");
     t_batchEdit();      // 批量编辑三件套：JOIN/阵列/剪贴板（逐条 CHECK 计数）
     t_sectionCore();
+    CHECK(t_sectionCrossing(), "剖面交叉细分回归(图1圆外区域+圆孔掏空+剖面线不渗漏/图2竖线双侧独立成环+单侧落盘不越界/内部短线不误分/开放线安全跳过)");
     t_inquiryCore();
     t_spatialIndex();   // 均匀网格空间索引：不变量/开关/复用/退化（逐条 CHECK 计数）
     CHECK(t_p004Memory(), "P0-04 内存预算 SmallVec 语义 + Element 尺寸上界");
@@ -14286,6 +14737,7 @@ int main(int argc, char** argv) {
     CHECK(t_sheetFrameOpts(), "【新建图框】图框生成选项(兼容/装订/加长/自定义/分区/对中/明细栏)");
     CHECK(t_multidoc(),    "多文档标签 DocTab(独立undo/脏标记隔离/cycle循环/拖拽重排/跨文档粘贴/历史互换/关闭夹取)");
     CHECK(t_i18n(), "国际化+高DPI(语言解析/.qm装载/上下文存在/切换翻译底座/缺翻译回落中文/卸载回落源语言/DPI换算一致/QLocale口径)");
+    CHECK(t_i18nEnglishCoverage(), "英文界面零中文残留(全量词典/中文恒等/动态拼接/模板占位符/反馈出口/命令目录/工具注册表/语言来回切换)");
     CHECK(t_interaction(), "AutoCAD 交互对齐(空格/回车重复命令/↑↓历史/Tab补齐/坐标注入/未知命令3候选/历史持久化/右键行为配置)");
     CHECK(t_recent(),      "最近文件 MRU(增删/去重/上限裁剪/pin保护/缺失文件/持久化重载/旧键迁移/损坏容错)");
     CHECK(t_cmdParity(),   "命令补齐 CommandParity(三态/别名/typo建议/单步撤销)");

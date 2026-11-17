@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "PropertyPanel.h"
 #include "core/SketchModel.h"
 #include "core/Element.h"
@@ -58,14 +59,14 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     sTolUp->setPrefix(QStringLiteral("+"));
     sTolLo->setPrefix(QStringLiteral("-"));
     eFit = new QLineEdit();
-    eFit->setPlaceholderText(QStringLiteral("如 H7 / g6"));
+    eFit->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("如 H7 / g6")));
     cDimStd = new QComboBox();
-    cDimStd->addItem(QStringLiteral("GB/T 4458（国标）"), (int)DimensionStandard::GBT);
-    cDimStd->addItem(QStringLiteral("ISO 129（国际）"),  (int)DimensionStandard::ISO);
+    cDimStd->addItem(SketchCAD::I18n::t(QString::fromUtf8("GB/T 4458（国标）")), (int)DimensionStandard::GBT);
+    cDimStd->addItem(SketchCAD::I18n::t(QString::fromUtf8("ISO 129（国际）")),  (int)DimensionStandard::ISO);
 
     // ---- 文字样式（字体）：取自模型 STYLE 表，运行时随表刷新 ----
     cTextStyle = new QComboBox();
-    cTextStyle->setToolTip(QStringLiteral("文字样式（字体）：引用 STYLE 表；修改样式将同步更新所有引用它的文字"));
+    cTextStyle->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("文字样式（字体）：引用 STYLE 表；修改样式将同步更新所有引用它的文字")));
     // ---- 字号（字高 mm）----
     sTextHeight = new QDoubleSpinBox();
     sTextHeight->setRange(0.0, 1000.0);
@@ -78,15 +79,15 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     sWidthFactor->setSingleStep(0.05);
     // ---- 9 点对齐（仅 Text/MText）----
     cTextAlign = new QComboBox();
-    cTextAlign->addItem(QStringLiteral("左上"), 0);
-    cTextAlign->addItem(QStringLiteral("中上"), 1);
-    cTextAlign->addItem(QStringLiteral("右上"), 2);
-    cTextAlign->addItem(QStringLiteral("左中"), 3);
-    cTextAlign->addItem(QStringLiteral("中心"), 4);
-    cTextAlign->addItem(QStringLiteral("右中"), 5);
-    cTextAlign->addItem(QStringLiteral("左下"), 6);
-    cTextAlign->addItem(QStringLiteral("中下"), 7);
-    cTextAlign->addItem(QStringLiteral("右下"), 8);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("左上")), 0);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("中上")), 1);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("右上")), 2);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("左中")), 3);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("中心")), 4);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("右中")), 5);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("左下")), 6);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("中下")), 7);
+    cTextAlign->addItem(SketchCAD::I18n::t(QString::fromUtf8("右下")), 8);
 
     sX = new QDoubleSpinBox(); sY  = new QDoubleSpinBox();
     sX2 = new QDoubleSpinBox(); sY2 = new QDoubleSpinBox();
@@ -118,10 +119,10 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     cWidth = new QComboBox();
     cWidth->setIconSize(QSize(24, 16));
     for (double px : {1.0, 2.0, 3.0, 5.0})
-        cWidth->addItem(icons::widthBar(px), QString::fromUtf8(lineWidthName(px)), px);
+        cWidth->addItem(icons::widthBar(px), SketchCAD::I18n::t(QString::fromUtf8(lineWidthName(px))), px);
     // 恢复默认线宽：清除手动覆盖，线宽改由线型派生（见 LineStyleConfig）
-    bWidthAuto = new QPushButton(QStringLiteral("恢复默认"));
-    bWidthAuto->setToolTip(QStringLiteral("清除手动线宽，恢复为当前线型对应的默认档位"));
+    bWidthAuto = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("恢复默认")));
+    bWidthAuto->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("清除手动线宽，恢复为当前线型对应的默认档位")));
 
     // ---- 线型 ----
     cLineStyle = new QComboBox();
@@ -129,17 +130,17 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     for (int i = 0; i < kLineStyleCount; ++i) {
         LineStyle ls = (LineStyle)i;
         cLineStyle->addItem(icons::lineStyleIcon(ls),
-                           QString::fromUtf8(lineStyleName(ls)), i);
+                           SketchCAD::I18n::t(QString::fromUtf8(lineStyleName(ls))), i);
     }
 
     // ---- ByLayer 动态解析开关 ----
     // 勾选：渲染/打印时实时取所属图层属性（改图层色全层联动）；
     // 取消：本图元以自身快照为覆盖值（override）。
-    cByLayer = new QCheckBox(QStringLiteral("随图层(ByLayer)"));
-    cByLayer->setToolTip(QStringLiteral("勾选后颜色/线型/线宽随所属图层变化；取消则冻结为当前显示值"));
+    cByLayer = new QCheckBox(SketchCAD::I18n::t(QString::fromUtf8("随图层(ByLayer)")));
+    cByLayer->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("勾选后颜色/线型/线宽随所属图层变化；取消则冻结为当前显示值")));
 
     // ---- 颜色：一行预设色块 + 自定义按钮 ----
-    bColor = new QPushButton(QStringLiteral("自定义..."));
+    bColor = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("自定义...")));
     bColor->setAutoFillBackground(true);
 
     presetRow = new QWidget();
@@ -157,45 +158,45 @@ PropertyPanel::PropertyPanel(SketchModel* m, QWidget* p)
     }
     prl->addStretch();
 
-    labX = new QLabel(QStringLiteral("起点 X"));
-    labY = new QLabel(QStringLiteral("起点 Y"));
+    labX = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("起点 X")));
+    labY = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("起点 Y")));
 
-    form_->addRow(QStringLiteral("编号"), lId);
-    form_->addRow(QStringLiteral("类型"), lType);
-    form_->addRow(QStringLiteral("名称"), eName);
-    form_->addRow(QStringLiteral("图层"), eLayer);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("编号")), lId);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("类型")), lType);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("名称")), eName);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("图层")), eLayer);
     form_->addRow(labX, sX);
     form_->addRow(labY, sY);
-    form_->addRow(QStringLiteral("终点 X"), sX2);
-    form_->addRow(QStringLiteral("终点 Y"), sY2);
-    form_->addRow(QStringLiteral("长度"), sLen);
-    form_->addRow(QStringLiteral("与X轴夹角"), sAng);
-    form_->addRow(QStringLiteral("半径"), sR);
-    form_->addRow(QStringLiteral("边数"), sPolySides);
-    form_->addRow(QStringLiteral("边长"), sPolySideLen);
-    form_->addRow(QStringLiteral("内接圆半径"), sPolyInRadius);
-    form_->addRow(QStringLiteral("外接圆半径"), sPolyCircRadius);
-    form_->addRow(QStringLiteral("标注文本"), eText);
-    form_->addRow(QStringLiteral("文字样式"), cTextStyle);
-    form_->addRow(QStringLiteral("字号"), sTextHeight);
-    form_->addRow(QStringLiteral("宽度因子"), sWidthFactor);
-    form_->addRow(QStringLiteral("对齐方式"), cTextAlign);
-    form_->addRow(QStringLiteral("尺寸值"), sDimValue);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("终点 X")), sX2);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("终点 Y")), sY2);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("长度")), sLen);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("与X轴夹角")), sAng);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("半径")), sR);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("边数")), sPolySides);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("边长")), sPolySideLen);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("内接圆半径")), sPolyInRadius);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("外接圆半径")), sPolyCircRadius);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("标注文本")), eText);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("文字样式")), cTextStyle);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("字号")), sTextHeight);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("宽度因子")), sWidthFactor);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("对齐方式")), cTextAlign);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("尺寸值")), sDimValue);
     // 公差表达规则（需用户手动填值；具体注写形式随"单标注标准"切换：GB/T 默认无、ISO 默认极限偏差）
-    form_->addRow(QStringLiteral("上偏差 +"), sTolUp);
-    form_->addRow(QStringLiteral("下偏差 -"), sTolLo);
-    form_->addRow(QStringLiteral("配合代号"), eFit);
-    form_->addRow(QStringLiteral("标注标准"), cDimStd);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("上偏差 +")), sTolUp);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("下偏差 -")), sTolLo);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("配合代号")), eFit);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("标注标准")), cDimStd);
     // 线宽：下拉框 + “恢复默认”按钮（清除手动覆盖，回到线型派生档位）
     auto* wRow = new QWidget();
     auto* wLay = new QHBoxLayout(wRow);
     wLay->setContentsMargins(0, 0, 0, 0); wLay->setSpacing(6);
     wLay->addWidget(cWidth); wLay->addWidget(bWidthAuto);
-    form_->addRow(QStringLiteral("线宽"), wRow);
-    form_->addRow(QStringLiteral("线型"), cLineStyle);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("线宽")), wRow);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("线型")), cLineStyle);
     form_->addRow(QStringLiteral("ByLayer"), cByLayer);
-    form_->addRow(QStringLiteral("常用色"), presetRow);
-    form_->addRow(QStringLiteral("颜色"), bColor);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("常用色")), presetRow);
+    form_->addRow(SketchCAD::I18n::t(QString::fromUtf8("颜色")), bColor);
 
     connect(eName, &QLineEdit::editingFinished, this, &PropertyPanel::apply);
     connect(eLayer, &QLineEdit::editingFinished, this, &PropertyPanel::apply);
@@ -255,6 +256,48 @@ void PropertyPanel::showRow(QWidget* field, bool on) {
     if (QWidget* lb = form_->labelForField(field)) lb->setVisible(on);
 }
 
+// 语言切换：重译表单静态行标签。用 labelForField 反查构造时 addRow 生成的标签并重设文本；
+// 动态字段值（坐标/名称/文本/公差）由 load()/onSelectionChanged 下次刷新时重算，此处不动。
+void PropertyPanel::retranslate() {
+    auto relabel = [this](QWidget* field, const char* zh) {
+        if (QLabel* lb = qobject_cast<QLabel*>(form_->labelForField(field)))
+            lb->setText(SketchCAD::I18n::t(QString::fromUtf8(zh)));
+    };
+    relabel(lId,         "编号");
+    relabel(lType,       "类型");
+    relabel(eName,       "名称");
+    relabel(eLayer,      "图层");
+    relabel(sX,          "起点 X");
+    relabel(sY,          "起点 Y");
+    relabel(sX2,         "终点 X");
+    relabel(sY2,         "终点 Y");
+    relabel(sLen,        "长度");
+    relabel(sAng,        "与X轴夹角");
+    relabel(sR,          "半径");
+    relabel(sPolySides,  "边数");
+    relabel(sPolySideLen,"边长");
+    relabel(sPolyInRadius,   "内接圆半径");
+    relabel(sPolyCircRadius, "外接圆半径");
+    relabel(eText,       "标注文本");
+    relabel(cTextStyle,  "文字样式");
+    relabel(sTextHeight, "字号");
+    relabel(sWidthFactor,"宽度因子");
+    relabel(cTextAlign,  "对齐方式");
+    relabel(sDimValue,   "尺寸值");
+    relabel(sTolUp,      "上偏差 +");
+    relabel(sTolLo,      "下偏差 -");
+    relabel(eFit,        "配合代号");
+    relabel(cDimStd,     "标注标准");
+    relabel(cWidth,      "线宽");
+    relabel(cLineStyle,  "线型");
+    relabel(cByLayer,    "ByLayer");
+    relabel(bColor,      "颜色");
+    // 「起点/基点 X/Y」随图元类型切换，交给当前刷新逻辑重算
+    labX->setText(SketchCAD::I18n::t(QString::fromUtf8("起点 X")));
+    labY->setText(SketchCAD::I18n::t(QString::fromUtf8("起点 Y")));
+    // 预设色板/线型下拉里的条目（含线型名）由 load() 重建，无需在此处理
+}
+
 void PropertyPanel::clearFields() {
     updating_ = true;
     lId->setText("-"); lType->setText("-");
@@ -265,8 +308,8 @@ void PropertyPanel::clearFields() {
     for (auto* s : {sX, sY, sX2, sY2, sLen, sAng, sR}) s->setValue(0);
     sPolySides->setValue(3);
     for (auto* s : {sPolySideLen, sPolyInRadius, sPolyCircRadius}) s->setValue(0);
-    labX->setText(QStringLiteral("起点 X"));
-    labY->setText(QStringLiteral("起点 Y"));
+    labX->setText(SketchCAD::I18n::t(QString::fromUtf8("起点 X")));
+    labY->setText(SketchCAD::I18n::t(QString::fromUtf8("起点 Y")));
     for (QWidget* w : {(QWidget*)sX2, (QWidget*)sY2, (QWidget*)sLen,
                        (QWidget*)sAng, (QWidget*)sR, (QWidget*)eText, (QWidget*)sDimValue,
                        (QWidget*)sTolUp, (QWidget*)sTolLo, (QWidget*)eFit, (QWidget*)cDimStd,
@@ -307,7 +350,7 @@ void PropertyPanel::load(int id) {
     curId_ = id;
     setColor(e->color);
     lId->setText("#" + QString::number(e->id));
-    lType->setText(e->typeName());
+    lType->setText(SketchCAD::I18n::t(e->typeName()));
     eName->setText(e->name);
     eLayer->setText(e->layer);
 
@@ -323,8 +366,8 @@ void PropertyPanel::load(int id) {
     const bool isTextLike = isText || isMText || isDim || isFcf || isMLeader || isTable;
 
     if (!e->pts.empty()) { sX->setValue(e->pts[0].x); sY->setValue(e->pts[0].y); }
-    labX->setText(isLine ? QStringLiteral("起点 X") : QStringLiteral("基点 X"));
-    labY->setText(isLine ? QStringLiteral("起点 Y") : QStringLiteral("基点 Y"));
+    labX->setText(isLine ? SketchCAD::I18n::t(QString::fromUtf8("起点 X")) : SketchCAD::I18n::t(QString::fromUtf8("基点 X")));
+    labY->setText(isLine ? SketchCAD::I18n::t(QString::fromUtf8("起点 Y")) : SketchCAD::I18n::t(QString::fromUtf8("基点 Y")));
 
     // 直线：终点 + 长度 + 夹角。长度与夹角是「派生属性」，
     // 既能被读出来，也能被改回去（改完反算终点），这才叫真正的可编辑。
@@ -372,7 +415,7 @@ void PropertyPanel::load(int id) {
         if (isDim) sTextHeight->setValue(e->dimTextHeight);
         else       sTextHeight->setValue(e->radius > 0.1 ? e->radius : 3.5);
         if (QLabel* lb = qobject_cast<QLabel*>(form_->labelForField(sTextHeight)))
-            lb->setText(isDim ? QStringLiteral("字号(0=派生)") : QStringLiteral("字号"));
+            lb->setText(isDim ? SketchCAD::I18n::t(QString::fromUtf8("字号(0=派生)")) : SketchCAD::I18n::t(QString::fromUtf8("字号")));
     }
     if (isText || isMText) {
         QSignalBlocker bw(sWidthFactor), ba(cTextAlign);
@@ -622,10 +665,10 @@ void PropertyPanel::applyDimValue() {
     const double v = sDimValue->value();
     if (model_->dimensionDriven()) {
         if (!model_->driveDimension(curId_, v))
-            model_->log(QStringLiteral("该标注类型暂不支持驱动几何"), "warn");
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("该标注类型暂不支持驱动几何")), "warn");
     } else {
         model_->updateElementLinked(curId_, [this](Element& el) { el.text = sDimValue->text(); });
-        model_->log(QStringLiteral("尺寸驱动已关闭：仅更新标注显示文本 #%1").arg(curId_));
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("尺寸驱动已关闭：仅更新标注显示文本 #%1")).arg(curId_));
     }
 }
 

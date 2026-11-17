@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "DiagBundle.h"
 
 #include "Diagnostics.h"
@@ -257,17 +258,17 @@ QString exportBundle(const QVariantMap& drawingMeta,
 
     QDir dir(outputDir.isEmpty() ? QDir::homePath() : outputDir);
     if (!dir.exists() && !dir.mkpath(QStringLiteral(".")))
-        return fail(QStringLiteral("无法创建输出目录：%1").arg(dir.absolutePath()));
+        return fail(SketchCAD::I18n::t(QString::fromUtf8("无法创建输出目录：%1")).arg(dir.absolutePath()));
 
     const QString zipPath = dir.filePath(QStringLiteral("SketchCAD-Diag-%1.zip")
                                              .arg(QDateTime::currentDateTime()
                                                       .toString(QStringLiteral("yyyyMMdd-HHmmss"))));
     QFile out(zipPath);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        return fail(QStringLiteral("无法写入 %1").arg(zipPath));
+        return fail(SketchCAD::I18n::t(QString::fromUtf8("无法写入 %1")).arg(zipPath));
     const QByteArray bytes = zip.finish();
     if (out.write(bytes) != bytes.size())
-        return fail(QStringLiteral("写入不完整：%1").arg(zipPath));
+        return fail(SketchCAD::I18n::t(QString::fromUtf8("写入不完整：%1")).arg(zipPath));
     out.close();
 
     Diagnostics::writeLog(QStringLiteral("已导出诊断包：%1（包含 %2 个文件）")

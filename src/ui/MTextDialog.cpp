@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "MTextDialog.h"
 #include "core/Element.h"
 #include "core/SketchModel.h"
@@ -16,7 +17,7 @@ namespace SketchCAD {
 
 MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* initial)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("多行文字 (MTEXT)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("多行文字 (MTEXT)")));
     resize(460, 420);
 
     edText_ = new QPlainTextEdit(this);
@@ -43,7 +44,7 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
     cbAlign_->setCurrentIndex(1);
 
     // 样式下拉：首项「默认（不关联）」→ 空 styleName
-    cbStyle_->addItem(QStringLiteral("默认（不关联样式）"), QString());
+    cbStyle_->addItem(SketchCAD::I18n::t(QString::fromUtf8("默认（不关联样式）")), QString());
     if (model_) {
         for (int i = 0; i < model_->textStyleCount(); ++i) {
             const TextStyle& s = model_->textStyleAt(i);
@@ -52,12 +53,12 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
     }
 
     // 字段占位插入
-    cbField_->addItem(QStringLiteral("插入字段…"), QString());
-    cbField_->addItem(QStringLiteral("日期 %<DATE>%"), QStringLiteral("%<DATE>%"));
-    cbField_->addItem(QStringLiteral("时间 %<TIME>%"), QStringLiteral("%<TIME>%"));
-    cbField_->addItem(QStringLiteral("文件名 %<FILENAME>%"), QStringLiteral("%<FILENAME>%"));
-    cbField_->addItem(QStringLiteral("文件路径 %<FILEPATH>%"), QStringLiteral("%<FILEPATH>%"));
-    cbField_->addItem(QStringLiteral("图元总数 %<COUNT>%"), QStringLiteral("%<COUNT>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("插入字段…")), QString());
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("日期 %<DATE>%")), QStringLiteral("%<DATE>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("时间 %<TIME>%")), QStringLiteral("%<TIME>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("文件名 %<FILENAME>%")), QStringLiteral("%<FILENAME>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("文件路径 %<FILEPATH>%")), QStringLiteral("%<FILEPATH>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("图元总数 %<COUNT>%")), QStringLiteral("%<COUNT>%"));
     // 引用型域：面积/周长优先预填当前选中的封闭图元 id（未选中时给 id 模板，用户替换）
     {
         QString areaCode = QStringLiteral("%<AREA:id>%");     // 占位模板（id 待用户替换）
@@ -79,10 +80,10 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
                 if (areaCode != QStringLiteral("%<AREA:id>%")) break;
             }
         }
-        cbField_->addItem(QStringLiteral("面积 %1").arg(areaCode), areaCode);
-        cbField_->addItem(QStringLiteral("周长 %1").arg(perimCode), perimCode);
+        cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("面积 %1")).arg(areaCode), areaCode);
+        cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("周长 %1")).arg(perimCode), perimCode);
     }
-    cbField_->addItem(QStringLiteral("图纸特性 %<PROP:名称>%"), QStringLiteral("%<PROP:名称>%"));
+    cbField_->addItem(SketchCAD::I18n::t(QString::fromUtf8("图纸特性 %<PROP:名称>%")), SketchCAD::I18n::t(QString::fromUtf8("%<PROP:名称>%")));
 
     // 预填已有图元
     if (initial) {
@@ -98,19 +99,19 @@ MTextDialog::MTextDialog(SketchModel* model, QWidget* parent, const Element* ini
 
     // ---- 布局 ----
     auto* form = new QFormLayout;
-    form->addRow(QStringLiteral("内容（支持 \\n 换行、%<字段>%）："), (QWidget*)nullptr);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("内容（支持 \\n 换行、%<字段>%）：")), (QWidget*)nullptr);
     form->addRow(edText_);
-    form->addRow(QStringLiteral("文字样式："), cbStyle_);
-    form->addRow(QStringLiteral("字高："), sbHeight_);
-    form->addRow(QStringLiteral("宽度因子："), sbWidthFactor_);
-    form->addRow(QStringLiteral("对齐方式："), cbAlign_);
-    form->addRow(QStringLiteral("行距因子："), sbLineSpacing_);
-    form->addRow(QStringLiteral("自动换行宽度："), sbWrap_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("文字样式：")), cbStyle_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("字高：")), sbHeight_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("宽度因子：")), sbWidthFactor_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("对齐方式：")), cbAlign_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("行距因子：")), sbLineSpacing_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("自动换行宽度：")), sbWrap_);
 
     auto* fieldRow = new QHBoxLayout;
-    fieldRow->addWidget(new QLabel(QStringLiteral("字段：")));
+    fieldRow->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("字段："))));
     fieldRow->addWidget(cbField_);
-    QPushButton* bIns = new QPushButton(QStringLiteral("插入到光标处"));
+    QPushButton* bIns = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("插入到光标处")));
     fieldRow->addWidget(bIns);
     connect(bIns, &QPushButton::clicked, this, &MTextDialog::insertField);
     connect(cbField_, QOverload<int>::of(&QComboBox::currentIndexChanged),

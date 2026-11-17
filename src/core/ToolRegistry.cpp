@@ -1,4 +1,5 @@
 #include "core/ToolRegistry.h"
+#include "core/I18n.h"
 
 namespace SketchCAD {
 
@@ -414,8 +415,23 @@ void ToolRegistry::registerTool(const ToolSpec& spec) {
 }
 
 const ToolSpec* ToolRegistry::find(const QString& id) const {
-    auto it = tools_.constFind(id);
-    return it != tools_.constEnd() ? &it.value() : nullptr;
+    // 显示字段按当前界面语言惰性翻译；中文模式原样返回，英文模式查运行时词典。
+    // 分类/参数模式等枚举字段随拷贝保留，所有分类查询继续走这里零行为变化。
+    const QString lang = SketchCAD::I18n::activeLanguage();
+    if (localizedLang_ != lang || localizedCount_ != tools_.size()) {
+        localized_.clear();
+        localized_.reserve(tools_.size());
+        for (auto i = tools_.constBegin(); i != tools_.constEnd(); ++i) {
+            ToolSpec s = i.value();
+            s.displayName = SketchCAD::I18n::t(s.displayName);
+            s.paramHint   = SketchCAD::I18n::t(s.paramHint);
+            localized_.insert(i.key(), std::move(s));
+        }
+        localizedLang_  = lang;
+        localizedCount_ = tools_.size();
+    }
+    auto it = localized_.constFind(id);
+    return it != localized_.constEnd() ? &it.value() : nullptr;
 }
 
 // ---- 分类查询 ----

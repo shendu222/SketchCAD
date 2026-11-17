@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/PolylineEditTool.h"
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
@@ -68,7 +69,7 @@ bool PolylineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
     // from_segments：选 line/arc/polyline 段
     if (id_ == "polyline_from_segments") {
         const Element* seg = pickSegmentLike(ctx, vp);
-        if (!seg) { ctx.model->log(QStringLiteral("请选择线段、圆弧或折线"), "warn"); return true; }
+        if (!seg) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择线段、圆弧或折线")), "warn"); return true; }
         fromSegments(ctx, seg->id);
         return true;
     }
@@ -77,13 +78,13 @@ bool PolylineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
     if (id_ == "polyline_join") {
         if (firstId_ < 0) {
             const Element* t = pickPolyline(ctx, vp);
-            if (!t) { ctx.model->log(QStringLiteral("请选择目标折线"), "warn"); return true; }
+            if (!t) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择目标折线")), "warn"); return true; }
             firstId_ = t->id;
-            ctx.model->log(QString("已选目标折线 #%1，点击相邻直线/圆弧/折线（右键结束）").arg(firstId_));
+            ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选目标折线 #%1，点击相邻直线/圆弧/折线（右键结束）"))).arg(firstId_));
             return true;
         }
         const Element* seg = pickSegmentLike(ctx, vp);
-        if (!seg) { ctx.model->log(QStringLiteral("请选择直线/圆弧/折线"), "warn"); return true; }
+        if (!seg) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择直线/圆弧/折线")), "warn"); return true; }
         join(ctx, *seg, w);
         return true;
     }
@@ -91,7 +92,7 @@ bool PolylineEditTool::onPress(ToolContext& ctx, const Vec3& w, QMouseEvent* e) 
     // 其它模式：必须先选 polyline
     const Element* eptr = pickPolyline(ctx, vp);
     if (!eptr) {
-        ctx.model->log(QStringLiteral("请选择折线"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择折线")), "warn");
         return true;
     }
     const Vec3 p = ctx.snapWorld(w);
@@ -117,13 +118,13 @@ bool PolylineEditTool::onRightButton(ToolContext& ctx) {
         // 用已累积的 ids 立刻成图并清空缓冲
         fromIds_.clear();
         firstId_ = -1; firstIdx_ = -1; firstSeg_ = -1;
-        ctx.model->log(QStringLiteral("已完成「从段生成折线」"));
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已完成「从段生成折线」")));
         return true;
     }
     if (id_ == "polyline_join" && firstId_ >= 0) {
         // 结束合并，清空目标缓冲
         firstId_ = -1; firstIdx_ = -1; firstSeg_ = -1;
-        ctx.model->log(QStringLiteral("已完成「合并」"));
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已完成「合并」")));
         return true;
     }
     return false;
@@ -241,7 +242,7 @@ void PolylineEditTool::addNode(ToolContext& ctx, const Element& e, const Vec3& p
         for (int i = bestSeg + 1; i < (int)out.arcFlags.size(); ++i) nf.push_back(out.arcFlags[i]);
         out.arcFlags = std::move(nf);
     });
-    ctx.model->log(QString("已在折线 #%1 第 %2 段插入节点").arg(e.id).arg(bestSeg + 1));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在折线 #%1 第 %2 段插入节点"))).arg(e.id).arg(bestSeg + 1));
 }
 
 void PolylineEditTool::appendNode(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -254,14 +255,14 @@ void PolylineEditTool::appendNode(ToolContext& ctx, const Element& e, const Vec3
         else         out.pts.push_back(p);
         // 在最外端插入节点时，原有 flags 不动（首/末不新增段）
     });
-    ctx.model->log(QString("已在折线 #%1 的%2端追加节点")
-                       .arg(e.id).arg(atFront ? QStringLiteral("首") : QStringLiteral("末")));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已在折线 #%1 的%2端追加节点")))
+                       .arg(e.id).arg(atFront ? SketchCAD::I18n::t(QString::fromUtf8("首")) : SketchCAD::I18n::t(QString::fromUtf8("末"))));
 }
 
 void PolylineEditTool::deleteNode(ToolContext& ctx, const Element& e, const Vec3& p) {
     if (e.pts.size() <= 2) {
         ctx.model->removeElement(e.id);
-        ctx.model->log(QString("折线 #%1 节点过少，已删除").arg(e.id));
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("折线 #%1 节点过少，已删除"))).arg(e.id));
         return;
     }
     const int idx = nearestNode(e, p);
@@ -285,7 +286,7 @@ void PolylineEditTool::deleteNode(ToolContext& ctx, const Element& e, const Vec3
         // 调整 closed 标记：若原 closed=true 且节点数 2/3 不应自动断开
         (void)n;
     });
-    ctx.model->log(QString("已删除折线 #%1 的节点 %2").arg(e.id).arg(idx));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除折线 #%1 的节点 %2"))).arg(e.id).arg(idx));
 }
 
 void PolylineEditTool::deleteBetween(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -295,18 +296,18 @@ void PolylineEditTool::deleteBetween(ToolContext& ctx, const Element& e, const V
     if (firstId_ < 0) {
         firstId_  = e.id;
         firstIdx_ = idx;
-        ctx.model->log(QString("已选择折线 #%1 节点 %2").arg(e.id).arg(idx));
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选择折线 #%1 节点 %2"))).arg(e.id).arg(idx));
         return;
     }
     if (firstId_ != e.id) {
-        ctx.model->log(QStringLiteral("请选择同一折线上的两个节点"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择同一折线上的两个节点")), "warn");
         firstId_ = -1; firstIdx_ = -1;
         return;
     }
     int a = firstIdx_, b = idx;
     if (a > b) std::swap(a, b);
     if (b - a <= 1) {
-        ctx.model->log(QStringLiteral("两个节点相邻，无需删除"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("两个节点相邻，无需删除")), "warn");
         firstId_ = -1; firstIdx_ = -1;
         return;
     }
@@ -323,18 +324,18 @@ void PolylineEditTool::deleteBetween(ToolContext& ctx, const Element& e, const V
         for (int k = b; k < (int)out.arcFlags.size(); ++k) nf.push_back(out.arcFlags[k]);
         out.arcFlags = std::move(nf);
     });
-    ctx.model->log(QString("已删除折线 #%1 节点 %2 到 %3 之间的部分").arg(e.id).arg(a).arg(b));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已删除折线 #%1 节点 %2 到 %3 之间的部分"))).arg(e.id).arg(a).arg(b));
     firstId_ = -1; firstIdx_ = -1;
 }
 
 void PolylineEditTool::trimSegments(ToolContext& ctx, const Element& e, const Vec3& p) {
     const int n = (int)e.pts.size();
-    if (n < 3) { ctx.model->log(QStringLiteral("节点不足，无法修剪"), "warn"); return; }
+    if (n < 3) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("节点不足，无法修剪")), "warn"); return; }
     int seg = nearestSeg(e, p);
     if (seg < 0) return;
     // 删除该段的"终点"节点（=pts[(seg+1)%n]），使段数 -1
     const int delNode = (seg + 1) % n;
-    if (n - 1 < 2) { ctx.model->log(QStringLiteral("修剪后节点不足"), "warn"); return; }
+    if (n - 1 < 2) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("修剪后节点不足")), "warn"); return; }
     ctx.model->updateElement(e.id, [&](Element& out) {
         out.pts.erase(out.pts.begin() + delNode);
         std::vector<bool> nf;
@@ -343,7 +344,7 @@ void PolylineEditTool::trimSegments(ToolContext& ctx, const Element& e, const Ve
         for (int k = seg + 1; k < (int)out.arcFlags.size(); ++k) nf.push_back(out.arcFlags[k]);
         out.arcFlags = std::move(nf);
     });
-    ctx.model->log(QString("已修剪折线 #%1 的第 %2 段").arg(e.id).arg(seg + 1));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已修剪折线 #%1 的第 %2 段"))).arg(e.id).arg(seg + 1));
 }
 
 void PolylineEditTool::equidistant(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -384,13 +385,13 @@ void PolylineEditTool::equidistant(ToolContext& ctx, const Element& e, const Vec
     out.name = e.name + QStringLiteral("(等距)");
     const int newId = ctx.model->addElement(out);
     ctx.model->setSelected(newId);
-    ctx.model->log(QString("已创建等距折线 #%1（d=%2 mm）").arg(newId).arg(d, 0, 'f', 2));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建等距折线 #%1（d=%2 mm）"))).arg(newId).arg(d, 0, 'f', 2));
 }
 
 void PolylineEditTool::fromSegments(ToolContext& ctx, int pickedId) {
     fromIds_.push_back(pickedId);
     if (fromIds_.size() == 1) {
-        ctx.model->log(QString("已选第 1 段（#%1），点击下一段或右键结束").arg(pickedId));
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已选第 1 段（#%1），点击下一段或右键结束"))).arg(pickedId));
         return;
     }
     // 检查端点是否接近上一段末端 → 决定是否真合并（v1 不强制，仅拼接节点）
@@ -420,7 +421,7 @@ void PolylineEditTool::fromSegments(ToolContext& ctx, int pickedId) {
         }
     }
     if (pts.size() < 2) {
-        ctx.model->log(QStringLiteral("所选段节点不足"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("所选段节点不足")), "warn");
         fromIds_.clear();
         return;
     }
@@ -430,7 +431,7 @@ void PolylineEditTool::fromSegments(ToolContext& ctx, int pickedId) {
     ctx.model->setSelected(newId);
     // 清空缓冲，开始新一轮
     fromIds_.clear();
-    ctx.model->log(QString("已合并 %1 段为折线 #%2（节点 %3）")
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已合并 %1 段为折线 #%2（节点 %3）")))
                        .arg((int)fromIds_.size() + 1).arg(newId).arg((int)pts.size()));
 }
 
@@ -440,7 +441,7 @@ void PolylineEditTool::arcsToChords(ToolContext& ctx, const Element& e) {
     ctx.model->updateElement(e.id, [&](Element& out) {
         std::fill(out.arcFlags.begin(), out.arcFlags.end(), false);
     });
-    ctx.model->log(QString("已将折线 #%1 的 %2 段弧转为直线").arg(e.id).arg(nArc));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已将折线 #%1 的 %2 段弧转为直线"))).arg(e.id).arg(nArc));
 }
 
 void PolylineEditTool::changeSegmentType(ToolContext& ctx, const Element& e, const Vec3& p) {
@@ -451,13 +452,13 @@ void PolylineEditTool::changeSegmentType(ToolContext& ctx, const Element& e, con
         firstId_ = e.id;
         firstSeg_ = seg;
         const bool cur = (seg < (int)e.arcFlags.size()) && e.arcFlags[seg];
-        ctx.model->log(QString("折线 #%1 第 %2 段：当前 %3，单击第二段切换两段（右键取消）")
+        ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("折线 #%1 第 %2 段：当前 %3，单击第二段切换两段（右键取消）")))
                            .arg(e.id).arg(seg + 1)
-                           .arg(cur ? QStringLiteral("弧") : QStringLiteral("直线")));
+                           .arg(cur ? SketchCAD::I18n::t(QString::fromUtf8("弧")) : SketchCAD::I18n::t(QString::fromUtf8("直线"))));
         return;
     }
     if (firstId_ != e.id) {
-        ctx.model->log(QStringLiteral("请选择同一折线上的两段"), "warn");
+        ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("请选择同一折线上的两段")), "warn");
         firstId_ = -1; firstSeg_ = -1;
         return;
     }
@@ -469,7 +470,7 @@ void PolylineEditTool::changeSegmentType(ToolContext& ctx, const Element& e, con
             if (k < nSegs) out.arcFlags[k] = !out.arcFlags[k];
         }
     });
-    ctx.model->log(QString("已切换折线 #%1 第 %2 到 %3 段的类型").arg(e.id).arg(a + 1).arg(b + 1));
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已切换折线 #%1 第 %2 到 %3 段的类型"))).arg(e.id).arg(a + 1).arg(b + 1));
     firstId_ = -1; firstSeg_ = -1;
 }
 
@@ -487,10 +488,10 @@ void PolylineEditTool::setWidth(ToolContext& ctx, const Element& e) {
     bool ok = false;
     const double cur = e.lineWidth;
     const double w = QInputDialog::getDouble(nullptr,
-                                            QStringLiteral("设置线宽"),
-                                            QStringLiteral("线宽 (mm/px):"),
+                                            SketchCAD::I18n::t(QString::fromUtf8("设置线宽")),
+                                            SketchCAD::I18n::t(QString::fromUtf8("线宽 (mm/px):")),
                                             cur, 0.0, 1000.0, 2, &ok);
-    if (!ok) { ctx.model->log(QStringLiteral("已取消设置线宽")); return; }
+    if (!ok) { ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("已取消设置线宽"))); return; }
     polyops::setWidth(*ctx.model, e.id, w);
 }
 

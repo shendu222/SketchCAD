@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "TableDialog.h"
 #include "core/Element.h"
 #include "core/ElementFactory.h"
@@ -18,7 +19,7 @@ namespace SketchCAD {
 
 TableDialog::TableDialog(SketchModel* model, QWidget* parent, const Element* initial)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("表格编辑器 (TABLE)"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("表格编辑器 (TABLE)")));
     resize(560, 480);
 
     grid_ = new QTableWidget(this);
@@ -39,13 +40,13 @@ TableDialog::TableDialog(SketchModel* model, QWidget* parent, const Element* ini
     sbTextHeight_->setSuffix(QStringLiteral(" mm")); sbTextHeight_->setDecimals(2);
 
     cbAlign_ = new QComboBox(this);
-    cbAlign_->addItem(QStringLiteral("左对齐"), 0);
-    cbAlign_->addItem(QStringLiteral("居中"),   1);
-    cbAlign_->addItem(QStringLiteral("右对齐"), 2);
+    cbAlign_->addItem(SketchCAD::I18n::t(QString::fromUtf8("左对齐")), 0);
+    cbAlign_->addItem(SketchCAD::I18n::t(QString::fromUtf8("居中")),   1);
+    cbAlign_->addItem(SketchCAD::I18n::t(QString::fromUtf8("右对齐")), 2);
     cbAlign_->setCurrentIndex(1);
 
     edColWidths_ = new QLineEdit(this);
-    edColWidths_->setToolTip(QStringLiteral("各列宽度(mm)，逗号分隔；数量少于列数时余下列用 30mm"));
+    edColWidths_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("各列宽度(mm)，逗号分隔；数量少于列数时余下列用 30mm")));
     edColWidths_->setText(QStringLiteral("30, 30, 30, 30"));
 
     connect(sbRows_, QOverload<int>::of(&QSpinBox::valueChanged), this, &TableDialog::rebuildGrid);
@@ -53,23 +54,17 @@ TableDialog::TableDialog(SketchModel* model, QWidget* parent, const Element* ini
 
     // ---- 参数区（左）+ 网格（右/下）----
     auto* form = new QFormLayout;
-    form->addRow(QStringLiteral("行数："), sbRows_);
-    form->addRow(QStringLiteral("列数："), sbCols_);
-    form->addRow(QStringLiteral("行高："), sbRowHeight_);
-    form->addRow(QStringLiteral("字高："), sbTextHeight_);
-    form->addRow(QStringLiteral("对齐："), cbAlign_);
-    form->addRow(QStringLiteral("列宽："), edColWidths_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("行数：")), sbRows_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("列数：")), sbCols_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("行高：")), sbRowHeight_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("字高：")), sbTextHeight_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("对齐：")), cbAlign_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("列宽：")), edColWidths_);
 
     auto* top = new QHBoxLayout;
     top->addLayout(form, 1);
     auto* tip = new QLabel(
-        QStringLiteral("单元格支持 %<DATE>% / %<FILENAME>% 等字段占位，\n"
-                       "渲染与打印时自动求值。\n\n"
-                       "公式列：单元格以 = 开头即公式，\n"
-                       "=sum(2,9) 求第 2~9 行本列之和，\n"
-                       "=count(2,9) 统计非空单元格数（明细栏\n"
-                       "数量/重量列末行常用，上游改动自动重算）。\n\n"
-                       "表格可整体选中/移动，\n双击表格重新打开本编辑器。"), this);
+        SketchCAD::I18n::t(QString::fromUtf8("单元格支持 %<DATE>% / %<FILENAME>% 等字段占位，\n渲染与打印时自动求值。\n\n公式列：单元格以 = 开头即公式，\n=sum(2,9) 求第 2~9 行本列之和，\n=count(2,9) 统计非空单元格数（明细栏\n数量/重量列末行常用，上游改动自动重算）。\n\n表格可整体选中/移动，\n双击表格重新打开本编辑器。")), this);
     tip->setWordWrap(true);
     top->addWidget(tip, 1);
 

@@ -68,6 +68,14 @@ static bool polylineOf(const Element& e, std::vector<Vec3>& v, bool& closed) {
             v = geo::sampleSpline(e.pts, 24);
             closed = false;
             return true;
+        case ElementType::Ellipse:
+            if (e.pts.empty() || e.radius <= 1e-9 || e.radiusY <= 1e-9) return false;
+            // 椭圆按采样点参与剪切，与 Geometry::flatten / intersectElements 同源
+            // （都是 sampleEllipse 160 段），保证 gatherCuts 的交点严格落在采样折线上。
+            // 椭圆是闭合轮廓，需至少两个断点才能取出要剪掉的一段（同矩形）。
+            v = geo::sampleEllipse(e.pts[0], e.radius, e.radiusY, e.rotation, 160);
+            closed = true;
+            return true;
         default:
             return false;
     }
@@ -101,9 +109,12 @@ static bool trimPolyline(const Element& t, const std::vector<Vec3>& cuts,
             Element e = inherit(t, ElementType::Line);
             e.pts = pc;
             out.push_back(e);
-        } else if (t.type == ElementType::Spline) {
+        } else if (t.type == ElementType::Spline || t.type == ElementType::Ellipse) {
+            // 椭圆被剪后必然是开放弧段，降级为样条（采样点即新控制点，与原曲线重合），
+            // 与样条剪切同一出口；保留 style/图层由 inherit 完成。
             Element e = inherit(t, ElementType::Spline);
-            e.pts = pc;                       // 采样点即新控制点，视觉上与原曲线重合
+            if (t.type == ElementType::Ellipse) e.name = QStringLiteral("样条");
+            e.pts = pc;
             e.closed = false;
             out.push_back(e);
         } else {

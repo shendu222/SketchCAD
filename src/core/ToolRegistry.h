@@ -113,6 +113,10 @@ private:
     void registerTool(const ToolSpec& spec);
 
     QHash<QString, ToolSpec> tools_;
+    // 英文模式的显示名/提示惰性缓存：按 activeLanguage() 失效重建。
+    mutable QHash<QString, ToolSpec> localized_;
+    mutable QString localizedLang_;
+    mutable int localizedCount_ = 0;
     QStringList lineSubIds_;       // 直线子模式 ID 列表
     QStringList xlineSubIds_;      // 构造线子模式 ID 列表
     QStringList circleSubIds_;     // 圆形子模式 ID 列表

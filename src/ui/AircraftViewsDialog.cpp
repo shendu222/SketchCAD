@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "AircraftViewsDialog.h"
 #include "core/SketchModel.h"
 #include <QVBoxLayout>
@@ -11,7 +12,7 @@ namespace SketchCAD {
 
 AircraftViewsDialog::AircraftViewsDialog(SketchModel* model, QWidget* parent)
     : QDialog(parent), model_(model) {
-    setWindowTitle(QStringLiteral("绘制飞机三面图"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("绘制飞机三面图")));
     resize(360, 460);
     buildUi();
 }
@@ -20,7 +21,7 @@ void AircraftViewsDialog::buildUi() {
     auto* root = new QVBoxLayout(this);
 
     root->addWidget(new QLabel(
-        QStringLiteral("所有尺寸单位：米（m）。修改后点击“确定”即按新尺寸生成三面图。"), this));
+        SketchCAD::I18n::t(QString::fromUtf8("所有尺寸单位：米（m）。修改后点击“确定”即按新尺寸生成三面图。")), this));
 
     auto* form = new QFormLayout();
     form->setLabelAlignment(Qt::AlignRight);
@@ -47,23 +48,23 @@ void AircraftViewsDialog::buildUi() {
     auto* sbMainGearTrack  = makeSpin(p_.mainGearTrack,  0.0,  50.0, " m");
     auto* sbOuterWidth     = makeSpin(p_.outerWidth,     0.0,  50.0, " m");
 
-    form->addRow(QStringLiteral("机身总长"), sbLength);
-    form->addRow(QStringLiteral("翼展"),     sbWingspan);
-    form->addRow(QStringLiteral("机身高度"), sbFuselageHeight);
-    form->addRow(QStringLiteral("垂尾高度"), sbTailHeight);
-    form->addRow(QStringLiteral("发动机距机头"), sbEngineX);
-    form->addRow(QStringLiteral("发动机半翼展"), sbEngineY);
-    form->addRow(QStringLiteral("前起落架距机头"), sbNoseGearX);
-    form->addRow(QStringLiteral("主起落架距机头"), sbMainGearX);
-    form->addRow(QStringLiteral("主起落架轮距"), sbMainGearTrack);
-    form->addRow(QStringLiteral("底部外廓宽度"), sbOuterWidth);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("机身总长")), sbLength);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("翼展")),     sbWingspan);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("机身高度")), sbFuselageHeight);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("垂尾高度")), sbTailHeight);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("发动机距机头")), sbEngineX);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("发动机半翼展")), sbEngineY);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("前起落架距机头")), sbNoseGearX);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("主起落架距机头")), sbMainGearX);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("主起落架轮距")), sbMainGearTrack);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("底部外廓宽度")), sbOuterWidth);
 
     root->addLayout(form);
 
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("确定")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, [this, sbLength, sbWingspan,
             sbFuselageHeight, sbTailHeight, sbEngineX, sbEngineY,
             sbNoseGearX, sbMainGearX, sbMainGearTrack, sbOuterWidth]() {
@@ -80,9 +81,9 @@ void AircraftViewsDialog::buildUi() {
         p.outerWidth     = sbOuterWidth->value();
 
         const auto elems = aircraft::buildThreeViews(p, model_);
-        model_->beginEdit(QStringLiteral("绘制飞机三面图"));
+        model_->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制飞机三面图")));
         model_->addElementsQuiet(elems);
-        model_->log(QStringLiteral("已生成飞机三面图：%1 个图元")
+        model_->log(SketchCAD::I18n::t(QString::fromUtf8("已生成飞机三面图：%1 个图元"))
                         .arg(elems.size()));
         accept();
     });

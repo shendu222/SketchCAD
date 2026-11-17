@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/WeldSymbolDialog.h"
 #include "core/weld/WeldSymbol.h"       // buildWeldSymbol / WeldSpec / weldCommandString / weldTypeName
 #include "core/SketchModel.h"           // 放置落盘（beginEdit / addElementsQuiet / log）
@@ -104,7 +105,7 @@ private:
 // ================================ 对话框主体 ================================
 WeldSymbolDialog::WeldSymbolDialog(SketchModel* model, CommandInterpreter* interp, QWidget* parent)
     : QDialog(parent), model_(model), interp_(interp) {
-    setWindowTitle(QStringLiteral("焊缝符号（GB/T 324）"));
+    setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("焊缝符号（GB/T 324）")));
     resize(620, 360);
 
     auto* root = new QHBoxLayout(this);
@@ -116,29 +117,29 @@ WeldSymbolDialog::WeldSymbolDialog(SketchModel* model, CommandInterpreter* inter
     cbType_ = new QComboBox(this);
     cbType_->addItems(weldTypeNames());                 // 顺序对应 WeldType 枚举
     cbAux_  = new QComboBox(this);
-    cbAux_->addItems({ QStringLiteral("无"), QStringLiteral("平面"),
-                       QStringLiteral("凸面"), QStringLiteral("凹面") });
+    cbAux_->addItems({ SketchCAD::I18n::t(QString::fromUtf8("无")), SketchCAD::I18n::t(QString::fromUtf8("平面")),
+                       SketchCAD::I18n::t(QString::fromUtf8("凸面")), SketchCAD::I18n::t(QString::fromUtf8("凹面")) });
     cbSupp_ = new QComboBox(this);
-    cbSupp_->addItems({ QStringLiteral("无"), QStringLiteral("周围焊"),
-                        QStringLiteral("现场焊"), QStringLiteral("熔透焊") });
+    cbSupp_->addItems({ SketchCAD::I18n::t(QString::fromUtf8("无")), SketchCAD::I18n::t(QString::fromUtf8("周围焊")),
+                        SketchCAD::I18n::t(QString::fromUtf8("现场焊")), SketchCAD::I18n::t(QString::fromUtf8("熔透焊")) });
     cbSide_ = new QComboBox(this);
-    cbSide_->addItems({ QStringLiteral("箭头侧（基准线下方）"),
-                        QStringLiteral("非箭头侧（基准线上方）"),
-                        QStringLiteral("双面焊（基准线上）") });
+    cbSide_->addItems({ SketchCAD::I18n::t(QString::fromUtf8("箭头侧（基准线下方）")),
+                        SketchCAD::I18n::t(QString::fromUtf8("非箭头侧（基准线上方）")),
+                        SketchCAD::I18n::t(QString::fromUtf8("双面焊（基准线上）")) });
 
-    form->addRow(QStringLiteral("基本符号："), cbType_);
-    form->addRow(QStringLiteral("辅助符号："), cbAux_);
-    form->addRow(QStringLiteral("补充符号："), cbSupp_);
-    form->addRow(QStringLiteral("箭头侧："),   cbSide_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("基本符号：")), cbType_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("辅助符号：")), cbAux_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("补充符号：")), cbSupp_);
+    form->addRow(SketchCAD::I18n::t(QString::fromUtf8("箭头侧：")),   cbSide_);
     left->addLayout(form);
 
-    auto* dimBox = new QGroupBox(QStringLiteral("尺寸（mm）"), this);
+    auto* dimBox = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("尺寸（mm）")), this);
     auto* dimForm = new QFormLayout(dimBox);
-    leK_ = new QLineEdit(this); leK_->setPlaceholderText(QStringLiteral("焊脚 k"));
-    leS_ = new QLineEdit(this); leS_->setPlaceholderText(QStringLiteral("坡口深 s"));
-    leL_ = new QLineEdit(this); leL_->setPlaceholderText(QStringLiteral("长度 l"));
-    leE_ = new QLineEdit(this); leE_->setPlaceholderText(QStringLiteral("间距 e"));
-    leN_ = new QLineEdit(this); leN_->setPlaceholderText(QStringLiteral("段数 n"));
+    leK_ = new QLineEdit(this); leK_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("焊脚 k")));
+    leS_ = new QLineEdit(this); leS_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("坡口深 s")));
+    leL_ = new QLineEdit(this); leL_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("长度 l")));
+    leE_ = new QLineEdit(this); leE_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("间距 e")));
+    leN_ = new QLineEdit(this); leN_->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("段数 n")));
     dimForm->addRow(QStringLiteral("k："), leK_);
     dimForm->addRow(QStringLiteral("s："), leS_);
     dimForm->addRow(QStringLiteral("l："), leL_);
@@ -150,7 +151,7 @@ WeldSymbolDialog::WeldSymbolDialog(SketchModel* model, CommandInterpreter* inter
 
     // -------------------- 右侧：实时预览 --------------------
     auto* right = new QVBoxLayout();
-    right->addWidget(new QLabel(QStringLiteral("实时预览（线宽 = 2d/3，符合 GB/T 12212）："), this));
+    right->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("实时预览（线宽 = 2d/3，符合 GB/T 12212）：")), this));
     preview_ = new WeldPreview(this);
     right->addWidget(preview_, 1);
     root->addLayout(right, 1);
@@ -158,8 +159,8 @@ WeldSymbolDialog::WeldSymbolDialog(SketchModel* model, CommandInterpreter* inter
     // -------------------- 底部按钮 --------------------
     auto* box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                      Qt::Horizontal, this);
-    box->button(QDialogButtonBox::Ok)->setText(QStringLiteral("放置到图纸"));
-    box->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+    box->button(QDialogButtonBox::Ok)->setText(SketchCAD::I18n::t(QString::fromUtf8("放置到图纸")));
+    box->button(QDialogButtonBox::Cancel)->setText(SketchCAD::I18n::t(QString::fromUtf8("取消")));
     connect(box, &QDialogButtonBox::accepted, this, &WeldSymbolDialog::onAccepted);
     connect(box, &QDialogButtonBox::rejected, this, &QDialog::reject);
 

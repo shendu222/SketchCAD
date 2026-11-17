@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "LogPanel.h"
 #include <QDateTime>
 #include <QTextCharFormat>
@@ -9,7 +10,7 @@ LogPanel::LogPanel(QWidget* p) : QPlainTextEdit(p) {
     setReadOnly(true);
     setMaximumBlockCount(2000);
     setStyleSheet("QPlainTextEdit{background:#1e2230;color:#d6dbe5;font-family:Consolas,monospace;font-size:12px;}");
-    appendPlainText(QStringLiteral("[系统] 我是慎独 草图模块 — 执行信息面板已就绪"));
+    appendPlainText(SketchCAD::I18n::t(QString::fromUtf8("[系统] 我是慎独 草图模块 — 执行信息面板已就绪")));
 }
 
 void LogPanel::appendLog(const QString& msg, const QString& type) {

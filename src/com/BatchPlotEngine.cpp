@@ -1,6 +1,7 @@
 // ============================================================================
 // 批量出图引擎 —— 实现
 // ============================================================================
+#include "core/I18n.h"
 #include "BatchPlotEngine.h"
 #include "ComError.h"
 #include "core/SketchModel.h"
@@ -135,9 +136,9 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
         int robSkip = 0, robFix = 0; QString robRep;
         std::vector<SketchCAD::Element> kept = SketchCAD::filterElements(imported, &robSkip, &robFix, &robRep);
         if (robSkip > 0 || robFix > 0)
-            appendLog(QString(), QStringLiteral("[robust] DXF/DWG 打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+            appendLog(QString(), SketchCAD::I18n::t(QString::fromUtf8("[robust] DXF/DWG 打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
                           .arg(robSkip).arg(robFix).arg(robRep));
-        model.beginEdit(QStringLiteral("自动化导入"));
+        model.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("自动化导入")));
         model.addElementsQuiet(kept);
         model.setDrawingPath(path);
         return true;
@@ -158,9 +159,9 @@ bool BatchPlotEngine::loadDrawing(SketchModel& model, const QString& path, QStri
     int robSkip = 0, robFix = 0; QString robRep;
     std::vector<Element> kept = SketchCAD::filterElements(loaded, &robSkip, &robFix, &robRep);
     if (robSkip > 0 || robFix > 0)
-        appendLog(QString(), QStringLiteral("[robust] 草图打开校验：%1 个损坏图元已跳过，%2 个已修复。%3")
+        appendLog(QString(), SketchCAD::I18n::t(QString::fromUtf8("[robust] 草图打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
                       .arg(robSkip).arg(robFix).arg(robRep));
-    model.beginEdit(QStringLiteral("自动化打开"));
+    model.beginEdit(SketchCAD::I18n::t(QString::fromUtf8("自动化打开")));
     model.addElementsQuiet(kept);
     // 以下各表均容缺（旧文件无键回落默认），与交互读档逐项对齐
     model.setLayersFromJson(root["layers"].toArray());
@@ -237,7 +238,7 @@ bool BatchPlotEngine::exportDrawing(SketchModel& model, const QString& path,
             QString e2;
             if (!PlotStyleTable::fromCtb(ctbText, &t, &e2)) {
                 // 解析有瑕疵：已解析的行仍生效，仅记录警告，不阻断出图
-                appendLog(QString(), QStringLiteral("[plotstyle] CTB 部分行解析失败：") + e2);
+                appendLog(QString(), SketchCAD::I18n::t(QString::fromUtf8("[plotstyle] CTB 部分行解析失败：")) + e2);
             }
             s.plotStyle = t;
             s.monochrome = true;   // 导入样式表即视为黑白出图意图
@@ -344,7 +345,7 @@ BatchResult BatchPlotEngine::runTasks(const QVector<BatchTask>& tasks, const QSt
     // 进程级互斥：并发调用在锁上排队串行执行，杜绝双任务同时写同一输出
     std::lock_guard<std::mutex> runLock(g_runMutex);
 
-    appendLog(logPath, QStringLiteral("批量开始：共 %1 个任务").arg(tasks.size()));
+    appendLog(logPath, SketchCAD::I18n::t(QString::fromUtf8("批量开始：共 %1 个任务")).arg(tasks.size()));
 
     for (int i = 0; i < tasks.size(); ++i) {
         const BatchTask& t = tasks[i];
@@ -378,18 +379,18 @@ BatchResult BatchPlotEngine::runTasks(const QVector<BatchTask>& tasks, const QSt
         result.tasks.append(r);
 
         emitEvent(QStringLiteral("onTaskDone"), taskResultJson(r));
-        appendLog(logPath, QStringLiteral("任务 %1/%2 %3 src=%4 out=%5 %6")
+        appendLog(logPath, SketchCAD::I18n::t(QString::fromUtf8("任务 %1/%2 %3 src=%4 out=%5 %6"))
                       .arg(i).arg(tasks.size())
-                      .arg(r.ok ? QStringLiteral("成功") : QStringLiteral("失败"))
+                      .arg(r.ok ? SketchCAD::I18n::t(QString::fromUtf8("成功")) : SketchCAD::I18n::t(QString::fromUtf8("失败")))
                       .arg(r.source, t.output,
-                           r.ok ? QStringLiteral("%1 字节").arg(r.bytes) : r.error));
+                           r.ok ? SketchCAD::I18n::t(QString::fromUtf8("%1 字节")).arg(r.bytes) : r.error));
     }
 
     result.allOk = (result.failed == 0);
     emitEvent(QStringLiteral("onBatchFinished"),
               QJsonObject{ {"allOk", result.allOk}, {"total", result.total},
                            {"succeeded", result.succeeded}, {"failed", result.failed} });
-    appendLog(logPath, QStringLiteral("批量结束：总 %1 成功 %2 失败 %3")
+    appendLog(logPath, SketchCAD::I18n::t(QString::fromUtf8("批量结束：总 %1 成功 %2 失败 %3"))
                   .arg(result.total).arg(result.succeeded).arg(result.failed));
     return result;
 }
@@ -414,7 +415,7 @@ BatchResult BatchPlotEngine::runBatch(const QString& tasksJson, const QString& l
         bad.error = comErrorText(SCAD_E_BAD_TASK)
             + QStringLiteral("：任务列表为空或 JSON 非法（期望 {\"tasks\":[..]} 或 [..]）");
         r.tasks.append(bad);
-        appendLog(logPath, QStringLiteral("批量失败：") + bad.error);
+        appendLog(logPath, SketchCAD::I18n::t(QString::fromUtf8("批量失败：")) + bad.error);
         return r;
     }
 

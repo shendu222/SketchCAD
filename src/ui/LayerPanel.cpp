@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "LayerPanel.h"
 #include "core/SketchModel.h"
 #include "core/Layer.h"
@@ -55,13 +56,14 @@ LayerPanel::LayerPanel(SketchModel* model, QWidget* parent)
     v->addWidget(list_, 1);
 
     // ---- 样式编辑组 ----
-    auto* gb = new QGroupBox(QStringLiteral("图层样式"), this);
-    auto* gl = new QVBoxLayout(gb);
+    styleGroup_ = new QGroupBox(SketchCAD::I18n::t(QString::fromUtf8("图层样式")), this);
+    auto* gl = new QVBoxLayout(styleGroup_);
     gl->setContentsMargins(8, 8, 8, 8);
     gl->setSpacing(5);
 
     auto* colorRow = new QHBoxLayout();
-    colorRow->addWidget(new QLabel(QStringLiteral("颜色：")));
+    colorLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("颜色：")));
+    colorRow->addWidget(colorLabel_);
     colorBtn_ = new QPushButton(this);
     colorBtn_->setFixedSize(46, 22);
     setColorSwatch(colorBtn_, QColor(26, 29, 40));
@@ -70,37 +72,39 @@ LayerPanel::LayerPanel(SketchModel* model, QWidget* parent)
     gl->addLayout(colorRow);
 
     auto* lsRow = new QHBoxLayout();
-    lsRow->addWidget(new QLabel(QStringLiteral("线型：")));
+    lineStyleLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("线型：")));
+    lsRow->addWidget(lineStyleLabel_);
     lineStyleCombo_ = new QComboBox(this);
     for (int i = 0; i < kLineStyleCount; ++i)
-        lineStyleCombo_->addItem(QString::fromUtf8(lineStyleName((LineStyle)i)));
+        lineStyleCombo_->addItem(SketchCAD::I18n::t(QString::fromUtf8(lineStyleName((LineStyle)i))));
     lsRow->addWidget(lineStyleCombo_, 1);
     gl->addLayout(lsRow);
 
     auto* lwRow = new QHBoxLayout();
-    lwRow->addWidget(new QLabel(QStringLiteral("线宽：")));
+    lineWidthLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("线宽：")));
+    lwRow->addWidget(lineWidthLabel_);
     lineWidthCombo_ = new QComboBox(this);
-    lineWidthCombo_->addItems({QStringLiteral("细线 0.5mm"), QStringLiteral("中粗线 1.0mm"),
-                               QStringLiteral("粗线 1.4mm"), QStringLiteral("特粗线 2.0mm")});
+    lineWidthCombo_->addItems({SketchCAD::I18n::t(QString::fromUtf8("细线 0.5mm")), SketchCAD::I18n::t(QString::fromUtf8("中粗线 1.0mm")),
+                               SketchCAD::I18n::t(QString::fromUtf8("粗线 1.4mm")), SketchCAD::I18n::t(QString::fromUtf8("特粗线 2.0mm"))});
     lwRow->addWidget(lineWidthCombo_, 1);
     gl->addLayout(lwRow);
 
-    applyStyleBtn_ = new QPushButton(QStringLiteral("批量套用到本层图元"), this);
+    applyStyleBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("批量套用到本层图元")), this);
     gl->addWidget(applyStyleBtn_);
-    v->addWidget(gb);
+    v->addWidget(styleGroup_);
 
     // ---- 操作按钮 ----
     auto* op = new QHBoxLayout();
-    newBtn_   = new QPushButton(QStringLiteral("新建"), this);
-    delBtn_   = new QPushButton(QStringLiteral("删除"), this);
-    renameBtn_ = new QPushButton(QStringLiteral("重命名"), this);
+    newBtn_   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("新建")), this);
+    delBtn_   = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("删除")), this);
+    renameBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("重命名")), this);
     op->addWidget(newBtn_); op->addWidget(delBtn_); op->addWidget(renameBtn_);
     v->addLayout(op);
 
-    assignBtn_ = new QPushButton(QStringLiteral("将选中图元移入此层"), this);
+    assignBtn_ = new QPushButton(SketchCAD::I18n::t(QString::fromUtf8("将选中图元移入此层")), this);
     v->addWidget(assignBtn_);
 
-    hintLabel_ = new QLabel(QStringLiteral("提示：把选中图元移入图层时保留其原有属性；修改图层样式/显示会同步到本层全部图元，不影响其他层。"), this);
+    hintLabel_ = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("提示：把选中图元移入图层时保留其原有属性；修改图层样式/显示会同步到本层全部图元，不影响其他层。")), this);
     hintLabel_->setWordWrap(true);
     hintLabel_->setStyleSheet(QStringLiteral("color:#777;font-size:11px;"));
     v->addWidget(hintLabel_);
@@ -118,6 +122,27 @@ LayerPanel::LayerPanel(SketchModel* model, QWidget* parent)
 
     // 模型信号订阅收口到 setModel（构造期与多文档切换共用同一条接线）
     setModel(model_);
+}
+
+// 语言切换：重译面板静态文本（组标题/行标签/按钮/提示）。列表行内容由 refresh() 重建。
+void LayerPanel::retranslate() {
+    if (styleGroup_)     styleGroup_->setTitle(SketchCAD::I18n::t(QString::fromUtf8("图层样式")));
+    if (colorLabel_)     colorLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("颜色：")));
+    if (lineStyleLabel_) lineStyleLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("线型：")));
+    if (lineWidthLabel_) lineWidthLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("线宽：")));
+    if (applyStyleBtn_)  applyStyleBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("批量套用到本层图元")));
+    if (newBtn_)         newBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("新建")));
+    if (delBtn_)         delBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("删除")));
+    if (renameBtn_)      renameBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("重命名")));
+    if (assignBtn_)      assignBtn_->setText(SketchCAD::I18n::t(QString::fromUtf8("将选中图元移入此层")));
+    if (hintLabel_)      hintLabel_->setText(SketchCAD::I18n::t(QString::fromUtf8("提示：把选中图元移入图层时保留其原有属性；修改图层样式/显示会同步到本层全部图元，不影响其他层。")));
+    // 线宽下拉条目
+    if (lineWidthCombo_) {
+        const QStringList items = {SketchCAD::I18n::t(QString::fromUtf8("细线 0.5mm")), SketchCAD::I18n::t(QString::fromUtf8("中粗线 1.0mm")),
+                                   SketchCAD::I18n::t(QString::fromUtf8("粗线 1.4mm")), SketchCAD::I18n::t(QString::fromUtf8("特粗线 2.0mm"))};
+        for (int i = 0; i < items.size() && i < lineWidthCombo_->count(); ++i)
+            lineWidthCombo_->setItemText(i, items.at(i));
+    }
 }
 
 // 多文档切换重绑：断开旧模型的连接 → 换绑 → 重新连接 → 按新模型重建
@@ -171,7 +196,7 @@ QWidget* LayerPanel::makeRowWidget(const Layer& l) {
 
     auto* vis = new QCheckBox(this);
     vis->setChecked(l.visible);
-    vis->setToolTip(QStringLiteral("显示/隐藏整层"));
+    vis->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("显示/隐藏整层")));
     connect(vis, &QCheckBox::checkStateChanged, this,
             [this, name = l.name](Qt::CheckState s) { onVisibleToggled(name, int(s)); });
     h->addWidget(vis);
@@ -179,7 +204,7 @@ QWidget* LayerPanel::makeRowWidget(const Layer& l) {
     auto* lock = new QCheckBox(this);
     lock->setText(QStringLiteral("🔒"));
     lock->setChecked(l.locked);
-    lock->setToolTip(QStringLiteral("锁定图层（禁止编辑本层图元）"));
+    lock->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("锁定图层（禁止编辑本层图元）")));
     connect(lock, &QCheckBox::checkStateChanged, this,
             [this, name = l.name](Qt::CheckState s) { onLockToggled(name, int(s)); });
     h->addWidget(lock);
@@ -191,7 +216,7 @@ QWidget* LayerPanel::makeRowWidget(const Layer& l) {
 
     // 活动图层标记："●当前"，让用户一眼看到"正在哪个层上画图"
     if (l.name == model_->currentLayer()) {
-        auto* cur = new QLabel(QStringLiteral("●当前"), this);
+        auto* cur = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("●当前")), this);
         cur->setStyleSheet(QStringLiteral("color:#1a73e8;font-weight:bold;font-size:11px;"));
         h->addWidget(cur);
     }
@@ -279,12 +304,12 @@ void LayerPanel::onApplyStyle() {
 void LayerPanel::onNewLayer() {
     // 自定义对话框：候选标准名（GB/T 18617）+ 实时合规提示；仅建议，不强制改名。
     QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("新建图层"));
+    dlg.setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("新建图层")));
     auto* v = new QVBoxLayout(&dlg);
     v->setContentsMargins(10, 10, 10, 10);
     v->setSpacing(8);
 
-    auto* hint = new QLabel(QStringLiteral("图层命名建议（GB/T 18617 / ISO 13567）："));
+    auto* hint = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("图层命名建议（GB/T 18617 / ISO 13567）：")));
     v->addWidget(hint);
 
     auto* combo = new QComboBox(&dlg);
@@ -298,7 +323,7 @@ void LayerPanel::onNewLayer() {
     }
     combo->addItems(items);
     combo->setCurrentText(QString());
-    combo->lineEdit()->setPlaceholderText(QStringLiteral("输入图层名，如 01_轮廓线"));
+    combo->lineEdit()->setPlaceholderText(SketchCAD::I18n::t(QString::fromUtf8("输入图层名，如 01_轮廓线")));
     v->addWidget(combo);
 
     auto* tip = new QLabel(&dlg);
@@ -312,16 +337,16 @@ void LayerPanel::onNewLayer() {
     auto updateTip = [&]() {
         const QString nm = combo->currentText().trimmed();
         if (nm.isEmpty()) {
-            tip->setText(QStringLiteral("提示：标准命名形如 编号_名称（如 01_轮廓线）。可自由命名，仅作建议。"));
+            tip->setText(SketchCAD::I18n::t(QString::fromUtf8("提示：标准命名形如 编号_名称（如 01_轮廓线）。可自由命名，仅作建议。")));
             tip->setStyleSheet(QStringLiteral("color:#888888;"));
             return;
         }
         QString reason;
         if (LayerNaming::isLayerNameCompliant(nm, &reason)) {
-            tip->setText(QStringLiteral("✓ 符合 GB/T 18617/ISO 13567 规范"));
+            tip->setText(SketchCAD::I18n::t(QString::fromUtf8("✓ 符合 GB/T 18617/ISO 13567 规范")));
             tip->setStyleSheet(QStringLiteral("color:#2e7d32;"));
         } else {
-            tip->setText(QStringLiteral("⚠ 不合规：") + reason);
+            tip->setText(SketchCAD::I18n::t(QString::fromUtf8("⚠ 不合规：")) + reason);
             tip->setStyleSheet(QStringLiteral("color:#b8860b;"));
         }
     };
@@ -345,8 +370,8 @@ void LayerPanel::onRenameLayer() {
     const QString name = selectedLayer();
     if (name.isEmpty() || name == QStringLiteral("0")) return;
     bool ok = false;
-    const QString nn = QInputDialog::getText(this, QStringLiteral("重命名图层"),
-                            QStringLiteral("新名称："), QLineEdit::Normal, name, &ok);
+    const QString nn = QInputDialog::getText(this, SketchCAD::I18n::t(QString::fromUtf8("重命名图层")),
+                            SketchCAD::I18n::t(QString::fromUtf8("新名称：")), QLineEdit::Normal, name, &ok);
     if (ok && !nn.trimmed().isEmpty() && nn.trimmed() != name)
         model_->renameLayer(name, nn.trimmed());
 }

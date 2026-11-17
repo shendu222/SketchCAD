@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "ui/tools/BoundaryTool.h"
 #include "core/ElementFactory.h"
 #include "core/SketchModel.h"
@@ -90,7 +91,7 @@ void BoundaryTool::finishOuter(ToolContext& ctx) {
     drawing_ = false;
     ctx.clearPreview();
     ctx.setDrawing(false);
-    ctx.model->log(QStringLiteral("边界外环已完成（%1 节点），继续拾取内孔，右键结束").arg((int)outer_.size()));
+    ctx.model->log(SketchCAD::I18n::t(QString::fromUtf8("边界外环已完成（%1 节点），继续拾取内孔，右键结束")).arg((int)outer_.size()));
 }
 
 void BoundaryTool::finishHole() {
@@ -103,7 +104,7 @@ void BoundaryTool::commit(ToolContext& ctx) {
     Element el = ElementFactory::createBoundary(outer_, holes_, ctx.model);
     const int id = ctx.model->addElement(el);
     ctx.model->setSelected(id);
-    ctx.model->log(QString("已创建边界 #%1（外环 %2 节点，内孔 %3）")
+    ctx.model->log(QString(SketchCAD::I18n::t(QString::fromUtf8("已创建边界 #%1（外环 %2 节点，内孔 %3）")))
                        .arg(id).arg((int)outer_.size()).arg((int)holes_.size()));
     reset(ctx);
 }

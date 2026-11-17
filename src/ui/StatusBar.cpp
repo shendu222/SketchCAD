@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "StatusBar.h"
 #include "core/CommandPrompt.h"
 #include <QLabel>
@@ -6,15 +7,15 @@
 namespace SketchCAD {
 
 StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
-    lCmd   = new QLabel(QStringLiteral("就绪"));   lCmd->setMinimumWidth(120);
+    lCmd   = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("就绪")));   lCmd->setMinimumWidth(120);
     lOpt   = new QLabel(QString());                lOpt->setMinimumWidth(60);
     lCoord = new QLabel(QStringLiteral("X:0.00  Y:0.00  Z:0.00")); lCoord->setMinimumWidth(170);
-    lPlane = new QLabel(QStringLiteral("平面:XY")); lPlane->setMinimumWidth(70);
+    lPlane = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("平面:XY"))); lPlane->setMinimumWidth(70);
     // UCS 指示器：⌖ 为坐标系定位符号（图标语义），世界系显示 WCS，命名 UCS 显示名称+角度
     lUcs   = new QLabel(QStringLiteral("⌖ WCS"));   lUcs->setMinimumWidth(80);
-    lUcs->setToolTip(QStringLiteral("当前用户坐标系（UCS）。命令 ucs world|3p|object|z|save|set 切换"));
-    lCount = new QLabel(QStringLiteral("图元:0"));  lCount->setMinimumWidth(60);
-    lScale = new QLabel(QStringLiteral("比例:4.00")); lScale->setMinimumWidth(70);
+    lUcs->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("当前用户坐标系（UCS）。命令 ucs world|3p|object|z|save|set 切换")));
+    lCount = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("图元:0")));  lCount->setMinimumWidth(60);
+    lScale = new QLabel(SketchCAD::I18n::t(QString::fromUtf8("比例:4.00"))); lScale->setMinimumWidth(70);
     lStats = new QLabel(QString());               lStats->setMinimumWidth(150);   // P0-04 数据面板
     addWidget(lCmd); addWidget(lOpt); addWidget(lCoord); addWidget(lPlane); addWidget(lUcs);
     addWidget(lCount); addWidget(lScale); addWidget(lStats);
@@ -23,8 +24,8 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
     // 用 QToolButton 而非 QLabel：QLabel 无 clicked 信号，需另做事件过滤器；
     // 扁平 + autoRaise 使其外观与状态栏文本一致。
     btnSave_ = new QToolButton(this);
-    btnSave_->setText(QStringLiteral("自动保存:—"));
-    btnSave_->setToolTip(QStringLiteral("点击立即执行一次自动保存"));
+    btnSave_->setText(SketchCAD::I18n::t(QString::fromUtf8("自动保存:—")));
+    btnSave_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("点击立即执行一次自动保存")));
     btnSave_->setAutoRaise(true);
     btnSave_->setFocusPolicy(Qt::NoFocus);      // 不抢命令行焦点
     btnSave_->setMinimumWidth(120);
@@ -44,8 +45,8 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
     };
     for (const auto& d : defs) {
         auto* b = new QToolButton(this);
-        b->setText(QString::fromUtf8(d.text));
-        b->setToolTip(QString::fromUtf8(d.tip));
+        b->setText(SketchCAD::I18n::t(QString::fromUtf8(d.text)));
+        b->setToolTip(SketchCAD::I18n::t(QString::fromUtf8(d.tip)));
         b->setCheckable(true);
         b->setAutoRaise(true);
         b->setFocusPolicy(Qt::NoFocus);          // 不抢命令行焦点
@@ -58,6 +59,35 @@ StatusBar::StatusBar(QWidget* p) : QStatusBar(p) {
     }
 
     setStyleSheet("QStatusBar::item{border:0;}");
+}
+
+void StatusBar::retranslate() {
+    // 重译构造时固化的静态标签。动态值（坐标/命令/选项/图元数/比例/自动保存时间）
+    // 由 MainWindow 在 retranslateUi 里调用对应 setter 重新回显，无需在此重算。
+    lCmd->setText(SketchCAD::I18n::t(QString::fromUtf8("就绪")));
+    lPlane->setText(SketchCAD::I18n::t(QString::fromUtf8("平面:XY")));
+    lCount->setText(SketchCAD::I18n::t(QString::fromUtf8("图元:0")));
+    lScale->setText(SketchCAD::I18n::t(QString::fromUtf8("比例:4.00")));
+    lUcs->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("当前用户坐标系（UCS）。命令 ucs world|3p|object|z|save|set 切换")));
+    btnSave_->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("点击立即执行一次自动保存")));
+    // 自动保存按钮文本按当前开关态重设（关→「自动保存:关」，开→「自动保存:—」）
+    setAutosaveEnabled(autosaveOn_);
+    // 开关组按钮（正交/极轴/捕捉/追踪/线宽/驱动）
+    const struct ToggleDef { Toggle key; const char* text; const char* tip; }
+        defs[6] = {
+            { Toggle::Ortho, "正交", "正交模式 (F8)：方向锁定到水平/垂直" },
+            { Toggle::Polar, "极轴", "极轴追踪 (F10)：按增量角度追踪落点" },
+            { Toggle::Snap,  "捕捉", "栅格吸附 (F9)：坐标量化到栅格步长" },
+            { Toggle::Track, "追踪", "对象捕捉追踪 (F11)：沿捕捉点对齐方向追踪" },
+            { Toggle::Lwt,   "线宽", "线宽显示：按图元实际线宽渲染（关=一律细线）" },
+            { Toggle::DimDrive, "驱动", "尺寸驱动 (需求 D-③，默认开)：改标注值是否联动调整实际几何；关=仅改标注显示" },
+        };
+    for (const auto& d : defs) {
+        QToolButton* b = btns_[(int)d.key];
+        if (!b) continue;
+        b->setText(SketchCAD::I18n::t(QString::fromUtf8(d.text)));
+        b->setToolTip(SketchCAD::I18n::t(QString::fromUtf8(d.tip)));
+    }
 }
 
 void StatusBar::setCommand(const QString& s) { lCmd->setText(s); }
@@ -82,9 +112,9 @@ void StatusBar::setCoord(double x, double y, double z) {
                         .arg(formatLengthMm(x, units_), formatLengthMm(y, units_))
                         .arg(formatLengthMm(z, units_)));
 }
-void StatusBar::setPlaneInfo(const QString& s) { lPlane->setText("平面:" + s); }
+void StatusBar::setPlaneInfo(const QString& s) { lPlane->setText(SketchCAD::I18n::t(QString::fromUtf8("平面:")) + s); }
 void StatusBar::setUcsInfo(const QString& s) { lUcs->setText("⌖ " + s); }
-void StatusBar::setCount(int n) { lCount->setText("图元:" + QString::number(n)); }
+void StatusBar::setCount(int n) { lCount->setText(SketchCAD::I18n::t(QString::fromUtf8("图元:")) + QString::number(n)); }
 
 // P0-04 数据面板：「图元 N / 场景项 M / 打开 Xms」。openMs<=0 时隐藏打开耗时段。
 void StatusBar::setLoadStats(int elements, int items, double openMs) {
@@ -93,20 +123,20 @@ void StatusBar::setLoadStats(int elements, int items, double openMs) {
     lStats->setText(s);
     Q_UNUSED(elements);   // 图元数已有 lCount 呈现；保留参数以备面板合并展示
 }
-void StatusBar::setScale(double s) { lScale->setText("比例:" + QString::number(s, 'f', 2)); }
-void StatusBar::setDrawScale(const QString& label) { lScale->setText("比例:" + label); }
+void StatusBar::setScale(double s) { lScale->setText(SketchCAD::I18n::t(QString::fromUtf8("比例:")) + QString::number(s, 'f', 2)); }
+void StatusBar::setDrawScale(const QString& label) { lScale->setText(SketchCAD::I18n::t(QString::fromUtf8("比例:")) + label); }
 
 void StatusBar::setLastAutosave(const QDateTime& t) {
-    if (!autosaveOn_) { btnSave_->setText(QStringLiteral("自动保存:关")); return; }
+    if (!autosaveOn_) { btnSave_->setText(SketchCAD::I18n::t(QString::fromUtf8("自动保存:关"))); return; }
     btnSave_->setText(t.isValid()
-        ? QStringLiteral("上次自动保存 %1").arg(t.toString(QStringLiteral("HH:mm")))
-        : QStringLiteral("自动保存:—"));
+        ? SketchCAD::I18n::t(QString::fromUtf8("上次自动保存 %1")).arg(t.toString(QStringLiteral("HH:mm")))
+        : SketchCAD::I18n::t(QString::fromUtf8("自动保存:—")));
 }
 
 void StatusBar::setAutosaveEnabled(bool on) {
     autosaveOn_ = on;
-    if (!on) btnSave_->setText(QStringLiteral("自动保存:关"));
-    else     btnSave_->setText(QStringLiteral("自动保存:—"));
+    if (!on) btnSave_->setText(SketchCAD::I18n::t(QString::fromUtf8("自动保存:关")));
+    else     btnSave_->setText(SketchCAD::I18n::t(QString::fromUtf8("自动保存:—")));
 }
 
 void StatusBar::setUnitsMeta(const UnitsMeta& u) {

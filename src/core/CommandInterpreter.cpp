@@ -1,3 +1,4 @@
+#include "core/I18n.h"
 #include "CommandInterpreter.h"
 #include "MacroScript.h"
 #include "AliasTable.h"
@@ -201,11 +202,11 @@ bool CommandInterpreter::execute(const QString& line) {
             // 输错命令名 → 给出最相近的至多 3 个已知命令候选（AutoCAD "Did you mean?" 风格容错）
             const QStringList sugs = nearestCommands(cmd, reg.exactNames() + externalCommandNames());
             if (!sugs.isEmpty())
-                model_->log("未知命令: " + cmd + QStringLiteral("（您是不是想输入: ")
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("未知命令: ")) + cmd + SketchCAD::I18n::t(QString::fromUtf8("（您是不是想输入: "))
                             + sugs.join(QStringLiteral(" / "))
-                            + QStringLiteral("？输入 help 查看全部）"), "warn");
+                            + SketchCAD::I18n::t(QString::fromUtf8("？输入 help 查看全部）")), "warn");
             else
-                model_->log("未知命令: " + cmd + "（输入 help 查看）", "warn");
+                model_->log(SketchCAD::I18n::t(QString::fromUtf8("未知命令: ")) + cmd + SketchCAD::I18n::t(QString::fromUtf8("（输入 help 查看）")), "warn");
         }
     } else {
         CommandContext ctx{model_, toks, cmd, this};
