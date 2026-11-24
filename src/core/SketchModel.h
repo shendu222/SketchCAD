@@ -596,6 +596,13 @@ public:
     QJsonObject toDrawingJson() const;
     QByteArray  toDrawingBytes() const;
 
+    // ---- 原生整图 JSON → 模型重建（core-only 读入对称入口）----
+    // 语义与 MainWindow 读档 JSON 分支的解析/重建部分完全一致，但不依赖 GUI 类型、
+    // 不写临时文件；错误通过 errOut 返回可读文本（可为 nullptr）。
+    // 版本键以源码权威 formatVersion 为准，并兼容只读别名 schemaVersion：
+    // 缺键按旧档兼容；出现但值不是 1 时明确失败，绝不静默降级。
+    bool applyDrawingJson(const QByteArray& bytes, QString* errOut = nullptr);
+
     // ---- 全局线型比例（LTSCALE，随图存档，不入撤销栈）----
     // 控制所有虚线/点画线/双点画线的线素长度（dashSpecFor 图案整体缩放 LTSCALE 倍）。
     // 渲染（penFor）与打印（makePen）两侧共用 model_->ltscale()，保证屏幕与图纸比例一致。

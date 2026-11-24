@@ -468,11 +468,11 @@ DimStyleEntry dimStyleEntryFromJson(const QJsonObject& o) {
     e.name = o["name"].toString("Standard");
     Style& s = e.style;
     // 缺键回落默认（与 Style 的成员默认值一致）
-    s.arrowLen   = json::getDouble(o, "arrowLen",   3.5);
-    s.arrowWidth = json::getDouble(o, "arrowWidth", 1.1);
+    s.arrowLen   = json::getDouble(o, "arrowLen",   2.5);
+    s.arrowWidth = json::getDouble(o, "arrowWidth", 0.8);
     s.extBeyond  = json::getDouble(o, "extBeyond",  2.5);
     s.extGap     = json::getDouble(o, "extGap",     0.0);
-    s.textHeight = json::getDouble(o, "textHeight", 3.5);
+    s.textHeight = json::getDouble(o, "textHeight", 2.5);
     s.textGap    = json::getDouble(o, "textGap",    0.8);
     s.defOffset  = json::getDouble(o, "defOffset",  12.0);
     s.arcSeg     = json::getDouble(o, "arcSeg",     4.0);

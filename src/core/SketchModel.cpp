@@ -1,5 +1,6 @@
 #include "core/I18n.h"
 #include "SketchModel.h"
+#include "core/ElementValidate.h"   // 读档鲁棒性守卫：filterElements / countDanglingRefs
 #include "Geometry.h"
 #include "ConstraintSolver.h"
 #include "ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
@@ -10,6 +11,7 @@
 #include "TextStyle.h"  // FIELD 域：refreshFields 预热求值（resolveFields/displayTableCell）
 #include <algorithm>
 #include <cmath>
+#include <new>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -3940,6 +3942,134 @@ QJsonObject SketchModel::toDrawingJson() const {
 
 QByteArray SketchModel::toDrawingBytes() const {
     return QJsonDocument(toDrawingJson()).toJson(QJsonDocument::Indented);
+}
+
+bool SketchModel::applyDrawingJson(const QByteArray& bytes, QString* errOut) {
+    const auto fail = [errOut](const QString& msg) -> bool {
+        if (errOut) *errOut = msg;
+        return false;
+    };
+
+    QJsonParseError parseErr;
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseErr);
+    if (!doc.isObject())
+        return fail(QStringLiteral("不是有效的草图文件"));
+    const QJsonObject root = doc.object();
+
+    // 版本守卫：源码权威键是 formatVersion（toDrawingJson 写入 1）；
+    // schemaVersion 作为只读别名兼容外部表达。缺键 = 旧档兼容；出现但非 1 = 明确失败。
+    // 绝不因为版本未知就按当前格式强行解析——那会静默画错几何。
+    // 先读原始值再判定：两键同时出现且不一致时优先报「冲突」，
+    // 不能让先检查到的那个键先抛「不支持」而掩盖真正的元数据矛盾。
+    auto readVersionKey = [&](const QString& key, int* valueOut) -> bool {
+        if (!root.contains(key)) { *valueOut = 0; return true; }
+        bool ok = false;
+        const int n = root.value(key).toVariant().toInt(&ok);
+        if (!ok) {
+            fail(QStringLiteral("草图版本字段无法识别：%1（SketchCAD 仅支持版本 1）。").arg(key));
+            return false;
+        }
+        *valueOut = n;
+        return true;
+    };
+    int fmtVer = 0, schemaVer = 0;
+    if (!readVersionKey(QStringLiteral("formatVersion"), &fmtVer)) return false;
+    if (!readVersionKey(QStringLiteral("schemaVersion"), &schemaVer)) return false;
+    if (fmtVer && schemaVer && fmtVer != schemaVer)
+        return fail(QStringLiteral("草图版本字段冲突：formatVersion=%1、schemaVersion=%2；无法确定文件版本。")
+                        .arg(fmtVer).arg(schemaVer));
+    if (fmtVer && fmtVer != 1)
+        return fail(QStringLiteral("不支持的草图格式版本：formatVersion=%1；SketchCAD 仅支持版本 1（请用兼容版本保存后再打开）。")
+                        .arg(fmtVer));
+    if (schemaVer && schemaVer != 1)
+        return fail(QStringLiteral("不支持的草图格式版本：schemaVersion=%1；SketchCAD 仅支持版本 1（请用兼容版本保存后再打开）。")
+                        .arg(schemaVer));
+
+    // 解析图元（与 readDrawingImpl JSON 分支同源：elementFromJson 全字段解码）
+    std::vector<Element> loaded;
+    const QJsonArray elemsJson = root.value(QStringLiteral("elements")).toArray();
+    loaded.reserve(static_cast<size_t>(elemsJson.size()));
+    for (const QJsonValue& v : elemsJson)
+        loaded.push_back(::SketchCAD::elementFromJson(v.toObject()));
+
+    // 鲁棒性守卫：只读校验/丢弃/修复，避免损坏数据进入模型后崩溃或画错。
+    int robSkip = 0, robFix = 0;
+    QString robRep;
+    const std::vector<Element> kept = filterElements(loaded, &robSkip, &robFix, &robRep);
+    if (robSkip > 0 || robFix > 0)
+        log(I18n::t(QStringLiteral("打开校验：%1 个损坏图元已跳过，%2 个已修复。%3"))
+                .arg(robSkip).arg(robFix).arg(robRep), QStringLiteral("warn"));
+
+    try {
+        clear();
+        beginEdit(I18n::t(QStringLiteral("打开草图")));
+        addElementsQuiet(kept);
+
+        // 以下顺序严格镜像 MainWindow::readDrawingImpl 的 JSON 重建段落：
+        // 图层 → 块 → 文字样式 → 标注样式 → 过滤器 → 布局 → 引用诊断 → 随图元数据 → 幅面 → BOM → 比例。
+        setLayersFromJson(root.value(QStringLiteral("layers")).toArray());
+        setBlocksFromJson(root.value(QStringLiteral("blocks")).toArray());
+        setTextStylesFromJson(root.value(QStringLiteral("textStyles")).toArray());
+        setDimStylesFromJson(root.value(QStringLiteral("dimStyles")).toObject());
+        setSavedFiltersFromJson(root.value(QStringLiteral("savedFilters")).toArray());
+        setLayoutsFromJson(root);
+
+        {
+            std::vector<QString> lns, bns, sns;
+            for (int i = 0; i < layerCount(); ++i) lns.push_back(layerAt(i).name);
+            for (const auto& b : blockTable()) bns.push_back(b.name);
+            for (int i = 0; i < textStyleCount(); ++i) sns.push_back(textStyleAt(i).name);
+            QString drep;
+            const int dangling = countDanglingRefs(kept, lns, bns, sns, &drep);
+            if (dangling > 0)
+                log(I18n::t(QStringLiteral("打开校验：%1 个图元引用了不存在的图层/块/样式或悬空几何：%2"))
+                        .arg(dangling).arg(drep), QStringLiteral("warn"));
+        }
+
+        // 四项随图元数据并入「打开草图」同一撤销步，避免一次开档被拆成多步 Ctrl+Z。
+        {
+            UndoGuard guard(this);
+            setUnits(UnitsMeta::fromJson(root.value(QStringLiteral("units")).toObject()));
+            setLimits(LimitsMeta::fromJson(root.value(QStringLiteral("limits")).toObject()));
+            setSnapConfig(snap::SnapConfig::fromJson(root.value(QStringLiteral("snapConfig")).toObject()));
+            setTrackConfig(snap::TrackConfig::fromJson(root.value(QStringLiteral("trackConfig")).toObject()));
+        }
+        setConstraintsFromJson(root.value(QStringLiteral("constraints")).toArray());
+        setParamsFromJson(root.value(QStringLiteral("params")).toObject());
+        // 源码权威键是 "properties"（用户口径的 props）；不重命名、不新增输出键。
+        setPropsFromJson(root.value(QStringLiteral("properties")).toObject());
+
+        if (auto sp = sheetSpecFromJson(root.value(QStringLiteral("sheet")).toObject()))
+            setSheetSpec(*sp);
+        else if (auto inf = inferSheetSpecFromFrame())
+            setSheetSpec(*inf);
+        setBomFromJson(root.value(QStringLiteral("bom")).toArray());
+
+        if (root.contains(QStringLiteral("scaleRatio")))
+            setScaleRatioValue(root.value(QStringLiteral("scaleRatio")).toDouble(1.0));
+        if (root.contains(QStringLiteral("ltscale")))
+            setLtscale(root.value(QStringLiteral("ltscale")).toDouble(1.0));
+        // core API 无文件路径语义；GUI 外壳按「未命名新文档」处理，不让临时路径进入 xref 基准。
+        setDrawingPath(QString());
+
+        // 标题栏比例域同步：原 GUI 侧 syncTitleBlockScale 的模型部分。
+        // 下沉到 core 后，GUI 路径与 core API 路径的 toDrawingBytes() 才能逐键一致。
+        const QString label = scaleLabel();
+        std::vector<int> need;
+        for (const auto& e : elements())
+            if (e.name == QStringLiteral("tb:field:scale") && e.text != label)
+                need.push_back(e.id);
+        for (int id : need)
+            updateElementQuiet(id, [&label](Element& x) { x.text = label; });
+
+        log(I18n::t(QStringLiteral("已导入草图 JSON（比例 %1）")).arg(label), QStringLiteral("info"));
+    } catch (const std::bad_alloc&) {
+        clear();   // 恢复到已知空态，绝不带着半张图继续运行
+        return fail(QStringLiteral("内存不足，已停止加载"));
+    }
+
+    if (errOut) errOut->clear();
+    return true;
 }
 
 // 修改绘图比例：把已有图元（不含图框/标题栏）按内容包围盒中心等比缩放。

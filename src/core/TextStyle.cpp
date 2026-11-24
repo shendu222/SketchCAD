@@ -190,6 +190,14 @@ ResolvedTextStyle resolveTextStyle(const Element& e, const SketchModel* model) {
     ResolvedTextStyle r;
     const TextStyle* ts = nullptr;
     if (model && !e.styleName.isEmpty()) ts = model->findTextStyle(e.styleName);
+    // GB/T 14691：尺寸标注数字统一长仿宋体。命令行 dim / QDIM / 智能标注 /
+    // 交互标注 / 零件库 mkDim / 宿主 API 等创建路径历史上未写 styleName，
+    // 旧档标注亦可能为空；此处按图元类型兜底，保证屏幕/打印/导出的标注文字
+    // 一律解析为长仿宋体（不改写图元数据、不影响其它文字类型）。
+    static const TextStyle kDimFallback = gbLongFangSongStyle();
+    if (e.type == ElementType::Dimension && (!ts || ts->fontFamily.isEmpty())) {
+        ts = &kDimFallback;
+    }
     r.fontFamily     = ts ? ts->fontFamily : QString();
     r.widthFactor    = (ts ? ts->widthFactor : 1.0) * (e.widthFactor > 0 ? e.widthFactor : 1.0);
     r.obliquingAngle = ts ? ts->obliquingAngle : 0.0;

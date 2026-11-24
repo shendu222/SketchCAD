@@ -20,6 +20,9 @@ set(CMAKE_CXX_COMPILER "C:/Qt/Tools/mingw1310_64/bin/g++.exe")
 
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets PrintSupport Qml Concurrent LinguistTools Sql)
 
+# 命令目录 JSON 随构建产物复制到 <build>/config，程序启动从 exe 同级 config 读取。
+configure_file(config/command_catalog.json ${CMAKE_BINARY_DIR}/config/command_catalog.json COPYONLY)
+
 # ---- DRY：公共核心源文件列表，供所有目标共用 ----
 set(CORE_SOURCES
     src/core/Element.cpp
@@ -44,7 +47,8 @@ set(CORE_SOURCES
     src/core/Snap.cpp
     src/core/SketchModel.cpp
     src/core/CommandInterpreter.cpp
-    src/core/CommandCatalog.cpp    # 命令元数据目录 + 面板纯逻辑 + 快捷键审计（纯数据层，可无头直测）
+    src/core/CommandCatalog.cpp       # 命令元数据目录 + 面板纯逻辑 + 快捷键审计（纯数据层，可无头直测）
+    src/core/CommandCatalogConfig.cpp # JSON 命令目录读取/校验/保存（启动时驱动 add 注册）
     src/core/BomItem.cpp           # P2：序号球标纯生成器 + BomItem 数据模型
     src/core/InvoluteGear.cpp       # P4：渐开线齿轮齿廓采样生成器（G1 公式）
     src/core/PartLibrary.cpp        # P4：零件库抽象（PartGenerator 接口 + GearGenerator 内建）
@@ -75,8 +79,6 @@ set(CORE_SOURCES
     src/core/weld/WeldSymbol.cpp       # 焊缝符号（GB/T 324）：buildWeldSymbol 组合既图元 + WELD 命令几何生成
     src/core/CenterLineGen.cpp   # P1 中心线家族生成器（10 种，纯函数 + 单文件自测接入 SketchSelfTest）
     src/core/SymbolFactory.cpp   # P3 符号标注扩展（datum/weld/taper/centerhole/elevation/rotation 6 类纯生成器）
-    src/core/SectionCutSymbol.cpp
-    src/core/SectionDrawing.cpp
     src/core/ConstraintSolver.cpp
     src/core/LegacyConstraintSolver.cpp   # SKT 集成 Phase B：修复模型委托实现（IConstraintSolver）
     src/core/ConstraintSolverFacade.cpp   # SKT 集成 Phase B：路由门面（特性开关+回落，单例）
@@ -89,12 +91,6 @@ set(CORE_SOURCES
     src/core/UndoDelta.cpp        # 撤销栈差量化（变更集 + 每 50 步全量检查点）
     src/core/Clipboard.cpp
     src/core/Cleanup.cpp
-    src/core/AircraftViews.cpp
-    src/core/FlangeViews.cpp
-    src/core/BearingViews.cpp
-    src/core/HousingViews.cpp
-    src/core/FlangeHubViews.cpp
-    src/core/FloorPlanViews.cpp
     src/core/Section.cpp
     src/core/HatchLibrary.cpp
     src/core/Gdt.cpp   # GD&T: 多重引线(MLeader) + 形位公差框格(Fcf) 几何生成器
@@ -136,13 +132,22 @@ set(CORE_SOURCES
 # 代码**（LibreDWG 是独立 GPL exe，转换器本体在 ../../thirdparty/libredwg-0.14，
 # 独立构建，绝不进入本工程的任何目标）。独立成库的目的是物理隔离：UI 层与
 # 主程序其他源文件无法绕过桥直接触碰转换器，链接边界即审计边界。
-add_library(SketchDwgBridge STATIC src/core/DwgBridge.cpp)
+add_library(sketchcad_dwgbridge STATIC src/core/DwgBridge.cpp)
+# 兼容旧目标的链接名；实际构建产物与编译设置均归 sketchcad_dwgbridge 所有。
+add_library(SketchDwgBridge ALIAS sketchcad_dwgbridge)
 # Qt6::Gui：CadFormats.h → Element.h 链上引用 QColor（仅取头路径，桥逻辑本身只用 Core）
-target_link_libraries(SketchDwgBridge PUBLIC Qt6::Core Qt6::Gui)
-target_compile_options(SketchDwgBridge PRIVATE -Wall -Wextra)
+target_link_libraries(sketchcad_dwgbridge PUBLIC Qt6::Core Qt6::Gui)
+target_include_directories(sketchcad_dwgbridge PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(sketchcad_dwgbridge PRIVATE -Wall -Wextra)
 
 set(UI_SOURCES
     src/ui/GraphicsView.cpp
+    src/ui/ActionFactory.h      # QAction 统一工厂（Builder 规格 + Factory Method）
+    src/ui/CommandCatalogEditor.cpp # 命令目录 JSON 维护界面（命令/参数 CRUD）
+    src/ui/UiMetrics.cpp        # 界面密度与响应式尺寸单一数据源
+    src/ui/PenRecipes.cpp       # 派生画笔配方（尺寸细实线 / 追踪引导线）
     src/ui/DeleteKeyFilter.cpp  # Del 键应用级兜底：绕开 QShortcutMap 吞键，纯 Qt Widgets 依赖
     src/ui/ThemeManager.cpp     # 内置亮/暗主题单例（setColorScheme + 画布背景色 + themeChanged 广播）
     src/ui/DrawingTheme.cpp     # 绘图区域全套主题配色（网格/坐标轴/引导线/HUD/徽标/选中/约束…）
@@ -177,12 +182,6 @@ set(UI_SOURCES
     src/ui/PaperSizeDialog.cpp
     src/ui/TitleBlockForm.cpp
     src/ui/ModifyInputDialog.cpp
-    src/ui/AircraftViewsDialog.cpp
-    src/ui/FlangeViewsDialog.cpp
-    src/ui/BearingViewsDialog.cpp
-    src/ui/HousingViewsDialog.cpp
-    src/ui/FlangeHubViewsDialog.cpp
-    src/ui/FloorPlanViewsDialog.cpp
     src/ui/ArrayDialog.cpp
     src/ui/BlockDialogs.cpp
     src/ui/BlockEditorDialog.cpp
@@ -216,17 +215,91 @@ set(UI_SOURCES
     src/ui/AiAssistantPanel.cpp     # AI 自然语言助手对话面板（流式显示 + 命令审批条）
 )
 
+# ---- 静态库分层：core / gui / dwgbridge ----
+# 三个库只承载实现与依赖传播；启动画面、主题、翻译、诊断的调用顺序仍完全由
+# src/main.cpp 控制，故不会因拆库而改变运行期行为。
+add_library(sketchcad_core STATIC ${CORE_SOURCES})
+# core 直接用到：QtCore（JSON/IO/插件）、QtGui（QColor/QFont/QPageLayout/剪贴板）、
+# QtQml（QJSEngine 脚本宿主）、QtSql（DrawingDb）、QtNetwork（AI 后端）。
+target_link_libraries(sketchcad_core PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Qml
+    Qt6::Sql
+    Qt6::Network
+    sketchcad_dwgbridge)
+target_include_directories(sketchcad_core PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(sketchcad_core PRIVATE -Wall -Wextra)
+# Diagnostics.cpp 位于 core；崩溃转储宏与 dbghelp 必须随编译/链接该实现的库走，
+# 否则拆库后主程序的 mini-dump 能力会静默消失。自测仍直接编译 CORE_SOURCES，
+# 不链接 sketchcad_core，因此保持「无宏、无 dbghelp」的纯无头语义。
+if(WIN32)
+    target_compile_definitions(sketchcad_core PRIVATE SKETCHCAD_ENABLE_CRASHHANDLER=1)
+    target_link_libraries(sketchcad_core PUBLIC dbghelp)
+endif()
+
+add_library(sketchcad_gui STATIC ${UI_SOURCES})
+# gui 直接用到：Widgets（面板/对话框）、PrintSupport（打印/预览/发布）、
+# Sql（DbConfigDialog）；Core/Gui/Qml/Network 由 sketchcad_core 传播。
+target_link_libraries(sketchcad_gui PUBLIC
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::PrintSupport
+    Qt6::Sql
+    sketchcad_core
+    sketchcad_dwgbridge)
+target_include_directories(sketchcad_gui PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(sketchcad_gui PRIVATE -Wall -Wextra)
+
 # ---- 主程序 ----
 add_executable(SketchCAD
     src/main.cpp
     src/ui/MainWindow.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
 )
-target_link_libraries(SketchCAD PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql Qt6::Network SketchDwgBridge)
-target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_link_libraries(SketchCAD PRIVATE
+    sketchcad_gui
+    sketchcad_core
+    sketchcad_dwgbridge
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::PrintSupport
+    Qt6::Concurrent)
+target_include_directories(SketchCAD PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(SketchCAD PRIVATE -Wall -Wextra)
+
+# ---- 双模式运行：SketchCAD 本体作为动态库被外部宿主加载 --------------------
+# SketchCAD.exe（上方）保持独立运行能力不变；本目标复用同一组静态库，额外导出
+# sdk/include/SketchCAD/hosting_abi.h 定义的纯 C 接口，供 OpenMBD Studio 以
+# QLibrary 动态加载。两条路径共享源码、共享 Qt 工具链，但不共享全局状态。
+#
+# -fvisibility=hidden：杜绝把 sketchCAD 内部 C++/moc 符号泄漏到宿主进程，
+# 避免与宿主静态链接的交换桥（ombd::sketchcad）发生符号互覆盖；只有显式
+# SKETCHCAD_HOSTING_ABI_EXPORT 的 C 符号对外可见。
+add_library(SketchCadPlugin SHARED src/host/SketchCadHosting.cpp)
+target_compile_definitions(SketchCadPlugin PRIVATE SKETCHCAD_HOSTING_ABI_BUILD)
+target_compile_options(SketchCadPlugin PRIVATE
+    -Wall -Wextra -fvisibility=hidden -fvisibility-inlines-hidden)
+target_include_directories(SketchCadPlugin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_link_libraries(SketchCadPlugin PRIVATE
+    sketchcad_gui
+    sketchcad_core
+    sketchcad_dwgbridge
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::PrintSupport
+    Qt6::Qml Qt6::Sql Qt6::Network Qt6::Concurrent)
+set_target_properties(SketchCadPlugin PROPERTIES
+    OUTPUT_NAME "SketchCadPlugin"
+    PREFIX ""
+    FOLDER "SketchCAD/SDK")
 
 # ---- D1b：部署 DWG 外部转换器（LibreDWG，独立构建）到运行时 tools/dwg/ ----
 # 必须置于 add_executable(SketchCAD) 之后（POST_BUILD 依赖该目标已存在）。
@@ -286,12 +359,8 @@ if(WIN32)
     target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 
-# 崩溃转储需要 dbghelp（MiniDumpWriteDump）。仅主程序启用：
-# 自测目标 SketchSelfTest 不定义 SKETCHCAD_ENABLE_CRASHHANDLER、不链 dbghelp，保持纯净无头。
-if(WIN32)
-    target_link_libraries(SketchCAD PRIVATE dbghelp)
-    target_compile_definitions(SketchCAD PRIVATE SKETCHCAD_ENABLE_CRASHHANDLER=1)
-endif()
+# 崩溃转储的宏与 dbghelp 已随 Diagnostics.cpp 一并迁移到 sketchcad_core；
+# SketchSelfTest 仍直接编译 CORE_SOURCES，不链接该库，保持纯净无头语义。
 
 # ===================== 国际化（Qt Linguist：ts → qm → 资源内嵌）=====================
 # 中文为源语言：sketchcad_en.ts 存英文译文（lupdate 从 tr() 抽取中文源串），
@@ -337,6 +406,7 @@ add_executable(SketchSelfTest
     src/ui/StatusBar.cpp            # 状态栏开关按钮 retranslate（语言切换即时刷新），供 t_i18nEnglishCoverage
     src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
     src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
+    src/ui/PenRecipes.cpp           # GraphicsView 依赖的派生画笔配方（尺寸细实线 / 追踪引导线）
     # ---- DEL 键端到端交互自测（t_deleteKeyInteraction）：真实 GraphicsView + 真实 QKeyEvent ----
     # 只接入 GraphicsView 及其最小依赖闭包（工具层 + 两个被工具引用的对话框），
     # 不含 MainWindow/其余面板，保持自测目标无头、可直注按键事件。
@@ -428,21 +498,6 @@ target_include_directories(PlotStyleSamples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(PlotStyleSamples PRIVATE -Wall -Wextra)
 
-# ===================== README 配图生成器（模板图纸离屏渲染 PNG）=====================
-# 六个参数化模板（法兰/箱体/轴承座/法兰轮毂/户型/飞机三面图）经 PrintEngine
-# 真实渲染链产出 docs/images/*.png，供 README「图文并茂」配图。仅供文档出图。
-add_executable(ReadmeShots
-    bench/ReadmeShots.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(ReadmeShots PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(ReadmeShots PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(ReadmeShots PRIVATE -Wall -Wextra)
-
 # ===================== DWG 打开核验（交互同读档链 → 离屏渲染 PNG）=====================
 # fromDwg → $INSUNITS 换算 → addBlockDef 注册块定义 → filterElements → GraphicsView
 # 渲染 PNG，用于与正确 CAD 的截图逐图对比（如施工图纸库 C0层.dwg 的块内容完整性）。
@@ -466,11 +521,14 @@ option(SCRIPTHOST_ENABLE_VBA    "Windows Script Host，支持 VBA/VBScript 脚�
 
 if(SCRIPTHOST_ENABLE_PYTHON)
   find_package(Python3 REQUIRED COMPONENTS Development)
-  foreach(tgt SketchCAD SketchSelfTest)
-    target_sources(${tgt} PRIVATE src/core/PythonEngine.cpp)
-    target_compile_definitions(${tgt} PRIVATE SCRIPTHOST_ENABLE_PYTHON)
-    target_link_libraries(${tgt} PRIVATE Python3::Python)
-  endforeach()
+  # 主程序经 sketchcad_core 获得引擎；SketchCAD 目标仍只含 main.cpp + MainWindow.cpp。
+  target_sources(sketchcad_core PRIVATE src/core/PythonEngine.cpp)
+  target_compile_definitions(sketchcad_core PRIVATE SCRIPTHOST_ENABLE_PYTHON)
+  target_link_libraries(sketchcad_core PUBLIC Python3::Python)
+  # 自测仍直接编译 CORE_SOURCES，保持原有可选引擎链路。
+  target_sources(SketchSelfTest PRIVATE src/core/PythonEngine.cpp)
+  target_compile_definitions(SketchSelfTest PRIVATE SCRIPTHOST_ENABLE_PYTHON)
+  target_link_libraries(SketchSelfTest PRIVATE Python3::Python)
   message(STATUS "脚本宿主：Python 引擎已启用")
 endif()
 
@@ -478,11 +536,12 @@ if(SCRIPTHOST_ENABLE_VBA)
   if(NOT WIN32)
     message(WARNING "SCRIPTHOST_ENABLE_VBA 仅在 Windows 平台有效，已忽略")
   else()
-    foreach(tgt SketchCAD SketchSelfTest)
-      target_sources(${tgt} PRIVATE src/core/VbaEngine.cpp)
-      target_compile_definitions(${tgt} PRIVATE SCRIPTHOST_ENABLE_VBA)
-      target_link_libraries(${tgt} PRIVATE ole32 oleaut32)
-    endforeach()
+    target_sources(sketchcad_core PRIVATE src/core/VbaEngine.cpp)
+    target_compile_definitions(sketchcad_core PRIVATE SCRIPTHOST_ENABLE_VBA)
+    target_link_libraries(sketchcad_core PUBLIC ole32 oleaut32)
+    target_sources(SketchSelfTest PRIVATE src/core/VbaEngine.cpp)
+    target_compile_definitions(SketchSelfTest PRIVATE SCRIPTHOST_ENABLE_VBA)
+    target_link_libraries(SketchSelfTest PRIVATE ole32 oleaut32)
     message(STATUS "脚本宿主：VBA 引擎已启用")
   endif()
 endif()

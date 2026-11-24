@@ -9,7 +9,7 @@
 // ----------------------------------------------------------------------------
 // 设计要点（对照《功能扩充方案_参考CAD对照.md》P3 提示词）：
 //   * 统一入口 SymbolFactory::mkSymbol(name, anchor, params) -> vector<Element>，
-//     与 SectionCutSymbol / SurfaceRoughness 同源「纯函数生成器」范式；调用方负责 append 进模型。
+//     与 SurfaceRoughness 同源「纯函数生成器」范式；调用方负责 append 进模型。
 //   * 产物为 Line / Text / Circle 组合，复用既有 ElementType，不新增枚举（满足 FORBID：不改枚举）。
 //   * 各符号的尺寸均为 GB 简化示意定值（由本模块集中提供，AI 不擅自改写国标数值语义）。
 //   * 未知 name → 返回空 vector（退化）；其余按 params 取值，缺省走合理默认值。

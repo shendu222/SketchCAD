@@ -18,7 +18,7 @@
 >
 > **下载地址**：[https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) · 完整发布说明见 [RELEASE_NOTES.md](RELEASE_NOTES.md)
 
-SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程；内置法兰、箱体、轴承、剖切、工艺三视图等**参数化制图模板**，输入参数即可自动生成成套图面。
+SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程。
 
 ---
 
@@ -29,7 +29,6 @@ SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图�
 | **轻量原生** | 纯 Qt Widgets 实现，**零外部几何库**——DXF / STEP 读写、剖面填充、约束求解均为自研 |
 | **国标优先** | 线宽组别、线型、图框、尺寸注法、剖面、粗糙度遵循 **GB/T 系列标准**（GB/T 4458 / GB/T 14665），支持一键切换 ISO |
 | **双模式交互** | 菜单、工具栏、鼠标直接绘制；同时支持底部**命令行**精确输入，如 `line 0,0 50,0` |
-| **参数化模板** | 法兰盘、箱体、轴承、法兰毂、剖切、工艺三视图等模板，给定参数自动生成三视图、剖面、标注与图签 |
 | **命令生态** | 60+ 绘图与编辑命令，支持正交 / 栅格吸附 / 极轴追踪 / 对象捕捉 / 约束求解 |
 | **扩展能力** | JavaScript 脚本、宏录制、CUI 别名、SDK 插件（C++ API）与 Windows COM 自动化 |
 | **工程自证** | 403 项自测全部通过，0 警告编译，含性能基准与离屏渲染比对 |
@@ -60,17 +59,6 @@ SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图�
 | **标注约束** | `dim`, `dims`, `constraint`, `perp`, `tangent2`, `qconnect` |
 | **正交捕捉** | `ortho`, `snap`, `dyn`, `polar`, `otrack`, `tk` |
 | **宏与通用** | `macrorec`, `undo`, `redo`, `clear`, `help` |
-
-### 🗂️ 专用制图视图（参数化模板）
-
-| 视图 | 说明 | 效果预览 |
-| :--- | :--- | :--- |
-| **旗板视图** `FlangeViews` | 钣金展开图，支持 GB 标准件参数化 | <img src="docs/images/flange_views.png" width="240" alt="旗板视图" /> |
-| **箱体视图** `HousingViews` | 箱体加工图 + GB 标准件图库 | <img src="docs/images/housing_views.png" width="240" alt="箱体视图" /> |
-| **轴承视图** `BearingViews` | 轴承选型计算，含 GB 标准数据库 | <img src="docs/images/bearing_views.png" width="240" alt="轴承视图" /> |
-| **法兰毂视图** `FlangeHubViews` | 法兰 + 毂参数化设计 | <img src="docs/images/flangehub_views.png" width="240" alt="法兰毂视图" /> |
-| **剖切视图** `FloorPlanViews` | 剖切平面定义，支持剖面线填充 | <img src="docs/images/floorplan_views.png" width="240" alt="剖切视图" /> |
-| **工艺视图** `AircraftViews` | 工艺路线标注与尺寸链计算 | <img src="docs/images/aircraft_threeview.png" width="240" alt="工艺三视图" /> |
 
 ### 💾 数据格式支持
 
@@ -163,8 +151,7 @@ sketch-cad-cpp/
 │   │   ├── LineModes... + Geometry + Snap  # 绘图模式与几何捕捉
 │   │   ├── Modify + Trim + ConstraintSolver# 编辑与约束求解
 │   │   ├── CommandInterpreter + CuiManager # 命令解析器与别名
-│   │   ├── CadFormats         # JSON / DXF / STEP / DWG 格式支持
-│   │   └── FlangeViews...     # 专用参数化视图系统
+│   │   └── CadFormats         # JSON / DXF / STEP / DWG 格式支持
 │   ├── ui/
 │   │   ├── MainWindow + GraphicsView       # 主界面与图形视图
 │   │   ├── tools/ + CommandLine            # 交互工具与命令行

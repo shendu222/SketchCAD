@@ -1,4 +1,5 @@
 #include "core/I18n.h"
+#include "CommandCatalog.h" // 命令全集来自唯一目录
 #include "CommandInterpreter.h"
 #include "MacroScript.h"
 #include "AliasTable.h"
@@ -67,13 +68,10 @@ const QStringList& CommandInterpreter::selectCommandNames() {
 }
 
 QStringList CommandInterpreter::commandNames() {
-    QStringList names = CommandRegistry::instance().exactNames();
-    names << lineSubModeNames();
-    names << splineCommandNames();
-    names << ellipseCommandNames();
-    names << polylineCommandNames();
-    names << selectCommandNames();
-    return names;
+    // 唯一数据源：CommandCatalog。增删命令只维护 CommandCatalog.cpp，
+    // help 总表 / Tab 补全 / 命令面板 / AI 提示词注入自动同步。
+    // 注册表仍负责实际分派；上面的家族列表保留仅为兼容旧调用。
+    return CommandCatalog::names();
 }
 
 QStringList CommandInterpreter::completions(const QString& prefix) const {

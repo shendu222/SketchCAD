@@ -18,7 +18,7 @@
 >
 > **Download**: [https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) · Full release notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
 
-SketchCAD targets engineering drafting: standards-compliant lineweights, linetypes, drawing frames, dimensioning and section annotations, covering general mechanical and aerospace drafting workflows. Built-in **parametric drafting templates** for flanges, housings, bearings, sections and process three-view drawings generate a complete drawing sheet from a few parameters.
+SketchCAD targets engineering drafting: standards-compliant lineweights, linetypes, drawing frames, dimensioning and section annotations, covering general mechanical and aerospace drafting workflows.
 
 ---
 
@@ -29,7 +29,6 @@ SketchCAD targets engineering drafting: standards-compliant lineweights, linetyp
 | **Lightweight and native** | Pure Qt Widgets implementation with **no external geometry kernel** — DXF / STEP I/O, hatching and constraint solving are all in-house |
 | **Standards first** | Lineweight groups, linetypes, drawing frames, dimensioning, sections and surface roughness follow the **GB/T series** (GB/T 4458 / GB/T 14665); one-click ISO switch |
 | **Dual interaction modes** | Menus, toolbars and direct mouse drawing, plus a bottom **command line** for precise input such as `line 0,0 50,0` |
-| **Parametric templates** | Flange, housing, bearing, flange-hub, section and process three-view templates generate views, sections, dimensions and title blocks from parameters |
 | **Command ecosystem** | 60+ drawing and editing commands with ortho / grid snap / polar tracking / object snap / constraint solving |
 | **Extensibility** | JavaScript scripting, macro recording, CUI aliases, SDK plugins (C++ API) and Windows COM automation |
 | **Engineering self-verification** | 403 self-tests passing, zero-warning build, performance benchmarks and offscreen render comparison |
@@ -60,17 +59,6 @@ Classic CAD layout: top menus (File / Plot / Tracking / Edit / Draw / Measure &&
 | **Dimensions & constraints** | `dim`, `dims`, `constraint`, `perp`, `tangent2`, `qconnect` |
 | **Ortho & snapping** | `ortho`, `snap`, `dyn`, `polar`, `otrack`, `tk` |
 | **Macros & general** | `macrorec`, `undo`, `redo`, `clear`, `help` |
-
-### 🗂️ Dedicated Drafting Views (Parametric Templates)
-
-| View | Description | Preview |
-| :--- | :--- | :--- |
-| **Flange plate view** `FlangeViews` | Sheet-metal development with GB standard-part parameters | <img src="docs/images/flange_views.png" width="240" alt="Flange plate view" /> |
-| **Housing view** `HousingViews` | Housing machining drawing + GB standard-part library | <img src="docs/images/housing_views.png" width="240" alt="Housing view" /> |
-| **Bearing view** `BearingViews` | Bearing selection calculations with a GB standard database | <img src="docs/images/bearing_views.png" width="240" alt="Bearing view" /> |
-| **Flange-hub view** `FlangeHubViews` | Parametric flange + hub design | <img src="docs/images/flangehub_views.png" width="240" alt="Flange-hub view" /> |
-| **Section view** `FloorPlanViews` | Section plane definition with hatch support | <img src="docs/images/floorplan_views.png" width="240" alt="Section view" /> |
-| **Process view** `AircraftViews` | Process route annotation and dimension-chain calculation | <img src="docs/images/aircraft_threeview.png" width="240" alt="Process three-view drawing" /> |
 
 ### 💾 Data Format Support
 
@@ -163,8 +151,7 @@ sketch-cad-cpp/
 │   │   ├── LineModes... + Geometry + Snap  # Drawing modes and geometric snapping
 │   │   ├── Modify + Trim + ConstraintSolver# Editing and constraint solving
 │   │   ├── CommandInterpreter + CuiManager # Command parser and aliases
-│   │   ├── CadFormats         # JSON / DXF / STEP / DWG support
-│   │   └── FlangeViews...     # Dedicated parametric view system
+│   │   └── CadFormats         # JSON / DXF / STEP / DWG support
 │   ├── ui/
 │   │   ├── MainWindow + GraphicsView       # Main window and graphics view
 │   │   ├── tools/ + CommandLine            # Interactive tools and command line

@@ -1,7 +1,7 @@
 #pragma once
 // P6（Ch6 视图工具）：向视符号 / 孔轴投影 / 转角投影 生成器
 // ------------------------------------------------------------
-// 对标 SectionCutSymbol 的「符号生成范例」范式：纯生成器返回图元集合，调用方 append。
+// 遵循「符号生成范例」范式：纯生成器返回图元集合，调用方 append。
 // FORBID「自造投影矩阵（用既有 Transform）」：转角投影的方向旋转复用 geo::rotateAroundCentroid
 // （Geometry.h 既有 Transform 原语），其余仅用三角函数求方向向量，不构造投影矩阵。
 // Phase-1 直接返回 std::vector<Element>（与 P1/P3/P4 一致）；IO_SPEC 的「符号 BlockRef」打包

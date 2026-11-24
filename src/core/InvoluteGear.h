@@ -6,7 +6,7 @@
 //     齿数/模数/压力角为参数，符合提示词 IO_SPEC。
 //   * 渐开线方程采用「人工给定(G1)」标准公式 involute(rb, t)，禁止自造其它表达式
 //     （见提示词 FORBID）。本文件即该公式的唯一权威实现点。
-//   * PartLibrary 把 FlangeViews/AircraftViews 的「参数 → Elements」模式收敛为统一接口，
+//   * PartLibrary 把「参数 → Elements」零件生成模式收敛为统一接口，
 //     InvoluteGear 作为首个具体零件生成器接入（P5 会在此框架下扩展 GB 标准件出库）。
 #include <vector>
 #include "Vec.h"

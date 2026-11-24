@@ -24,6 +24,7 @@
 #include "ui/DocTab.h"            // DocManager / DocSession（多文档标签会话）
 
 class QDockWidget;
+class QResizeEvent;
 class QToolBar;
 class QAction;
 class QActionGroup;
@@ -328,6 +329,11 @@ private:
     // 在真实屏幕上下文中再校正一次（避免窗口管理器首次 show 覆盖程序设定的位置）。
     void ensureVisibleOnScreen();
     void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    // 跨屏幕/窗口尺寸阈值时统一重排工具条、参数条与停靠面板比例。
+    // 只在密度档位变化时生效，避免 resize 递归与用户手动调整被反复覆盖。
+    void applyResponsiveLayout();
+    int lastLayoutDensity_ = -1; // 上次应用的 ui::UiMetrics::Density，-1=尚未应用
     bool firstShow_ = true;     // 仅在首次 show 时校正几何，避免干扰用户后续的手动缩放/移动
 
     void saveFile();
@@ -354,8 +360,11 @@ private:
     void openDrawingFromDb(int id);
     // templates 表按 id 取回 JSON + 参考尺寸 -> readDrawing -> 按用户新尺寸 setScaleRatio（同形异尺寸）
     void applyTemplateFromDb(int id);
-    // 共用：把 JSON 文本落临时文件并经 openDocInteractive/readDrawing 载入（返回是否成功）
+    // 兼容旧调用名：纯转发到 openDocFromJsonBytes，不再写临时文件、不再走 readDrawing。
+    // 解析/重建语义由 SketchModel::applyDrawingJson 单一承载。
     bool loadDrawingJsonViaTempFile(const QString& json, QString* errOut);
+    // GUI 外壳：新建文档标签 + 读后刷新；模型重建一行转发给 core API。
+    bool openDocFromJsonBytes(const QByteArray& bytes, QString* errOut);
 
     // ---- 启动页：启动=继续上次工作 ----
     // 恢复项优先（P0-02 快照），其次 新建（空白 / A0~A4 模板+标题栏样式）/ 打开最近 / 打开其他。

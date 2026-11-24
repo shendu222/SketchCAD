@@ -435,11 +435,11 @@ QByteArray toDxf(const std::vector<Element>& elems, QString* err,
     L << "0" << "TABLE" << "2" << "DIMSTYLE" << "70" << "1"
       << "0" << "DIMSTYLE" << "2" << "STANDARD" << "70" << "0"
       << "40" << "1.0"                       // DIMSCALE 全局比例
-      << "41" << "3.5"                       // DIMASZ  箭头大小
+      << "41" << num(dimSt.arrowLen)         // DIMASZ  箭头大小（与 dim::Style 同源）
       << "42" << "0.0"                       // DIMEXO  界线起点偏移
       << "43" << "10.0"                      // DIMDLI  基线间距
       << "44" << "2.5"                       // DIMEXE  界线超出量
-      << "140" << "3.5"                      // DIMTXT  标注字高
+      << "140" << num(dimSt.textHeight)      // DIMTXT  标注字高（与 dim::Style 同源）
       << "141" << "0.0"                      // DIMCEN  圆心标记（关）
       << "142" << "0.0"                      // DIMTSZ  斜线尺寸（0=箭头）
       << "144" << num(dimlfac)               // DIMLFAC 线性测量比例因子

@@ -12,8 +12,8 @@ namespace SketchCAD {
 // ============================================================
 // 设计要点：
 //   1. 纯数据 + 纯逻辑，无 QtWidgets 依赖，可无头直测（与 AliasTable 同层）。
-//   2. name 必须与 CommandRegistry::registerExact 注册名一致（小写）；
-//      未收录的命令仍会出现在 help 总表 / 命令面板（回落条目），只是没有详细字段。
+//   2. name 必须与 CommandRegistry::registerExact / registerPrefix 实际可执行名一致（小写）；
+//      本目录是内置命令元数据的唯一来源，help、AI 提示词、Tab 补全与命令面板均从这里取名。
 //   3. usage 字符串全部取自各命令实现内的「用法：」错误提示或 Commands.h
 //      家族注释，保证帮助文本与真实解析行为同源，不凭空编造。
 //   4. 帮助文本只影响展示输出，不参与命令解析（HelpCommand 仍按注册名分派）。
@@ -34,8 +34,21 @@ struct CommandInfo {
 
 namespace CommandCatalog {
 
-/// 静态元数据表（进程级共享，首次调用构造）。
+/// 元数据表（进程级共享，首次调用从 JSON 配置加载）。
 const QVector<CommandInfo>& entries();
+
+/// 强制从 JSON 配置重新加载；成功返回 true。
+bool reload(QString* error = nullptr);
+
+/// 最近一次配置加载错误；为空表示加载成功。
+QString lastLoadError();
+
+/// 当前使用的配置文件绝对路径。
+QString configPath();
+
+/// 目录中的全部命令名，保持 entries() 的分组顺序。
+/// help 总表、AI 提示词注入、Tab 补全、命令面板均从这里取名，避免另维护名单。
+QStringList names();
 
 /// 按命令名精确查找（toLower 后匹配）；未收录返回 nullptr。
 const CommandInfo* find(const QString& name);

@@ -60,6 +60,13 @@ double standardTextHeightMm(SheetFormat f, bool chinese) {
     return chinese ? 5.0 : 3.5;
 }
 
+double standardDimTextHeightMm(SheetFormat f) {
+    // 尺寸数字比正文降一档：A0/A1 用 3.5mm，A2~A5 用 2.5mm（GB/T 14691 字号系列）。
+    // 位置/对齐公式不变（textGap + textHeight/2），仅视觉上更贴合图形比例。
+    const bool big = (f == SheetFormat::A0 || f == SheetFormat::A1);
+    return big ? 3.5 : 2.5;
+}
+
 // 进程内「当前图纸幅面」：默认 A3（A2/A3/A4 同档）。由「新建图纸」写入。
 static SheetFormat g_currentSheetFormat = SheetFormat::A3;
 SheetFormat currentSheetFormat() { return g_currentSheetFormat; }

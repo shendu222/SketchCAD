@@ -7,7 +7,7 @@ namespace NlTools {
 QVector<LlmTool> schemas() {
     QVector<LlmTool> t;
     t.append({ QStringLiteral("runSketchCommand"),
-        SketchCAD::I18n::t(QString::fromUtf8("执行一条 SketchCAD 命令（自然语言助手的主要动作入口）。参数 line 为完整命令串，由你根据用户输入理解语义、抽取参数后生成，语法与界面命令行完全一致，例如 \"circle 0,0 50\"、\"line 0,0 100,0\"、\"delete 7\"。自然语言参数抽取示例：「给我绘制一个圆心在0，0、半径为20的圆」→ \"circle 0,0 20\"。命令名与参数顺序必须严格遵守 system prompt 中的 usage；不确定时先用 getCommandHelp 查询。")),
+        SketchCAD::I18n::t(QString::fromUtf8("执行一条 SketchCAD 命令（自然语言助手的主要动作入口）。参数 line 为完整命令串，由你根据用户输入理解语义、抽取参数后生成。命令名称、用途、参数、示例与语法均严格以 system prompt 注入的 CommandCatalog 命令目录为准，不得使用目录之外的命令或猜测参数顺序；不确定时先用 getCommandHelp 查询。")),
         SketchCAD::I18n::t(QString::fromUtf8("{\"type\":\"object\",\"properties\":{\"line\":{\"type\":\"string\",\"description\":\"完整命令串\"}},\"required\":[\"line\"]}")) });
 
     t.append({ QStringLiteral("getSelection"),

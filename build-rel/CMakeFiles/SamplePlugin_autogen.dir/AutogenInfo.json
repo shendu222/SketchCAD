@@ -899,8 +899,11 @@
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/ReadmeShots_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchBenchmark_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCAD_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchDwgBridge_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp"
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCadPlugin_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_core_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_dwgbridge_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_gui_autogen/mocs_compilation.cpp"
 	],
 	"MULTI_CONFIG" : false,
 	"PARALLEL" : 14,
@@ -931,8 +934,11 @@
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/ReadmeShots_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchBenchmark_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCAD_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchDwgBridge_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp"
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchCadPlugin_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/SketchSelfTest_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_core_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_dwgbridge_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-rel/sketchcad_gui_autogen/mocs_compilation.cpp"
 	],
 	"UIC_UI_FILES" : [],
 	"USE_BETTER_GRAPH" : true,

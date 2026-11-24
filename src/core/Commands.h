@@ -249,9 +249,6 @@ class ClipCommand : public ICommand { public: bool execute(const CommandContext&
 //   xref path <块名>               打印该外部参照解析后的绝对路径（诊断用）
 class XrefCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 
-// ---- 飞机三面图（航空制图模板）----
-class AircraftViewsCommand : public ICommand { public: bool execute(const CommandContext&) override; };
-
 // ---- 帮助 ----
 class HelpCommand : public ICommand { public: bool execute(const CommandContext&) override; };
 

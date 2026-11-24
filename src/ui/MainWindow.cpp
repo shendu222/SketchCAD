@@ -37,9 +37,12 @@
 #include "ui/StandardsPanel.h"          // 工程制图合规检查面板（STDCHECK 结果展示）
 #include "core/standards/ComplianceChecker.h"  // 命令→面板刷新回调桥
 #include "ui/ThemeManager.h"    // 内置亮/暗主题：选项改动 → applySettingLive 即时重绘
+#include "ui/ActionFactory.h"   // 菜单/工具条 QAction 统一工厂（DRY）
+#include "ui/UiMetrics.h"       // 界面密度与响应式尺寸单一数据源
 #include "ui/RulerWidget.h"
 #include <QTabBar>
 #include <QStackedWidget>
+#include <QResizeEvent>
 #include <QShortcut>
 #include <QListWidget>     // 启动页「打开最近」列表
 #include <QGridLayout>     // 启动页模板按钮网格
@@ -66,12 +69,6 @@
 #include "ui/PaperSizeDialog.h"
 #include "ui/TitleBlockForm.h"
 #include "ui/ModifyInputDialog.h"
-#include "ui/AircraftViewsDialog.h"
-#include "ui/FlangeViewsDialog.h"
-#include "ui/BearingViewsDialog.h"
-#include "ui/HousingViewsDialog.h"
-#include "ui/FlangeHubViewsDialog.h"
-#include "ui/FloorPlanViewsDialog.h"
 #include "ui/ArrayDialog.h"
 #include "ui/BlockDialogs.h"
 #include "ui/BlockEditorDialog.h"
@@ -109,6 +106,7 @@
 #include "ui/AiAssistantPanel.h"        // 对话面板（流式显示 + 命令审批条）
 #include "core/RecentFiles.h"           // 最近文件 MRU（路径+时间+pin）
 #include "ui/OptionsDialog.h"           // 统一「选项」对话框（工具 → 选项...）
+#include "ui/CommandCatalogEditor.h"    // 工具 → 命令目录维护（JSON 命令目录 CRUD）
 #include "core/Diagnostics.h"           // 日志滚动落盘（供保存失败等记日志）
 #include "version.h"                    // 版本宏（由 CMake project VERSION 生成；关于对话框用）
 #include "ui/RewardConfig.h"            // 关于对话框「打赏」：内置收款码资源路径 + 可选降级配置
@@ -186,10 +184,6 @@
 
 namespace SketchCAD {
 
-// 工具条按钮统一最小宽度（px）：图标 20 + 文字 2 汉字 + 内边距，
-// 保证 1~2 个汉字的短按钮与长按钮对齐时不参差不齐（见 MainWindow::uniformButtonWidth）。
-static const int kToolButtonMinWidth = 64;
-
 MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     // 多文档会话表：首张图纸（会话 0）在构造期创建；model_/view_ 从此只是
     // 「活动文档」的借用指针，切换标签时由 switchToDoc 重绑（见 hookActiveDoc）。
@@ -197,6 +191,14 @@ MainWindow::MainWindow(QWidget* p) : QMainWindow(p) {
     DocSession* firstDoc = docs_->addNewDoc();
     model_ = firstDoc->model();
     interp_ = new CommandInterpreter(model_);
+
+    // 命令目录 JSON 启动校验：一旦缺失/损坏，立即给出可定位错误，
+    // 而不是等用户执行 help / AI 助手时才静默失败。
+    {
+        QString catalogError;
+        if (!SketchCAD::CommandCatalog::reload(&catalogError))
+            QMessageBox::critical(this, QStringLiteral("命令目录配置错误"), catalogError);
+    }
 
     // 脚本宿主：构建统一交互面与语言引擎策略表，并实时把脚本输出/错误汇入日志面板
     scriptHost_ = new ScriptHost(model_, interp_, this);
@@ -1066,8 +1068,71 @@ void MainWindow::showEvent(QShowEvent* event) {
     // 且窗口管理器完成初始定位后几何不被 WM 覆盖。
     if (firstShow_) {
         firstShow_ = false;
-        QTimer::singleShot(0, this, &MainWindow::ensureVisibleOnScreen);
+        QTimer::singleShot(0, this, [this] {
+            ensureVisibleOnScreen();
+            applyResponsiveLayout();
+        });
     }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    applyResponsiveLayout();
+}
+
+void MainWindow::applyResponsiveLayout() {
+    if (!paramBar_ || !bomDock_ || !propDock_ || width() <= 0) return;
+
+    using ui::UiMetrics;
+    const auto density = UiMetrics::densityFor(width());
+    const int densityKey = static_cast<int>(density);
+    if (densityKey == lastLayoutDensity_) return;
+    lastLayoutDensity_ = densityKey;
+
+    // 工具条：图标、内边距、间距、按钮最小宽全部由当前窗口密度档位驱动。
+    // 这里不调用 applyToolBarLook/uniformButtonWidth，因为它们按屏幕密度取默认值；
+    // 窗口从大屏拖到小屏时应以当前窗口宽度为准。
+    const auto toolbars = findChildren<QToolBar*>();
+    const int minButtonWidth = UiMetrics::toolButtonMinWidth(density);
+    for (QToolBar* tb : toolbars) {
+        if (!tb) continue;
+        tb->setIconSize(UiMetrics::toolBarIconSize(density));
+        if (QLayout* l = tb->layout()) {
+            l->setContentsMargins(UiMetrics::toolBarMarginH(density),
+                                  UiMetrics::toolBarMarginV(density),
+                                  UiMetrics::toolBarMarginH(density),
+                                  UiMetrics::toolBarMarginV(density));
+            l->setSpacing(UiMetrics::toolBarSpacing(density));
+        }
+        for (QToolButton* b : tb->findChildren<QToolButton*>())
+            if (b->minimumWidth() < minButtonWidth) b->setMinimumWidth(minButtonWidth);
+    }
+
+    // 参数输入条：窄屏收紧左右留白与控件宽，提示标签继续保留 stretch。
+    if (auto* layout = qobject_cast<QHBoxLayout*>(paramBar_->layout())) {
+        layout->setContentsMargins(UiMetrics::paramMarginH(density),
+                                   UiMetrics::paramMarginV(density),
+                                   UiMetrics::paramMarginH(density),
+                                   UiMetrics::paramMarginV(density));
+        layout->setSpacing(UiMetrics::paramSpacing(density));
+    }
+    if (sbAngle_)   sbAngle_->setFixedWidth(UiMetrics::angleSpinWidth(density));
+    if (sbLength_)  sbLength_->setFixedWidth(UiMetrics::valueSpinWidth(density));
+    if (sbSpacing_) sbSpacing_->setFixedWidth(UiMetrics::valueSpinWidth(density));
+    if (paramStyleBox_) paramStyleBox_->setMinimumWidth(UiMetrics::styleComboMinWidth(density));
+
+    // 停靠面板：只在密度切换时重设初始比例，不覆盖用户在同档位内的手动拖拽。
+    resizeDocks({bomDock_, propDock_},
+                {UiMetrics::leftDockWidth(density), UiMetrics::rightDockWidth(density)},
+                Qt::Horizontal);
+    resizeDocks({bomDock_, elemDock_, layerDock_},
+                {UiMetrics::leftDockVertical() / 2, UiMetrics::leftDockVertical() / 3,
+                 UiMetrics::leftDockVertical() / 6},
+                Qt::Vertical);
+    resizeDocks({propDock_, constraintDock_, logDock_},
+                {UiMetrics::rightDockVertical() * 2 / 5, UiMetrics::rightDockVertical() / 4,
+                 UiMetrics::rightDockVertical() * 7 / 20},
+                Qt::Vertical);
 }
 
 // 预设色板：工具条下拉与菜单子项共用同一份定义
@@ -1302,13 +1367,11 @@ void MainWindow::buildMenu() {
     // 「应用=亮色 + 系统暗色」错配态下原生 chrome 变暗而菜单文字仍是深色。
     bar->setStyleSheet(QStringLiteral("QMenuBar { background: palette(window); }"));
 
-    // 统一带快捷键的动作构造（键盘通路与鼠标菜单一一对应）
+    // 统一带快捷键的动作构造（键盘通路与鼠标菜单一一对应）。
+    // 构造细节下沉到 ActionFactory，菜单函数只声明“显示什么、按什么键、做什么”。
     auto mk = [this](QMenu* menu, const QString& text, const QKeySequence& key, auto fn) {
-        QAction* a = menu->addAction(text);
-        if (!key.isEmpty()) a->setShortcut(key);
-        a->setShortcutContext(Qt::ApplicationShortcut);
-        connect(a, &QAction::triggered, this, fn);
-        return a;
+        return ui::addMenuAction(
+            menu, this, text, fn, ui::ActionSpec{}.withShortcut(key));
     };
 
     // 命令补齐：菜单/工具条与命令行共用同一 CommandInterpreter 处理器（菜单项直接走 interp_->execute，与命令行同一 handler）。
@@ -2375,6 +2438,10 @@ void MainWindow::buildMenu() {
     tools->setObjectName("menuTools");
     mk(tools, SketchCAD::I18n::t(QString::fromUtf8("选项...")), QKeySequence(), [this] { openOptionsDialog(); })
         ->setIcon(icons::make("options"));
+    mk(tools, SketchCAD::I18n::t(QString::fromUtf8("命令目录维护...")), QKeySequence(), [this] {
+        CommandCatalogEditor dlg(this);
+        dlg.exec();
+    })->setIcon(icons::make("script"));
     tools->addSeparator();
     // ---- 命令补齐：格式/工具类命令（与命令行共用 interp_->execute）----
     mk(tools, SketchCAD::I18n::t(QString::fromUtf8("线型(&L)...")), QKeySequence(), [this] { interp_->execute("linetype"); })
@@ -2765,15 +2832,12 @@ void MainWindow::printDirect() {
 // 块（Block）GUI 入口：把命令行 block 操作封装为可视化菜单/对话框
 // ============================================================================
 void MainWindow::buildBlockMenu(QMenu* m) {
-    // 与 buildMenu 中的 mk 等价的局部构造器（buildBlockMenu 是独立成员，复用 mk 不便）
+    // 与 buildMenu 共用 ActionFactory：两者只差图标，不再各自维护一份构造样板。
     auto add = [this](QMenu* menu, const QString& text, const QKeySequence& key,
                       auto fn, const QString& icon) {
-        QAction* a = menu->addAction(text);
-        if (!key.isEmpty()) a->setShortcut(key);
-        a->setShortcutContext(Qt::ApplicationShortcut);
-        a->setIcon(icons::make(icon));
-        connect(a, &QAction::triggered, this, fn);
-        return a;
+        return ui::addMenuAction(
+            menu, this, text, fn,
+            ui::ActionSpec{}.withShortcut(key).withIcon(icons::make(icon)));
     };
     add(m, QStringLiteral("创建块..."), QKeySequence("Ctrl+Shift+B"),
         [this] { openCreateBlockDialog(); }, "block");
@@ -2988,62 +3052,6 @@ void MainWindow::buildSketchMenu(QMenu* m) {
 
     m->addSeparator();
 
-    // 航空制图与机械制图模板
-    m->addSection(QStringLiteral("制图模板"));
-    QAction* aircraftAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("飞机三面图...")));
-    aircraftAct->setIcon(icons::make("views"));
-    aircraftAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义尺寸生成飞机正面图、侧面图、俯视图")));
-    aircraftAct->setStatusTip(aircraftAct->toolTip());
-    connect(aircraftAct, &QAction::triggered, this, [this] {
-        AircraftViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
-    QAction* flangeAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("法兰盘三面图...")));
-    flangeAct->setIcon(icons::make("views"));
-    flangeAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成法兰盘主视图、俯视图、左视图")));
-    flangeAct->setStatusTip(flangeAct->toolTip());
-    connect(flangeAct, &QAction::triggered, this, [this] {
-        FlangeViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
-    QAction* bearingAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("轴承座三面图...")));
-    bearingAct->setIcon(icons::make("views"));
-    bearingAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成轴承座主视图、俯视图、左视图（左视图全剖）")));
-    bearingAct->setStatusTip(bearingAct->toolTip());
-    connect(bearingAct, &QAction::triggered, this, [this] {
-        BearingViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
-    QAction* housingAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("箱体视图...")));
-    housingAct->setIcon(icons::make("views"));
-    housingAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成箱体主视图（全剖）、俯视图 B、A—A 断面、C 向视图（含剖切符号与粗糙度）")));
-    housingAct->setStatusTip(housingAct->toolTip());
-    connect(housingAct, &QAction::triggered, this, [this] {
-        HousingViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
-    QAction* flangeHubAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("法兰盘轮毂视图...")));
-    flangeHubAct->setIcon(icons::make("views"));
-    flangeHubAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成法兰盘轮毂视图（全剖 A—A）与左视图（含剖面线、剖切符号、粗糙度、尺寸标注）")));
-    flangeHubAct->setStatusTip(flangeHubAct->toolTip());
-    connect(flangeHubAct, &QAction::triggered, this, [this] {
-        FlangeHubViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
-    QAction* floorPlanAct = m->addAction(SketchCAD::I18n::t(QString::fromUtf8("户型平面图...")));
-    floorPlanAct->setIcon(icons::make("views"));
-    floorPlanAct->setToolTip(SketchCAD::I18n::t(QString::fromUtf8("按默认或自定义参数生成建筑户型平面图：墙体（剪力墙涂黑/双线内墙）、门（开启弧）、窗、家具图块、房间标注、四周建筑尺寸链与右侧图签")));
-    floorPlanAct->setStatusTip(floorPlanAct->toolTip());
-    connect(floorPlanAct, &QAction::triggered, this, [this] {
-        FloorPlanViewsDialog dlg(model_, this);
-        dlg.exec();
-    });
-
     // 块（Block）：创建/插入/管理/分解的可视化入口（与【编辑>修改>块】共用 buildBlockMenu）
     {
         QMenu* blk = m->addMenu(icons::make("block"), SketchCAD::I18n::t(tr("块(&B)")));
@@ -3216,8 +3224,12 @@ void MainWindow::buildParamBar() {
     paramBar_ = new QWidget(this);
     paramBar_->setObjectName("paramBar");
     auto* hl = new QHBoxLayout(paramBar_);
-    hl->setContentsMargins(8, 4, 8, 4);
-    hl->setSpacing(8);
+    const auto density = ui::UiMetrics::screenDensity();
+    hl->setContentsMargins(ui::UiMetrics::paramMarginH(density),
+                           ui::UiMetrics::paramMarginV(density),
+                           ui::UiMetrics::paramMarginH(density),
+                           ui::UiMetrics::paramMarginV(density));
+    hl->setSpacing(ui::UiMetrics::paramSpacing(density));
 
     hl->addWidget(new QLabel(SketchCAD::I18n::t(QString::fromUtf8("参数输入条"))));
 
@@ -3227,7 +3239,7 @@ void MainWindow::buildParamBar() {
     sbAngle_->setRange(-360.0, 360.0);
     sbAngle_->setValue(model_->lineParams().angleDeg);
     sbAngle_->setSuffix(QStringLiteral("°"));
-    sbAngle_->setFixedWidth(80);
+    sbAngle_->setFixedWidth(ui::UiMetrics::angleSpinWidth(density));
     connect(sbAngle_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double v) { model_->setLineParamAngle(v); });
     hl->addWidget(sbAngle_);
@@ -3238,7 +3250,7 @@ void MainWindow::buildParamBar() {
     sbLength_->setRange(0.0, 1e6);
     sbLength_->setValue(model_->lineParams().length);
     sbLength_->setSuffix(QStringLiteral(" mm"));
-    sbLength_->setFixedWidth(90);
+    sbLength_->setFixedWidth(ui::UiMetrics::valueSpinWidth(density));
     connect(sbLength_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {   // 输入按当前单位口径，回写模型 mm
                 model_->setLineParamLength(v * lengthFactorToMm(model_->units().length));
@@ -3251,7 +3263,7 @@ void MainWindow::buildParamBar() {
     sbSpacing_->setRange(0.1, 1e6);
     sbSpacing_->setValue(model_->lineParams().spacing);
     sbSpacing_->setSuffix(QStringLiteral(" mm"));
-    sbSpacing_->setFixedWidth(90);
+    sbSpacing_->setFixedWidth(ui::UiMetrics::valueSpinWidth(density));
     connect(sbSpacing_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double v) {   // 输入按当前单位口径，回写模型 mm
                 model_->setLineParamSpacing(v * lengthFactorToMm(model_->units().length));
@@ -3275,7 +3287,7 @@ void MainWindow::buildParamBar() {
     paramStyleBox_->setIconSize(QSize(48, 16));
     paramStyleBox_->setMinimumContentsLength(8);
     // 限定下拉框最小宽，避免其(图标+文字)硬性最小宽度把主窗口最小宽推得过大而超屏
-    paramStyleBox_->setMinimumWidth(120);
+    paramStyleBox_->setMinimumWidth(ui::UiMetrics::styleComboMinWidth(density));
     for (int i = 0; i < kLineStyleCount; ++i) {
         LineStyle ls = (LineStyle)i;
         paramStyleBox_->addItem(icons::lineStyleIcon(ls),
@@ -3635,8 +3647,9 @@ void MainWindow::createDropdownTool(QToolBar* tb, QActionGroup* group, QList<QAc
 // ---------------------------------------------------------------------------
 void MainWindow::applyToolBarLook(QToolBar* tb) {
     // 图标 + 文字并排：文字完整显示，不会被压成纯图标或被截断
+    const auto density = ui::UiMetrics::screenDensity();
     tb->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    tb->setIconSize(QSize(20, 20));
+    tb->setIconSize(ui::UiMetrics::toolBarIconSize(density));
     // 锁定在顶部工具条区：不可拖动/浮动，避免被拖到左右两侧竖排挤压，
     // 也避免浮动成独立窗口与画布、停靠面板重叠。
     tb->setMovable(false);
@@ -3644,8 +3657,11 @@ void MainWindow::applyToolBarLook(QToolBar* tb) {
     tb->setAllowedAreas(Qt::TopToolBarArea);
     tb->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     if (QLayout* l = tb->layout()) {
-        l->setContentsMargins(6, 2, 6, 2);
-        l->setSpacing(2);
+        l->setContentsMargins(ui::UiMetrics::toolBarMarginH(density),
+                              ui::UiMetrics::toolBarMarginV(density),
+                              ui::UiMetrics::toolBarMarginH(density),
+                              ui::UiMetrics::toolBarMarginV(density));
+        l->setSpacing(ui::UiMetrics::toolBarSpacing(density));
     }
     // 收紧按钮内边距：系统默认留白偏大（每个按钮 80~116px），24 个按钮会把两行
     // 都顶到 1360px 以上，窄屏（1280）仍会触发 ">>" 溢出按钮、尾部按钮被收起。
@@ -3674,9 +3690,11 @@ void MainWindow::applyToolBarLook(QToolBar* tb) {
 // 统一按钮最小宽度：短标签（1~2 个汉字，如「圆」「删除」「XY」）与长标签留白一致，
 // 排在一起不会参差不齐；超过该宽度的按钮自然变宽，不会被截断。
 void MainWindow::uniformButtonWidth(QToolBar* tb) {
+    if (!tb) return;
+    const int minWidth = ui::UiMetrics::toolButtonMinWidth(ui::UiMetrics::screenDensity());
     for (QToolButton* b : tb->findChildren<QToolButton*>()) {
-        if (b->minimumWidth() < kToolButtonMinWidth)
-            b->setMinimumWidth(kToolButtonMinWidth);
+        if (b->minimumWidth() < minWidth)
+            b->setMinimumWidth(minWidth);
     }
 }
 
@@ -3715,11 +3733,10 @@ void MainWindow::buildToolbar() {
         const QString zhT  = SketchCAD::I18n::t(zh);   // 中文名/提示走运行时词典，语言切换重建时重求值
         const QString tipT = SketchCAD::I18n::t(tip);
         auto* a = new QAction(icons::make(icon), zhT, this);
-        a->setCheckable(true);
         a->setActionGroup(group);
-        a->setToolTip(key.isEmpty() ? tipT : QString("%1  [%2]").arg(tipT, key));
-        a->setStatusTip(a->toolTip());
-        if (!key.isEmpty()) { a->setShortcut(QKeySequence(key)); a->setShortcutContext(Qt::ApplicationShortcut); }
+        const QString actionTip = key.isEmpty() ? tipT : QString("%1  [%2]").arg(tipT, key);
+        ui::configureAction(
+            a, this, ui::ActionSpec{}.withCheckable(true).withToolTip(actionTip));
         connect(a, &QAction::triggered, this, [this, en] { model_->setActiveTool(en); });
         if (onBar) curTb->addAction(a);
         else       addAction(a);          // 不上工具条也要挂到窗口上，否则快捷键不生效
@@ -4260,10 +4277,15 @@ void MainWindow::buildDocks() {
     designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
     aiDock_->setVisible(false);       // 初始隐藏（同上）
 
-    // 初始分栏比例：左 240 / 右 300；左栏上下各分
-    resizeDocks({bomDock_, propDock_}, {240, 300}, Qt::Horizontal);
-    resizeDocks({bomDock_, elemDock_, layerDock_}, {300, 200, 160}, Qt::Vertical);
-    resizeDocks({propDock_, constraintDock_, logDock_}, {320, 200, 280}, Qt::Vertical);
+    // 初始分栏比例按屏幕密度取值：窄屏收窄左右栏，把视觉重心留给中央画布。
+    const auto dockDensity = ui::UiMetrics::screenDensity();
+    resizeDocks({bomDock_, propDock_},
+                {ui::UiMetrics::leftDockWidth(dockDensity),
+                 ui::UiMetrics::rightDockWidth(dockDensity)}, Qt::Horizontal);
+    resizeDocks({bomDock_, elemDock_, layerDock_},
+                {300, 200, 160}, Qt::Vertical);
+    resizeDocks({propDock_, constraintDock_, logDock_},
+                {320, 200, 280}, Qt::Vertical);
 
     // 设计中心：双击块 → 在视图中心插入引用（外部块已由面板并入本图块表）
     connect(designPanel_, &DesignCenterPanel::insertBlockRequested,
@@ -5331,31 +5353,45 @@ void MainWindow::saveCurrentAsTemplate(const QString& name) {
     }
 }
 
-// 把 DB 中的 JSON 落临时文件，复用既有 readDrawing 完成全部还原/校验/渲染（零重复代码、零回归）。
+// 兼容旧调用名：纯转发。临时文件、readDrawing、recent 撤销均已下线；
+// 解析与重建的唯一真相源是 SketchModel::applyDrawingJson。
 bool MainWindow::loadDrawingJsonViaTempFile(const QString& json, QString* errOut) {
-    QTemporaryFile tmp;
-    tmp.setAutoRemove(false);
-    tmp.setFileTemplate(QDir::tempPath() + QStringLiteral("/sketchcad_db_XXXXXX.json"));
-    if (!tmp.open()) {
-        if (errOut) *errOut = QStringLiteral("无法创建临时文件");
+    return openDocFromJsonBytes(json.toUtf8(), errOut);
+}
+
+// GUI 外壳：保持 openDocInteractive + readDrawing 成功后的可观察行为（新标签、
+// 状态栏统计、打印设置同步、FIELD 刷新、未命名文档、视图适配），但不碰解析细节。
+bool MainWindow::openDocFromJsonBytes(const QByteArray& bytes, QString* errOut) {
+    const qint64 t0 = QDateTime::currentMSecsSinceEpoch();
+
+    DocSession* s = docs_->addNewDoc();
+    makeDocPage(s);
+    if (docTabs_) docTabs_->addTab(docTabText(docs_->count() - 1));
+    switchToDoc(docs_->count() - 1);
+
+    QString err;
+    if (!model_->applyDrawingJson(bytes, &err)) {
+        closeDocAt(docs_->count() - 1);   // 失败回滚：不留半张图/空标签
+        if (errOut) *errOut = err.isEmpty() ? QStringLiteral("打开失败") : err;
         return false;
     }
-    tmp.write(json.toUtf8());
-    tmp.close();   // 关闭后再交给 readDrawing 打开（readDrawing 内部会重新打开）
-    const QString path = tmp.fileName();
-    // openDocInteractive 内部走 readDrawing（JSON 分支），解析完成后文件已被读取关闭，
-    // 此时删除临时文件不影响已载入的模型数据。
-    const int idx = openDocInteractive(path);
-    if (idx < 0) {
-        QFile::remove(path);
-        if (errOut) *errOut = QStringLiteral("打开失败");
-        return false;
+
+    lastOpenMs_ = (double)(QDateTime::currentMSecsSinceEpoch() - t0);
+    statusBar_->setLoadStats((int)model_->elements().size(), view_->sceneItemCount(), lastOpenMs_);
+    // 原路径会 pushRecentFile(tempPath) 再在 loadDrawingJsonViaTempFile 中撤销；
+    // 内存导入从一开始就不写 MRU，等价最终状态。
+    syncPrintSettingsToSheet();
+    if (appSettings_ && appSettings_->fieldAutoUpdateOnOpen()) {
+        const int nField = model_->refreshFields();
+        if (nField > 0)
+            model_->log(SketchCAD::I18n::t(QString::fromUtf8("已自动刷新 %1 个域宿主（fieldupdate 可手动重算）")).arg(nField),
+                        QStringLiteral("info"));
     }
-    // 该临时文件路径不应进入「最近打开」（readDrawing 内已 push，这里撤销）
-    if (recent_) { recent_->remove(path); rebuildRecentMenu(); }
-    // 载入成功：清掉临时路径，避免后续「保存」误写临时文件；按未命名新文档对待。
     if (docs_ && docs_->active()) docs_->active()->filePath.clear();
-    QFile::remove(path);
+    docs_->active()->markClean();
+    syncTabTitle(docs_->activeIndex());
+    view_->fitView();
+    if (errOut) errOut->clear();
     return true;
 }
 

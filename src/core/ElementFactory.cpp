@@ -16,6 +16,9 @@ Element ElementFactory::create(ElementType t, const QString& name, const SketchM
         model->applyDefaultStyle(e);
         model->applyActiveLayer(e);   // 归属当前活动图层并继承其属性（默认层"0"不覆盖）
     }
+    // 尺寸标注文字统一长仿宋体（GB/T 14691）：命令行 dim / 交互标注 / QDIM 等
+    // 经由 create() 创建的标注在此一步写入样式名，与 createDimension() 保持一致。
+    if (t == ElementType::Dimension) e.styleName = QString::fromUtf8(kGBLongFangSongName);
     return e;
 }
 

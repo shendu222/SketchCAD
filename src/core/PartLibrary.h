@@ -1,7 +1,7 @@
 #pragma once
 // P4（Ch13 机械零件设计）：零件库抽象
 // ------------------------------------------------------------
-// 把 FlangeViews / AircraftViews 的「参数对话框 → Elements」模式收敛为统一接口：
+// 把「参数对话框 → Elements」零件生成模式收敛为统一接口：
 // 具体零件（齿轮/法兰/轴承…）实现 PartGenerator，由 PartLibrary 按 id 注册与出库。
 // P5 将在此框架下扩展 GB 标准件 JSON 规格表驱动出库（checkout(partId, params) → Elements）。
 #include <QString>

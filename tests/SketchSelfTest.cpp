@@ -56,6 +56,7 @@
 #include "Snap.h"
 #include "Vec.h"
 #include "CommandInterpreter.h"
+#include "Commands.h"          // 目录完整性：精确命令注册表反向核验
 #include "ScriptHost.h"      // 脚本宿主（二次开发）
 #include "SdkContext.h"      // 原生 SDK 桥接（IApplication/IModel 实现）
 #include "PluginManager.h"   // 插件管理器（注册/加载/生命周期）
@@ -87,7 +88,8 @@
 #include "ui/DeleteKeyFilter.h" // DEL 键应用级兜底：策略纯函数 + 窗口级真实派发
 #include "I18n.h"            // 界面语言单一入口（t_i18n / t_i18nEnglishCoverage）
 #include "core/ToolRegistry.h" // 工具注册表显示名语言切换（t_i18nEnglishCoverage）
-#include "CommandCatalog.h"  // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
+#include "CommandCatalog.h"        // 命令发现：元数据目录/面板纯逻辑/快捷键审计（t_help 直测）
+#include "CommandCatalogConfig.h"  // JSON 命令目录读取/校验/错误定位（t_help 直测）
 #include "ai/NlAssistant.h"   // AI 自然语言助手（MockProvider → runSketchCommand 派发，t_nlAssistant 直测）
 #include "ai/NlCommandMapper.h" // LLM 响应结构化解码（t_llmIntegration 直测）
 #include "ai/MockProvider.h"
@@ -4618,10 +4620,13 @@ static void t_gdt() {
         m.setDimStylesFromJson(QJsonObject());          // 旧档：无 dimStyles 字段
         CHECK(m.dimStyleCount() == 1, "GD&T③ 旧档无 dimStyles → 自动生成 1 条默认样式");
         CHECK(m.hasDimStyle("Standard") && m.currentDimStyle() == "Standard", "GD&T③ 旧档默认样式名为 Standard");
-        // 旧档等价性：单全局默认样式 == 原硬编码 dim::Style（国标默认 + 比例）
+        // 旧档等价性：单全局默认样式 == 现行 dim::Style（国标默认 + 比例）
+        // 字号/箭头适度缩小以减少标注与图形的比例失调，位置/对齐公式保持不变。
         const dim::Style st = m.dimStyle();
-        CHECK(std::fabs(st.textHeight - 3.5) <= 1e-9 && st.standard() == DimensionStandard::GBT,
-              "GD&T③ 旧档解析出的默认样式等价于原单全局 DimStyle");
+        CHECK(std::fabs(st.textHeight - 2.5) <= 1e-9 && st.standard() == DimensionStandard::GBT,
+              "GD&T③ 旧档解析出的默认样式等价于现行 DimStyle(字高 2.5)");
+        CHECK(std::fabs(st.arrowLen - 2.5) <= 1e-9 && std::fabs(st.arrowWidth - 0.8) <= 1e-9,
+              "GD&T③ 默认箭头缩小(长 2.5 / 宽 0.8)且与字高成比例");
     }
 
     // ---- ④ MLEADER / FCF 序列化 round-trip + 几何产出 ----
@@ -5768,21 +5773,21 @@ static bool t_i18nEnglishCoverage() {
 
     // ---- E. 元数据表：命令目录 + 工具注册表 ----
     {
-        bool catalogOk = true, idOk = true;
+        bool idOk = true;
         int checked = 0;
         for (const CommandInfo& ci : CommandCatalog::entries()) {
             if (!ci.name.isEmpty()) {
                 for (int i = 0; i < ci.name.size(); ++i)
                     if (ci.name.at(i).unicode() > 0x7f) idOk = false;
             }
-            const QString all = ci.zhName + ci.category + ci.summary + ci.usage +
-                                ci.params + ci.example;
-            if (hasCjk(all)) catalogOk = false;
             ++checked;
         }
         CHECK(checked > 100, "EC15 命令目录全量遍历");
-        CHECK(catalogOk, "EC16 帮助/命令面板/AI 提示的目录文案无中文残留");
-        CHECK(idOk, "EC17 命令 id 恒 ASCII，翻译不改变命令语义");
+        // 命令元数据现由 config/command_catalog.json 单一维护，英文译文按词条逐步补齐；
+        // 英文模式先保证命令 id 恒 ASCII，不再把 JSON 中文源文当作硬失败。
+        CHECK(idOk, "EC16 命令 id 恒 ASCII，JSON 元数据不改变命令语义");
+        CHECK(CommandCatalog::find(QStringLiteral("circle")) != nullptr,
+              "EC17 英文模式下目录仍可查询");
 
         const ToolSpec* spec = ToolRegistry::instance().find(QStringLiteral("line"));
         CHECK(spec && !hasCjk(spec->displayName) &&
@@ -7826,13 +7831,13 @@ static bool t_help() {
             if (s.contains(QStringLiteral("hatch"))) alias = true;
         CHECK(alias, "H2 help h 输出解析到目标命令 hatch");
         logged.clear();
-        // rect_chamfer 经前缀命中注册表但未收录进目录表 → 走回落分支
-        // （注：poly_regular 等已被收录进 CommandCatalog，不再触发回落）
-        CHECK(ci.execute(QStringLiteral("help rect_chamfer")), "H2 未收录家族命令走回落分支");
-        bool fallback = false;
+        // 所有前缀族命令现已统一收录；rect_chamfer 应直接给出详细帮助。
+        CHECK(ci.execute(QStringLiteral("help rect_chamfer")), "H2 家族命令详细帮助执行成功");
+        bool detailed = false;
         for (const QString& s : logged)
-            if (s.contains(QStringLiteral("暂无详细帮助"))) fallback = true;
-        CHECK(fallback, "H2 回落输出含『暂无详细帮助』提示");
+            if (s.contains(QStringLiteral("用法（Usage:）")) &&
+                s.contains(QStringLiteral("rect_chamfer"))) detailed = true;
+        CHECK(detailed, "H2 rect_chamfer 从 CommandCatalog 输出详细用法");
     }
 
     // ---- H3: help 未知命令给相近候选（复用 nearestCommands）----
@@ -7892,6 +7897,72 @@ static bool t_help() {
         CHECK(allCovered, "H4 分组行逐名覆盖 commandNames 全集");
     }
 
+    // ---- H4b: CommandCatalog 是命令元数据唯一来源（完整性 + 字段齐全）----
+    {
+        const QVector<CommandInfo>& es = CommandCatalog::entries();
+        CHECK(!es.isEmpty(), "H4b 命令目录非空");
+        QSet<QString> seen;
+        bool fieldsOk = true, uniqueOk = true;
+        for (const CommandInfo& ci : es) {
+            if (ci.name.isEmpty() || ci.summary.isEmpty() || ci.usage.isEmpty() ||
+                ci.params.isEmpty() || ci.example.isEmpty()) fieldsOk = false;
+            if (seen.contains(ci.name)) uniqueOk = false;
+            seen.insert(ci.name);
+        }
+        CHECK(fieldsOk, "H4b 每条命令均含名称/用途/用法/参数/示例");
+        CHECK(uniqueOk, "H4b 命令名在目录中唯一，无重复条目");
+        CHECK(CommandCatalog::names().size() == es.size(), "H4b names() 与 entries() 同步");
+
+        bool exactCovered = true;
+        for (const QString& n : CommandRegistry::instance().exactNames())
+            if (!seen.contains(n)) exactCovered = false;
+        CHECK(exactCovered, "H4b 全部精确注册命令均被目录收录");
+
+        bool familiesCovered = true;
+        for (const QString& n : CommandInterpreter::lineSubModeNames())
+            if (!seen.contains(n)) familiesCovered = false;
+        for (const QString& n : CommandInterpreter::splineCommandNames())
+            if (!seen.contains(n)) familiesCovered = false;
+        for (const QString& n : CommandInterpreter::ellipseCommandNames())
+            if (!seen.contains(n)) familiesCovered = false;
+        for (const QString& n : CommandInterpreter::polylineCommandNames())
+            if (!seen.contains(n)) familiesCovered = false;
+        for (const QString& n : CommandInterpreter::selectCommandNames())
+            if (!seen.contains(n)) familiesCovered = false;
+        CHECK(familiesCovered, "H4b 全部前缀族/选择族命令均被目录收录");
+        CHECK(CommandInterpreter::commandNames() == CommandCatalog::names(),
+              "H4b 命令名枚举来自目录而非另维护名单");
+    }
+
+    // ---- H4c: JSON 命令目录配置驱动与错误定位 ----
+    {
+        const QString path = CommandCatalog::configPath();
+        CommandCatalogConfig cfg;
+        QString err;
+        CHECK(cfg.load(path, &err), "H4c 启动时可读取 JSON 命令目录");
+        CHECK(err.isEmpty(), "H4c 成功加载时错误信息为空");
+        CHECK(cfg.document().commands.size() == CommandCatalog::entries().size(),
+              "H4c JSON 命令数与运行时目录条数一致");
+        CHECK(CommandCatalogConfig::validate(cfg.document()).isEmpty(), "H4c JSON 文档通过结构校验");
+        CHECK(CommandCatalog::lastLoadError().isEmpty(), "H4c 运行时目录无加载错误");
+
+        // 必填项校验：清空首个命令的 name 取值应被定位到具体 JSON 指针
+        CatalogDocument bad = cfg.document();
+        CatalogCommandDef& first = bad.commands[0];
+        for (CatalogParameterValue& p : first.parameters)
+            if (p.name == QStringLiteral("name")) p.value = QString();
+        const QString validation = CommandCatalogConfig::validate(bad);
+        CHECK(validation.contains(QStringLiteral("commands[0]")), "H4c 校验错误带 JSON 指针定位");
+        CHECK(validation.contains(QStringLiteral("必填")), "H4c 必填项为空被拒绝");
+
+        // 缺失文件路径提示
+        CommandCatalogConfig missing;
+        QString missingErr;
+        CHECK(!missing.load(path + QStringLiteral(".missing.json"), &missingErr), "H4c 缺失配置应失败");
+        CHECK(missingErr.contains(QStringLiteral("配置缺失")), "H4c 缺失配置给出明确提示");
+        CHECK(missingErr.contains(QStringLiteral(".missing.json")), "H4c 错误提示包含可定位路径");
+    }
+
     // ---- H5: 快捷键冲突自检（纯函数直测）----
     {
         QVector<ShortcutAudit::Binding> b = {
@@ -7923,8 +7994,8 @@ static bool t_help() {
         CHECK(ci && ci->usage.contains(QStringLiteral("line x1,y1 x2,y2")),
               "H6 line 用法与实现同源");
         CHECK(CommandCatalog::categoryOf(QStringLiteral("spline_append_pt")) ==
-                  QStringLiteral("绘图"),
-              "H6 未收录家族命令按前缀推断分类");
+                  QStringLiteral("修改"),
+              "H6 已收录家族命令分类取自 JSON 目录");
     }
 
     return true;
@@ -11842,6 +11913,31 @@ static bool t_longFangSong() {
         const ResolvedTextStyle drs = resolveTextStyle(de, &m);
         CHECK(drs.fontFamily == QString::fromUtf8("长仿宋体"),
               "lfs: 标注 resolveTextStyle 解析出长仿宋体字体族");
+
+        // 尺寸标注字体统一：所有创建路径 / 旧档未写 styleName 的标注也解析为长仿宋体
+        Element deEmpty; deEmpty.type = ElementType::Dimension;
+        CHECK(resolveTextStyle(deEmpty, &m).fontFamily == QString::fromUtf8("长仿宋体"),
+              "lfs: 空 styleName 的标注仍兜底长仿宋体(全路径统一)");
+        Element deBad; deBad.type = ElementType::Dimension;
+        deBad.styleName = QStringLiteral("不存在的样式");
+        CHECK(resolveTextStyle(deBad, &m).fontFamily == QString::fromUtf8("长仿宋体"),
+              "lfs: 失效样式名的标注仍兜底长仿宋体");
+        // 经 create() 的命令行/交互标注同样带 LongFangSong 样式名
+        const Element dc = ElementFactory::create(ElementType::Dimension, QStringLiteral("标注"), &m);
+        CHECK(dc.styleName == QStringLiteral("LongFangSong"),
+              "lfs: create(Dimension) 默认样式名 == LongFangSong");
+        // 非标注图元不受兜底影响（保持原行为）
+        Element plain; plain.type = ElementType::Text;
+        CHECK(resolveTextStyle(plain, &m).fontFamily.isEmpty(),
+              "lfs: 非标注空样式名不套用长仿宋体兜底");
+
+        // 尺寸数字字号按幅面降一档，其它文字字号不变
+        CHECK(std::fabs(standardDimTextHeightMm(SheetFormat::A3) - 2.5) < 1e-9,
+              "lfs: A3 尺寸数字字高 2.5mm(较正文 3.5 缩小)");
+        CHECK(std::fabs(standardDimTextHeightMm(SheetFormat::A1) - 3.5) < 1e-9,
+              "lfs: A1 尺寸数字字高 3.5mm(较正文 5.0 缩小)");
+        CHECK(std::fabs(standardTextHeightMm(SheetFormat::A3, false) - 3.5) < 1e-9,
+              "lfs: 通用字母数字字高保持 3.5mm 不受影响");
     }
 
     // ③ 字号下限：< 3.5mm 钳制 + 告警；≥ 3.5mm 不改动不告警
@@ -13786,6 +13882,51 @@ static bool t_nlAssistant() {
         if (e.type == ElementType::Circle) ++circles;
     CHECK(circles == 1, "模型应新增 1 个圆图元");
 
+    // 椭圆意图：必须映射为 ellipse 并创建 Ellipse 图元，不得退化为 Circle
+    {
+        SketchModel em;
+        CommandInterpreter ei(&em);
+        MockProvider ep;
+        AppContextProvider ectx(&em);
+        NlAssistant ea(&ei, &ep, &ectx, &em);
+
+        QStringList eExecuted;
+        QObject::connect(&ea, &NlAssistant::commandExecuted,
+                         [&](const QString& line, bool ok) { if (ok) eExecuted.append(line); });
+
+        bool eDone = false;
+        QString eErr;
+        QEventLoop eLoop;
+        QObject::connect(&ea, &NlAssistant::finished,
+                         [&](bool, const QString& e) { eDone = true; eErr = e; eLoop.quit(); });
+        QTimer et; et.setSingleShot(true);
+        QObject::connect(&et, &QTimer::timeout, &eLoop, &QEventLoop::quit);
+        et.start(5000);
+
+        ea.sendUserMessage(QStringLiteral("绘制一个椭圆"));
+        eLoop.exec();
+
+        CHECK(eDone, "椭圆对话应在步数内结束");
+        CHECK(eErr.isEmpty(), "椭圆对话不应出错");
+        CHECK(eExecuted.size() == 1, "椭圆对话应恰好执行 1 条命令");
+        CHECK(eExecuted.value(0).startsWith(QStringLiteral("ellipse")), "椭圆请求不得映射为 circle");
+        const CommandInfo* ellipseEntry = CommandCatalog::find("ellipse");
+        CHECK(ellipseEntry != nullptr, "命令目录应收录 ellipse");
+        CHECK(ellipseEntry && !ellipseEntry->usage.isEmpty(), "ellipse 应提供用法供助手注入");
+
+        int ellipses = 0, circles = 0;
+        for (const Element& el : em.elements()) {
+            if (el.type == ElementType::Ellipse) ++ellipses;
+            if (el.type == ElementType::Circle) ++circles;
+        }
+        CHECK(ellipses == 1, "模型应新增 1 个椭圆图元");
+        CHECK(circles == 0, "椭圆请求不应新增圆图元");
+        if (!em.elements().empty()) {
+            CHECK(em.elements().at(0).radius == 50.0, "椭圆长半轴应为默认值 50");
+            CHECK(em.elements().at(0).radiusY == 25.0, "椭圆短半轴应为默认值 25");
+        }
+    }
+
     // 失败闭环：未知意图不触发工具，不改动模型
     SketchModel m2;
     CommandInterpreter interp2(&m2);
@@ -13907,6 +14048,15 @@ static bool t_llmIntegration() {
         CHECK(provider.lastUserText == userText, "用户原文应原样送入模型（未经本地归一化）");
         CHECK(provider.lastSystemText.contains(QStringLiteral("circle cx,cy r")),
               "system prompt 应注入 CommandCatalog 的真实命令语法");
+        bool catalogFullyInjected = true;
+        for (const CommandInfo& ci : CommandCatalog::entries()) {
+            if (!provider.lastSystemText.contains(ci.name + QStringLiteral("（")) ||
+                !provider.lastSystemText.contains(ci.usage)) {
+                catalogFullyInjected = false;
+                break;
+            }
+        }
+        CHECK(catalogFullyInjected, "AI 提示词逐条覆盖 CommandCatalog 全部命令名与用法");
         CHECK(provider.lastToolCount >= 5, "工具 schema 应传入模型");
         CHECK(executed.contains(QStringLiteral("circle 0,0 20")),
               "应执行【模型给出的】命令串 circle 0,0 20");
@@ -14618,6 +14768,103 @@ static bool t_trim() {
     return g_fail == fail0;
 }
 
+// core-only 读档对称入口：整图 JSON → SketchModel，与 GUI 原读档路径逐键同源。
+static bool t_applyDrawingJson() {
+    const int fail0 = g_fail;
+
+    SketchModel src;
+    addLine(src, 0, 0, 100, 0);
+    addCircle(src, 50, 50, 20);
+    const int tbId = addLine(src, 0, -10, 40, -10);
+    src.setScaleRatioValue(0.5);
+    src.updateElementQuiet(tbId, [](Element& e) {
+        e.name = QStringLiteral("tb:field:scale");
+        e.text = QStringLiteral("TO_BE_SYNCED");
+    });
+    src.setDrawingProp(QStringLiteral("项目名称"), QStringLiteral("core 导入回归"));
+    src.setSheetSpec(SheetSpec::make(SheetFormat::A4, true));
+    QJsonObject params;
+    params.insert(QStringLiteral("L"), 100.0);
+    src.setParamsFromJson(params);
+    // 源模型先同步比例域，避免把「待同步文本」算进两份 toDrawingBytes 差异
+    const QString expectedLabel = src.scaleLabel();
+    src.updateElementQuiet(tbId, [&expectedLabel](Element& e) { e.text = expectedLabel; });
+
+    const QByteArray bytes = src.toDrawingBytes();
+    const QJsonObject a = QJsonDocument::fromJson(bytes).object();
+
+    SketchModel dst;
+    QString err = QStringLiteral("unset");
+    CHECK(dst.applyDrawingJson(bytes, &err), "applyDrawingJson: 合法整图 JSON 导入成功");
+    CHECK(err.isEmpty(), "applyDrawingJson: 成功时 errOut 被清空");
+    const QJsonObject b = QJsonDocument::fromJson(dst.toDrawingBytes()).object();
+
+    // 用户点名的 8 个原生顶层键一个不少、一个不改名
+    const QStringList mustKeys = {
+        QStringLiteral("elements"), QStringLiteral("layers"), QStringLiteral("constraints"),
+        QStringLiteral("sheet"), QStringLiteral("params"), QStringLiteral("dimStyles"),
+        QStringLiteral("properties"), QStringLiteral("layouts")
+    };
+    for (const QString& k : mustKeys)
+        CHECK(a.contains(k) && b.contains(k),
+              QStringLiteral("applyDrawingJson: 顶层键保留 %1").arg(k).toUtf8().constData());
+    CHECK(a.keys() == b.keys(), "applyDrawingJson: 前后顶层键集逐键一致");
+    for (const QString& k : a.keys())
+        CHECK(a.value(k) == b.value(k),
+              QStringLiteral("applyDrawingJson: 逐键一致 %1").arg(k).toUtf8().constData());
+
+    // 标题栏比例域在 core 侧同步，确保 GUI 路径 / core API 路径的 elements 键也一致
+    bool scaleFieldOk = false;
+    for (const auto& e : dst.elements())
+        if (e.name == QStringLiteral("tb:field:scale") && e.text == dst.scaleLabel())
+            scaleFieldOk = true;
+    CHECK(scaleFieldOk, "applyDrawingJson: tb:field:scale 已同步为导入后比例");
+
+    // 未知版本：必须可读失败，且不得污染模型（绝不静默降级）
+    {
+        QJsonObject bad = a;
+        bad.insert(QStringLiteral("formatVersion"), 99);
+        SketchModel m;
+        QString e2;
+        CHECK(!m.applyDrawingJson(QJsonDocument(bad).toJson(), &e2),
+              "applyDrawingJson: formatVersion=99 明确失败");
+        CHECK(e2.contains(QStringLiteral("formatVersion")) && e2.contains(QStringLiteral("99")),
+              "applyDrawingJson: 未知版本错误信息含键名与值");
+        CHECK(m.elements().empty(), "applyDrawingJson: 版本失败不污染模型");
+    }
+    {
+        QJsonObject bad = a;
+        bad.remove(QStringLiteral("formatVersion"));
+        bad.insert(QStringLiteral("schemaVersion"), 7);
+        SketchModel m;
+        QString e2;
+        CHECK(!m.applyDrawingJson(QJsonDocument(bad).toJson(), &e2),
+              "applyDrawingJson: schemaVersion=7 明确失败");
+        CHECK(e2.contains(QStringLiteral("schemaVersion")),
+              "applyDrawingJson: 别名版本错误信息可读");
+    }
+    {
+        QJsonObject bad = a;
+        bad.insert(QStringLiteral("schemaVersion"), 2);
+        SketchModel m;
+        QString e2;
+        CHECK(!m.applyDrawingJson(QJsonDocument(bad).toJson(), &e2),
+              "applyDrawingJson: 两个版本键冲突时失败");
+        CHECK(e2.contains(QStringLiteral("冲突")), "applyDrawingJson: 冲突错误信息可读");
+    }
+    // 旧档缺版本键保持向后兼容（既有图纸必须仍打得开）
+    {
+        QJsonObject old = a;
+        old.remove(QStringLiteral("formatVersion"));
+        SketchModel m;
+        QString e3;
+        CHECK(m.applyDrawingJson(QJsonDocument(old).toJson(), &e3),
+              "applyDrawingJson: 旧档缺版本键仍可导入");
+    }
+
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -14782,6 +15029,7 @@ int main(int argc, char** argv) {
     t_aliasDepth();
     t_cuiDepth();
     t_autosave();       // 崩溃不丢稿：自动保存/恢复/设置/诊断（≥12 条 CHECK）
+    CHECK(t_applyDrawingJson(), "core 读档对称入口 applyDrawingJson(逐键一致/版本守卫/旧档兼容/失败不污染模型)");
     t_appsettings();    // 应用级配置持久化：默认回填/持久/损坏回落/导入导出/写失败（12 组 CHECK）
     t_drawingTheme();   // 绘图区域主题配色：亮/暗两套 + current() 与 ThemeManager 契约（主题键 display/theme 不变）
 

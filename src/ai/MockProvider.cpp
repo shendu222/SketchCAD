@@ -32,6 +32,43 @@ void MockProvider::chat(const QVector<LlmMessage>& messages,
         if (messages.at(i).role == LlmRole::User) { text = messages.at(i).content; break; }
     }
 
+    // 意图：椭圆。必须先于圆判定，避免“椭圆 + 圆心/半径”描述被圆形规则抢走。
+    const bool wantsEllipse = text.contains(QStringLiteral("椭圆"))
+                              || text.contains(QStringLiteral("ellipse"), Qt::CaseInsensitive);
+    if (wantsEllipse) {
+        QString x = QStringLiteral("0"), y = QStringLiteral("0");
+        double a = 50.0, b = 25.0, rot = 0.0;
+
+        QRegularExpression pointRe(QStringLiteral("([+-]?\\d+(?:\\.\\d+)?)\\s*[,，]\\s*([+-]?\\d+(?:\\.\\d+)?)"));
+        const QRegularExpressionMatch pm = pointRe.match(text);
+        if (pm.hasMatch()) { x = pm.captured(1); y = pm.captured(2); }
+
+        auto axis = [&text](const QString& label, double fallback) {
+            QRegularExpression re(label + QStringLiteral("(?:半)?轴?\\s*[=:：]?\\s*([+-]?\\d+(?:\\.\\d+)?)"));
+            const QRegularExpressionMatch m = re.match(text);
+            return m.hasMatch() ? m.captured(1).toDouble() : fallback;
+        };
+        a = axis(QStringLiteral("长"), a);
+        b = axis(QStringLiteral("短"), b);
+        if (b <= 0.0) b = a * 0.5;
+
+        QRegularExpression rotRe(QStringLiteral("旋转\\s*([+-]?\\d+(?:\\.\\d+)?)"));
+        const QRegularExpressionMatch rm = rotRe.match(text);
+        if (rm.hasMatch()) rot = rm.captured(1).toDouble();
+
+        const QString line = QStringLiteral("ellipse %1,%2 %3 %4 %5")
+                                 .arg(x, y)
+                                 .arg(a, 0, 'f', 2).arg(b, 0, 'f', 2).arg(rot, 0, 'f', 0);
+        onDelta(SketchCAD::I18n::t(QStringLiteral("正在执行命令：")) + line);
+        LlmToolCall tc;
+        tc.id = QStringLiteral("call_mock_ellipse_1");
+        tc.name = QStringLiteral("runSketchCommand");
+        tc.arguments = QJsonObject{{ QStringLiteral("line"), line }};
+        onToolCalls({ tc });
+        onDone("");
+        return;
+    }
+
     // 意图：圆心(x,y) 半径 r 的圆
     QRegularExpression re("圆心\\s*[\\(（]?\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*,\\s*([+-]?\\d+(?:\\.\\d+)?)\\s*[\\)）]?[^\\d]*?半径\\s*[rR=]?\\s*([+-]?\\d+(?:\\.\\d+)?)");
     const QRegularExpressionMatch m = re.match(text);

@@ -58,6 +58,13 @@ public:
     QStringList externalCommandNames() const;
     void addHistory(const QString& line);
     static QStringList commandNames();
+    /// 家族命令名单：保留为公开 API，供目录完整性自测与遗留装配读取；
+    /// 实际 commandNames() 已改为由 CommandCatalog 驱动。
+    static const QStringList& lineSubModeNames();
+    static const QStringList& splineCommandNames();
+    static const QStringList& ellipseCommandNames();
+    static const QStringList& polylineCommandNames();
+    static const QStringList& selectCommandNames();
     /// 公开点解析：纯解析（不换算，无 UCS 语义）。UCS 感知入口在
     /// CommandContext::tryParsePoint（成员，经 model->toWorld）与
     /// SketchModel::parsePointToWorld（CommandLine 分段式，含 @/极坐标语法）。
@@ -73,17 +80,6 @@ private:
     // 外部命令表（插件注册）：命令名(小写) → 处理函数。execute() 在内置命令
     // 查找失败后回退到此表；同名冲突时内置优先、外部去重。
     std::map<QString, std::function<bool(const QString&)>> externalCommands_;
-
-    /// 直线子模式的命令名（用于 commandNames / completions）
-    static const QStringList& lineSubModeNames();
-    /// 样条家族命令名（绘制 + 编辑，用于 commandNames / completions）
-    static const QStringList& splineCommandNames();
-    /// 椭圆家族命令名（用于 commandNames / completions）
-    static const QStringList& ellipseCommandNames();
-    /// 折线家族命令名（用于 commandNames / completions）
-    static const QStringList& polylineCommandNames();
-    /// 选择家族命令名（用于 commandNames / completions）
-    static const QStringList& selectCommandNames();
 };
 
 } // namespace SketchCAD

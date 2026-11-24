@@ -47,7 +47,6 @@
 
 | 命令名 | 所在位置 | 主要参数 | 作用说明 | 出现次数 | 调用条件 |
 |---|---|---|---|---:|---|
-| `aircraft_views` | 注册 src/core/Commands.cpp:4288 / 目录 src/core/CommandCatalog.cpp:54 | aircraft_views | 按当前参数一键生成航空三面图模板 | 3 | 精确注册；命令行/脚本/AI/菜单可调用；用法：aircraft_views |
 | `arc` | 注册 src/core/Commands.cpp:3302 / 目录 src/core/CommandCatalog.cpp:41 | arc cx,cy r a0 [a1] | 圆心 + 半径 + 起止角绘制圆弧 | 39 | 精确注册；命令行/脚本/AI/菜单可调用；用法：arc cx,cy r a0 [a1]；参数：a0 起始角；a1 终止角（度，省略 = a0+360 即整圆弧）；AI system prompt 核心命令；有 acad.pgp 别名入口 |
 | `attdef` | 注册 src/core/Commands.cpp:4213 / 目录 src/core/CommandCatalog.cpp:119 | attdef <块名> <标签> [提示] [x,y] [字高] | 为块定义追加属性定义（属性块） | 5 | 精确注册；命令行/脚本/AI/菜单可调用；用法：attdef <块名> <标签> [提示] [x,y] [字高] |
 | `attedit` | 注册 src/core/Commands.cpp:4214 / 目录 src/core/CommandCatalog.cpp:120 | attedit <引用id> <标签> <值> | 编辑块引用的属性值 | 5 | 精确注册；命令行/脚本/AI/菜单可调用；用法：attedit <引用id> <标签> <值> |
@@ -483,7 +482,7 @@
 | `MacroScript` SCR 回放 | src/core/MacroScript.cpp:134 | `interp->execute(line)` 逐行执行外部脚本 | **是** |
 | 命令解释器唯一分派点 | src/core/CommandInterpreter.cpp:212 | `command->execute(ctx)` | 所有命令的最终落点 |
 | `GraphicsView` 交互工具 `ITool` 家族（12 个工具，src/ui/tools/） | 各 `*Tool.cpp` | 鼠标交互直接 `addElement` | **否** |
-| `ElementFactory` / `PartLibrary` / 生成器（飞机三面图、法兰、轴承等） | src/core/ | 纯几何构造后写模型 | **否** |
+| `ElementFactory` / `PartLibrary` / 几何生成器 | src/core/ | 纯几何构造后写模型 | **否** |
 
 **结论**：自定义绘图函数内部**不产生任何绘图命令**（建模直接写 `SketchModel`）；
 唯一的命令注入口是 `ScriptApi::run()`、SCR 回放、AI `runSketchCommand`、命令行与菜单调用点（§6.1–6.3）。

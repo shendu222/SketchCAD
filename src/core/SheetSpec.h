@@ -41,6 +41,11 @@ bool isStandardDrawingScale(double ratio);
 // chinese=true 取汉字字高，false 取字母数字字高。
 double standardTextHeightMm(SheetFormat f, bool chinese);
 
+// GB/T 14691 字体号数系列中的尺寸标注专用字高：在通用字母数字档基础上降一档
+// （A2~A5: 3.5→2.5，A0/A1: 5→3.5）。标注数字始终清晰可读，且与图形的比例更协调；
+// 仅作用于尺寸标注，正文/表格/标题栏文字仍走 standardTextHeightMm。
+double standardDimTextHeightMm(SheetFormat f);
+
 // 进程内「当前图纸幅面」：由「新建图纸」设定，供把「随幅面变化」的量
 // （如尺寸数字字高，见 5.6 表3）派生为标准值。默认 A3。
 SheetFormat currentSheetFormat();

@@ -282,10 +282,11 @@ QString NlAssistant::buildSystemPrompt() const {
         "用户用自然语言描述绘图或操作意图；你必须先理解语义、抽取参数，"
         "再调用 runSketchCommand 工具给出完整命令串（参数 line）。"
         "命令语法与界面命令行完全一致，不要输出代码块，不要复述命令，直接调用工具。"
-        "\n参数抽取示例：「给我绘制一个圆心在0，0、半径为20的圆」→ line=\"circle 0,0 20\"；"
-        "「从 0,0 画一条到 100,0 的直线」→ line=\"line 0,0 100,0\"；"
-        "「绘制一个中心在原点、边长50mm的六边形」→ line=\"poly_regular 0,0 side:50 6\""
-        "（正多边形用 poly_regular / poly_edge 命令，由程序算顶点，不要手算坐标）；"
+        "\n【命令目录唯一性】下方“命令目录”由程序从 CommandCatalog 注入，"
+        "是命令名称、用途、参数与使用示例的唯一事实来源；不要在目录之外猜测或发明命令。"
+        "自然语言抽取出的每个命令串都必须与目录中某条命令的 name / usage / example 对应。"
+        "\n【语义消歧】当两种图元语义同时出现时，以目录条目的用途描述最贴切者为准；"
+        "椭圆语义（椭圆/长半轴/短半轴/长轴/短轴）不得映射为圆形条目，反之亦然。"
         "\n执行结果会以 tool 消息回传给你，请据此用中文简要说明结果（结果文本也由你生成）。"
         "\n不确定语法时先用 getCommandHelp(name) 查询；需要图纸状态时用 "
         "getSelection / getLayers / listElements。"
@@ -294,23 +295,23 @@ QString NlAssistant::buildSystemPrompt() const {
         "由检查器对当前图纸给出结论。这两个工具都是只读查询，不会执行任何绘图命令；"
         "只有真正要改图时才用 runSketchCommand。");
 
-    // 把真实命令语法喂给模型（唯一数据源 CommandCatalog::usage），
-    // 让「自然语言 → 参数 → 命令串」这一步由模型依据事实完成，而非凭记忆猜参数顺序。
-    // 只注入常用核心命令以控制上下文体积；其余命令模型可用 getCommandHelp 按需查询。
-    static const char* const kCore[] = {
-        "circle", "circle3p", "arc", "line", "line_h", "line_v", "line_angle",
-        "rect", "poly", "poly_regular", "poly_edge", "poly_circumscribed", "poly_star",
-        "point", "text", "delete", "undo", "redo", "clear",
-        "select_all", "select_none", "zoom", "move", "rotate"
-    };
-    QStringList syntax;
-    for (const char* nm : kCore) {
-        const CommandInfo* info = CommandCatalog::find(QString::fromLatin1(nm));
-        if (info && !info->usage.isEmpty())
-            syntax.append(QStringLiteral("  %1").arg(info->usage));
+    // 全量注入命令目录：名称/用途/用法/参数/示例均取自 CommandCatalog，
+    // 与 help 命令读取的是同一份数据，避免另维护一份“核心命令表”造成漂移。
+    QVector<QPair<QString, QStringList>> groups;
+    for (const CommandInfo& ci : CommandCatalog::entries()) {
+        QStringList* bucket = nullptr;
+        for (auto& g : groups)
+            if (g.first == ci.category) { bucket = &g.second; break; }
+        if (!bucket) { groups.append({ ci.category, QStringList() }); bucket = &groups.last().second; }
+        const QString row = QStringLiteral("%1（%2）| 用途:%3 | 用法:%4 | 参数:%5 | 示例:%6")
+                                .arg(ci.name, ci.zhName, ci.summary, ci.usage, ci.params, ci.example);
+        *bucket << row;
     }
-    if (!syntax.isEmpty())
-        p += QStringLiteral("\n可用命令语法（usage，必须严格遵守）：\n") + syntax.join(QLatin1Char('\n'));
+    if (!groups.isEmpty()) {
+        p += QStringLiteral("\n命令目录（CommandCatalog 全量，必须严格遵守）：\n");
+        for (const auto& g : groups)
+            p += QStringLiteral("[%1]\n%2\n").arg(g.first, g.second.join(QLatin1Char('\n')));
+    }
 
     // 构造期（以及每轮刷新）注入国标高频规则摘要：只放「高频规则 + 标准号 +
     // 用 queryStandard 精确查询」的指引，绝不把 12 张全量 JSON 塞进上下文。

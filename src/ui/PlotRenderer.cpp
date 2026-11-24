@@ -263,7 +263,7 @@ void paintDimension(QPainter* p, const Element& e, Ctx& c) {
     dim::Style st;
     st.stdConf = DimensionStandardConfig::forStandard(e.standard);
     st.drawingScale = c.model ? c.model->scaleRatio() : 1.0;   // 数字按实物尺寸（GB/T 14690）
-    st.textHeight = standardTextHeightMm(currentSheetFormat(), false);
+    st.textHeight = standardDimTextHeightMm(currentSheetFormat());
     if (e.dimTextHeight > 1e-6) st.textHeight = e.dimTextHeight;
     const dim::Geom g = dim::build(e, st);
     if (!g.valid) return;

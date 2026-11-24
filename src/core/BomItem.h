@@ -39,7 +39,7 @@ struct BomItem {
 };
 
 // 球标纯生成器：返回「圆 + 编号文字」两个图元的集合（与 SurfaceRoughness::buildRoughnessSymbol /
-// SectionCutSymbol 同范式——生成器只产出图元，调用方负责 append 与撤销包裹）。
+// SymbolFactory 同范式——生成器只产出图元，调用方负责 append 与撤销包裹）。
 //   seq     : 序号编号（写入文字，QString::number(seq)）
 //   anchor  : 球标圆心（世界坐标 mm；调用方决定放置点，通常取源几何质心 geo::elementCentroid）
 //   layer   : 目标图层（默认 "0"）

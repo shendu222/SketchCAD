@@ -19,9 +19,9 @@
 #include "Xref.h"
 #include "ConstraintSolver.h"
 #include "ConstraintSolverFacade.h"   // 约束求解路由门面（特性开关+回落）
-#include "AircraftViews.h"
 #include "CadFormats.h"        // P0-01：dxfout 命令行导出（版本协商 / 原生实体）
 #include "CommandCatalog.h"    // help <cmd>：命令元数据目录（用法/参数/样例/相关）
+#include "CommandArgParser.h"  // 标量参数解析单一入口（arrayrect / id 列表）
 #include "CommandInterpreter.h" // help 总表：commandNames()（注册表+家族全集）
 #include "BomItem.h"            // P2：序号球标纯生成器 + BomItem 数据模型
 #include "AliasTable.h"        // help 总表：别名单列；help <cmd> 先解析别名
@@ -1215,11 +1215,15 @@ bool ListCommand::execute(const CommandContext& ctx) {
     // 目标集：无参 → 全部图元；带 id 参数 → 指定图元（无效 id 明确报错）
     std::vector<Element> targets;
     if (ctx.toks.size() >= 2) {
-        for (int i = 1; i < ctx.toks.size(); ++i) {
-            bool ok = false;
-            const int id = ctx.toks[i].toInt(&ok);
-            const Element* e = ok ? m->element(id) : nullptr;
-            if (!e) { m->log("list: #" + ctx.toks[i] + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
+        std::vector<int> ids;
+        int bad = -1;
+        if (!arg::parseIds(ctx.toks, 1, ids, &bad)) {
+            m->log("list: #" + ctx.toks.value(bad) + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn");
+            return false;
+        }
+        for (int id : ids) {
+            const Element* e = m->element(id);
+            if (!e) { m->log("list: #" + QString::number(id) + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
             targets.push_back(*e);
         }
     } else {
@@ -1298,11 +1302,15 @@ bool AreaCommand::execute(const CommandContext& ctx) {
     // ---- 对象模式：id 参数 / 无参用选区 ----
     std::vector<Element> targets;
     if (ctx.toks.size() >= 2) {
-        for (int i = 1; i < ctx.toks.size(); ++i) {
-            bool ok = false;
-            const int id = ctx.toks[i].toInt(&ok);
-            const Element* e = ok ? m->element(id) : nullptr;
-            if (!e) { m->log("area: #" + ctx.toks[i] + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
+        std::vector<int> ids;
+        int bad = -1;
+        if (!arg::parseIds(ctx.toks, 1, ids, &bad)) {
+            m->log("area: #" + ctx.toks.value(bad) + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn");
+            return false;
+        }
+        for (int id : ids) {
+            const Element* e = m->element(id);
+            if (!e) { m->log("area: #" + QString::number(id) + SketchCAD::I18n::t(QString::fromUtf8(" 不存在")), "warn"); return false; }
             targets.push_back(*e);
         }
     } else {
@@ -1765,12 +1773,12 @@ bool ModifyCommand::execute(const CommandContext& ctx) {
     if (cmd == "arrayrect") {
         // 矩形阵列：arrayrect <rows> <cols> <rowSpacing> <colSpacing>
         if (ctx.toks.size() < 5) { m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: arrayrect <行数> <列数> <行间距> <列间距>")), "warn"); return false; }
-        bool ok1, ok2, ok3, ok4;
-        const int rows = ctx.toks[1].toInt(&ok1), cols = ctx.toks[2].toInt(&ok2);
-        const double rsp = ctx.toks[3].toDouble(&ok3), csp = ctx.toks[4].toDouble(&ok4);
-        if (!ok1 || !ok2 || !ok3 || !ok4 || rows < 1 || cols < 1) {
+        arg::RectArrayArgs aa;
+        if (!arg::parseRectArray(ctx.toks, aa)) {
             m->log(SketchCAD::I18n::t(QString::fromUtf8("参数无效（行/列 ≥1，间距可为 0）")), "warn"); return false;
         }
+        const int rows = aa.rows, cols = aa.cols;
+        const double rsp = aa.rowSpacing, csp = aa.colSpacing;
         auto src = selectedElems();
         if (src.empty()) { m->log(SketchCAD::I18n::t(QString::fromUtf8("无可阵列图元（请先选中）")), "warn"); return false; }
         auto changes = modify::makeRectangularArray(src, rows, cols, rsp, csp);
@@ -3103,22 +3111,6 @@ bool XrefCommand::execute(const CommandContext& ctx) {
 }
 
 // ============================================================
-// 飞机三面图（航空制图模板）
-// ============================================================
-
-bool AircraftViewsCommand::execute(const CommandContext& ctx) {
-    SketchModel* m = ctx.model;
-    aircraft::AircraftViewsParams p;
-    // 未来可扩展：按 toks 解析 key=value 覆盖默认值
-    const auto elems = aircraft::buildThreeViews(p, m);
-    m->beginEdit(SketchCAD::I18n::t(QString::fromUtf8("绘制飞机三面图")));
-    m->addElementsQuiet(elems);
-    m->log(SketchCAD::I18n::t(QString::fromUtf8("已生成飞机三面图：%1 个图元（侧面图/俯视图/正面图）"))
-               .arg(elems.size()));
-    return true;
-}
-
-// ============================================================
 // 帮助命令（命令发现与容错帮助）
 // ============================================================
 // help            → 全命令总表（按分类分组，自动从注册表枚举，永不漏登记）
@@ -3300,6 +3292,43 @@ void CommandRegistry::registerBuiltins() {
     registerExact("circle",   std::make_shared<CircleCommand>());
     registerExact("circle3p", std::make_shared<Circle3PCommand>());
     registerExact("arc",      std::make_shared<ArcCommand>());
+    registerExact("ellipse",  std::make_shared<LambdaCommand>([](const CommandContext& ctx) {
+        SketchModel* m = ctx.model;
+        if (ctx.toks.size() > 5) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: ellipse [cx,cy] [长半轴] [短半轴] [旋转角]")), "warn");
+            return false;
+        }
+        Vec3 c(0.0, 0.0, 0.0);
+        double a = 50.0, b = 25.0, rot = 0.0;
+        if (ctx.toks.size() >= 2 && !ctx.parsePoint(1, c)) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("椭圆中心解析失败")), "warn");
+            return false;
+        }
+        auto positive = [m](const QString& token, double& out, const char* what) {
+            bool ok = false;
+            const double v = token.toDouble(&ok);
+            if (!ok || v <= 0.0) {
+                m->log(SketchCAD::I18n::t(QString::fromUtf8(what)) + QStringLiteral(" 须为正数"), "warn");
+                return false;
+            }
+            out = v;
+            return true;
+        };
+        if (ctx.toks.size() >= 3 && !positive(ctx.toks[2], a, "长半轴")) return false;
+        if (ctx.toks.size() >= 4 && !positive(ctx.toks[3], b, "短半轴")) return false;
+        if (ctx.toks.size() >= 5) {
+            bool ok = false;
+            rot = ctx.toks[4].toDouble(&ok);
+            if (!ok) {
+                m->log(SketchCAD::I18n::t(QString::fromUtf8("旋转角须为数值")), "warn");
+                return false;
+            }
+        }
+        if (b > a) { std::swap(a, b); rot += 90.0; }
+        const int id = m->addElement(ElementFactory::createEllipse(c, a, b, rot, m));
+        m->log(SketchCAD::I18n::t(QString::fromUtf8("已创建椭圆 #")) + QString::number(id));
+        return true;
+    }));
     registerExact("rect",     std::make_shared<RectCommand>());
     registerExact("poly",     std::make_shared<PolySplineCommand>(ElementType::Polygon, "多边形"));
     registerExact("spline",   std::make_shared<PolySplineCommand>(ElementType::Spline, "样条曲线"));
@@ -4283,9 +4312,6 @@ void CommandRegistry::registerBuiltins() {
             m->log(SketchCAD::I18n::t(QString::fromUtf8("已导出 DXF（%1）：%2（%3 字节）")).arg(cadfmt::dxfVersionLabel(ver)).arg(path).arg(body.size()), QStringLiteral("info"));
             return true;
         }));
-
-    // ---- 飞机三面图（航空制图模板）----
-    registerExact("aircraft_views", std::make_shared<AircraftViewsCommand>());
 
     // ============================================================
     // 命令补齐（AutoCAD/ZWCAD 肌肉记忆对齐）

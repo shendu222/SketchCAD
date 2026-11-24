@@ -22,11 +22,11 @@ namespace dim {
 struct Style {
     DimensionStandardConfig stdConf = DimensionStandardConfig::gbtDefault();
 
-    double arrowLen   = 3.5;    // 箭头长 ≈ 6d
-    double arrowWidth = 1.1;    // 箭头宽 ≈ 2d（实心闭合箭头，尖端与尺寸界线接触）
+    double arrowLen   = 2.5;    // 箭头长：由 3.5 适度缩小，与降档后的字高保持比例
+    double arrowWidth = 0.8;    // 箭头宽：由 1.1 同步缩小（≈箭头长 0.32）
     double extBeyond  = 2.5;    // 尺寸界线超出尺寸线终端 2~3mm
     double extGap     = 0.0;    // 界线起点与轮廓的间隙（国标为接触，留常量便于调整）
-    double textHeight = 3.5;    // 数字字高（GB/T 14691 常用号数）
+    double textHeight = 2.5;    // 数字字高：GB/T 14691 常用号数降一档，仍清晰可读
     double textGap    = 0.8;    // 数字底边与尺寸线的间距
     double defOffset  = 12.0;   // 未指定尺寸线位置时相对测量线的默认偏置
     double arcSeg     = 4.0;    // 角度尺寸弧的折线近似步长（度）

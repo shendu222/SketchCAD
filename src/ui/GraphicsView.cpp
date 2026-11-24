@@ -47,6 +47,7 @@
 #include "core/ShapeSelect.h"        // 栏选/圈围/圈交判定（fence/wp/cp）
 #include "ui/ThemeManager.h"          // 内置亮/暗主题：画布背景随主题翻色
 #include "ui/DrawingTheme.h"          // 绘图区域全套主题配色（网格/坐标轴/引导线/HUD…）
+#include "ui/PenRecipes.h"            // 派生画笔配方（尺寸细实线 / 追踪引导线）
 
 // ============================ 平移排查调试日志 ============================
 // 右键拖不动时，把每一步鼠标/右键事件的现场写入 %TEMP%/sketchcad_pan.log，
@@ -469,8 +470,9 @@ void ElementItem::paintDimension(QPainter* p, const Element& e) const {
     dim::Style st;
     st.stdConf = DimensionStandardConfig::forStandard(e.standard);
     st.drawingScale = dimScale;          // 数字按实物尺寸（GB/T 14690）
-    // T6：数字字高随当前图纸幅面派生（GB/T 14665-2012 5.6 表3：A0/A1→5，A2/A3/A4→3.5）
-    st.textHeight = standardTextHeightMm(currentSheetFormat(), false);
+    // 尺寸数字字高按幅面派生并降一档（A0/A1→3.5，A2~A5→2.5），使标注与图形比例更协调；
+    // 文字位置/对齐仍由 dim::build 的 (textGap + textHeight/2) 同一公式计算，不受影响。
+    st.textHeight = standardDimTextHeightMm(currentSheetFormat());
     // 命名标注样式（一图多标准）：**仅当元素显式引用了 DIMSTYLE 表中某式时**以表定义为准，
     // 实现「改样式 → 引用它的标注全图联动」。未引用（dimStyleName 空）时保持上面的历史
     // 派生（按 e.standard + 图幅字高），确保既有标注零行为变化、旧档无回归。
@@ -487,10 +489,8 @@ void ElementItem::paintDimension(QPainter* p, const Element& e) const {
     const double z = viewZoom();
 
     // 细实线：尺寸要素用细实线，线宽约为粗实线的 1/2，不跟随图元 lineWidth 变粗。
-    QPen thin = p->pen();
-    thin.setCosmetic(true);
-    thin.setWidthF(std::max(1.0, p->pen().widthF() * 0.5));
-    thin.setStyle(Qt::SolidLine);        // 即便处于预览虚线状态，尺寸线本身也必须是实线
+    // 尺寸要素强制细实线：即便处于预览虚线状态，尺寸线本身也必须是实线。
+    const QPen thin = ui::PenRecipes::thinOutline(p->pen());
     p->setPen(thin);
     p->setBrush(Qt::NoBrush);
 
@@ -613,11 +613,7 @@ void ElementItem::paintMLeader(QPainter* p, const Element& e) const {
     if (!g.valid) return;
     const double z = viewZoom();
 
-    QPen thin = p->pen();
-    thin.setCosmetic(true);
-    thin.setStyle(Qt::SolidLine);
-    thin.setWidthF(std::max(1.0, p->pen().widthF() * 0.5));
-    p->setPen(thin);
+    p->setPen(ui::PenRecipes::thinOutline(p->pen()));
     p->setBrush(Qt::NoBrush);
     for (const auto& s : g.leader)  p->drawLine(qpt(s.a), qpt(s.b));
     for (const auto& s : g.landing) p->drawLine(qpt(s.a), qpt(s.b));
@@ -671,11 +667,7 @@ void ElementItem::paintFcf(QPainter* p, const Element& e) const {
     if (!g.valid) return;
     const double z = viewZoom();
 
-    QPen thin = p->pen();
-    thin.setCosmetic(true);
-    thin.setStyle(Qt::SolidLine);
-    thin.setWidthF(std::max(1.0, p->pen().widthF() * 0.5));
-    p->setPen(thin);
+    p->setPen(ui::PenRecipes::thinOutline(p->pen()));
     p->setBrush(Qt::NoBrush);
     for (const auto& s : g.frame)         p->drawLine(qpt(s.a), qpt(s.b));
     for (const auto& s : g.symbolStrokes) p->drawLine(qpt(s.a), qpt(s.b));
@@ -2179,9 +2171,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
         // ② 对象追踪对齐线（已获取的 OSNAP 锚点）：蓝色水平/垂直虚线
         if (tc.objectTrack && !otrackAnchors_.empty()) {
             p->save();
-            QPen op(th.objTrackGuide);
-            op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
-            p->setPen(op);
+            p->setPen(ui::PenRecipes::guide(th.objTrackGuide, zoom_));
             for (const auto& a : otrackAnchors_) {
                 p->drawLine(QPointF(a.x - R, a.y), QPointF(a.x + R, a.y));
                 p->drawLine(QPointF(a.x, a.y - R), QPointF(a.x, a.y + R));
@@ -2201,9 +2191,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             }
             const auto angs = snap::polarAngles(tc, ld, model_->currentUcs().angleRad * 180.0 / M_PI);
             p->save();
-            QPen pp(th.polarGuide);
-            pp.setStyle(Qt::DashLine); pp.setWidthF(1.0 / zoom_); pp.setCosmetic(true);
-            p->setPen(pp);
+            p->setPen(ui::PenRecipes::guide(th.polarGuide, zoom_));
             for (double deg : angs) {
                 const double a = deg * M_PI / 180.0;
                 p->drawLine(QPointF(base.x, base.y),
@@ -2217,9 +2205,7 @@ void GraphicsView::drawForeground(QPainter* p, const QRectF& rect) {
             const Vec3 base = pendingPts_.back();
             const Ucs& ucs = model_->currentUcs();
             p->save();
-            QPen op(th.orthoGuide);
-            op.setStyle(Qt::DashLine); op.setWidthF(1.0 / zoom_); op.setCosmetic(true);
-            p->setPen(op);
+            p->setPen(ui::PenRecipes::guide(th.orthoGuide, zoom_));
             p->drawLine(QPointF(base.x - R * ucs.xAxis().x, base.y - R * ucs.xAxis().y),
                         QPointF(base.x + R * ucs.xAxis().x, base.y + R * ucs.xAxis().y));
             p->drawLine(QPointF(base.x - R * ucs.yAxis().x, base.y - R * ucs.yAxis().y),

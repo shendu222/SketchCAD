@@ -45,14 +45,11 @@
 | 20 | 查询测量与数据提取 | dist 距离；area 面积（含加减模式）；massprop 质量属性；id 坐标；list 列表；measure 测量；InquiryDialog；BOM 树与明细栏；边界区域 boundary；qselect 联动；案例：**计算扳手截面积与重心** | 用户手册、docs/inquiry-measure-design-analysis.md、docs/boundary-region-design-analysis.md |
 | 21 | 图框、标题栏与打印出图 | GB/T 14689 幅面 A0~A5 与图框；按幅面生成图框与标题栏；TitleBlockForm 标题栏填写；标准标题栏（GB/T 10609.1）；投影角（第一/三角）；PrintEngine 打印引擎；打印预览与保真；plot 出图与打印样式（plot style 映射）；PublishDialog 批量发布；layout 布局与多视口 mview；A3/A4 选型与自动比例；案例：**一张 A4 零件图从图框到 PDF** | 用户手册 §5.1/§6、docs/print-module-design-analysis.md、docs/plot-publish-design-analysis.md、docs/plot-style-mapping-design-analysis.md、docs/layout-multiviewport-design-analysis.md、docs/print-fidelity-fix-design-analysis.md |
 
-## 第五部分 参数化制图模板篇（第22~25章）★案例主打
+## 第五部分 参数化绘图篇（第22章）
 
 | 章 | 标题 | 内容要点 | 素材指引 |
 |---|---|---|---|
 | 22 | 约束与参数化绘图 | 约束工具 N（重合/平行/垂直/相等/相切/水平/竖直/固定）；constraint 命令；perp/tangent2；qconnect 快速连接；ConstraintSolver 求解器原理（无 UI 依赖）；约束可视化（ConstraintBar）；尺寸驱动联动；案例：**约束驱动的可调矩形板** | 用户手册 §5.4.8、docs/osnap-constraint-design-analysis.md、docs/constraint-extension-design-analysis.md、docs/constraint-visualization-design-analysis.md、src/core/ConstraintSolver.h |
-| 23 | 法兰盘参数化制图案例（机械） | 模板入口与对话框；DN100 PN16 带颈平焊法兰全参数（D=210/K=170/L=18/n=4/C=16/boreD=110/hubD=150/hubHeight=26、hasHub/recess、公差）；自动生成主/俯/左三视图+螺栓孔分布+标注+引线+图签；A4 与自动比例；标题栏避让；FlangeHubViews 法兰毂（Ø80/Ø60/沉孔Ø41/通孔Ø33/3-Ø11.5…）；修改参数再生成的工作流；案例：**从 PN16 改参数出 PN10 变体** | 用户手册 §5.7(2)(5)、docs/法兰盘三面图-参数说明.md、src/core/FlangeViews.h、src/core/FlangeHubViews.h、docs/images/flange_views.png、flangehub_views.png |
-| 24 | 轴承与箱体参数化案例（机械） | 轴承座三面图（Ø130/孔Ø96/底板240×160×20/总高180/支承板105/U形槽55×36；主视+俯视+左视全剖）；BearingViews 轴承选型与 GB 标准数据库；箱体视图（主视全剖+A—A 断面+俯视 B+C 向；Ø82/Ø64H8/4×M4-7H/侧凸台Ø34）；粗糙度（GB/T 131）与技术要求；案例：**箱体改壁厚重新出图** | 用户手册 §5.7(3)(4)、src/core/BearingViews.h、src/core/HousingViews.h、docs/images/bearing_views.png、housing_views.png |
-| 25 | 工艺三视图与户型图（航空+建筑） | 飞机三面图（单位**米**：机身38.90/翼展35.80/高6.13/垂尾5.99；正/侧/俯三视图）；工艺路线标注与尺寸链；FloorPlanViews 户型平面图（9200×11756、剪力墙200/隔墙100、门900/800/推拉1500、1:50、showFurniture/showDims 开关、图签）；makeValid 收敛与 validate 验证机制；案例：**出一张飞机三面图+改户型门宽** | 用户手册 §5.7(1)(6)、docs/户型平面图参数化绘制-算法与参数说明.md、src/core/AircraftViews.h、src/core/FloorPlanViews.h、docs/images/aircraft_threeview.png、floorplan_views.png |
 
 ## 第六部分 数据交换与协作篇（第26~27章）
 
