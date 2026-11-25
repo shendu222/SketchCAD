@@ -1132,12 +1132,11 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/CMakeFiles/3.31.3/CMakeRCCompiler.cmake \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/CMakeFiles/3.31.3/CMakeSystem.cmake \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_gui_autogen/moc_predefs.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/config/command_catalog.json \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/app.rc.in \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/version.h.in \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ArcModes.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AutoSave.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BearingViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Block.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BomItem.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CircleModes.h \
@@ -1149,13 +1148,9 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Element.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ElementFactory.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/EllipseModes.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeHubViews.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeViews.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Geometry.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GripOps.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HatchLibrary.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HousingViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/JsonUtil.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layer.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Layout.h \
@@ -1173,6 +1168,7 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Snap.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SpatialIndex.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextStyle.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ToolRegistry.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Ucs.h \
@@ -1182,16 +1178,13 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Xref.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ComplianceChecker.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/weld/WeldSymbol.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ActionFactory.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AircraftViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AircraftViewsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ArrayDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ArrayDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockDialogs.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockDialogs.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BlockEditorDialog.cpp \
@@ -1200,6 +1193,8 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BomTree.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CleanupDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CleanupDialog.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandCatalogEditor.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandCatalogEditor.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandLine.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandLine.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandPalette.cpp \
@@ -1228,20 +1223,12 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ElementPath.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FilterDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FilterDialog.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeHubViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeHubViewsDialog.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeViewsDialog.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GraphicsView.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GraphicsView.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GroupManagerDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GroupManagerDialog.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/HousingViewsDialog.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/HousingViewsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/InquiryDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/InquiryDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/LayerPanel.cpp \
@@ -1260,6 +1247,8 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/OptionsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PlotRenderer.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PlotRenderer.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PrintEngine.cpp \
@@ -1290,6 +1279,8 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StandardsPanel.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StatusBar.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StatusBar.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StdPartTemplatePanel.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StdPartTemplatePanel.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StyleManagerDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StyleManagerDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TableDialog.cpp \
@@ -1298,6 +1289,8 @@ sketchcad_gui_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ThemeManager.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UiMetrics.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UiMetrics.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UnitsLimitsDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UnitsLimitsDialog.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/WeldSymbolDialog.cpp \

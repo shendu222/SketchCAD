@@ -73,6 +73,9 @@
 #include "ui/BlockDialogs.h"
 #include "ui/BlockEditorDialog.h"
 #include "ui/DesignCenterPanel.h"
+#include "ui/StdPartTemplatePanel.h"    // 标准件原图模板库（占位符参数出图）
+#include "core/StdPartInstance.h"       // 标准件参数实例 JSON（保存/打开/重渲染）
+#include "core/StdPartTemplate.h"       // StdPartTemplateStore::find（元数据 → typeId）
 #include "ui/SectionDialog.h"
 #include "ui/RegionManagerDialog.h"
 #include "ui/CleanupDialog.h"
@@ -1211,6 +1214,7 @@ void MainWindow::retranslateUi() {
         { constraintDock_,   "约束栏" },
         { standardsDock_,    "合规检查" },
         { designDock_,       "设计中心" },
+        { stdTplDock_,       "标准件模板库" },
         { aiDock_,           "AI 助手" },
     };
     for (const auto& d : docks)
@@ -1406,6 +1410,9 @@ void MainWindow::buildMenu() {
         })
         ->setIcon(icons::make("new"));
     mk(f, SketchCAD::I18n::t(tr("打开...")),      QKeySequence::Open, [this] { openFile(); })
+        ->setIcon(icons::make("open"));
+    mk(f, SketchCAD::I18n::t(tr("打开标准件参数 JSON...")), QKeySequence(),
+       [this] { openStdPartInstanceJson(); })
         ->setIcon(icons::make("open"));
     mk(f, SketchCAD::I18n::t(tr("保存...")),      QKeySequence::Save, [this] { saveFile(); })
         ->setIcon(icons::make("save"));
@@ -2230,6 +2237,7 @@ void MainWindow::buildMenu() {
     panels->addAction(logDock_->toggleViewAction());
     panels->addAction(cmdDock_->toggleViewAction());
     panels->addAction(designDock_->toggleViewAction());
+    panels->addAction(stdTplDock_->toggleViewAction());
     panels->addAction(aiDock_->toggleViewAction());
     panels->addAction(standardsDock_->toggleViewAction());
     panels->addSeparator();
@@ -2921,6 +2929,175 @@ void MainWindow::insertBlockAtViewCenter(const QString& name) {
     const int id = model_->insertBlock(name, c);
     if (id < 0) return;
     model_->setSelection({ id });
+}
+
+void MainWindow::openStdPartTemplateLibrary() {
+    stdTplDock_->show();
+    stdTplDock_->raise();
+    if (stdTplPanel_) stdTplPanel_->refresh();
+}
+
+void MainWindow::insertStdPartTemplate() {
+    if (!stdTplPanel_) return;
+    QString err;
+    const QVariantMap params = stdTplPanel_->parameters(&err);
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("参数校验失败"), err);
+        return;
+    }
+    StdPartPlacement pl = stdTplPanel_->placement();
+    if (pl.mode == QStringLiteral("pick")) {
+        // 记住点击瞬间的参数快照，进入视图取点态；onCanvasPointPicked 完成插入
+        stdPartPickPending_ = true;
+        stdPartPendingParams_ = params;
+        stdPartPendingPlacement_ = pl;
+        stdPartPendingTemplateId_ = stdTplPanel_->currentTemplateId();
+        model_->setActiveTool(QStringLiteral("select"));
+        view_->setPointPickMode(true);
+        model_->log(QStringLiteral("标准件：请在画布上单击指定插入位置"));
+        return;
+    }
+    Vec3 target;
+    if (pl.mode == QStringLiteral("coordinate")) {
+        if (!model_->parsePointToWorld(pl.pointText, model_->lastInputPointWorld(), target)) {
+            QMessageBox::warning(this, QStringLiteral("插入位置无效"),
+                                 QStringLiteral("坐标格式应为 x,y / @dx,dy / dist<angle：%1")
+                                     .arg(pl.pointText));
+            return;
+        }
+    } else {
+        target = view_->viewCenterWorld();
+    }
+    pl.point = target;
+    QString ierr;
+    const StdPartInstance inst = makeStdPartInstance(stdTplPanel_->currentTemplateId(),
+                                                     params, pl, &ierr);
+    if (!ierr.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("无法生成标准件"), ierr);
+        return;
+    }
+    insertStdPartInstanceIntoDrawing(inst);
+}
+
+StdPartInstance MainWindow::makeStdPartInstance(const QString& templateId,
+                                                const QVariantMap& params,
+                                                const StdPartPlacement& placement,
+                                                QString* err) const {
+    StdPartInstance inst;
+    const StdPartTemplateMeta* meta = StdPartTemplateStore::instance().find(templateId);
+    if (!meta) {
+        if (err) *err = QStringLiteral("模板库中找不到 templateId=%1").arg(templateId);
+        return inst;
+    }
+    inst.typeId     = StdPartInstance::typeIdFor(*meta);
+    inst.category   = meta->category;
+    inst.standard   = meta->standard;
+    inst.templateId = templateId;
+    inst.params     = params;
+    StdPartPlacement p = placement;
+    if (p.layer.isEmpty()) p.layer = QStringLiteral("0");
+    inst.placement  = p;
+    return inst;
+}
+
+void MainWindow::insertStdPartInstanceIntoDrawing(const StdPartInstance& inst) {
+    QString err;
+    std::vector<Element> els = StdPartInstance::render(inst, &err);
+    if (!err.isEmpty() || els.empty()) {
+        QMessageBox::warning(this, QStringLiteral("标准件渲染失败"),
+                             err.isEmpty() ? QStringLiteral("未生成任何图元") : err);
+        return;
+    }
+    insertGeneratedElements(els, QStringLiteral("插入标准件（参数化）"));
+    view_->fitView();
+    model_->log(QStringLiteral("已插入标准件 %1（%2）：%3 图元")
+                    .arg(inst.typeId, inst.params.value(QStringLiteral("SPEC_TEXT")).toString())
+                    .arg(els.size()));
+}
+
+void MainWindow::saveStdPartInstanceJson(const QString& path) {
+    if (!stdTplPanel_ || path.isEmpty()) return;
+    QString err;
+    const QVariantMap params = stdTplPanel_->parameters(&err);
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("参数校验失败"), err);
+        return;
+    }
+    StdPartPlacement pl = stdTplPanel_->placement();
+    Vec3 target = pl.point;
+    if (pl.mode == QStringLiteral("coordinate")) {
+        if (!model_->parsePointToWorld(pl.pointText, model_->lastInputPointWorld(), target)) {
+            QMessageBox::warning(this, QStringLiteral("插入位置无效"),
+                                 QStringLiteral("坐标格式无效：%1").arg(pl.pointText));
+            return;
+        }
+    } else if (pl.mode == QStringLiteral("viewCenter")) {
+        target = view_->viewCenterWorld();
+    }
+    pl.point = target;
+    const StdPartInstance inst = makeStdPartInstance(stdTplPanel_->currentTemplateId(),
+                                                     params, pl, &err);
+    if (!err.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("无法保存标准件"), err);
+        return;
+    }
+    QString outPath = path;
+    if (!outPath.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive))
+        outPath += QStringLiteral(".stdpart.json");
+    if (!StdPartInstance::writeFile(outPath, inst, &err)) {
+        QMessageBox::warning(this, QStringLiteral("保存失败"), err);
+        return;
+    }
+    model_->log(QStringLiteral("标准件参数已保存：%1").arg(outPath));
+}
+
+void MainWindow::openStdPartInstanceJson() {
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("打开标准件参数 JSON"), QString(),
+        QStringLiteral("标准件参数 JSON (*.stdpart.json *.json);;所有文件 (*)"));
+    if (path.isEmpty()) return;
+    QString err;
+    StdPartInstance inst;
+    if (!StdPartInstance::readFile(path, inst, &err)) {
+        QMessageBox::warning(this, QStringLiteral("打开失败"), err);
+        return;
+    }
+    stdTplDock_->show();
+    stdTplDock_->raise();
+    if (!stdTplPanel_->applyInstance(inst, &err)) {
+        QMessageBox::warning(this, QStringLiteral("模板载入失败"), err);
+        return;
+    }
+    insertStdPartInstanceIntoDrawing(inst);
+    model_->log(QStringLiteral("已从参数 JSON 重新渲染标准件：%1").arg(path));
+}
+
+void MainWindow::saveStdPartTemplateDrawing(const QString& path) {
+    if (!stdTplPanel_ || path.isEmpty()) return;
+    const auto& els = stdTplPanel_->rendered();
+    if (els.empty()) return;
+    std::vector<Element> copy = els;
+    QString err;
+    bool ok = false;
+    const QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == QStringLiteral("dxf")) {
+        const QByteArray dxf = cadfmt::toDxf(copy, &err);
+        if (!dxf.isEmpty()) { QFile f(path); ok = f.open(QIODevice::WriteOnly) && f.write(dxf) > 0; }
+    } else if (ext == QStringLiteral("dwg")) {
+        const QByteArray dwg = cadfmt::toDwg(copy, &err);
+        if (!dwg.isEmpty()) { QFile f(path); ok = f.open(QIODevice::WriteOnly) && f.write(dwg) > 0; }
+    } else {
+        // .sketch / 其它：临时切换活动模型内容 → writeDrawing → 还原（避免污染当前文档）
+        std::vector<Element> backup = model_->elements();
+        model_->clear();
+        model_->addElementsQuiet(copy);
+        ok = writeDrawing(path, &err);
+        model_->clear();
+        model_->addElementsQuiet(backup);
+        view_->fitView();
+    }
+    if (ok) model_->log(QStringLiteral("标准件模板图纸已保存：%1").arg(path));
+    else QMessageBox::warning(this, QStringLiteral("保存失败"), err);
 }
 
 void MainWindow::explodeBlockFromMenu() {
@@ -4243,6 +4420,12 @@ void MainWindow::buildDocks() {
     designDock_->setObjectName("dockDesignCenter");
     designDock_->setWidget(designPanel_);
 
+    // 标准件原图模板库（DWG 模板 + 占位符替换参数出图）：右侧独立停靠，初始隐藏
+    stdTplPanel_ = new StdPartTemplatePanel(model_, this);
+    stdTplDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("标准件模板库")), this);
+    stdTplDock_->setObjectName("dockStdPartTemplates");
+    stdTplDock_->setWidget(stdTplPanel_);
+
     // ---- AI 自然语言助手对话面板 ----
     // ⚠️ 必须在下方 setFeatures 循环 / 初始隐藏之前创建：aiDock_ 参与该循环，
     //    若此处为空指针将对 nullptr 调用 QDockWidget::setFeatures → 0xc0000005，
@@ -4265,16 +4448,18 @@ void MainWindow::buildDocks() {
     splitDockWidget(logDock_, standardsDock_, Qt::Vertical);
     // 设计中心：右侧独立停靠（初始隐藏，可从「视图 > 面板」勾出）
     addDockWidget(Qt::RightDockWidgetArea, designDock_);
+    addDockWidget(Qt::RightDockWidgetArea, stdTplDock_);
     // AI 助手：右侧独立停靠（初始隐藏，同上）
     addDockWidget(Qt::RightDockWidgetArea, aiDock_);
     // 底部：命令行
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, aiDock_, standardsDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, stdTplDock_, aiDock_, standardsDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
     designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
+    stdTplDock_->setVisible(false);   // 初始隐藏（同上）
     aiDock_->setVisible(false);       // 初始隐藏（同上）
 
     // 初始分栏比例按屏幕密度取值：窄屏收窄左右栏，把视觉重心留给中央画布。
@@ -4290,6 +4475,15 @@ void MainWindow::buildDocks() {
     // 设计中心：双击块 → 在视图中心插入引用（外部块已由面板并入本图块表）
     connect(designPanel_, &DesignCenterPanel::insertBlockRequested,
             this, &MainWindow::insertBlockAtViewCenter);
+    // 标准件模板库：插入预览结果 / 保存为图纸文件
+    connect(stdTplPanel_, &StdPartTemplatePanel::insertRequested,
+            this, &MainWindow::insertStdPartTemplate);
+    connect(stdTplPanel_, &StdPartTemplatePanel::saveRequested,
+            this, &MainWindow::saveStdPartTemplateDrawing);
+    connect(stdTplPanel_, &StdPartTemplatePanel::saveJsonRequested,
+            this, &MainWindow::saveStdPartInstanceJson);
+    connect(stdTplPanel_, &StdPartTemplatePanel::openJsonRequested,
+            this, &MainWindow::openStdPartInstanceJson);
 }
 
 void MainWindow::connectSignals() {
@@ -6080,6 +6274,22 @@ void MainWindow::onCanvasPointPicked(const Vec3& p) {
     if (mirrorPending_) { handleMirrorPick(p); return; }
     // 剪贴板（copybase 基点 / 粘贴落点）拾取次优先处理。
     if (clipBasePending_ || clipPastePending_) { handleClipPick(p); return; }
+    // 标准件插入位置拾取：用点击时的参数快照 + 当前落点完成插入。
+    if (stdPartPickPending_) {
+        stdPartPickPending_ = false;
+        if (view_->pointPickMode()) view_->setPointPickMode(false);
+        StdPartPlacement pl = stdPartPendingPlacement_;
+        pl.point = p;
+        QString err;
+        const StdPartInstance inst = makeStdPartInstance(stdPartPendingTemplateId_,
+                                                         stdPartPendingParams_, pl, &err);
+        if (!err.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("无法生成标准件"), err);
+            return;
+        }
+        insertStdPartInstanceIntoDrawing(inst);
+        return;
+    }
     // 仅当处于拾取态且有活动对话框时回填；否则复位拾取态（避免左键被永久吞掉）。
     if (!view_->pointPickMode()) return;
     if (!activeArrayDialog_) {
@@ -6161,6 +6371,11 @@ void MainWindow::finishMirror() {
 void MainWindow::onPointPickCancelled() {
     if (mirrorPending_) finishMirror();
     if (clipBasePending_ || clipPastePending_) finishClipPick();
+    if (stdPartPickPending_) {
+        stdPartPickPending_ = false;
+        if (view_->pointPickMode()) view_->setPointPickMode(false);
+        model_->log(QStringLiteral("已取消标准件插入位置拾取"));
+    }
 }
 
 // ============================ 连合（JOIN） ============================

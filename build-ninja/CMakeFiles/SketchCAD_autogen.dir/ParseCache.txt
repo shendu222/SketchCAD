@@ -18,6 +18,8 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/MainWindow.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QString
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QStringList
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QTimer
+ mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QVariant
+ mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QVariantMap
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QVector
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/q17memory.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/q20functional.h
@@ -163,6 +165,7 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/MainWindow.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qutf8stringview.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/quuid.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qvariant.h
+ mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qvariantmap.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qvarlengtharray.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qvector.h
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/qversiontagging.h
@@ -503,6 +506,7 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/MainWindow.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Snap.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SpatialIndex.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.h
+ mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextStyle.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ToolRegistry.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Ucs.h

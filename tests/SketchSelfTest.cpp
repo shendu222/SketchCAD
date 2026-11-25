@@ -17,6 +17,7 @@
 #include <QWindow>        // 窗口级真实按键派发（QWidgetWindow → QShortcutMap → 焦点控件）
 #include <QFileInfo>
 #include <QFile>
+#include <QDir>
 #include <QSet>          // t_sheetFrameBars：预设 key 唯一性检查
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -38,6 +39,8 @@
 #include "BomItem.h"           // P2 序号球标纯生成器 + BomItem 数据模型（t_bom 直测）
 #include "InvoluteGear.h"       // P4 渐开线齿轮齿廓采样生成器（t_gear 直测）
 #include "PartLibrary.h"        // P4 零件库抽象（t_gear 直测 GearGenerator 接入）
+#include "StdPartTemplate.h"    // DWG 原图模板库（占位符替换/几何缩放 直测）
+#include "StdPartInstance.h"    // 标准件参数实例 JSON + 定位变换 直测
 #include "GbFastenerTable.h"    // P5 GB 紧固件规格表（t_partlib 直测）
 #include "Block.h"               // P5 出库：BlockDef / makeRef / extractAttributes
 #include "ViewTools.h"           // P6 视图工具（向视符号/孔轴投影/转角投影，t_viewtool 直测）
@@ -14865,6 +14868,162 @@ static bool t_applyDrawingJson() {
     return g_fail == fail0;
 }
 
+// ===========================================================================
+// DWG 原图模板库：占位符命名/替换 + 几何缩放 + 元数据构建（t_stdPartTemplate）
+// ===========================================================================
+static bool t_stdPartTemplate() {
+    using namespace SketchCAD;
+    int pass0 = g_pass, fail0 = g_fail;
+    // 占位符键表：6 键固定且命名规则统一
+    const QStringList ks = StdPartPlaceholders::keys();
+    CHECK(ks.size() == 6 && ks.contains(QStringLiteral("NOMINAL_D"))
+          && ks.contains(QStringLiteral("LENGTH_L")) && ks.contains(QStringLiteral("SPEC_TEXT")),
+          "stdtpl: 占位符键表 6 键且含 d/L/SPEC_TEXT");
+    CHECK(StdPartPlaceholders::bracketed(QStringLiteral("NOMINAL_D")) == QStringLiteral("{{NOMINAL_D}}"),
+          "stdtpl: 占位符格式 {{KEY}}");
+    // 文本替换：组合键优先、单项键、无占位符原样返回
+    QVariantMap v;
+    v[QStringLiteral("NOMINAL_D")] = 10;
+    v[QStringLiteral("LENGTH_L")] = 50;
+    v[QStringLiteral("SPEC_TEXT")] = QStringLiteral("M10x50");
+    CHECK(StdPartTemplateStore::replaceInText(QStringLiteral("M{{NOMINAL_D}}x{{LENGTH_L}}"), v)
+              == QStringLiteral("M10x50"), "stdtpl: 文字占位符替换正确");
+    CHECK(StdPartTemplateStore::replaceInText(QStringLiteral("{{SPEC_TEXT}} GB/T 5782"), v)
+              == QStringLiteral("M10x50 GB/T 5782"), "stdtpl: SPEC_TEXT 组合键替换正确");
+    // 几何缩放：d=5→10 (y×2)，L=25→50 (x×2)，圆半径随 d
+    StdPartTemplateMeta m;
+    m.baselineNominal = 5; m.baselineLength = 25;
+    m.specText = QStringLiteral("M5x25");
+    m.standard = QStringLiteral("GB 5782-86");
+    std::vector<Element> src;
+    Element ln; ln.type = ElementType::Line;
+    ln.pts = { Vec3(0, 0, 0), Vec3(25, 5, 0) };
+    src.push_back(ln);
+    Element ci; ci.type = ElementType::Circle;
+    ci.pts = { Vec3(12.5, 2.5, 0) }; ci.radius = 2.5;
+    src.push_back(ci);
+    Element tx; tx.type = ElementType::Text;
+    tx.pts = { Vec3(0, -4, 0) }; tx.radius = 3.5;
+    tx.text = QStringLiteral("{{SPEC_TEXT}}");
+    src.push_back(tx);
+    QVariantMap p;
+    p[QStringLiteral("NOMINAL_D")] = 10;
+    p[QStringLiteral("LENGTH_L")] = 50;
+    p[QStringLiteral("SPEC_TEXT")] = QStringLiteral("M10x50");
+    const auto out = StdPartTemplateStore::render(src, m, p);
+    CHECK(out.size() == src.size() + 1, "stdtpl: render 追加规格标注图元");
+    CHECK(std::fabs(out[0].pts[1].x - 50) < 1e-6 && std::fabs(out[0].pts[1].y - 10) < 1e-6,
+          "stdtpl: 长度沿 x / 直径沿 y 缩放正确");
+    CHECK(std::fabs(out[1].radius - 5.0) < 1e-6, "stdtpl: 圆半径随公称直径缩放");
+    CHECK(out[2].text == QStringLiteral("M10x50"), "stdtpl: 文字占位符在 render 中替换");
+    CHECK(out[3].text.startsWith(QStringLiteral("M10x50")), "stdtpl: 追加的规格标注为替换后的值");
+
+    // 面板签名/焊缝等价检查（间接验证 UI 接线不漂移）：键表顺序即表单顺序
+    CHECK(ks[0] == QStringLiteral("NOMINAL_D") && ks[1] == QStringLiteral("LENGTH_L"),
+          "stdtpl: 参数表单顺序与占位符键表一致");
+    fprintf(stdout, "  (DWG 原图模板库: 通过 %d / 失败 %d)\n",
+            g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
+// ===========================================================================
+// 标准件参数实例 JSON：类型标识/参数键值/版本守卫 + 基点旋转缩放定位（t_stdPartInstance）
+// ===========================================================================
+static bool t_stdPartInstance() {
+    using namespace SketchCAD;
+    int pass0 = g_pass, fail0 = g_fail;
+
+    StdPartInstance inst;
+    inst.typeId = QStringLiteral("GB_5782_86");
+    inst.category = QStringLiteral("六角头螺栓 - GB 5782-86");
+    inst.standard = QStringLiteral("GB 5782-86");
+    inst.templateId = QStringLiteral("0123456789abcdef");
+    inst.params[QStringLiteral("NOMINAL_D")] = 10.0;
+    inst.params[QStringLiteral("LENGTH_L")] = 50.0;
+    inst.params[QStringLiteral("SPEC_TEXT")] = QStringLiteral("M10x50");
+    inst.placement.mode = QStringLiteral("coordinate");
+    inst.placement.point = Vec3(100, 50, 0);
+    inst.placement.base = QStringLiteral("bboxCenter");
+    inst.placement.angleDeg = 90.0;
+    inst.placement.scale = 2.0;
+    inst.placement.layer = QStringLiteral("STD");
+
+    const QJsonObject o = inst.toJson();
+    CHECK(o.value(QStringLiteral("formatVersion")).toInt() == 1
+          && o.value(QStringLiteral("schemaVersion")).toInt() == 1,
+          "stdinst: JSON 含 formatVersion/schemaVersion=1");
+    CHECK(o.value(QStringLiteral("kind")).toString() == QStringLiteral("stdpart-instance"),
+          "stdinst: JSON 含标准件类型标识 kind");
+    CHECK(o.value(QStringLiteral("typeId")).toString() == QStringLiteral("GB_5782_86")
+          && !o.value(QStringLiteral("templateId")).toString().isEmpty(),
+          "stdinst: JSON 含标准件类型标识与模板引用");
+    CHECK(o.value(QStringLiteral("params")).toObject()
+              .value(QStringLiteral("NOMINAL_D")).toDouble() == 10.0,
+          "stdinst: JSON 参数键值完整");
+
+    QString err;
+    const StdPartInstance back = StdPartInstance::fromJson(o, &err);
+    CHECK(err.isEmpty() && back.typeId == inst.typeId && back.templateId == inst.templateId,
+          "stdinst: JSON 往返类型标识一致");
+    CHECK(back.params.value(QStringLiteral("SPEC_TEXT")).toString() == QStringLiteral("M10x50")
+          && std::fabs(back.placement.angleDeg - 90.0) < 1e-9,
+          "stdinst: JSON 往返参数与定位一致");
+    QJsonObject bad = o;
+    bad[QStringLiteral("formatVersion")] = 2;
+    err.clear();
+    StdPartInstance::fromJson(bad, &err);
+    CHECK(!err.isEmpty(), "stdinst: 未知版本明确失败");
+
+    // 定位变换：包围盒中心对齐到 (100,50)，绕基点旋转 90°，统一缩放 2×
+    std::vector<Element> src;
+    Element ln; ln.type = ElementType::Line;
+    ln.pts = { Vec3(0, 0, 0), Vec3(10, 0, 0) };
+    src.push_back(ln);
+    Element ci; ci.type = ElementType::Circle;
+    ci.pts = { Vec3(5, 0, 0) }; ci.radius = 5;
+    src.push_back(ci);
+    Element tx; tx.type = ElementType::Text;
+    tx.pts = { Vec3(0, -4, 0) }; tx.radius = 3.5;
+    src.push_back(tx);
+
+    err.clear();
+    const auto placed = StdPartInstance::placeElements(src, inst.placement, &err);
+    CHECK(err.isEmpty() && placed.size() == 3, "stdinst: 定位变换产出全部图元");
+    CHECK(std::fabs(placed[1].pts[0].x - 100) < 1e-6
+          && std::fabs(placed[1].pts[0].y - 50) < 1e-6,
+          "stdinst: 圆心(模板基点)对齐到目标点");
+    CHECK(std::fabs(placed[1].radius - 10.0) < 1e-6, "stdinst: 插入缩放同步半径");
+    CHECK(std::fabs(placed[0].pts[0].x - 100) < 1e-6
+          && std::fabs(placed[0].pts[0].y - 40) < 1e-6,
+          "stdinst: 绕基点逆时针旋转 90° 正确");
+    CHECK(placed[0].layer == QStringLiteral("STD")
+          && std::fabs(placed[2].rotation - 90.0) < 1e-6,
+          "stdinst: 图层覆盖与文字旋转角同步");
+
+    StdPartPlacement ll = inst.placement;
+    ll.base = QStringLiteral("lowerLeft");
+    ll.angleDeg = 0.0; ll.scale = 1.0;
+    const auto placed2 = StdPartInstance::placeElements(src, ll, &err);
+    CHECK(std::fabs(placed2[1].pts[0].x - 105) < 1e-6
+          && std::fabs(placed2[1].pts[0].y - 55) < 1e-6,
+          "stdinst: 左下角基点对齐正确");
+
+    const QString path = QDir::temp().filePath(QStringLiteral("sketchcad_stdpart_instance_test.json"));
+    err.clear();
+    CHECK(StdPartInstance::writeFile(path, inst, &err), "stdinst: JSON 文件写出成功");
+    StdPartInstance disk;
+    err.clear();
+    CHECK(StdPartInstance::readFile(path, disk, &err)
+          && disk.typeId == inst.typeId
+          && disk.params.value(QStringLiteral("LENGTH_L")).toDouble() == 50.0,
+          "stdinst: JSON 文件读回参数实例一致");
+    QFile::remove(path);
+
+    fprintf(stdout, "  (标准件参数实例: 通过 %d / 失败 %d)\n",
+            g_pass - pass0, g_fail - fail0);
+    return g_fail == fail0;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);   // t_interaction 需无头构造 QLineEdit 系控件（QApplication 行为是 QCoreApplication 超集）
     setvbuf(stdout, nullptr, _IONBF, 0);   // 无缓冲：进程异常挂起时也能看到已完成的用例
@@ -15017,6 +15176,8 @@ int main(int argc, char** argv) {
     CHECK(t_gdtAnnotation(), "GD&T 标注赋值(粗糙度最近标准值/几何公差类别与符号/修饰符/预览组装)");
     CHECK(t_weldSymbol(), "焊缝符号(GB/T 324:角焊/V形各一组图元非空/组合既图元/线宽2d3/经WELD落盘与toDrawingJson往返)");
     CHECK(t_longFangSong(), "长仿宋体默认样式 LongFangSong(GB/T 14691:新建文字默认样式/字号下限3.5告警/字宽≈h/√2/模型默认表/fitCellText中心锚点兼容)");
+    CHECK(t_stdPartTemplate(), "DWG原图模板库(占位符{{KEY}}命名/文字替换/几何d-L缩放/规格标注追加)");
+    CHECK(t_stdPartInstance(), "标准件参数实例JSON(类型标识/参数键值/版本守卫/基点旋转缩放定位/文件往返)");
     CHECK(t_toleranceDB(), "ISO 公差数据库(IT01~IT18 标准公差+轴孔基本偏差:30/IT7=0.021/H7孔EI=0/h7轴es=0/JS对称/a~g间隙/孔轴镜像/大小写等价)");
     CHECK(t_layerGB(), "GB/T 18617/ISO 13567 图层命名建议与合规检查(标准条目装载/候选列表/多分隔符合规判定/ComplianceChecker批量/STDCHECK命令路径)");
     CHECK(t_compliance(), "工程制图合规检查器(7类GB/T规则:R1线宽比/R2最小间隙/R3字号下限/R4粗糙度/R5焊缝/R6幅面留边/R7图层命名,经STDCHECK命令路径+反向不误报)");

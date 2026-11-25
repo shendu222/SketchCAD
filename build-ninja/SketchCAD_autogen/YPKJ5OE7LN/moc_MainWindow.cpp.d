@@ -17,6 +17,8 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCAD_autogen/YPKJ5OE7
   C:/Qt/6.10.1/mingw_64/include/QtCore/QString \
   C:/Qt/6.10.1/mingw_64/include/QtCore/QStringList \
   C:/Qt/6.10.1/mingw_64/include/QtCore/QTimer \
+  C:/Qt/6.10.1/mingw_64/include/QtCore/QVariant \
+  C:/Qt/6.10.1/mingw_64/include/QtCore/QVariantMap \
   C:/Qt/6.10.1/mingw_64/include/QtCore/QVector \
   C:/Qt/6.10.1/mingw_64/include/QtCore/q17memory.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/q20functional.h \
@@ -162,6 +164,7 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCAD_autogen/YPKJ5OE7
   C:/Qt/6.10.1/mingw_64/include/QtCore/qutf8stringview.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/quuid.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/qvariant.h \
+  C:/Qt/6.10.1/mingw_64/include/QtCore/qvariantmap.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/qvarlengtharray.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/qvector.h \
   C:/Qt/6.10.1/mingw_64/include/QtCore/qversiontagging.h \
@@ -501,6 +504,7 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCAD_autogen/YPKJ5OE7
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Snap.h \
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SpatialIndex.h \
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.h \
+  D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h \
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/TextStyle.h \
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ToolRegistry.h \
   D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Ucs.h \

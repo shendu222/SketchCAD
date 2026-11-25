@@ -701,6 +701,9 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/OpenAiProvider.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_core_autogen/moc_predefs.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/OpenAiProvider.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/MacroScript.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlCommandMapper.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.h
  mmc:Q_OBJECT
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QJsonObject
@@ -1053,8 +1056,6 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.h
  mdp:C:/Qt/Tools/mingw1310_64/x86_64-w64-mingw32/include/wchar.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_core_autogen/moc_predefs.h
  mdp:D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/LlmProvider.h
-D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/MacroScript.h
-D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlCommandMapper.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/DrawingDb.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Inquiry.cpp
@@ -2840,6 +2841,7 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/LegacyConstraintSolver.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/LineModes.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/NlCommandMapper.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/MacroScript.cpp
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PartLibrary.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/PolylineOps.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ProxyGraphics.h
@@ -3823,8 +3825,10 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ScriptHost.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SdkContext.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Section.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SheetFrameTemplate.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.h
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SketchModel.h
  mmc:Q_OBJECT
  mdp:C:/Qt/6.10.1/mingw_64/include/QtCore/QByteArray
@@ -4322,8 +4326,10 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ScriptApi.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SdkContext.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Section.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.cpp
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SheetFrameTemplate.cpp
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SketchModel.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SpatialIndex.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.cpp
@@ -4342,3 +4348,5 @@ D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ComplianceChecker.c
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/StandardsDB.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/standards/ToleranceDB.cpp
 D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/weld/WeldSymbol.cpp
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.h
+D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.cpp

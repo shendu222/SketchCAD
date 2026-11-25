@@ -24,8 +24,8 @@ IDI_ICON1 ICON DISCARDABLE "D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/
 // 点号形式会被 windres 判为 syntax error。
 // 值由 CMake 变量 SKETCHPAD_VERSION_RC 提供，与 version.h 的点号形式同源。
 1 VERSIONINFO
-FILEVERSION     1,1,1,0
-PRODUCTVERSION  1,1,1,0
+FILEVERSION     1,2,0,0
+PRODUCTVERSION  1,2,0,0
 BEGIN
     BLOCK "StringFileInfo"
     BEGIN
@@ -34,12 +34,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "我是慎独"
             VALUE "FileDescription",  "SketchCAD 草图设计系统"
-            VALUE "FileVersion",      "1.1.1.0"
+            VALUE "FileVersion",      "1.2.0.0"
             VALUE "InternalName",     "SketchCAD"
             VALUE "LegalCopyright",   "Copyright (C) 2026 我是慎独. All rights reserved."
             VALUE "OriginalFilename", "SketchCAD.exe"
             VALUE "ProductName",      "SketchCAD 草图设计系统"
-            VALUE "ProductVersion",   "1.1.1.0"
+            VALUE "ProductVersion",   "1.2.0.0"
         END
     END
     BLOCK "VarFileInfo"

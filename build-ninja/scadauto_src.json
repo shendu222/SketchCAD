@@ -11,15 +11,15 @@
             {
                 "arcSeg": 4,
                 "arrowForm": 0,
-                "arrowLen": 3.5,
-                "arrowWidth": 1.1,
+                "arrowLen": 2.5,
+                "arrowWidth": 0.8,
                 "defOffset": 12,
                 "extBeyond": 2.5,
                 "extGap": 0,
                 "name": "Standard",
                 "std": 0,
                 "textGap": 0.8,
-                "textHeight": 3.5,
+                "textHeight": 2.5,
                 "textOrient": 0,
                 "tolStyle": 0
             }

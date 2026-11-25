@@ -833,6 +833,7 @@
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginTargets-relwithdebinfo.cmake",
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6QSQLiteDriverPluginAdditionalTargetInfo.cmake",
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Sql/Qt6SqlVersionlessAliasTargets.cmake",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/config/command_catalog.json",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/version.h.in",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/app.rc.in",
 		"C:/Qt/6.10.1/mingw_64/lib/cmake/Qt6Core/Qt6CoreConfigureFileTemplate.in",
@@ -889,12 +890,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_AircraftViews.cpp",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AliasTable.h",
 			"MU",
 			"PRMOGMWJPH/moc_AliasTable.cpp",
@@ -928,12 +923,6 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.h",
 			"MU",
 			"PRMOGMWJPH/moc_BatchTools.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BearingViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_BearingViews.cpp",
 			null
 		],
 		[
@@ -988,6 +977,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.h",
 			"MU",
 			"PRMOGMWJPH/moc_CommandCatalog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.h",
+			"MU",
+			"PRMOGMWJPH/moc_CommandCatalogConfig.cpp",
 			null
 		],
 		[
@@ -1081,24 +1076,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeHubViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_FlangeHubViews.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_FlangeViews.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_FloorPlanViews.cpp",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.h",
 			"MU",
 			"PRMOGMWJPH/moc_GbFastenerTable.cpp",
@@ -1126,12 +1103,6 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HatchLibrary.h",
 			"MU",
 			"PRMOGMWJPH/moc_HatchLibrary.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HousingViews.h",
-			"MU",
-			"PRMOGMWJPH/moc_HousingViews.cpp",
 			null
 		],
 		[
@@ -1297,18 +1268,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionCutSymbol.h",
-			"MU",
-			"PRMOGMWJPH/moc_SectionCutSymbol.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.h",
-			"MU",
-			"PRMOGMWJPH/moc_SectionDrawing.cpp",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.h",
 			"MU",
 			"PRMOGMWJPH/moc_SectionProps.cpp",
@@ -1348,6 +1307,24 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.h",
 			"MU",
 			"PRMOGMWJPH/moc_SplineModes.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.h",
+			"MU",
+			"PRMOGMWJPH/moc_StdPartCatalog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h",
+			"MU",
+			"PRMOGMWJPH/moc_StdPartInstance.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.h",
+			"MU",
+			"PRMOGMWJPH/moc_StdPartTemplate.cpp",
 			null
 		],
 		[
@@ -1459,15 +1436,15 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.h",
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ActionFactory.h",
 			"MU",
-			"YPKJ5OE7LN/moc_AiAssistantPanel.cpp",
+			"YPKJ5OE7LN/moc_ActionFactory.cpp",
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AircraftViewsDialog.h",
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AiAssistantPanel.h",
 			"MU",
-			"YPKJ5OE7LN/moc_AircraftViewsDialog.cpp",
+			"YPKJ5OE7LN/moc_AiAssistantPanel.cpp",
 			null
 		],
 		[
@@ -1480,12 +1457,6 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_AutoSaveOptionsDialog.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.h",
-			"MU",
-			"YPKJ5OE7LN/moc_BearingViewsDialog.cpp",
 			null
 		],
 		[
@@ -1510,6 +1481,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CleanupDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_CleanupDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandCatalogEditor.h",
+			"MU",
+			"YPKJ5OE7LN/moc_CommandCatalogEditor.cpp",
 			null
 		],
 		[
@@ -1597,24 +1574,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeHubViewsDialog.h",
-			"MU",
-			"YPKJ5OE7LN/moc_FlangeHubViewsDialog.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeViewsDialog.h",
-			"MU",
-			"YPKJ5OE7LN/moc_FlangeViewsDialog.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.h",
-			"MU",
-			"YPKJ5OE7LN/moc_FloorPlanViewsDialog.cpp",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_GdtAnnotationDialog.cpp",
@@ -1630,12 +1589,6 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GroupManagerDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_GroupManagerDialog.cpp",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/HousingViewsDialog.h",
-			"MU",
-			"YPKJ5OE7LN/moc_HousingViewsDialog.cpp",
 			null
 		],
 		[
@@ -1690,6 +1643,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_PaperSizeDialog.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.h",
+			"MU",
+			"YPKJ5OE7LN/moc_PenRecipes.cpp",
 			null
 		],
 		[
@@ -1783,6 +1742,12 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StdPartTemplatePanel.h",
+			"MU",
+			"YPKJ5OE7LN/moc_StdPartTemplatePanel.cpp",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StyleManagerDialog.h",
 			"MU",
 			"YPKJ5OE7LN/moc_StyleManagerDialog.cpp",
@@ -1804,6 +1769,12 @@
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.h",
 			"MU",
 			"YPKJ5OE7LN/moc_TitleBlockForm.cpp",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UiMetrics.h",
+			"MU",
+			"YPKJ5OE7LN/moc_UiMetrics.cpp",
 			null
 		],
 		[
@@ -1968,9 +1939,9 @@
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/.qt/rcc/qrc_sketchcad_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/.qt/rcc/qrc_sketchselftest_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/PlotStyleSamples_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/ReadmeShots_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchBenchmark_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCAD_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCadPlugin_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchSelfTest_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_core_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_dwgbridge_autogen/mocs_compilation.cpp",
@@ -2027,11 +1998,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.cpp",
-			"MU",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AliasTable.cpp",
 			"MU",
 			null
@@ -2058,11 +2024,6 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BearingViews.cpp",
 			"MU",
 			null
 		],
@@ -2108,6 +2069,11 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.cpp",
 			"MU",
 			null
 		],
@@ -2192,21 +2158,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeHubViews.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeViews.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.cpp",
-			"MU",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.cpp",
 			"MU",
 			null
@@ -2228,11 +2179,6 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HatchLibrary.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HousingViews.cpp",
 			"MU",
 			null
 		],
@@ -2372,16 +2318,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionCutSymbol.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.cpp",
-			"MU",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.cpp",
 			"MU",
 			null
@@ -2413,6 +2349,21 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.cpp",
 			"MU",
 			null
 		],
@@ -2517,22 +2468,12 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AircraftViewsDialog.cpp",
-			"MU",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/ArrayDialog.cpp",
 			"MU",
 			null
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/AutoSaveOptionsDialog.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/BearingViewsDialog.cpp",
 			"MU",
 			null
 		],
@@ -2553,6 +2494,11 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CleanupDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/CommandCatalogEditor.cpp",
 			"MU",
 			null
 		],
@@ -2627,21 +2573,6 @@
 			null
 		],
 		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeHubViewsDialog.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FlangeViewsDialog.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/FloorPlanViewsDialog.cpp",
-			"MU",
-			null
-		],
-		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GdtAnnotationDialog.cpp",
 			"MU",
 			null
@@ -2653,11 +2584,6 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GroupManagerDialog.cpp",
-			"MU",
-			null
-		],
-		[
-			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/HousingViewsDialog.cpp",
 			"MU",
 			null
 		],
@@ -2703,6 +2629,11 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PaperSizeDialog.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.cpp",
 			"MU",
 			null
 		],
@@ -2782,6 +2713,11 @@
 			null
 		],
 		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StdPartTemplatePanel.cpp",
+			"MU",
+			null
+		],
+		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/StyleManagerDialog.cpp",
 			"MU",
 			null
@@ -2798,6 +2734,11 @@
 		],
 		[
 			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/TitleBlockForm.cpp",
+			"MU",
+			null
+		],
+		[
+			"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/UiMetrics.cpp",
 			"MU",
 			null
 		],
@@ -2881,9 +2822,9 @@
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/.qt/rcc/qrc_sketchcad_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/.qt/rcc/qrc_sketchselftest_standards.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/PlotStyleSamples_autogen/mocs_compilation.cpp",
-		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/ReadmeShots_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchBenchmark_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCAD_autogen/mocs_compilation.cpp",
+		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchCadPlugin_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchSelfTest_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_core_autogen/mocs_compilation.cpp",
 		"D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/sketchcad_dwgbridge_autogen/mocs_compilation.cpp",

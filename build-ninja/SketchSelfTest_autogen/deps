@@ -1096,6 +1096,7 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/CMakeFiles/3.31.3/CMakeRCCompiler.cmake \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/CMakeFiles/3.31.3/CMakeSystem.cmake \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/build-ninja/SketchSelfTest_autogen/moc_predefs.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/config/command_catalog.json \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/app.rc.in \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/resources/version.h.in \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/sdk/include/SketchCAD/i_application.h \
@@ -1119,8 +1120,6 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ai/tooldefs.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/com/BatchPlotEngine.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/com/BatchPlotEngine.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AircraftViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AliasTable.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AliasTable.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/AppSettings.cpp \
@@ -1133,8 +1132,6 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchBom.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BatchTools.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BearingViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BearingViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Block.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Block.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/BomItem.cpp \
@@ -1153,6 +1150,8 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Clipboard.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalog.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandCatalogConfig.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandInterpreter.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/CommandInterpreter.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Commands.cpp \
@@ -1185,12 +1184,6 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/EllipseModes.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FeatureMenu.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FeatureMenu.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeHubViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeHubViews.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FlangeViews.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/FloorPlanViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GbFastenerTable.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Gdt.cpp \
@@ -1201,8 +1194,6 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/GripOps.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HatchLibrary.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HatchLibrary.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HousingViews.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/HousingViews.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/I18n.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/I18n.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/I18nDict.cpp \
@@ -1259,10 +1250,6 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SdkContext.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Section.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/Section.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionCutSymbol.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionCutSymbol.h \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.cpp \
-	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionDrawing.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SectionProps.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/ShapeSelect.cpp \
@@ -1278,6 +1265,12 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SpatialIndex.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SplineModes.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartCatalog.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartInstance.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/StdPartTemplate.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SurfaceRoughness.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SurfaceRoughness.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/core/SymbolFactory.cpp \
@@ -1333,6 +1326,8 @@ SketchSelfTest_autogen/timestamp: \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/GraphicsView.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/MTextDialog.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/MTextDialog.h \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.cpp \
+	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PenRecipes.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PlotRenderer.cpp \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PlotRenderer.h \
 	D:/01-CAD/02-avticationCAD/sketch-cad-cpp/src/ui/PrintEngine.cpp \

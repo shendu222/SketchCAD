@@ -100,6 +100,25 @@ rule CXX_EXECUTABLE_LINKER__SketchCAD_Release
 #############################################
 # Rule for compiling CXX files.
 
+rule CXX_COMPILER__SketchCadPlugin_unscanned_Release
+  depfile = $DEP_FILE
+  deps = gcc
+  command = ${LAUNCHER}${CODE_CHECK}C:\Qt\Tools\mingw1310_64\bin\g++.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building CXX object $out
+
+
+#############################################
+# Rule for linking CXX shared library.
+
+rule CXX_SHARED_LIBRARY_LINKER__SketchCadPlugin_Release
+  command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $LANGUAGE_COMPILE_FLAGS $ARCH_FLAGS $LINK_FLAGS -shared -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 $in $LINK_PATH $LINK_LIBRARIES && $POST_BUILD"
+  description = Linking CXX shared library $TARGET_FILE
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling CXX files.
+
 rule CXX_COMPILER__SketchSelfTest_unscanned_Release
   depfile = $DEP_FILE
   deps = gcc
@@ -163,27 +182,6 @@ rule CXX_EXECUTABLE_LINKER__PlotStyleSamples_Release
 #############################################
 # Rule for compiling CXX files.
 
-rule CXX_COMPILER__ReadmeShots_unscanned_Release
-  depfile = $DEP_FILE
-  deps = gcc
-  command = ${LAUNCHER}${CODE_CHECK}C:\Qt\Tools\mingw1310_64\bin\g++.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
-  description = Building CXX object $out
-
-
-#############################################
-# Rule for linking CXX executable.
-
-rule CXX_EXECUTABLE_LINKER__ReadmeShots_Release
-  command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $FLAGS $LINK_FLAGS @$RSP_FILE -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 && $POST_BUILD"
-  description = Linking CXX executable $TARGET_FILE
-  rspfile = $RSP_FILE
-  rspfile_content = $in $LINK_PATH $LINK_LIBRARIES
-  restat = $RESTAT
-
-
-#############################################
-# Rule for compiling CXX files.
-
 rule CXX_COMPILER__DwgOpenVerify_unscanned_Release
   depfile = $DEP_FILE
   deps = gcc
@@ -195,6 +193,69 @@ rule CXX_COMPILER__DwgOpenVerify_unscanned_Release
 # Rule for linking CXX executable.
 
 rule CXX_EXECUTABLE_LINKER__DwgOpenVerify_Release
+  command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $FLAGS $LINK_FLAGS @$RSP_FILE -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 && $POST_BUILD"
+  description = Linking CXX executable $TARGET_FILE
+  rspfile = $RSP_FILE
+  rspfile_content = $in $LINK_PATH $LINK_LIBRARIES
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling CXX files.
+
+rule CXX_COMPILER__StdPartDwgAnalyzer_unscanned_Release
+  depfile = $DEP_FILE
+  deps = gcc
+  command = ${LAUNCHER}${CODE_CHECK}C:\Qt\Tools\mingw1310_64\bin\g++.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building CXX object $out
+
+
+#############################################
+# Rule for linking CXX executable.
+
+rule CXX_EXECUTABLE_LINKER__StdPartDwgAnalyzer_Release
+  command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $FLAGS $LINK_FLAGS @$RSP_FILE -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 && $POST_BUILD"
+  description = Linking CXX executable $TARGET_FILE
+  rspfile = $RSP_FILE
+  rspfile_content = $in $LINK_PATH $LINK_LIBRARIES
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling CXX files.
+
+rule CXX_COMPILER__StdPartCatalogBuilder_unscanned_Release
+  depfile = $DEP_FILE
+  deps = gcc
+  command = ${LAUNCHER}${CODE_CHECK}C:\Qt\Tools\mingw1310_64\bin\g++.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building CXX object $out
+
+
+#############################################
+# Rule for linking CXX executable.
+
+rule CXX_EXECUTABLE_LINKER__StdPartCatalogBuilder_Release
+  command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $FLAGS $LINK_FLAGS @$RSP_FILE -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 && $POST_BUILD"
+  description = Linking CXX executable $TARGET_FILE
+  rspfile = $RSP_FILE
+  rspfile_content = $in $LINK_PATH $LINK_LIBRARIES
+  restat = $RESTAT
+
+
+#############################################
+# Rule for compiling CXX files.
+
+rule CXX_COMPILER__StdPartTemplateBuilder_unscanned_Release
+  depfile = $DEP_FILE
+  deps = gcc
+  command = ${LAUNCHER}${CODE_CHECK}C:\Qt\Tools\mingw1310_64\bin\g++.exe $DEFINES $INCLUDES $FLAGS -MD -MT $out -MF $DEP_FILE -o $out -c $in
+  description = Building CXX object $out
+
+
+#############################################
+# Rule for linking CXX executable.
+
+rule CXX_EXECUTABLE_LINKER__StdPartTemplateBuilder_Release
   command = C:\Windows\system32\cmd.exe /C "$PRE_LINK && C:\Qt\Tools\mingw1310_64\bin\g++.exe $FLAGS $LINK_FLAGS @$RSP_FILE -o $TARGET_FILE -Wl,--out-implib,$TARGET_IMPLIB -Wl,--major-image-version,0,--minor-image-version,0 && $POST_BUILD"
   description = Linking CXX executable $TARGET_FILE
   rspfile = $RSP_FILE

@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 #   → configure_file 生成 build/app.rc（注入 exe 文件属性 VERSIONINFO）
 #   → build.sh package 模式读取本行，拼出 SketchCAD-<版本>-Setup.exe
 # 三者（关于对话框 / exe 属性 / 安装包文件名）因此天然一致，不会各自漂移。
-project(SketchCAD VERSION 1.1.1 LANGUAGES CXX)
+project(SketchCAD VERSION 1.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -52,6 +52,9 @@ set(CORE_SOURCES
     src/core/BomItem.cpp           # P2：序号球标纯生成器 + BomItem 数据模型
     src/core/InvoluteGear.cpp       # P4：渐开线齿轮齿廓采样生成器（G1 公式）
     src/core/PartLibrary.cpp        # P4：零件库抽象（PartGenerator 接口 + GearGenerator 内建）
+    src/core/StdPartCatalog.cpp     # GB 标准件参数化目录（DWG 图库解析驱动 + 参数驱动出图）
+    src/core/StdPartTemplate.cpp    # DWG 原图模板库（占位符替换式参数化出图）
+    src/core/StdPartInstance.cpp    # 标准件参数实例 JSON（类型/参数/定位 + 重渲染）
     src/core/GbFastenerTable.cpp    # P5：GB 紧固件规格表（六角螺栓/螺母/平垫圈，人工给定 G3）
     src/core/ViewTools.cpp          # P6：视图工具（向视符号/孔轴投影/转角投影生成器）
     src/core/SectionProps.cpp       # P7：截面特性（Green 定理标准公式，G1 待人工校核）
@@ -186,6 +189,7 @@ set(UI_SOURCES
     src/ui/BlockDialogs.cpp
     src/ui/BlockEditorDialog.cpp
     src/ui/DesignCenterPanel.cpp
+    src/ui/StdPartTemplatePanel.cpp
     src/ui/SectionDialog.cpp
     src/ui/RegionManagerDialog.cpp
     src/ui/CleanupDialog.cpp
@@ -512,6 +516,47 @@ target_include_directories(DwgOpenVerify PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(DwgOpenVerify PRIVATE -Wall -Wextra)
+
+# ===================== GB 标准件 DWG 图库批量解析器 =====================
+# 扫描 CAD标准件图库全部 DWG，走同源 fromDwg 链解析图元/图层/标注，
+# 输出 JSON 索引（build/stdpart_index.json），供参数化国标库与推理文档使用。
+add_executable(StdPartDwgAnalyzer
+    tools/stdpart/analyze_stdpart_dwg.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(StdPartDwgAnalyzer PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
+target_include_directories(StdPartDwgAnalyzer PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(StdPartDwgAnalyzer PRIVATE -Wall -Wextra)
+
+# GB 标准件目录构建器：合并分片索引 → 生成参数化目录 JSON → 验证参数驱动
+add_executable(StdPartCatalogBuilder
+    tools/stdpart/build_stdpart_catalog.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(StdPartCatalogBuilder PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
+target_include_directories(StdPartCatalogBuilder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(StdPartCatalogBuilder PRIVATE -Wall -Wextra)
+
+# DWG 原图模板库批量构建器：DWG → qCompress(DXF 占位符模板) + index.json + 解析报告
+add_executable(StdPartTemplateBuilder
+    tools/stdpart/build_stdpart_templates.cpp
+    ${CORE_SOURCES}
+    ${UI_SOURCES}
+)
+target_link_libraries(StdPartTemplateBuilder PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
+target_include_directories(StdPartTemplateBuilder PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
+target_compile_options(StdPartTemplateBuilder PRIVATE -Wall -Wextra)
 
 # ===================== 脚本宿主：可选语言引擎 =====================
 # 默认仅 JavaScript（Qt 内置 QJSEngine，零外部依赖）参与构建。

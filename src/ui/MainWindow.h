@@ -19,6 +19,7 @@
 #include "ui/MTextDialog.h"       // MTEXT 多行文字对话框（双击编辑/菜单入口共用）
 #include "ui/StyleManagerDialog.h" // STYLE 文字样式管理器对话框
 #include "core/Clipboard.h"      // clipboard::Payload（剪贴板粘贴拾取状态成员需要）
+#include "core/StdPartInstance.h" // 标准件参数实例 JSON（类型/参数/定位）
 #include "core/CadFormats.h"      // cadfmt::DxfVersion / DxfExportOptions（导出 DXF 版本选择）
 #include "core/AutoSave.h"        // AutoSave::Snapshot（恢复流程的方法签名需要完整类型）
 #include "ui/DocTab.h"            // DocManager / DocSession（多文档标签会话）
@@ -94,6 +95,12 @@ private:
     StandardsPanel* standardsPanel_ = nullptr;   // 工程制图合规检查面板（STDCHECK 结果）
     QDockWidget*   standardsDock_ = nullptr;
     DesignCenterPanel* designPanel_;          // 设计中心面板（块表树 + 外部块库）
+    QDockWidget* stdTplDock_ = nullptr;        // 标准件原图模板库（参数替换出图）
+    class StdPartTemplatePanel* stdTplPanel_ = nullptr;
+    bool stdPartPickPending_ = false;          // 标准件「画布拾取插入位置」等待用户点击
+    QVariantMap stdPartPendingParams_;         // 点击时使用的面板参数快照
+    StdPartPlacement stdPartPendingPlacement_;
+    QString stdPartPendingTemplateId_;
     ConstraintBar* constraintBar_;   // 约束栏面板（展示选中图元的约束与状态）
     // 工具条拆成两行，避免单行过长导致按钮被截断/挤压缩水/溢出窗口：
     //   toolbar_  = 第一行「草图工具」：选择 / 图元 / 曲线 / 标注 / 修改
@@ -519,6 +526,18 @@ private:
     void openAttachXrefDialog();                      // 附加外部参照...（选择文件 + 路径类型）
     void detachXrefFromMenu();                        // 分离外部参照...（从已附加列表中选择）
     void insertBlockAtViewCenter(const QString& name); // 设计中心双击块 → 视图中心插入引用
+    void openStdPartTemplateLibrary();                // 标准件原图模板库侧栏
+    void insertStdPartTemplate();                     // 按面板定位设置插入标准件
+    void saveStdPartTemplateDrawing(const QString& path); // 面板预览图元保存为图纸
+    void saveStdPartInstanceJson(const QString& path);    // 保存参数实例 JSON
+    void openStdPartInstanceJson();                       // 打开参数实例 JSON 并重新渲染插入
+    void insertStdPartInstanceIntoDrawing(const SketchCAD::StdPartInstance& inst);
+
+    // 由模板 id + 参数 + 定位组装可保存/可重放的标准件实例
+    SketchCAD::StdPartInstance makeStdPartInstance(const QString& templateId,
+                                                   const QVariantMap& params,
+                                                   const SketchCAD::StdPartPlacement& placement,
+                                                   QString* err) const;
 
     // ---- 样式（线宽 / 颜色）----
     void applyWidth(double px);               // 设默认线宽；若有选中则同时改选中图元

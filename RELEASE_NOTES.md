@@ -1,3 +1,35 @@
+# SketchCAD v1.2.0 发布说明（Release Notes）
+
+- 发布版本：**v1.2.0**
+- 发布日期：2026-11-25
+- 适用平台：Windows（Qt 6 + MinGW 构建）
+- 版本性质：**功能版**：标准件图库支持参数实例 JSON 落盘/重开渲染与指定位置插入
+- 代码托管：GitHub（`shendu222/sketchCAD`）与 Gitee（`markhenrychen/sketch-cad`）同步，内容一致
+
+---
+
+## 一、本版本新增
+
+1. **标准件参数实例 JSON（`.stdpart.json`）**：保存标准件类型标识 `typeId`、模板引用
+   `templateId`、参数键值 `params`（与 `{{KEY}}` 占位符一一对应）、版本字段
+   `formatVersion/schemaVersion=1` 与定位信息 `placement`；重新打开后按模板重放替换与变换，
+   直接渲染插入图纸，不依赖几何副本。
+2. **参数输入界面扩展**：标准件模板库面板增加插入位置（视图中心 / 画布拾取 / 坐标输入）、
+   基点（包围盒中心 / 左下角 / 首个圆心 / 自定义）、旋转角、目标图层，以及
+   「保存为参数 JSON」「打开参数 JSON」按钮；实时预览同步插入定位。
+3. **定位与对齐**：画布拾取复用 `GraphicsView::pointPickMode`；坐标输入复用
+   `SketchModel::parsePointToWorld`（`x,y` / `@dx,dy` / `dist<angle`）；定点后按基点旋转、
+   缩放、平移并覆盖图层，整组一次撤销。
+4. **文件菜单**：新增「打开标准件参数 JSON...」入口。
+
+## 二、质量校验
+
+- `SketchSelfTest` 全量自测：`通过 3676 / 失败 0`（新增 `t_stdPartInstance` 15 条断言）。
+- `SketchCAD` 主程序 `-Wall -Wextra` 零警告构建通过；离屏启动 5 秒稳定驻留无崩溃。
+- 版本一致性：CMake `project(VERSION 1.2.0)` → `version.h` / `app.rc` / 安装包名同源。
+
+---
+
 # SketchCAD v1.1.1 发布说明（Release Notes）
 
 - 发布版本：**v1.1.1**
