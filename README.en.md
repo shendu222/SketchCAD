@@ -3,22 +3,22 @@
 > [Chinese README](README.md) · **English**
 
 <p align="center">
-  <img src="resources/logo_sketchcad_v1.0_small.png" width="120" alt="SketchCAD Logo" />
+  <img src="resources/i18n/en/logo.png" width="120" alt="SketchCAD logo" />
 </p>
 
-> **A lightweight 2D CAD application built on Qt 6** — C++17 · pure Qt Widgets · 60+ drawing commands · GB/T standards support
+> **A lightweight 2D CAD application built on Qt 6** — C++17 · pure Qt Widgets · 220+ commands · standard-part library · AI natural-language drafting
 
-<img src="resources/badges/build.svg" alt="build: passing" /> <img src="resources/badges/license.svg" alt="license: Proprietary" /> <img src="resources/badges/version.svg" alt="version: 1.1.1" />
+<img src="resources/i18n/en/badge_build.svg" alt="build: passing" /> <img src="resources/i18n/en/badge_license.svg" alt="license: Proprietary" /> <img src="resources/i18n/en/badge_version.svg" alt="version: 1.3.6" />
 
 <p align="center">
-  <img src="resources/posters/SketchCAD-v1.1.1-poster.png" width="420" alt="SketchCAD v1.1.1 release poster (with download QR code)" />
+  <img src="resources/i18n/en/poster.svg" width="420" alt="SketchCAD v1.3.6 release poster" />
 </p>
 
-> **v1.1.1 released** — startup hotfix: fixes the issue where the process exited before the main window appeared. Functionality is identical to v1.1.0. Both **EXE** (Inno Setup) and **MSI** (Windows Installer) installers are provided.
+> **v1.3.6 released** — feature release: the AI assistant recognizes “draw a T-slot bolt M10X100” as the Draw > Standard Part function and generates the drawing. Tool calls, structured JSON commands and bare command lines all execute, and the view is fitted automatically afterward.
 >
-> **Download**: [https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) · Full release notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
+> **Download**: [GitHub Releases](https://github.com/shendu222/SketchCAD/releases) · Full release notes: [RELEASE_NOTES.md](RELEASE_NOTES.md)
 
-SketchCAD targets engineering drafting: standards-compliant lineweights, linetypes, drawing frames, dimensioning and section annotations, covering general mechanical and aerospace drafting workflows.
+SketchCAD targets engineering drafting: standards-compliant lineweights, linetypes, drawing frames, dimensioning and section annotations, covering general mechanical and aerospace drafting workflows. It ships with 193 categories, 5073 original DWG templates and 4792 specification points, ready for parametric, AI-driven or dialog-based part generation.
 
 ---
 
@@ -29,19 +29,23 @@ SketchCAD targets engineering drafting: standards-compliant lineweights, linetyp
 | **Lightweight and native** | Pure Qt Widgets implementation with **no external geometry kernel** — DXF / STEP I/O, hatching and constraint solving are all in-house |
 | **Standards first** | Lineweight groups, linetypes, drawing frames, dimensioning, sections and surface roughness follow the **GB/T series** (GB/T 4458 / GB/T 14665); one-click ISO switch |
 | **Dual interaction modes** | Menus, toolbars and direct mouse drawing, plus a bottom **command line** for precise input such as `line 0,0 50,0` |
-| **Command ecosystem** | 60+ drawing and editing commands with ortho / grid snap / polar tracking / object snap / constraint solving |
+| **Command ecosystem** | 220+ drawing and editing commands with ortho / grid snap / polar tracking / object snap / constraint solving |
+| **AI natural-language drafting** | Built-in AI assistant: tool calls, JSON commands and bare command lines are all executable. Standard-part requests are routed to the Standard Part entry, completing “understand → execute → draw → feedback” in one sentence |
+| **Standard-part library** | 193 GB standard-part categories, 5073 original DWG templates and 4792 specification points; placeholder substitution, `.stdpart.json` instances, placement at a chosen point and reopen/re-render |
 | **Extensibility** | JavaScript scripting, macro recording, CUI aliases, SDK plugins (C++ API) and Windows COM automation |
-| **Engineering self-verification** | 403 self-tests passing, zero-warning build, performance benchmarks and offscreen render comparison |
+| **Engineering self-verification** | Zero-warning `-Wall -Wextra` build; offscreen startup and render smoke checks; a clean source tree containing only core code, configuration and runtime data |
 
 ---
 
 ## 🖥️ UI Overview
 
 <p align="center">
-  <img src="docs/images/gui_main.png" alt="SketchCAD main window" />
+  <img src="resources/i18n/en/gui_main.svg" alt="SketchCAD main window" />
 </p>
 
-Classic CAD layout: top menus (File / Plot / Tracking / Edit / Draw / Measure && Inquiry / View / Script / Interface / Plugins / Help), **BOM tree + entity panel + layers** on the left, a drawing area with a coordinate grid on the right (F8 ortho, F9 grid snap, object snap), and a **parameter input bar** above for precise angle / length / spacing / count input.
+Classic CAD layout: top menus (File / Plot / Tracking / Edit / Draw / Measure & Inquiry / View / Script / Interface / Plugins / Help), **BOM tree + entity panel + layers** on the left, a drawing area with a coordinate grid on the right (F8 ortho, F9 grid snap, object snap), and a **parameter input bar** above for precise angle / length / spacing / count input.
+
+Draw > Standard Part opens the **Standard Part Library dialog**: category navigation, thumbnail preview, parameter configuration, instance workset and action buttons are collected in one non-modal window. The AI panel and command line share the same command interpreter, so every drawing action is undoable and traceable.
 
 ---
 
@@ -57,8 +61,18 @@ Classic CAD layout: top menus (File / Plot / Tracking / Edit / Draw / Measure &&
 | **Inquiry & measure** | `dist`, `area`, `massprop`, `id`, `list` |
 | **Selection filters** | `select_all`, `invert`, `select_layer`, `qselect` |
 | **Dimensions & constraints** | `dim`, `dims`, `constraint`, `perp`, `tangent2`, `qconnect` |
+| **Standard parts** | `stdpart T-slot bolt M10X100`, `stdpart hex bolt M10x100` |
 | **Ortho & snapping** | `ortho`, `snap`, `dyn`, `polar`, `otrack`, `tk` |
 | **Macros & general** | `macrorec`, `undo`, `redo`, `clear`, `help` |
+
+### 🤖 AI Assistant and Standard-Part Drafting
+
+- **Natural language to commands**: the AI assistant calls `runSketchCommand`, converting a user description into the same command string used by menus and the command line.
+- **All three return shapes execute**: standard function calling, structured JSON and a bare command line emitted as plain text (for example `stdpart M10X100`) are all executed.
+- **Standard-part disambiguation**: when a standard-part name and a specification are present — bolt, T-slot bolt, nut, washer, pin, key, bearing, etc. — the request is routed to `stdpart` and never split into “T-slot + bolt” manual drafting steps.
+- **Direct commands in the AI panel**: entering `stdpart M10X100` in the AI panel executes immediately instead of returning only a textual “done” message.
+- **Closed execution loop**: successful commands are logged; standard-part drawing automatically fits the view so the result is immediately visible.
+- **Persistent parameter instances**: `.stdpart.json` stores `formatVersion/schemaVersion`, `typeId`, `templateId`, `params` and `placement`; reopening re-renders from the same template.
 
 ### 💾 Data Format Support
 
@@ -68,14 +82,15 @@ Classic CAD layout: top menus (File / Plot / Tracking / Edit / Draw / Measure &&
 | **DXF** | ✅ / ✅ | AutoCAD DXF R12 compatible, including SPLINE |
 | **STEP** | ✅ / ✅ | ISO 10303 exchange format |
 | **DWG** | ✅ / ❌ | R12 read-only, CODEPAGE / AC1009 compatible |
+| **`.stdpart.json`** | ✅ / ✅ | Standard-part instance: type ID, parameter values, version fields and placement |
 
 ### 🏗️ Architecture
 
 <p align="center">
-  <img src="docs/images/architecture.png" alt="SketchCAD architecture" />
+  <img src="resources/i18n/en/architecture.svg" alt="SketchCAD architecture" />
 </p>
 
-The UI layer (Qt Widgets) drives the core engine through `ModelMediator`; the `core/` engine has **no UI dependency** and owns the entity model, geometric snapping, editing operations, command interpretation, format I/O and constraint solving. SDK plugins, COM automation, the script host and CUI aliases attach to the core through extension interfaces.
+The UI layer (Qt Widgets) drives the core engine through `ModelMediator`; the AI orchestration layer turns natural language into commands through tools; the `core/` engine has **no UI dependency** and owns the entity model, geometric snapping, editing operations, command interpretation, format I/O, standard-part templates and constraint solving. SDK plugins, COM automation, the script host and CUI aliases attach to the core through extension interfaces.
 
 The core data model is a unified list of entities (`Element`) covering 12 entity types: line, circle, arc, rectangle, polygon, spline, ellipse, polyline, text, dimension, section region and more.
 
@@ -85,27 +100,29 @@ The core data model is a unified list of entities (`Element`) covering 12 entity
 
 ### One-click Install
 
-v1.1.1 ships two installers, both available on the [Release page](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) (or scan the QR code on the release poster above):
+v1.3.6 ships EXE and MSI installers, both available on the [Release page](https://github.com/shendu222/SketchCAD/releases) (or scan the QR code on the release poster above):
 
 | Installer | Use case |
 | :--- | :--- |
-| `SketchCAD-1.1.1-Setup.exe` | Inno Setup wizard: license agreement, optional desktop icon and file associations |
-| `SketchCAD-1.1.1-Setup.msi` | Windows Installer: silent `msiexec` deployment / Group Policy distribution |
+| `SketchCAD-1.3.6-Setup.exe` | Inno Setup wizard: license agreement, optional desktop icon and file associations |
+| `SketchCAD-1.3.6-Setup.msi` | Windows Installer: silent `msiexec` deployment / Group Policy distribution |
 
 Both are built from the same set of program files and are identical in content; verify integrity with the supplied `checksums.sha256` via `sha256sum -c`.
 
 Double-click the EXE to install, or install silently from the command line:
 
 ```cmd
-SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+SketchCAD-1.3.6-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+msiexec /i SketchCAD-1.3.6-Setup.msi /qn
 ```
 
 ### First Use
 
 1. **Launch** → choose drawing units (millimeters / inches)
 2. **Draw a line** → type `line 0,0 50,0` in the command line, or use the toolbar
-3. **Save** → JSON / DXF / STEP / DWG formats
+3. **Use AI** → type “draw a T-slot bolt M10X100” in the AI assistant
+4. **Open the standard-part library** → Draw > Standard Part: choose a category, fill parameters, insert into the drawing or export `.stdpart.json`
+5. **Save** → JSON / DXF / STEP formats
 
 ### System Requirements
 
@@ -128,7 +145,6 @@ msiexec /i SketchCAD-1.1.1-Setup.msi /qn
 ```bash
 # Option 1: Git Bash script
 ./build.sh                    # compile -> build/SketchCAD.exe
-./build.sh test               # run tests (403/0 passing)
 ./build.sh dist               # windeployqt packaging into dist/
 ./build.sh package            # EXE + MSI installers -> dist/SketchCAD-<version>-Setup.exe / .msi
 
@@ -142,26 +158,28 @@ cmake --build build
 
 ```
 sketch-cad-cpp/
-├── 📄 CMakeLists.txt          # Main build script (single source of version, includes bench/)
-├── 📜 build.sh                # Build / test / package script (Git Bash)
+├── 📄 CMakeLists.txt          # Main build script (single source of version)
+├── 📜 build.sh                # Build / package script (Git Bash)
+├── ⚙️ config/                  # Command catalog and runtime configuration
 ├── 📁 src/
 │   ├── main.cpp               # Application entry point
 │   ├── core/                  # Core engine (no UI dependency)
 │   │   ├── Element*.cpp + SketchModel.*    # Entities and data model
 │   │   ├── LineModes... + Geometry + Snap  # Drawing modes and geometric snapping
 │   │   ├── Modify + Trim + ConstraintSolver# Editing and constraint solving
-│   │   ├── CommandInterpreter + CuiManager # Command parser and aliases
+│   │   ├── CommandInterpreter + Commands   # Interpreter and stdpart command
+│   │   ├── StdPartTemplate/StdPartInstance # Template library and parameter JSON
 │   │   └── CadFormats         # JSON / DXF / STEP / DWG support
-│   ├── ui/
-│   │   ├── MainWindow + GraphicsView       # Main window and graphics view
-│   │   ├── tools/ + CommandLine            # Interactive tools and command line
-│   │   └── PrintEngine + ScriptHost        # Print engine and script host
-│   ├── tests/                 # SketchSelfTest (403 self-tests)
-│   └── bench/                 # Performance benchmarks
-├── 📚 docs/                   # Design docs, user manual and UI screenshots
-├── 📦 dist/                   # windeployqt release directory
-├── 🎨 resources/              # Icons, version info and brand assets
-└── 🛠️ tools/                  # Helper tools (DXF import/export, etc.)
+│   └── ui/
+│       ├── MainWindow + GraphicsView       # Main window and graphics view
+│       ├── StdPartTemplateDialog + Panel   # Draw > Standard Part dialog and panel
+│       ├── AiAssistantPanel + CommandLine  # AI panel and command line
+│       └── tools/ + PrintEngine            # Interactive tools and printing
+├── 📚 RELEASE_NOTES.md         # Version history and fix notes
+├── 📦 packaging/               # Inno Setup / WiX installer configuration
+├── 🎨 resources/               # Icons, images, version info and brand assets
+│   └── i18n/{zh,en}/           # Localized README images
+└── 🧩 data/stdpart/            # Standard-part template library and runtime index
 ```
 
 ---
@@ -170,18 +188,18 @@ sketch-cad-cpp/
 
 | Document | Summary |
 | :--- | :--- |
-| [User Manual](docs/用户手册.md) | Complete feature reference and operating guide for end users (the linked file keeps its original Chinese filename) |
-| [Editing System](docs/batch-edit-join-array-clipboard-design-analysis.md) | Batch editing / array / clipboard design |
-| [Polyline Editing](docs/polyline-edit-pedit-design-analysis.md) | Polyline editing (PEDIT) implementation details |
-| [Grip Interaction](docs/grip-selection-design-analysis.md) | Grip selection / boundary regions / inquiry and measurement |
-| [DXF Import Extensions](docs/dxf-import-expansion-design-analysis.md) | DXF import extensions and native DWG compatibility analysis |
-| [Print Module](docs/print-module-design-analysis.md) | Print engine and plot fidelity |
-| [SDK Plugins](docs/sdk-plugin-framework-design-analysis.md) | SDK plugin development guide (C++ API) |
-| [Selection Filters](docs/selection-group-qselect-filter-design-analysis.md) | Selection groups / qselect filtering design |
-| [Command Parity](docs/command-parity-design-analysis.md) | Alignment with mainstream CAD commands |
-| [vs. AutoCAD](docs/cad-vs-autocad-gap-analysis-2026-10.md) | Feature gaps between SketchCAD and mainstream CAD, with a roadmap |
+| `docs/用户手册.md` | Complete feature reference and operating guide for end users (release documentation; not bundled in the clean source tree) |
+| [Release Notes](RELEASE_NOTES.md) | Added features, fixes and verification for each version |
+| [AI Orchestration](src/ai/NlAssistant.cpp) | LLM ⇄ tools ⇄ interpreter ⇄ model update loop |
+| [AI Command Routing](config/command_catalog.json) | Names, purposes, parameters and examples of AI-callable commands |
+| [Standard-Part Template Engine](src/core/StdPartTemplate.cpp) | DWG templates, placeholder substitution, length-zone scaling and placement |
+| [Standard-Part Command](src/core/Commands.cpp) | `stdpart`: the core entry from natural-language requests to finished drawings |
+| [Command Interpreter](src/core/CommandInterpreter.cpp) | Command registration, aliases, completion and execution |
+| [Format I/O](src/core/CadFormats.cpp) | JSON / DXF / STEP / DWG implementation |
+| [Print Module](src/ui/PrintEngine.cpp) | Print engine and plot fidelity |
+| [SDK Interface](sdk/include/SketchCAD/i_plugin.h) | C++ plugin ABI and extension interface |
 
-> More design analyses live in `docs/` (the `*-design-analysis.md` series covering snapping, constraints, dimensions, sections, layers, blocks, scripting, macros, CUI, COM, DXF/DWG, plotting, multi-document, undo and more).
+> The source tree stays lean: test programs, test data, design documents and build intermediates are not bundled with the main project. For historical design material, use release documentation or version control history.
 
 ---
 
@@ -201,6 +219,7 @@ line 0,0 50,0              # draw a segment from (0,0) to (50,0)
 circle_cr 20,20 10         # draw a circle centered at (20,20) with radius 10
 arrayrect 3 4 20 15        # rectangular array: 3 columns x 4 rows, spacing 20x15
 join                       # join adjacent entities
+stdpart T-slot bolt M10X100 # generate a T-slot bolt directly
 qselect type=直线 layer=0  # quick-select all lines on layer 0 (the type value is a command argument and must stay verbatim)
 ```
 
@@ -217,22 +236,24 @@ qselect type=直线 layer=0  # quick-select all lines on layer 0 (the type value
 
 ### Interface Language
 
-Switch between `zh-CN` and `en` under Options > General > Interface Language. English mode covers menus, toolbars, the status bar, command-line feedback, dialogs, errors and empty-state hints. The dictionary and generator live in `tools/i18n/`; run `python tools/i18n/build_i18n.py --check` to verify translation coverage, or `--apply` to regenerate `src/core/I18nDict.cpp`. Chinese is the source language, so all text and behavior remain unchanged.
+Switch between `zh-CN` and `en` under Options > General > Interface Language. English mode covers menus, toolbars, the status bar, command-line feedback, dialogs, errors and empty-state hints. The dictionary is compiled into `src/core/I18nDict.cpp` and loaded at runtime; no separate generator is required. Chinese is the source language, so all text and behavior remain unchanged.
+
+The README itself has Chinese and English versions, and every image has a matching file under `resources/i18n/zh/` and `resources/i18n/en/`; each README references only its own language directory.
 
 ### Install / Uninstall Switches
 
 ```cmd
 :: Silent install (EXE)
-SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+SketchCAD-1.3.6-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: Silent install (MSI)
-msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+msiexec /i SketchCAD-1.3.6-Setup.msi /qn
 
 :: Silent uninstall (after EXE install, inside the program directory)
 unins000.exe /VERYSILENT
 
 :: Silent uninstall (after MSI install)
-msiexec /x SketchCAD-1.1.1-Setup.msi /qn
+msiexec /x SketchCAD-1.3.6-Setup.msi /qn
 ```
 
 ---
@@ -241,10 +262,12 @@ msiexec /x SketchCAD-1.1.1-Setup.msi /qn
 
 | Test type | Tool / Result | Notes |
 | :--- | :--- | :--- |
-| **Unit tests** | `SketchSelfTest` | **403 passing / 0 failing** (entities / editing / constraints / selection) |
-| **GUI tests** | offscreen screenshots | HiDPI / multi-language / multi-resolution comparison |
-| **Performance** | `SketchBenchmark` | single-threaded 44.5 ms / p99 0.011 ms |
+| **Build verification** | CMake + Ninja | Clean source tree configures and builds `SketchCAD` successfully |
 | **Build quality** | `-Wall -Wextra` | **0 warnings** |
+| **Offscreen smoke** | offscreen startup | Main window stays alive with no startup crash |
+| **AI drawing verification** | command-path regression | `stdpart` tool calls / bare commands / direct AI-panel input all produce 180 entities and fit the view |
+
+> The cleaned source tree no longer bundles test programs, test data or result files; verification relies on the build chain, offscreen startup and command-path regression.
 
 ---
 
@@ -262,7 +285,8 @@ This project uses a **proprietary license**; see [LICENSE.txt](LICENSE.txt).
 
 | Symptom | Suggested fix |
 | :--- | :--- |
-| **Exits before the main window appears** | Upgrade to **v1.1.1** (fixes the startup crash caused by dock-widget initialization order); see `RELEASE_NOTES.md` |
+| **AI only prints a command string but nothing is drawn** | Make sure you are running **v1.3.6** or newer; older builds do not execute bare command lines emitted by the model. Rebuild and restart: tool calls, JSON commands and bare commands all execute and fit the view. |
+| **AI splits a standard part into manual drafting steps** | Upgrade to **v1.3.6**; a standard-part name plus specification is always routed to `stdpart`, matching Draw > Standard Part. |
 | **No response on startup** | Check that the Qt runtime path `C:\Qt\6.10.1` is configured correctly |
 | **Drawing renders incorrectly** | Try disabling the `closed` / `hatch` display options and retry |
 | **COM calls fail** | Make sure the installer has been run and the registry keys were written |
@@ -270,9 +294,9 @@ This project uses a **proprietary license**; see [LICENSE.txt](LICENSE.txt).
 ---
 
 <p align="center">
-  <img src="resources/splash_sketchcad_v1.0.jpg" width="640" alt="SketchCAD V1.0 splash screen" />
+  <img src="resources/i18n/en/splash.svg" width="640" alt="SketchCAD v1.3.6 splash screen" />
 </p>
 
 <p align="center">
-  <em>SketchCAD — making CAD design simpler · parametric · standardized</em>
+  <em>SketchCAD — making CAD design simpler · parametric · standardized · intelligent</em>
 </p>

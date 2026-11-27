@@ -3,22 +3,22 @@
 > 中文 · [English README](README.en.md)
 
 <p align="center">
-  <img src="resources/logo_sketchcad_v1.0_small.png" width="120" alt="SketchCAD Logo" />
+  <img src="resources/i18n/zh/logo.png" width="120" alt="SketchCAD 标志" />
 </p>
 
-> **一款基于 Qt 6 的轻量级 2D CAD 设计软件** —— C++17 · 纯 Qt Widgets · 60+ 绘图命令 · GB/T 国标支持
+> **一款基于 Qt 6 的轻量级 2D CAD 设计软件** —— C++17 · 纯 Qt Widgets · 220+ 命令 · 标准件图库 · AI 自然语言绘图
 
-<img src="resources/badges/build.svg" alt="build: passing" /> <img src="resources/badges/license.svg" alt="license: Proprietary" /> <img src="resources/badges/version.svg" alt="version: 1.1.1" />
+<img src="resources/i18n/zh/badge_build.svg" alt="构建：通过" /> <img src="resources/i18n/zh/badge_license.svg" alt="许可证：私有" /> <img src="resources/i18n/zh/badge_version.svg" alt="版本：1.3.6" />
 
 <p align="center">
-  <img src="resources/posters/SketchCAD-v1.1.1-poster.png" width="420" alt="SketchCAD v1.1.1 发布海报（含下载地址二维码）" />
+  <img src="resources/i18n/zh/poster.svg" width="420" alt="SketchCAD v1.3.6 发布海报" />
 </p>
 
-> **v1.1.1 已发布** —— 启动故障修复版（Hotfix）：修复程序启动后主界面尚未显示即退出的问题，功能与 v1.1.0 保持一致；同时提供 **EXE**（Inno Setup）与 **MSI**（Windows Installer）两种安装程序。
+> **v1.3.6 已发布** —— 功能版：AI 助手可把“绘制一个T形槽用螺栓M10X100”直接识别为【绘图】-【标准件】并生成图形；命令行文本、结构化命令与工具调用三条路径均可执行，执行后自动适配视图。
 >
-> **下载地址**：[https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) · 完整发布说明见 [RELEASE_NOTES.md](RELEASE_NOTES.md)
+> **下载地址**：[GitHub Releases](https://github.com/shendu222/SketchCAD/releases) · 完整发布说明见 [RELEASE_NOTES.md](RELEASE_NOTES.md)
 
-SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程。
+SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图框、尺寸注法与剖面标注，覆盖通用机械与航空制图流程。内置 193 类、5073 个标准件原图模板与 4792 个规格点，可通过参数、AI 指令或【绘图】-【标准件】对话框直接出图。
 
 ---
 
@@ -29,19 +29,23 @@ SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图�
 | **轻量原生** | 纯 Qt Widgets 实现，**零外部几何库**——DXF / STEP 读写、剖面填充、约束求解均为自研 |
 | **国标优先** | 线宽组别、线型、图框、尺寸注法、剖面、粗糙度遵循 **GB/T 系列标准**（GB/T 4458 / GB/T 14665），支持一键切换 ISO |
 | **双模式交互** | 菜单、工具栏、鼠标直接绘制；同时支持底部**命令行**精确输入，如 `line 0,0 50,0` |
-| **命令生态** | 60+ 绘图与编辑命令，支持正交 / 栅格吸附 / 极轴追踪 / 对象捕捉 / 约束求解 |
+| **命令生态** | 220+ 绘图与编辑命令，支持正交 / 栅格吸附 / 极轴追踪 / 对象捕捉 / 约束求解 |
+| **AI 自然语言绘图** | 内置 AI 助手：支持工具调用、JSON 命令与裸命令行三种返回形态；标准件请求自动路由到【标准件】入口，一句话完成“理解 → 执行 → 出图 → 回显” |
+| **标准件图库** | 193 类 GB 标准件、5073 个 DWG 原图模板、4792 个规格点；支持参数替换、`.stdpart.json` 参数实例、指定位置插入与重复打开渲染 |
 | **扩展能力** | JavaScript 脚本、宏录制、CUI 别名、SDK 插件（C++ API）与 Windows COM 自动化 |
-| **工程自证** | 403 项自测全部通过，0 警告编译，含性能基准与离屏渲染比对 |
+| **工程自证** | `-Wall -Wextra` 零警告构建；离屏启动与渲染冒烟验证；源码树仅保留核心源码、配置与运行数据 |
 
 ---
 
 ## 🖥️ 界面总览
 
 <p align="center">
-  <img src="docs/images/gui_main.png" alt="SketchCAD 主界面" />
+  <img src="resources/i18n/zh/gui_main.svg" alt="SketchCAD 主界面" />
 </p>
 
 经典 CAD 布局：顶部菜单（文件 / 打印 / 追踪 / 编辑 / 绘图 / 测量查询 / 视图 / 脚本 / 界面 / 插件 / 帮助），左侧 **BOM 树 + 图元面板 + 图层**，右侧绘图区带坐标网格（F8 正交、F9 栅格吸附、对象捕捉），上方**参数输入条**支持角度 / 长度 / 间隔 / 条数精确输入。
+
+【绘图】-【标准件】打开**标准件模板库对话框**：分类导航、缩略预览、参数配置、实例工作集与操作按钮集中在一个非模态窗口中；AI 面板与命令行共享同一套命令解释器，所有绘图动作可撤销、可追溯。
 
 ---
 
@@ -57,8 +61,18 @@ SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图�
 | **查询测量** | `dist`, `area`, `massprop`, `id`, `list` |
 | **选择过滤** | `select_all`, `invert`, `select_layer`, `qselect` |
 | **标注约束** | `dim`, `dims`, `constraint`, `perp`, `tangent2`, `qconnect` |
+| **标准件** | `stdpart T形槽用螺栓 M10X100`, `stdpart 六角头螺栓 M10x100` |
 | **正交捕捉** | `ortho`, `snap`, `dyn`, `polar`, `otrack`, `tk` |
 | **宏与通用** | `macrorec`, `undo`, `redo`, `clear`, `help` |
+
+### 🤖 AI 助手与标准件智能出图
+
+- **自然语言到命令**：AI 助手调用 `runSketchCommand`，把用户描述转换为与菜单 / 命令行完全同源的命令串。
+- **三种返回形态全部可执行**：标准 function-calling、结构化 JSON、以及模型直接输出的裸命令行（如 `stdpart M10X100`）都会被真正执行。
+- **标准件专用消歧**：含螺栓、T形槽用螺栓、螺母、垫圈、销、键、轴承等品名与规格时，固定路由到 `stdpart`，不会拆成“T形槽 + 螺栓”分步绘图。
+- **AI 面板直接输入命令**：用户在 AI 面板输入 `stdpart M10X100` 时立即执行，不再只得到“已生成”的文字复述。
+- **执行闭环**：命令成功后写入日志，标准件出图自动适配视图，用户可立即看到结果。
+- **参数实例持久化**：`.stdpart.json` 保存 `formatVersion/schemaVersion`、`typeId`、`templateId`、`params`、`placement`，重新打开即可按模板重渲染。
 
 ### 💾 数据格式支持
 
@@ -68,14 +82,15 @@ SketchCAD 面向工程制图场景：支持符合国标的线宽、线型、图�
 | **DXF** | ✅ / ✅ | AutoCAD DXF R12 兼容，支持 SPLINE 等 |
 | **STEP** | ✅ / ✅ | ISO 10303 标准交换格式 |
 | **DWG** | ✅ / ❌ | R12 只读，CODEPAGE / AC1009 兼容 |
+| **`.stdpart.json`** | ✅ / ✅ | 标准件参数实例：类型标识、参数键值、版本字段与插入定位 |
 
 ### 🏗️ 架构设计
 
 <p align="center">
-  <img src="docs/images/architecture.png" alt="SketchCAD 架构设计" />
+  <img src="resources/i18n/zh/architecture.svg" alt="SketchCAD 架构设计" />
 </p>
 
-UI 用户界面层（Qt Widgets）经 `ModelMediator` 驱动核心引擎；`core/` 核心引擎层**无 UI 依赖**，统一管理图元模型、几何捕捉、编辑操作、命令解释、格式读写与约束求解；SDK 插件、COM 自动化、脚本宿主与 CUI 别名通过扩展接口接入核心。
+UI 用户界面层（Qt Widgets）经 `ModelMediator` 驱动核心引擎；AI 编排层通过工具调用把自然语言转换为命令；`core/` 核心引擎层**无 UI 依赖**，统一管理图元模型、几何捕捉、编辑操作、命令解释、格式读写、标准件模板与约束求解；SDK 插件、COM 自动化、脚本宿主与 CUI 别名通过扩展接口接入核心。
 
 核心数据模型为统一的图元（`Element`）列表，覆盖直线、圆、圆弧、矩形、多边形、样条、椭圆、折线、文本、尺寸标注、剖面区域等 12 类图元。
 
@@ -85,27 +100,29 @@ UI 用户界面层（Qt Widgets）经 `ModelMediator` 驱动核心引擎；`core
 
 ### 一键安装
 
-v1.1.1 提供两种安装程序，均可在 [Release 页面](https://github.com/shendu222/SketchCAD/releases/tag/v1.1.1-setup) 下载（也可扫描上方发布海报中的二维码）：
+v1.3.6 提供 EXE 与 MSI 两种安装程序，可在 [Release 页面](https://github.com/shendu222/SketchCAD/releases) 下载（也可扫描上方发布海报中的二维码）：
 
 | 安装程序 | 适用场景 |
 | :--- | :--- |
-| `SketchCAD-1.1.1-Setup.exe` | Inno Setup 引导安装：许可协议、可选桌面图标与文件关联 |
-| `SketchCAD-1.1.1-Setup.msi` | Windows Installer：`msiexec` 静默部署 / 组策略分发 |
+| `SketchCAD-1.3.6-Setup.exe` | Inno Setup 引导安装：许可协议、可选桌面图标与文件关联 |
+| `SketchCAD-1.3.6-Setup.msi` | Windows Installer：`msiexec` 静默部署 / 组策略分发 |
 
 两者打包自同一批程序文件，内容一致；下载后可用随发行版提供的 `checksums.sha256` 执行 `sha256sum -c` 校验完整性。
 
 双击运行 EXE 即可安装，或通过命令行静默安装：
 
 ```cmd
-SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+SketchCAD-1.3.6-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+msiexec /i SketchCAD-1.3.6-Setup.msi /qn
 ```
 
 ### 首次使用
 
 1. **启动软件** → 选择绘图单位（毫米 / 英寸）
 2. **绘制线条** → 命令行输入 `line 0,0 50,0` 或点击工具栏
-3. **保存文件** → 支持 JSON / DXF / STEP / DWG 格式
+3. **使用 AI** → 在 AI 助手输入“绘制一个T形槽用螺栓M10X100”
+4. **标准件入库** → 【绘图】-【标准件】选择类别、填写参数、插入图纸或导出 `.stdpart.json`
+5. **保存文件** → 支持 JSON / DXF / STEP 格式
 
 ### 环境要求
 
@@ -128,7 +145,6 @@ msiexec /i SketchCAD-1.1.1-Setup.msi /qn
 ```bash
 # 方式 1：Git Bash 脚本
 ./build.sh                    # 编译 → build/SketchCAD.exe
-./build.sh test               # 运行测试 (403/0 通过)
 ./build.sh dist               # 打包 windeployqt 到 dist/
 ./build.sh package            # 生成 EXE + MSI 安装包 → dist/SketchCAD-<version>-Setup.exe / .msi
 
@@ -142,26 +158,28 @@ cmake --build build
 
 ```
 sketch-cad-cpp/
-├── 📄 CMakeLists.txt          # 主构建脚本（版本号唯一来源，含 bench 子目录）
-├── 📜 build.sh                # 构建 / 测试 / 打包脚本（Git Bash）
+├── 📄 CMakeLists.txt          # 主构建脚本（版本号唯一来源）
+├── 📜 build.sh                # 构建 / 打包脚本（Git Bash）
+├── ⚙️ config/                  # 命令目录与运行时配置
 ├── 📁 src/
 │   ├── main.cpp               # 程序入口
 │   ├── core/                  # 核心引擎（无 UI 依赖）
 │   │   ├── Element*.cpp + SketchModel.*    # 图元与数据模型
 │   │   ├── LineModes... + Geometry + Snap  # 绘图模式与几何捕捉
 │   │   ├── Modify + Trim + ConstraintSolver# 编辑与约束求解
-│   │   ├── CommandInterpreter + CuiManager # 命令解析器与别名
+│   │   ├── CommandInterpreter + Commands   # 命令解析、stdpart 标准件命令
+│   │   ├── StdPartTemplate/StdPartInstance # 模板库与参数实例 JSON
 │   │   └── CadFormats         # JSON / DXF / STEP / DWG 格式支持
-│   ├── ui/
-│   │   ├── MainWindow + GraphicsView       # 主界面与图形视图
-│   │   ├── tools/ + CommandLine            # 交互工具与命令行
-│   │   └── PrintEngine + ScriptHost        # 打印引擎与脚本宿主
-│   ├── tests/                 # SketchSelfTest（403 项自测）
-│   └── bench/                 # 性能基准测试
-├── 📚 docs/                   # 设计文档、用户手册与界面截图
-├── 📦 dist/                   # windeployqt 发布目录
-├── 🎨 resources/              # 图标、版本信息与品牌视觉资源
-└── 🛠️ tools/                  # 辅助工具（DXF 导入导出等）
+│   └── ui/
+│       ├── MainWindow + GraphicsView       # 主界面与图形视图
+│       ├── StdPartTemplateDialog + Panel   # 【绘图>标准件】对话框与面板
+│       ├── AiAssistantPanel + CommandLine  # AI 面板与命令行
+│       └── tools/ + PrintEngine            # 交互工具与打印引擎
+├── 📚 RELEASE_NOTES.md         # 版本历史与修复说明
+├── 📦 packaging/               # Inno Setup / WiX 安装包配置
+├── 🎨 resources/               # 图标、图片、版本信息与品牌视觉资源
+│   └── i18n/{zh,en}/           # README 中文 / 英文双语图片
+└── 🧩 data/stdpart/            # 标准件模板库与运行时索引
 ```
 
 ---
@@ -170,18 +188,18 @@ sketch-cad-cpp/
 
 | 文档 | 内容概要 |
 | :--- | :--- |
-| [用户手册](docs/用户手册.md) | 面向使用者的完整功能说明与操作指南 |
-| [编辑系统](docs/batch-edit-join-array-clipboard-design-analysis.md) | 批量编辑 / 阵列 / 剪贴板设计 |
-| [多段线编辑](docs/polyline-edit-pedit-design-analysis.md) | 多段线编辑（PEDIT）实现细节 |
-| [夹点交互](docs/grip-selection-design-analysis.md) | 夹点选择 / 边界区域 / 查询测量 |
-| [DXF 导入扩展](docs/dxf-import-expansion-design-analysis.md) | DXF 导入扩展与 DWG 原生兼容分析 |
-| [打印模块](docs/print-module-design-analysis.md) | 打印引擎与打印保真实现 |
-| [SDK 插件](docs/sdk-plugin-framework-design-analysis.md) | SDK 插件开发指南（C++ API） |
-| [选择过滤](docs/selection-group-qselect-filter-design-analysis.md) | 选择组 / qselect 过滤设计 |
-| [命令对齐](docs/command-parity-design-analysis.md) | 主流 CAD 命令对齐分析 |
-| [与 AutoCAD 差异](docs/cad-vs-autocad-gap-analysis-2026-10.md) | SketchCAD 与主流 CAD 功能差异与改进路线 |
+| `docs/用户手册.md` | 面向使用者的完整功能说明与操作指南（发行版文档，精简源码树不随附） |
+| [发布说明](RELEASE_NOTES.md) | 各版本新增功能、修复与质量校验记录 |
+| [AI 助手编排](src/ai/NlAssistant.cpp) | LLM ⇄ 工具 ⇄ 命令解释器 ⇄ 模型对象更新闭环 |
+| [AI 指令路由](config/command_catalog.json) | AI 可调用命令的名称、用途、参数与示例 |
+| [标准件模板引擎](src/core/StdPartTemplate.cpp) | DWG 模板、占位符替换、长度分区缩放与定位变换 |
+| [标准件命令](src/core/Commands.cpp) | `stdpart` 命令：自然语言请求到标准件出图的核心入口 |
+| [命令解释器](src/core/CommandInterpreter.cpp) | 命令注册、别名、补全与执行 |
+| [格式读写](src/core/CadFormats.cpp) | JSON / DXF / STEP / DWG 读写实现 |
+| [打印模块](src/ui/PrintEngine.cpp) | 打印引擎与打印保真实现 |
+| [SDK 接口](sdk/include/SketchCAD/i_plugin.h) | C++ 插件 ABI 与扩展接口 |
 
-> 更多设计分析文档见 `docs/` 目录（`*-design-analysis.md` 系列，覆盖捕捉、约束、标注、剖面、图层、块、脚本、宏、CUI、COM、DXF/DWG、打印、多文档、撤销等主题）。
+> 源码工程保持精简：不再随主工程附带测试程序、测试数据、设计分析文档与构建中间目录；需要历史设计资料时请使用发行版文档或版本库历史。
 
 ---
 
@@ -201,6 +219,7 @@ line 0,0 50,0              # 绘制从 (0,0) 到 (50,0) 的线段
 circle_cr 20,20 10         # 绘制圆心 (20,20) 半径 10 的圆
 arrayrect 3 4 20 15        # 创建 3 列 4 行，间距 20x15 的矩形阵列
 join                       # 合并相邻图元
+stdpart T形槽用螺栓 M10X100 # 直接生成 T 形槽用螺栓
 qselect type=直线 layer=0  # 快速选择 0 层的所有直线
 ```
 
@@ -217,22 +236,24 @@ qselect type=直线 layer=0  # 快速选择 0 层的所有直线
 
 ### 界面语言
 
-在「选项 → 常规 → 界面语言」中可切换 `zh-CN` / `en`。英文模式覆盖菜单、工具栏、状态栏、命令行反馈、弹窗、错误与空态提示；词典与生成器位于 `tools/i18n/`，执行 `python tools/i18n/build_i18n.py --check` 可校验译文覆盖率，`--apply` 重新生成 `src/core/I18nDict.cpp`。中文模式为源语言，所有文案与行为保持原样。
+在「选项 → 常规 → 界面语言」中可切换 `zh-CN` / `en`。英文模式覆盖菜单、工具栏、状态栏、命令行反馈、弹窗、错误与空态提示；词典固化在 `src/core/I18nDict.cpp`，运行时按选择加载，无需额外生成工具。中文模式为源语言，所有文案与行为保持原样。
+
+README 本身提供中文 / 英文两个版本，且所有图片均有 `resources/i18n/zh/` 与 `resources/i18n/en/` 对应版本，两个文档分别引用各自语言目录。
 
 ### 安装 / 卸载参数
 
 ```cmd
 :: 静默安装（EXE）
-SketchCAD-1.1.1-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+SketchCAD-1.3.6-Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: 静默安装（MSI）
-msiexec /i SketchCAD-1.1.1-Setup.msi /qn
+msiexec /i SketchCAD-1.3.6-Setup.msi /qn
 
 :: 静默卸载（EXE 安装后，程序目录内）
 unins000.exe /VERYSILENT
 
 :: 静默卸载（MSI 安装后）
-msiexec /x SketchCAD-1.1.1-Setup.msi /qn
+msiexec /x SketchCAD-1.3.6-Setup.msi /qn
 ```
 
 ---
@@ -241,10 +262,12 @@ msiexec /x SketchCAD-1.1.1-Setup.msi /qn
 
 | 测试类型 | 工具 / 结果 | 说明 |
 | :--- | :--- | :--- |
-| **单元测试** | `SketchSelfTest` | **403 项通过 / 0 失败**（覆盖图元 / 编辑 / 约束 / 选择） |
-| **GUI 测试** | offscreen 截图 | 支持高分屏 / 多语言 / 多分辨率比对 |
-| **性能基准** | `SketchBenchmark` | 单线程 44.5ms / p99 0.011ms |
+| **构建验证** | CMake + Ninja | 从干净源码树配置并构建 `SketchCAD` 成功 |
 | **编译质量** | `-Wall -Wextra` | **0 警告** |
+| **离屏冒烟** | offscreen 启动 | 主窗口稳定驻留，无启动崩溃 |
+| **AI 出图验证** | 命令链路回归 | `stdpart` 工具调用 / 裸命令 / AI 面板直输均能生成 180 图元并适配视图 |
+
+> 清理后的源码工程不再包含测试程序、测试数据和结果文件；验证以构建链、离屏启动与命令链路回归为准。
 
 ---
 
@@ -262,7 +285,8 @@ msiexec /x SketchCAD-1.1.1-Setup.msi /qn
 
 | 问题现象 | 建议解决方案 |
 | :--- | :--- |
-| **启动后主界面未显示即退出** | 升级至 **v1.1.1**（该版本修复了停靠窗口初始化顺序导致的启动崩溃），详见 `RELEASE_NOTES.md` |
+| **AI 只回复命令文本，界面没有出图** | 请确认使用 **v1.3.6** 或更新版本；旧版本不会执行模型直接输出的裸命令行。重新编译并重启后，工具调用 / JSON / 裸命令均会实际执行并自动适配视图 |
+| **AI 把标准件拆成分步绘图** | 升级至 **v1.3.6**；标准件品名 + 规格固定路由到 `stdpart`，对应【绘图】-【标准件】 |
 | **启动无响应** | 检查 Qt 运行环境路径 `C:\Qt\6.10.1` 是否正确配置 |
 | **绘图显示异常** | 尝试关闭 `closed` / `hatch` 相关显示选项后重试 |
 | **COM 调用失败** | 确认已运行安装程序，注册表项已正确写入 |
@@ -270,9 +294,9 @@ msiexec /x SketchCAD-1.1.1-Setup.msi /qn
 ---
 
 <p align="center">
-  <img src="resources/splash_sketchcad_v1.0.jpg" width="640" alt="SketchCAD V1.0 启动封面" />
+  <img src="resources/i18n/zh/splash.svg" width="640" alt="SketchCAD v1.3.6 启动封面" />
 </p>
 
 <p align="center">
-  <em>SketchCAD —— 让 CAD 设计更简单 · 参数化 · 标准化</em>
+  <em>SketchCAD —— 让 CAD 设计更简单 · 参数化 · 标准化 · 智能化</em>
 </p>
