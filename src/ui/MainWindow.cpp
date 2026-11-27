@@ -74,6 +74,7 @@
 #include "ui/BlockEditorDialog.h"
 #include "ui/DesignCenterPanel.h"
 #include "ui/StdPartTemplatePanel.h"    // 标准件原图模板库（占位符参数出图）
+#include "ui/StdPartTemplateDialog.h"   // 【绘图>标准件】模板库对话框
 #include "core/StdPartInstance.h"       // 标准件参数实例 JSON（保存/打开/重渲染）
 #include "core/StdPartTemplate.h"       // StdPartTemplateStore::find（元数据 → typeId）
 #include "ui/SectionDialog.h"
@@ -863,6 +864,9 @@ void MainWindow::initAiAssistant() {
         model_->log(SketchCAD::I18n::t(QString::fromUtf8("AI 助手执行：%1（%2）"))
                         .arg(line, ok ? SketchCAD::I18n::t(QString::fromUtf8("成功")) : SketchCAD::I18n::t(QString::fromUtf8("失败"))),
                     ok ? QStringLiteral("info") : QStringLiteral("warn"));
+        // 标准件模板坐标可能在当前视口之外：出图成功后自动适配视图，确保用户立即看到结果。
+        if (ok && view_ && line.startsWith(QStringLiteral("stdpart "), Qt::CaseInsensitive))
+            view_->fitView();
     });
 
     // 5) 选项变更热更新。「取消回滚」走同一 settingChanged 通道，后端参数也随之回退。
@@ -1214,11 +1218,12 @@ void MainWindow::retranslateUi() {
         { constraintDock_,   "约束栏" },
         { standardsDock_,    "合规检查" },
         { designDock_,       "设计中心" },
-        { stdTplDock_,       "标准件模板库" },
         { aiDock_,           "AI 助手" },
     };
     for (const auto& d : docks)
         if (d.dock) d.dock->setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8(d.zh)));
+    if (stdTplDialog_)
+        stdTplDialog_->setWindowTitle(SketchCAD::I18n::t(QString::fromUtf8("标准件模板库")));
 
     // 4) 参数输入条静态标签（角度/长度/间隔/条数/线型/提示），动态项由 updateParamBarForTool 重算
     if (lblAngle_)   lblAngle_->setText(SketchCAD::I18n::t(QString::fromUtf8("角度")));
@@ -2187,6 +2192,10 @@ void MainWindow::buildMenu() {
             dlg.exec();
        })
         ->setIcon(icons::make("dim"));
+    // 标准件模板库对话框：分类导航 + 参数配置 + 实例工作集 + 插入图纸
+    mk(s, SketchCAD::I18n::t(QString::fromUtf8("标准件(&S)...")), QKeySequence(),
+       [this] { openStdPartTemplateLibrary(); })
+        ->setIcon(icons::make("block"));
     bar->addMenu(s);
 
     // ---- 顶级菜单：测量查询（只读几何查询面板，dist/area/massprop/id 的图形化入口）----
@@ -2237,7 +2246,6 @@ void MainWindow::buildMenu() {
     panels->addAction(logDock_->toggleViewAction());
     panels->addAction(cmdDock_->toggleViewAction());
     panels->addAction(designDock_->toggleViewAction());
-    panels->addAction(stdTplDock_->toggleViewAction());
     panels->addAction(aiDock_->toggleViewAction());
     panels->addAction(standardsDock_->toggleViewAction());
     panels->addSeparator();
@@ -2932,9 +2940,11 @@ void MainWindow::insertBlockAtViewCenter(const QString& name) {
 }
 
 void MainWindow::openStdPartTemplateLibrary() {
-    stdTplDock_->show();
-    stdTplDock_->raise();
-    if (stdTplPanel_) stdTplPanel_->refresh();
+    if (!stdTplDialog_) return;
+    stdTplDialog_->show();
+    stdTplDialog_->raise();
+    stdTplDialog_->activateWindow();
+    if (stdTplPanel_) stdTplPanel_->refresh();   // 模板库文件可能已重建，刷新分类树
 }
 
 void MainWindow::insertStdPartTemplate() {
@@ -3062,8 +3072,7 @@ void MainWindow::openStdPartInstanceJson() {
         QMessageBox::warning(this, QStringLiteral("打开失败"), err);
         return;
     }
-    stdTplDock_->show();
-    stdTplDock_->raise();
+    openStdPartTemplateLibrary();
     if (!stdTplPanel_->applyInstance(inst, &err)) {
         QMessageBox::warning(this, QStringLiteral("模板载入失败"), err);
         return;
@@ -4420,11 +4429,9 @@ void MainWindow::buildDocks() {
     designDock_->setObjectName("dockDesignCenter");
     designDock_->setWidget(designPanel_);
 
-    // 标准件原图模板库（DWG 模板 + 占位符替换参数出图）：右侧独立停靠，初始隐藏
-    stdTplPanel_ = new StdPartTemplatePanel(model_, this);
-    stdTplDock_ = new QDockWidget(SketchCAD::I18n::t(QString::fromUtf8("标准件模板库")), this);
-    stdTplDock_->setObjectName("dockStdPartTemplates");
-    stdTplDock_->setWidget(stdTplPanel_);
+    // 标准件原图模板库：由【绘图>标准件】弹出的非模态对话框承载，不再占用右侧 dock
+    stdTplDialog_ = new StdPartTemplateDialog(model_, this);
+    stdTplPanel_ = stdTplDialog_->panel();
 
     // ---- AI 自然语言助手对话面板 ----
     // ⚠️ 必须在下方 setFeatures 循环 / 初始隐藏之前创建：aiDock_ 参与该循环，
@@ -4448,18 +4455,16 @@ void MainWindow::buildDocks() {
     splitDockWidget(logDock_, standardsDock_, Qt::Vertical);
     // 设计中心：右侧独立停靠（初始隐藏，可从「视图 > 面板」勾出）
     addDockWidget(Qt::RightDockWidgetArea, designDock_);
-    addDockWidget(Qt::RightDockWidgetArea, stdTplDock_);
     // AI 助手：右侧独立停靠（初始隐藏，同上）
     addDockWidget(Qt::RightDockWidgetArea, aiDock_);
     // 底部：命令行
     addDockWidget(Qt::BottomDockWidgetArea, cmdDock_);
 
     // 全部面板可拖拽移动、浮动、关闭（关闭后可从「视图 > 面板」重新勾选显示）
-    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, stdTplDock_, aiDock_, standardsDock_})
+    for (auto* d : {bomDock_, elemDock_, propDock_, logDock_, cmdDock_, layerDock_, constraintDock_, designDock_, aiDock_, standardsDock_})
         d->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
                        QDockWidget::DockWidgetFloatable);
     designDock_->setVisible(false);   // 初始隐藏，按需勾出（避免首次启动过于拥挤）
-    stdTplDock_->setVisible(false);   // 初始隐藏（同上）
     aiDock_->setVisible(false);       // 初始隐藏（同上）
 
     // 初始分栏比例按屏幕密度取值：窄屏收窄左右栏，把视觉重心留给中央画布。
@@ -4475,7 +4480,9 @@ void MainWindow::buildDocks() {
     // 设计中心：双击块 → 在视图中心插入引用（外部块已由面板并入本图块表）
     connect(designPanel_, &DesignCenterPanel::insertBlockRequested,
             this, &MainWindow::insertBlockAtViewCenter);
-    // 标准件模板库：插入预览结果 / 保存为图纸文件
+    // 标准件模板库对话框：插入请求统一由主窗口解析落点并落模
+    connect(stdTplDialog_, &StdPartTemplateDialog::insertRequested,
+            this, &MainWindow::insertStdPartTemplate);
     connect(stdTplPanel_, &StdPartTemplatePanel::insertRequested,
             this, &MainWindow::insertStdPartTemplate);
     connect(stdTplPanel_, &StdPartTemplatePanel::saveRequested,

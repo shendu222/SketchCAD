@@ -40,6 +40,10 @@ public:
     QString currentTemplateId() const;
     // 打开 JSON 后回填模板/参数/定位并刷新预览
     bool applyInstance(const StdPartInstance& inst, QString* err = nullptr);
+    // 嵌入【标准件模板库】对话框时隐藏面板自带操作按钮，由对话框统一提供
+    void setDialogMode(bool on);
+    // 恢复当前模板的原规格参数（供对话框「新建」使用）
+    void resetToDefaults();
 
 signals:
     void insertRequested();            // 请求按当前定位设置把标准件插入图纸

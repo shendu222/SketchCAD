@@ -77,6 +77,59 @@
   ],
   "commands": [
     {
+      "key": "stdpart",
+      "parameters": [
+        {
+          "order": 1,
+          "name": "name",
+          "value": "stdpart"
+        },
+        {
+          "order": 2,
+          "name": "zhName",
+          "value": "标准件"
+        },
+        {
+          "order": 3,
+          "name": "category",
+          "value": "绘图"
+        },
+        {
+          "order": 4,
+          "name": "summary",
+          "value": "按标准件类型与规格直接从原图模板生成标准件（对应菜单【绘图】-【标准件】）"
+        },
+        {
+          "order": 5,
+          "name": "usage",
+          "value": "stdpart <品名> <规格>"
+        },
+        {
+          "order": 6,
+          "name": "params",
+          "value": "品名如 T形槽用螺栓/六角头螺栓/螺母/垫圈；规格格式 M<d>X<L>，如 M10X100"
+        },
+        {
+          "order": 7,
+          "name": "example",
+          "value": "stdpart T形槽用螺栓 M10X100"
+        },
+        {
+          "order": 8,
+          "name": "related",
+          "value": [
+            "line",
+            "circle"
+          ]
+        },
+        {
+          "order": 9,
+          "name": "shortcut",
+          "value": "绘图>标准件"
+        }
+      ]
+    },
+    {
       "key": "line",
       "parameters": [
         {

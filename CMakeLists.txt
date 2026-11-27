@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 #   → configure_file 生成 build/app.rc（注入 exe 文件属性 VERSIONINFO）
 #   → build.sh package 模式读取本行，拼出 SketchCAD-<版本>-Setup.exe
 # 三者（关于对话框 / exe 属性 / 安装包文件名）因此天然一致，不会各自漂移。
-project(SketchCAD VERSION 1.2.0 LANGUAGES CXX)
+project(SketchCAD VERSION 1.3.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -80,7 +80,7 @@ set(CORE_SOURCES
     src/core/TitleBlockLayout.cpp  # 标题栏单元格文字自适应（度量→收缩→定位）+ 网格重建（编辑期/自测共用）
     src/core/SurfaceRoughness.cpp
     src/core/weld/WeldSymbol.cpp       # 焊缝符号（GB/T 324）：buildWeldSymbol 组合既图元 + WELD 命令几何生成
-    src/core/CenterLineGen.cpp   # P1 中心线家族生成器（10 种，纯函数 + 单文件自测接入 SketchSelfTest）
+    src/core/CenterLineGen.cpp   # P1 中心线家族生成器（10 种，纯函数）
     src/core/SymbolFactory.cpp   # P3 符号标注扩展（datum/weld/taper/centerhole/elevation/rotation 6 类纯生成器）
     src/core/ConstraintSolver.cpp
     src/core/LegacyConstraintSolver.cpp   # SKT 集成 Phase B：修复模型委托实现（IConstraintSolver）
@@ -190,6 +190,7 @@ set(UI_SOURCES
     src/ui/BlockEditorDialog.cpp
     src/ui/DesignCenterPanel.cpp
     src/ui/StdPartTemplatePanel.cpp
+    src/ui/StdPartTemplateDialog.cpp
     src/ui/SectionDialog.cpp
     src/ui/RegionManagerDialog.cpp
     src/ui/CleanupDialog.cpp
@@ -237,8 +238,7 @@ target_include_directories(sketchcad_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
 target_compile_options(sketchcad_core PRIVATE -Wall -Wextra)
 # Diagnostics.cpp 位于 core；崩溃转储宏与 dbghelp 必须随编译/链接该实现的库走，
-# 否则拆库后主程序的 mini-dump 能力会静默消失。自测仍直接编译 CORE_SOURCES，
-# 不链接 sketchcad_core，因此保持「无宏、无 dbghelp」的纯无头语义。
+# 否则拆库后主程序的 mini-dump 能力会静默消失。
 if(WIN32)
     target_compile_definitions(sketchcad_core PRIVATE SKETCHCAD_ENABLE_CRASHHANDLER=1)
     target_link_libraries(sketchcad_core PUBLIC dbghelp)
@@ -327,7 +327,7 @@ endif()
 # ---- 版本宏注入（version.h）----
 # 从 project(... VERSION ...) 生成，供「关于」对话框等 C++ 侧读取，
 # 使界面显示的版本与 exe 属性、安装包名同源于一个数字。
-# 【重要】SketchSelfTest 不链接本头文件：自测不关心版本，保持目标最小化。
+# 版本头仅由主程序与插件在运行时读取。
 set(SKETCHCAD_COMPANY_NAME  "我是慎独")
 set(SKETCHCAD_PRODUCT_NAME  "SketchCAD 草图设计系统")
 set(SKETCHCAD_COPYRIGHT     "Copyright (C) 2026 我是慎独. All rights reserved.")
@@ -363,8 +363,7 @@ if(WIN32)
     target_include_directories(SketchCAD PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 endif()
 
-# 崩溃转储的宏与 dbghelp 已随 Diagnostics.cpp 一并迁移到 sketchcad_core；
-# SketchSelfTest 仍直接编译 CORE_SOURCES，不链接该库，保持纯净无头语义。
+# 崩溃转储的宏与 dbghelp 随 Diagnostics.cpp 一并挂在 sketchcad_core。
 
 # ===================== 国际化（Qt Linguist：ts → qm → 资源内嵌）=====================
 # 中文为源语言：sketchcad_en.ts 存英文译文（lupdate 从 tr() 抽取中文源串），
@@ -394,53 +393,9 @@ qt_add_resources(SketchCAD "sketchcad_reward_qr"
     PREFIX "/reward"
     FILES ${SKETCHCAD_REWARD_QR})
 
-# ---- 无界面自测（约束求解 / 捕捉 单元测试）----
-# 复用 CORE_SOURCES，不链接 UI；覆盖 21 种约束每类 ≥1 用例 + 8 类捕捉命中 + 冲突检测。
-# 附加批量出图引擎（COM 无关层）与打印三件套，供 t_comAutomation 无头直测。
-add_executable(SketchSelfTest
-    tests/SketchSelfTest.cpp
-    ${CORE_SOURCES}
-    src/com/BatchPlotEngine.cpp
-    src/ui/ElementPath.cpp
-    src/ui/PlotRenderer.cpp
-    src/ui/PrintEngine.cpp
-    src/ui/DocTab.cpp               # 多文档会话核心（仅依赖 core，供 t_multidoc 离线直测）
-    src/ui/CommandLine.cpp          # 命令行键盘语义（历史/补全/重复），供 t_interaction 无头直测
-    src/ui/ElementPanel.cpp         # 图元类型条目 retranslate（语言切换即时刷新），供 t_i18nEnglishCoverage
-    src/ui/StatusBar.cpp            # 状态栏开关按钮 retranslate（语言切换即时刷新），供 t_i18nEnglishCoverage
-    src/ui/DrawingTheme.cpp         # 绘图区域主题配色（亮/暗两套 + current() 契约），供 t_drawingTheme 无头直测
-    src/ui/ThemeManager.cpp         # 生效模式（system/light/dark）→ DrawingTheme::current() 取值来源（无 QApplication 时静默空转）
-    src/ui/PenRecipes.cpp           # GraphicsView 依赖的派生画笔配方（尺寸细实线 / 追踪引导线）
-    # ---- DEL 键端到端交互自测（t_deleteKeyInteraction）：真实 GraphicsView + 真实 QKeyEvent ----
-    # 只接入 GraphicsView 及其最小依赖闭包（工具层 + 两个被工具引用的对话框），
-    # 不含 MainWindow/其余面板，保持自测目标无头、可直注按键事件。
-    src/ui/GraphicsView.cpp
-    src/ui/DeleteKeyFilter.cpp  # 应用级 Del 兜底（策略纯函数 + 窗口级真实派发自测）
-    src/ui/tools/ToolContext.cpp
-    src/ui/tools/ToolManager.cpp
-    src/ui/tools/Tools.cpp
-    src/ui/tools/FreehandLineTool.cpp
-    src/ui/tools/SplineEditTool.cpp
-    src/ui/tools/PolylineTool.cpp
-    src/ui/tools/BoundaryTool.cpp
-    src/ui/tools/PolylineEditTool.cpp
-    src/ui/tools/ShapeSelectTool.cpp
-    src/ui/tools/MTextTool.cpp
-    src/ui/tools/TableTool.cpp
-    src/ui/tools/WeldTool.cpp
-    src/ui/MTextDialog.cpp
-    src/ui/TableDialog.cpp
-)
-target_link_libraries(SketchSelfTest PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql Qt6::Network SketchDwgBridge)
-target_include_directories(SketchSelfTest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(SketchSelfTest PRIVATE -Wall -Wextra)
-
 # ---- 标准知识库（GB/T 机械制图手册数据，12 类表 JSON 内嵌）----
 # 经 qt_add_resources 内嵌为 :/standards/<name>.json，部署零附件；
-# 主程序与无头自测均需在运行时读取，故同时挂接 SketchCAD 与 SketchSelfTest。
+# 主程序运行时读取，故以 Qt 资源内嵌。
 # ⚠️ 必须显式给 QT_RESOURCE_ALIAS：Qt6 会把 FILES 的相对路径原样当别名，
 #    否则实际注册成 :/standards/src/core/standards/data/<name>.json，运行时取不到。
 set(SKETCHCAD_STD_DATA
@@ -462,101 +417,6 @@ foreach(_std_file ${SKETCHCAD_STD_DATA})
     set_source_files_properties(${_std_file} PROPERTIES QT_RESOURCE_ALIAS "${_std_name}")
 endforeach()
 qt_add_resources(SketchCAD "sketchcad_standards" PREFIX "/standards" FILES ${SKETCHCAD_STD_DATA})
-qt_add_resources(SketchSelfTest "sketchselftest_standards" PREFIX "/standards" FILES ${SKETCHCAD_STD_DATA})
-# 供 t_standardsDB 字节探针：定位源 JSON 与运行时资源逐字节比对。
-target_compile_definitions(SketchSelfTest PRIVATE
-    SKETCHCAD_STANDARDS_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/core/standards/data")
-
-# 黄金样本（tests/golden/ 静态 DXF 锚点）拷贝到构建根目录，供 t_goldenSamples 无头读取
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/tests/golden
-     DESTINATION ${CMAKE_BINARY_DIR})
-
-# ===================== 性能基准（增量同步 + 均匀网格空间索引）=====================
-# 带 QApplication，可实例化 GraphicsView（与真实交互同一代码路径）：
-# 测 打开(rebuild)/单点拾取(索引 vs 全量)/一致性差分/选择高亮/平移缩放 FPS。
-# 三档规模 1万/5万/10万，对照验收目标。无头环境 FPS 为交互处理开销代理（见源码注释）。
-add_executable(SketchBenchmark
-    bench/SketchBenchmark.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(SketchBenchmark PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(SketchBenchmark PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(SketchBenchmark PRIVATE -Wall -Wextra)
-
-# ===================== 打印样式样张生成器（A4/A3 黑白 PDF 目检 + 双路回归）=====================
-# 产出四类 GB 线型（粗实/细实/虚线/点画）的黑白样张（带样式表 vs 不带样式表），
-# 并对两路出图做灰度直方图/墨量/彩色像素回归比对，支撑打印样式映射的验收。
-add_executable(PlotStyleSamples
-    bench/PlotStyleSamples.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(PlotStyleSamples PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(PlotStyleSamples PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(PlotStyleSamples PRIVATE -Wall -Wextra)
-
-# ===================== DWG 打开核验（交互同读档链 → 离屏渲染 PNG）=====================
-# fromDwg → $INSUNITS 换算 → addBlockDef 注册块定义 → filterElements → GraphicsView
-# 渲染 PNG，用于与正确 CAD 的截图逐图对比（如施工图纸库 C0层.dwg 的块内容完整性）。
-add_executable(DwgOpenVerify
-    bench/DwgOpenVerify.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(DwgOpenVerify PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(DwgOpenVerify PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(DwgOpenVerify PRIVATE -Wall -Wextra)
-
-# ===================== GB 标准件 DWG 图库批量解析器 =====================
-# 扫描 CAD标准件图库全部 DWG，走同源 fromDwg 链解析图元/图层/标注，
-# 输出 JSON 索引（build/stdpart_index.json），供参数化国标库与推理文档使用。
-add_executable(StdPartDwgAnalyzer
-    tools/stdpart/analyze_stdpart_dwg.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(StdPartDwgAnalyzer PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(StdPartDwgAnalyzer PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(StdPartDwgAnalyzer PRIVATE -Wall -Wextra)
-
-# GB 标准件目录构建器：合并分片索引 → 生成参数化目录 JSON → 验证参数驱动
-add_executable(StdPartCatalogBuilder
-    tools/stdpart/build_stdpart_catalog.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(StdPartCatalogBuilder PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(StdPartCatalogBuilder PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(StdPartCatalogBuilder PRIVATE -Wall -Wextra)
-
-# DWG 原图模板库批量构建器：DWG → qCompress(DXF 占位符模板) + index.json + 解析报告
-add_executable(StdPartTemplateBuilder
-    tools/stdpart/build_stdpart_templates.cpp
-    ${CORE_SOURCES}
-    ${UI_SOURCES}
-)
-target_link_libraries(StdPartTemplateBuilder PRIVATE Qt6::Core Qt6::Widgets Qt6::PrintSupport Qt6::Qml Qt6::Concurrent Qt6::Sql SketchDwgBridge)
-target_include_directories(StdPartTemplateBuilder PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/core
-    ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(StdPartTemplateBuilder PRIVATE -Wall -Wextra)
 
 # ===================== 脚本宿主：可选语言引擎 =====================
 # 默认仅 JavaScript（Qt 内置 QJSEngine，零外部依赖）参与构建。
@@ -570,10 +430,6 @@ if(SCRIPTHOST_ENABLE_PYTHON)
   target_sources(sketchcad_core PRIVATE src/core/PythonEngine.cpp)
   target_compile_definitions(sketchcad_core PRIVATE SCRIPTHOST_ENABLE_PYTHON)
   target_link_libraries(sketchcad_core PUBLIC Python3::Python)
-  # 自测仍直接编译 CORE_SOURCES，保持原有可选引擎链路。
-  target_sources(SketchSelfTest PRIVATE src/core/PythonEngine.cpp)
-  target_compile_definitions(SketchSelfTest PRIVATE SCRIPTHOST_ENABLE_PYTHON)
-  target_link_libraries(SketchSelfTest PRIVATE Python3::Python)
   message(STATUS "脚本宿主：Python 引擎已启用")
 endif()
 
@@ -584,42 +440,9 @@ if(SCRIPTHOST_ENABLE_VBA)
     target_sources(sketchcad_core PRIVATE src/core/VbaEngine.cpp)
     target_compile_definitions(sketchcad_core PRIVATE SCRIPTHOST_ENABLE_VBA)
     target_link_libraries(sketchcad_core PUBLIC ole32 oleaut32)
-    target_sources(SketchSelfTest PRIVATE src/core/VbaEngine.cpp)
-    target_compile_definitions(SketchSelfTest PRIVATE SCRIPTHOST_ENABLE_VBA)
-    target_link_libraries(SketchSelfTest PRIVATE ole32 oleaut32)
     message(STATUS "脚本宿主：VBA 引擎已启用")
   endif()
 endif()
-
-# ===================== 示例插件（第三方开发示范：机械行业） =====================
-# 仅依赖 SDK 公共头（纯接口 + POD），不链接宿主任何内部库，
-# 以此验证「第三方插件可完全独立于宿主二进制编译」的 ABI 契约。
-# 输出到构建目录下的 plugins/ 子目录，宿主启动时自动扫描加载，
-# 自测亦可按路径直接加载验证「注册→执行→卸载」全链路。
-add_library(SamplePlugin SHARED sdk/samples/SamplePlugin/SamplePlugin.cpp)
-target_include_directories(SamplePlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_definitions(SamplePlugin PRIVATE SKETCHCAD_PLUGIN_BUILD)
-target_compile_options(SamplePlugin PRIVATE -Wall -Wextra)
-set_target_properties(SamplePlugin PROPERTIES
-    PREFIX ""                                                  # 输出 SamplePlugin.dll（不带 lib 前缀，符合插件命名惯例）
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"   # Windows: .dll
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"   # Linux:   .so
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
-)
-message(STATUS "SDK 示例插件：SamplePlugin 已纳入构建（机械行业示范）")
-
-# ---- ABI 协商探针（自测负例专用）：导出 sdk_abi_version=99 的「未来插件」 ----
-# 输出到独立目录 abiprobe/，避免被宿主启动时的 plugins/ 目录扫描误加载。
-add_library(AbiProbePlugin SHARED sdk/tests/AbiProbe/AbiProbe.cpp)
-target_include_directories(AbiProbePlugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/sdk/include)
-target_compile_options(AbiProbePlugin PRIVATE -Wall -Wextra)
-set_target_properties(AbiProbePlugin PROPERTIES
-    PREFIX ""
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/abiprobe"
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/abiprobe"
-    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/abiprobe"
-)
-message(STATUS "SDK ABI 探针：AbiProbePlugin 已纳入构建（自测负例：ABI 过新拒绝）")
 
 # ===================== COM 自动化服务器（批量出图，Windows） =====================
 # 进程内 COM 组件（SketchCADAutomation.dll），regsvr32 注册后供 VBScript /

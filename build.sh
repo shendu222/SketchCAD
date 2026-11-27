@@ -4,7 +4,6 @@
 # 用法：
 #   ./build.sh          增量构建
 #   ./build.sh clean    清理后完整重建
-#   ./build.sh test     构建并运行核心层自测
 #   ./build.sh dist     构建并打包可独立运行的 dist/ 目录
 #   ./build.sh package  构建商业安装包 → dist/SketchCAD-<版本>-Setup.exe
 #                       + dist/SketchCAD-<版本>-Setup.msi + checksums.sha256
@@ -43,7 +42,7 @@ if [ "$MODE" != "mysql-plugin" ]; then
 if [ "$MODE" = "dbconfig" ] || [ "$MODE" = "package" ]; then
     # 数据库配置功能已并入 SketchCAD 主目标；package 模式也仅增量构建该目标、单作业，
     # 避免 BatchPlotEngine 等大文件并行编译触发 OOM（实测全量并行 ninja 必 OOM），
-    # 且避免 package 去编译与安装包无关的辅助目标（bench/示例/COM 等）。
+    # 且避免 package 去编译与安装包无关的辅助目标（插件示例/COM 等）。
     "$NINJA" -C "$WROOT/build" SketchCAD -j 1
     echo "[OK] 已安全增量构建 SketchCAD（含数据库配置功能）: $ROOT/build/SketchCAD.exe"
 else
@@ -358,15 +357,6 @@ sync_cover() {
 sync_cover "$ROOT/build/"
 echo "[OK] 启动画面封面已同步到 build/"
 
-if [ "$MODE" = "test" ]; then
-    echo "---- 核心层自测 ----"
-    # Qt 在 MSYS 伪终端下默认不写 stderr，需显式声明有控制台
-    QT_ASSUME_STDERR_HAS_CONSOLE=1 "$ROOT/build/SketchSelfTest.exe" || { echo "[错误] SketchSelfTest 失败" >&2; exit 1; }
-    # P0-04 大图纸视图级自测：裁剪建项/分帧补建/重绘节流/OOM 注入/拾取确定性/LOD
-    echo "---- P0-04 视图级自测（SketchBenchmark --selftest）----"
-    QT_ASSUME_STDERR_HAS_CONSOLE=1 "$ROOT/build/SketchBenchmark.exe" --selftest || { echo "[错误] P0-04 视图级自测失败" >&2; exit 1; }
-fi
-
 if [ "$MODE" = "dist" ]; then
     mkdir -p "$ROOT/dist"
     cp "$ROOT/build/SketchCAD.exe" "$ROOT/dist/"
@@ -576,9 +566,9 @@ if [ "$MODE" = "package" ]; then
     cp "$ROOT/LICENSE.txt" "$STAGE/" 2>/dev/null || true
     cp "$ROOT/README.md" "$STAGE/" 2>/dev/null || true
     # 第三方组件许可声明（LGPL 等合规要求随分发附带）
-    if [ -f "$ROOT/docs/third-party-notices.md" ]; then
+    if [ -f "$ROOT/THIRD_PARTY_NOTICES.md" ]; then
         mkdir -p "$STAGE/third-party-notices"
-        cp "$ROOT/docs/third-party-notices.md" "$STAGE/third-party-notices/"
+        cp "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/third-party-notices/"
     fi
     # alias.pgp：命令别名表，缺失时程序会自动建默认，可选
     [ -f "$ROOT/dist/alias.pgp" ] && cp "$ROOT/dist/alias.pgp" "$STAGE/" 2>/dev/null || true

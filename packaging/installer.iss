@@ -108,7 +108,7 @@ Source: "..\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; 此处再显式列一条，便于「手工把 ..\stage 当源」的打包路径也不漏。
 Source: "..\COPYING"; DestDir: "{app}"; Flags: ignoreversion
 ; 第三方组件许可声明
-Source: "..\docs\third-party-notices.md"; DestDir: "{app}\third-party-notices"; \
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}\third-party-notices"; \
     Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]

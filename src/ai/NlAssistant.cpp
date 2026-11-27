@@ -3,6 +3,7 @@
 
 #include "core/CommandInterpreter.h"
 #include "core/CommandCatalog.h"
+#include "core/Commands.h"      // 注册表为已注册命令的权威来源（命令目录可能滞后）
 #include "core/Element.h"
 #include "core/SketchModel.h"
 #include "ai/tooldefs.h"
@@ -23,6 +24,37 @@ namespace SketchCAD {
 namespace {
 
 // IT 等级字符串 → 枚举：IT01 单独处理，IT0=1，IT1=2 … IT18=19（即序号 n+1）。
+// 兼容非 function-calling 后端：模型直接输出一行裸命令行（如 "stdpart M10X100"）
+// 时，按「命令名必须是已注册命令」的严格条件解码为一次工具调用。
+// 这不是本地意图推理，只是把模型给出的命令文本接到既有执行链上。
+QString decodeBareCommandLine(const QString& modelOutput) {
+    QString s = modelOutput.trimmed();
+    if (s.isEmpty() || s.contains(QLatin1Char('{'))) return QString();
+    // 去掉模型偶尔附带的代码围栏 / 角色前缀
+    if (s.startsWith(QStringLiteral("```"))) {
+        s.remove(0, 3);
+        const int fence = s.lastIndexOf(QStringLiteral("```"));
+        if (fence >= 0) s.truncate(fence);
+        s = s.trimmed();
+    }
+    const QStringList prefixes = {
+        QStringLiteral("助手："), QStringLiteral("助手:"),
+        QStringLiteral("命令："), QStringLiteral("命令:"),
+        QStringLiteral("执行："), QStringLiteral("执行:")
+    };
+    for (const QString& p : prefixes)
+        if (s.startsWith(p)) { s = s.mid(p.size()).trimmed(); break; }
+    if (s.isEmpty() || s.contains(QLatin1Char('\n')) || s.contains(QStringLiteral("。"))) return QString();
+
+    const QString cmd = s.section(QLatin1Char(' '), 0, 0).trimmed().toLower();
+    // 命令注册表优先：即使 config/command_catalog.json 尚未随新二进制更新，
+    // 已编译进去的命令（如 stdpart）也必须能被识别执行。
+    const bool registered = CommandRegistry::instance().findExact(cmd) != nullptr
+                         || CommandInterpreter::commandNames().contains(cmd);
+    if (!registered) return QString();
+    return s;
+}
+
 bool parseITGrade(const QString& s, ITGrade& out) {
     const QString t = s.trimmed();
     if (t == QStringLiteral("01")) { out = ITGrade::IT01; return true; }
@@ -136,14 +168,41 @@ void NlAssistant::sendUserMessage(const QString& text) {
     busy_ = true;
     aborted_ = false;
     step_ = 0;
+    lastBareCommand_.clear();
     LlmMessage u;
     u.role = LlmRole::User;
     u.content = text;
     history_.append(u);
 
+    // 用户在 AI 面板里直接输入一条已注册命令（如 "stdpart M10X100"）时，
+    // 按命令行同源语义立即执行，不再交给模型复述。破坏性命令仍走模型审批流程。
+    const QString direct = decodeBareCommandLine(text);
+    if (!direct.isEmpty() && !isDestructive(direct)) {
+        lastBareCommand_ = direct;
+        LlmToolCall tc;
+        tc.id = QStringLiteral("user_command_%1").arg(step_);
+        tc.name = QStringLiteral("runSketchCommand");
+        tc.arguments = QJsonObject{{ QStringLiteral("line"), direct }};
+        LlmMessage a;
+        a.role = LlmRole::Assistant;
+        a.content = direct;
+        a.toolCalls = { tc };
+        history_.append(a);
+        const bool ok = interp_ ? interp_->execute(direct) : false;
+        emit commandExecuted(direct, ok);
+        LlmMessage toolMsg;
+        toolMsg.role = LlmRole::Tool;
+        toolMsg.toolCallId = tc.id;
+        toolMsg.toolName = tc.name;
+        toolMsg.content = ok ? QStringLiteral("命令已执行成功。") : QStringLiteral("命令执行失败。");
+        history_.append(toolMsg);
+        finalize(ok ? QStringLiteral("已执行命令：%1").arg(direct)
+                    : QStringLiteral("命令执行失败：%1").arg(direct), QString());
+        return;
+    }
+
     // 用户原文原样进入模型：语义理解、参数抽取、命令串生成与结果说明
-    // 全部由 LlmProvider 背后的模型完成。此处不得存在任何本地规则映射，
-    // 也不得有「绕过模型直接执行」的快捷路径。
+    // 全部由 LlmProvider 背后的模型完成。
     runTurn();
 }
 
@@ -185,6 +244,18 @@ void NlAssistant::handleDone(const QString& err) {
             tc.name = QStringLiteral("runSketchCommand");
             tc.arguments = QJsonObject{{ QStringLiteral("line"), r.commandLine }};
             calls.append(tc);
+        } else {
+            // 裸命令行回退：模型没有 function-calling、也没有输出 JSON，
+            // 而是直接给出 "stdpart M10X100" 一行命令时仍应真正执行。
+            const QString bare = decodeBareCommandLine(accContent_);
+            if (!bare.isEmpty() && bare != lastBareCommand_) {
+                lastBareCommand_ = bare;
+                LlmToolCall tc;
+                tc.id = QStringLiteral("model_bare_%1").arg(step_);
+                tc.name = QStringLiteral("runSketchCommand");
+                tc.arguments = QJsonObject{{ QStringLiteral("line"), bare }};
+                calls.append(tc);
+            }
         }
     }
 
@@ -287,6 +358,13 @@ QString NlAssistant::buildSystemPrompt() const {
         "自然语言抽取出的每个命令串都必须与目录中某条命令的 name / usage / example 对应。"
         "\n【语义消歧】当两种图元语义同时出现时，以目录条目的用途描述最贴切者为准；"
         "椭圆语义（椭圆/长半轴/短半轴/长轴/短轴）不得映射为圆形条目，反之亦然。"
+        "遇到“绘制一个<零件名称>”“生成<标准件>”“插入<零件名称>”且含机械标准件品名"
+        "（螺栓、T形槽用螺栓、六角头螺栓、内六角螺栓、螺母、垫圈、销、键、轴承、铆钉、挡圈等）"
+        "与规格（如 M10X100、M6x30、10x50、M8）时，必须调用 `stdpart` 命令，"
+        "对应菜单【绘图】-【标准件】，直接生成标准件；命令串必须写成"
+        "`stdpart <完整品名> <规格>`，例如 `stdpart T形槽用螺栓 M10X100`，"
+        "不得省略用户给出的品名（否则可能匹配到其它同类标准件）。"
+        "禁止把品名拆成“T形槽”+“螺栓”两段，也禁止改用 line/circle/rect 等通用绘图命令分步拼画。"
         "\n执行结果会以 tool 消息回传给你，请据此用中文简要说明结果（结果文本也由你生成）。"
         "\n不确定语法时先用 getCommandHelp(name) 查询；需要图纸状态时用 "
         "getSelection / getLayers / listElements。"

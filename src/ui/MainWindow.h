@@ -57,6 +57,7 @@ class InsertBlockDialog;
 class CreateBlockDialog;
 class BlockManagerDialog;
 class GroupManagerDialog;   // 编组管理器（GROUP）
+class StdPartTemplateDialog; // 【绘图>标准件】标准件模板库对话框
 class QSelectDialog;        // 快速选择（QSELECT）
 class FilterDialog;         // 过滤器（FILTER）
 struct SheetSpec;
@@ -95,8 +96,8 @@ private:
     StandardsPanel* standardsPanel_ = nullptr;   // 工程制图合规检查面板（STDCHECK 结果）
     QDockWidget*   standardsDock_ = nullptr;
     DesignCenterPanel* designPanel_;          // 设计中心面板（块表树 + 外部块库）
-    QDockWidget* stdTplDock_ = nullptr;        // 标准件原图模板库（参数替换出图）
-    class StdPartTemplatePanel* stdTplPanel_ = nullptr;
+    StdPartTemplateDialog* stdTplDialog_ = nullptr; // 标准件模板库对话框（非模态，状态保留）
+    class StdPartTemplatePanel* stdTplPanel_ = nullptr; // 对话框内嵌面板（供既有槽复用）
     bool stdPartPickPending_ = false;          // 标准件「画布拾取插入位置」等待用户点击
     QVariantMap stdPartPendingParams_;         // 点击时使用的面板参数快照
     StdPartPlacement stdPartPendingPlacement_;

@@ -38,6 +38,8 @@
 #include "standards/StandardsDB.h" // 标准知识库：内嵌 12 类机械制图国标数据（standards 命令 / LLM 工具 / 浏览面板共用单例）
 #include "standards/ComplianceChecker.h" // 图层命名合规检查（stdcheck 命令；GB/T 18617 / ISO 13567）
 #include "SheetSpec.h"              // 图框幅面驱动：SheetFrameOptions / applySheetFrameToModel（按 A0–A4 联动图框）
+#include "StdPartTemplate.h"        // stdpart：AI 标准件请求 → 原图模板参数化出图
+#include "StdPartInstance.h"        // stdpart：占位符替换 + 参数缩放（不依赖 UI）
 
 namespace SketchCAD {
 
@@ -3286,6 +3288,21 @@ bool QConnectCommand::execute(const CommandContext& ctx) {
     return true;
 }
 
+namespace {
+
+// 标准件意图归一化：只保留品名/标准号/规格的可比较骨架。
+// "绘制一个T形槽用螺栓M10X100" → "T形槽用螺栓M10X100"
+QString stdpartNormalize(const QString& raw) {
+    QString s = raw;
+    s.replace(QStringLiteral("×"), QStringLiteral("X"));
+    s.replace(QStringLiteral("ｘ"), QStringLiteral("X"));
+    s.remove(QRegularExpression(QStringLiteral("^(绘制|画|生成|插入|添加|创建|调用)(一个|个|一幅|一张)?(的)?")));
+    s.remove(QRegularExpression(QStringLiteral("[\\s\\-_（）()·、,，]")));
+    return s.toUpper();
+}
+
+} // namespace
+
 void CommandRegistry::registerBuiltins() {
     // ---- 基础绘图 ----
     registerExact("line",     std::make_shared<LineCommand>());
@@ -3332,6 +3349,85 @@ void CommandRegistry::registerBuiltins() {
     registerExact("rect",     std::make_shared<RectCommand>());
     registerExact("poly",     std::make_shared<PolySplineCommand>(ElementType::Polygon, "多边形"));
     registerExact("spline",   std::make_shared<PolySplineCommand>(ElementType::Spline, "样条曲线"));
+
+    // ---- 标准件（AI「绘制一个T形槽用螺栓M10X100」的唯一正确落点）----
+    // 直接走【绘图>标准件】同源的模板参数化引擎，不再把"T形槽"+"螺栓"拆成
+    // 两个通用绘图步骤。用法：stdpart <品名> <规格>，如：
+    //   stdpart T形槽用螺栓 M10X100
+    //   stdpart 六角头螺栓 M10x100
+    registerExact("stdpart", std::make_shared<LambdaCommand>([](const CommandContext& ctx) {
+        SketchModel* m = ctx.model;
+        const QString full = stdpartNormalize(QStringList(ctx.toks.mid(1)).join(QStringLiteral(" ")));
+        if (full.isEmpty()) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("用法: stdpart <品名> <规格>，如 stdpart T形槽用螺栓 M10X100")), "warn");
+            return false;
+        }
+        const QRegularExpression specRe(QStringLiteral("M(\\d+(?:\\.\\d+)?)(?:X)(\\d+(?:\\.\\d+)?)"));
+        const QRegularExpressionMatch sm = specRe.match(full);
+        if (!sm.hasMatch()) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("未识别标准件规格（需 M<d>X<L>，如 M10X100）")), "warn");
+            return false;
+        }
+        const double d = sm.captured(1).toDouble();
+        const double L = sm.captured(2).toDouble();
+        if (d <= 0 || L <= 0) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("标准件规格无效")), "warn");
+            return false;
+        }
+        const QString spec = sm.captured(0);
+        const QString hint = stdpartNormalize(QString(full).remove(spec));
+
+        auto& store = StdPartTemplateStore::instance();
+        if (!store.loaded()) store.load(StdPartTemplateStore::defaultStoreDir());
+        const StdPartTemplateMeta* best = nullptr;
+        int bestScore = -1;
+        for (const StdPartTemplateMeta& meta : store.metas()) {
+            if (stdpartNormalize(meta.specText) != spec) continue;
+            int score = 1;
+            if (!hint.isEmpty()) {
+                const QString cat = stdpartNormalize(meta.category);
+                if (cat.contains(hint)) score = 100 + hint.size();
+                else if (hint.contains(cat)) score = 90 + cat.size();
+                else continue;
+            }
+            if (score > bestScore) { bestScore = score; best = &meta; }
+        }
+        if (!best) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("模板库中未找到匹配的标准件：%1")).arg(full), "warn");
+            return false;
+        }
+
+        QVariantMap params;
+        params.insert(QStringLiteral("NOMINAL_D"), d);
+        params.insert(QStringLiteral("LENGTH_L"), L);
+        params.insert(QStringLiteral("PITCH_P"), best->baselinePitch > 0 ? best->baselinePitch : 1.5);
+        params.insert(QStringLiteral("ACROSS_FLATS_S"),
+                      best->baselineAcrossFlats > 0 ? best->baselineAcrossFlats : d * 1.6);
+        params.insert(QStringLiteral("THICKNESS_T"),
+                      best->baselineThickness > 0 ? best->baselineThickness : d * 0.64);
+        params.insert(QStringLiteral("SPEC_TEXT"),
+                      QStringLiteral("M%1x%2").arg(d, 0, 'f', 0).arg(L, 0, 'f', 0));
+
+        StdPartInstance inst;
+        inst.typeId = StdPartInstance::typeIdFor(*best);
+        inst.category = best->category;
+        inst.standard = best->standard;
+        inst.templateId = best->id;
+        inst.params = params;
+
+        QString err;
+        const std::vector<Element> els = StdPartInstance::render(inst, &err);
+        if (!err.isEmpty() || els.empty()) {
+            m->log(SketchCAD::I18n::t(QString::fromUtf8("标准件生成失败: ")) + err, "warn");
+            return false;
+        }
+        m->beginEdit(QStringLiteral("插入标准件 %1").arg(inst.typeId));
+        const std::vector<int> ids = m->addElementsQuiet(els);
+        m->log(QStringLiteral("已按【绘图>标准件】生成 %1 %2：%3 图元")
+                   .arg(best->category, params.value(QStringLiteral("SPEC_TEXT")).toString())
+                   .arg(ids.size()));
+        return true;
+    }));
 
     // ---- 点实体（供 Node 节点捕捉：绘制离散点，可被 Node 捕捉吸附）----
     registerExact("point", std::make_shared<LambdaCommand>(

@@ -70,6 +70,7 @@ private:
     int step_ = 0;
     QString accContent_;
     QVector<LlmToolCall> accToolCalls_;
+    QString lastBareCommand_;   // 同一轮请求内防止模型重复输出同一裸命令导致重复落模
     static constexpr int kMaxSteps = 8;
     static const QStringList& destructiveCommands();
 };

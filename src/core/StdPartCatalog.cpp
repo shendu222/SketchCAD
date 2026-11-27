@@ -17,11 +17,6 @@ namespace {
 
 constexpr double K_PI = 3.14159265358979323846;
 
-Element makeLine(const Vec3& a, const Vec3& b, const QString& name) {
-    Element e = ElementFactory::create(ElementType::Line, name, nullptr);
-    e.pts = { a, b };
-    return e;
-}
 Element makeCircle(const Vec3& c, double r, const QString& name) {
     Element e = ElementFactory::create(ElementType::Circle, name, nullptr);
     e.pts = { c }; e.radius = r;

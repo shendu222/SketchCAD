@@ -145,7 +145,7 @@ public:
 // 尺寸来源：GbFastenerTable（s/k/d/e，G3 禁改）；派生（GB/T 5782 参考规则，须人工校核）：
 //   b=min(2d+6,杆长)、lg=l−b（夹紧长）、u=min(lg,0.35d)≈2P（不完整螺纹）、ls=lg−u（光杆）、
 //   c=0.15d（30° 倒角半角）、d1=0.85d、r=max(0.25,0.05d)（头下圆角）、dw=0.9s（支承面）、da≈e。
-// 三段弧几何（30° 倒角锥截交，xd=√3·Δ、Δ=(e−s)/2）：
+// 三段弧几何（30° 倒角锥截交，xd=Δ/√3、Δ=(e−s)/2；与 GB 原图模板一致）：
 //   中弧：过 (xd,±e/4) 与端面 (0,0)，圆心 (ρm,0)，ρm=(xd²+(e/4)²)/(2xd)；
 //   侧弧：过 (xd,±e/4) 与 (xd,±e/2)、左凸至 (0,±3e/8)，圆心 (cx,±3e/8)，cx=半径=(xd²+(e/8)²)/(2xd)。
 // 标注文本全部为真实数值（fmt：一位小数、整数去尾），角度/半径用 30°、R0.3、0.8×30° 形式。
@@ -168,7 +168,7 @@ public:
         // ---- 布局：主视原点=头部外端面与轴线交点，+X 指向杆端 ----
         const double R    = e / 2.0;
         const double dEl  = (e - s) / 2.0;                     // 倒角端面落差 Δ
-        const double xd   = dEl * std::sqrt(3.0);              // 倒角弧/棱线起点 x
+        const double xd   = dEl / std::sqrt(3.0);              // 倒角弧/棱线起点 x（Δ/√3，非 √3·Δ）
         const double tip  = k + length;                        // 杆端（总长 l = k + 杆长）
         const double b    = std::min(2.0 * d + 6.0, length);   // 螺纹长度（参考）
         const double lg   = std::max(0.0, length - b);         // 夹紧长度（含不完整螺纹）

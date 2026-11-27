@@ -32,6 +32,34 @@ void MockProvider::chat(const QVector<LlmMessage>& messages,
         if (messages.at(i).role == LlmRole::User) { text = messages.at(i).content; break; }
     }
 
+    // 意图：标准件。必须先于任何通用几何判定，避免“T形槽用螺栓 M10X100”
+    // 被拆成“T形槽 + 螺栓”的分步绘图流程。对应【绘图】-【标准件】。
+    {
+        QRegularExpression specRe(QStringLiteral("[Mm]\\s*(\\d+(?:\\.\\d+)?)\\s*[xX×]\\s*(\\d+(?:\\.\\d+)?)"));
+        const QRegularExpressionMatch sm = specRe.match(text);
+        const bool stdName = text.contains(QStringLiteral("螺栓")) || text.contains(QStringLiteral("螺钉"))
+            || text.contains(QStringLiteral("螺母")) || text.contains(QStringLiteral("垫圈"))
+            || text.contains(QStringLiteral("垫片")) || text.contains(QStringLiteral("销"))
+            || text.contains(QStringLiteral("键")) || text.contains(QStringLiteral("轴承"))
+            || text.contains(QStringLiteral("铆钉")) || text.contains(QStringLiteral("挡圈"));
+        if (sm.hasMatch() && stdName) {
+            const QString spec = QStringLiteral("M%1X%2").arg(sm.captured(1), sm.captured(2));
+            QString name = text.left(sm.capturedStart(0));
+            name.remove(QRegularExpression(QStringLiteral("^(绘制|画|生成|插入|添加|创建|调用)(一个|个|一幅|一张)?(的)?")));
+            name.remove(QRegularExpression(QStringLiteral("[\\s，,。：:]")));
+            if (name.isEmpty()) name = QStringLiteral("标准件");
+            const QString line = QStringLiteral("stdpart %1 %2").arg(name, spec);
+            onDelta(SketchCAD::I18n::t(QStringLiteral("正在执行命令：")) + line);
+            LlmToolCall tc;
+            tc.id = QStringLiteral("call_mock_stdpart_1");
+            tc.name = QStringLiteral("runSketchCommand");
+            tc.arguments = QJsonObject{{ QStringLiteral("line"), line }};
+            onToolCalls({ tc });
+            onDone("");
+            return;
+        }
+    }
+
     // 意图：椭圆。必须先于圆判定，避免“椭圆 + 圆心/半径”描述被圆形规则抢走。
     const bool wantsEllipse = text.contains(QStringLiteral("椭圆"))
                               || text.contains(QStringLiteral("ellipse"), Qt::CaseInsensitive);

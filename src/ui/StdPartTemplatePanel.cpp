@@ -514,6 +514,16 @@ bool StdPartTemplatePanel::applyInstance(const StdPartInstance& inst, QString* e
     return true;
 }
 
+void StdPartTemplatePanel::setDialogMode(bool on) {
+    for (QPushButton* b : { insertBtn_, saveBtn_, resetBtn_, saveJsonBtn_, openJsonBtn_ }) {
+        if (b) b->setVisible(!on);
+    }
+}
+
+void StdPartTemplatePanel::resetToDefaults() {
+    if (!currentId_.isEmpty()) onReset();
+}
+
 QString StdPartTemplatePanel::proposeSavePath(const QString& ext) const {
     const StdPartTemplateMeta* m = StdPartTemplateStore::instance().find(currentId_);
     const QString name = m ? m->specText : currentId_;
